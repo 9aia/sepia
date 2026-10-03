@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
+import { queryClient } from "../hooks/query/queryClient";
 import "../style.css";
 
 export const Route = createRootRoute({
@@ -30,7 +32,9 @@ export const Route = createRootRoute({
 function RootComponent() {
   return (
     <RootDocument>
-      <Outlet />
+      <QueryClientProvider client={queryClient}>
+        <Outlet />
+      </QueryClientProvider>
     </RootDocument>
   );
 }

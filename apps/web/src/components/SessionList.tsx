@@ -3,7 +3,11 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
-import { createNewSession, removeSession, selectSession, sepiaStore } from "../lib/store";
+import { sepiaStore, setSelectedId } from "../lib/store";
+import { useAgents } from "../hooks/query/useAgents";
+import { useCreateSession } from "../hooks/query/useCreateSession";
+import { useDeleteSession } from "../hooks/query/useDeleteSession";
+import { useSessions } from "../hooks/query/useSessions";
 
 function formatUpdated(iso: string): string {
   const then = new Date(iso).getTime();
@@ -25,14 +29,19 @@ const inFormField = (): boolean => {
   );
 };
 
+const messageOf = (err: unknown, fallback: string): string =>
+  err instanceof Error ? err.message : fallback;
+
 export function SessionList() {
-  const sessions = useStore(sepiaStore, (state) => state.sessions);
+  const { data: sessions = [], isLoading: loading, error } = useSessions();
+  const { data: agents = [] } = useAgents();
+  const createMutation = useCreateSession();
+  const deleteMutation = useDeleteSession();
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
-  const loading = useStore(sepiaStore, (state) => state.loading);
-  const error = useStore(sepiaStore, (state) => state.error);
-  const creating = useStore(sepiaStore, (state) => state.creating);
-  const createError = useStore(sepiaStore, (state) => state.createError);
-  const agents = useStore(sepiaStore, (state) => state.agents);
+  const creating = createMutation.isPending;
+  const createError = createMutation.isError
+    ? messageOf(createMutation.error, "Failed to create session")
+    : null;
   const [cwd, setCwd] = useState("");
   const [title, setTitle] = useState("");
   const [agent, setAgent] = useState("devin");
@@ -66,7 +75,7 @@ export function SessionList() {
     const session = filtered[index];
     if (session === undefined) return;
     virtualizer.scrollToIndex(index, { align: "auto" });
-    selectSession(session.id);
+    setSelectedId(session.id);
   };
 
   useHotkey("Mod+K", () => filterRef.current?.focus(), { preventDefault: true });
@@ -105,7 +114,7 @@ export function SessionList() {
     const trimmedCwd = cwd.trim();
     if (trimmedCwd === "") return;
     const trimmedTitle = title.trim();
-    createNewSession({
+    createMutation.mutate({
       cwd: trimmedCwd,
       agent,
       title: trimmedTitle === "" ? undefined : trimmedTitle,
@@ -176,7 +185,11 @@ export function SessionList() {
       />
 
       {loading && <p className="session-list__status">Loading sessions…</p>}
-      {error && <p className="session-list__status session-list__status--error">{error}</p>}
+      {error !== null && (
+        <p className="session-list__status session-list__status--error">
+          {messageOf(error, "Failed to list sessions")}
+        </p>
+      )}
       {!loading && !error && filtered.length === 0 && (
         <p className="session-list__status">
           {sessions.length === 0 ? "No sessions found." : "No sessions match the filter."}
@@ -215,7 +228,7 @@ export function SessionList() {
                 <button
                   type="button"
                   className={"session-item" + (selected ? " session-item--selected" : "")}
-                  onClick={() => selectSession(session.id)}
+                  onClick={() => setSelectedId(session.id)}
                 >
                   <div className="session-item__top">
                     <span className="session-item__title">{session.title}</span>
@@ -244,7 +257,7 @@ export function SessionList() {
                   onClick={(event) => {
                     event.stopPropagation();
                     if (window.confirm(`Delete session "${session.title}"?`)) {
-                      removeSession(session.id);
+                      deleteMutation.mutate(session.id);
                     }
                   }}
                 >

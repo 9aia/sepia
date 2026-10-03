@@ -6,12 +6,18 @@ import { streamingMarkdownExtension } from "@tanstack/markdown/extensions/stream
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useThrottledCallback } from "@tanstack/react-pacer";
 import "@copilotkit/react-ui/styles.css";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import type { PermissionRequest } from "../lib/types";
 import { codeHighlighter, highlightThemeCss } from "../lib/highlight";
-import { respondToPermission, subscribeSessionStream } from "../lib/api";
+import { subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
-import { refreshHistory, sepiaStore, takeoverSession } from "../lib/store";
+import { sepiaStore } from "../lib/store";
+import { queryKeys } from "../hooks/query/keys";
+import { useAttachSession } from "../hooks/query/useAttachSession";
+import { useHistory } from "../hooks/query/useHistory";
+import { useRespondToPermission } from "../hooks/query/useRespondToPermission";
+import { useSessions } from "../hooks/query/useSessions";
 import { ApprovalDialog } from "./ApprovalDialog";
 
 const PERMISSION_EVENT = "acp:permission_request";
@@ -43,23 +49,41 @@ function parsePermission(value: unknown): PermissionRequest | null {
   };
 }
 
+const messageOf = (err: unknown, fallback: string): string =>
+  err instanceof Error ? err.message : fallback;
+
 export function ChatPanel() {
-  const session = useStore(
-    sepiaStore,
-    (state) => state.sessions.find((s) => s.id === state.selectedId) ?? null,
-  );
-  const history = useStore(sepiaStore, (state) => state.history);
-  const historyTotal = useStore(sepiaStore, (state) => state.historyTotal);
-  const readOnly = useStore(sepiaStore, (state) => state.readOnly);
-  const attachError = useStore(sepiaStore, (state) => state.attachError);
-  const attachReady = useStore(sepiaStore, (state) => state.attachReady);
-  const historyError = useStore(sepiaStore, (state) => state.historyError);
+  const selectedId = useStore(sepiaStore, (state) => state.selectedId);
+  const { data: sessions = [] } = useSessions();
+  const session = sessions.find((s) => s.id === selectedId) ?? null;
+  const sessionId = session?.id ?? null;
+
+  const queryClient = useQueryClient();
+  const attachMutation = useAttachSession();
+  const respondMutation = useRespondToPermission();
+  const historyQuery = useHistory(sessionId);
+  const history = historyQuery.data?.messages ?? [];
+  const historyTotal = historyQuery.data?.total ?? 0;
+
+  // Mutation state is for the last mutate() call; only trust it when it
+  // refers to the session currently on screen.
+  const forCurrent = attachMutation.variables?.id === sessionId;
+  const attachReady = attachMutation.isSuccess && forCurrent && attachMutation.data.attached;
+  const readOnly = forCurrent && attachMutation.isSuccess && attachMutation.data.readOnly;
+  const attachError =
+    attachMutation.isError && forCurrent
+      ? messageOf(attachMutation.error, "Failed to attach session")
+      : null;
+  const historyError = historyQuery.isError
+    ? messageOf(historyQuery.error, "Failed to load history")
+    : null;
+
   const [mounted, setMounted] = useState(false);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>("connecting");
   const [running, setRunning] = useState(false);
-  const sessionId = session?.id ?? null;
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { mutate: attach } = attachMutation;
 
   const historyVirtualizer = useVirtualizer({
     count: history.length,
@@ -85,11 +109,15 @@ export function ChatPanel() {
   }, [history.length, sessionId, scrollToBottom]);
 
   useEffect(() => {
+    if (sessionId !== null) attach({ id: sessionId });
+  }, [sessionId, attach]);
+
+  useEffect(() => {
     setPermission(null);
     setRunning(false);
     // The stream subscribes to live-session events; it only exists once the
     // agent is attached, otherwise every request just races a 400.
-    if (!sessionId || attachReady !== sessionId) return;
+    if (!sessionId || !attachReady) return;
     return subscribeSessionStream(
       sessionId,
       (event) => {
@@ -102,21 +130,21 @@ export function ChatPanel() {
         if (event.type === "RUN_STARTED") setRunning(true);
         if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
           setRunning(false);
-          refreshHistory(sessionId);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.history(sessionId) });
         }
       },
       setStreamStatus,
     );
-  }, [sessionId, attachReady]);
+  }, [sessionId, attachReady, queryClient]);
 
   const resolvePermission = useCallback(
     (optionId: string | null) => {
       if (!sessionId || !permission) return;
       const requestId = permission.requestId;
       setPermission(null);
-      void respondToPermission(sessionId, requestId, optionId);
+      respondMutation.mutate({ sessionId, requestId, optionId });
     },
-    [sessionId, permission],
+    [sessionId, permission, respondMutation],
   );
 
   if (!session) {
@@ -215,7 +243,7 @@ export function ChatPanel() {
             <button
               type="button"
               className="chat-panel__takeover"
-              onClick={() => takeoverSession(session.id)}
+              onClick={() => attach({ id: session.id, takeover: true })}
             >
               Take over
             </button>
