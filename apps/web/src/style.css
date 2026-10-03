@@ -1,3 +1,6 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
 :root {
   --bg: #0f1115;
   --panel: #171a21;
@@ -324,80 +327,15 @@ body {
 
 .history__content {
   word-break: break-word;
-  font-size: 14px;
-  line-height: 1.6;
+  --tw-prose-invert-links: var(--accent);
+  --tw-prose-invert-bullets: var(--muted);
+  --tw-prose-invert-counters: var(--muted);
 }
 
-.history__content p,
-.history__content ul,
-.history__content ol,
-.history__content blockquote,
-.history__content pre,
-.history__content table,
-.history__content h1,
-.history__content h2,
-.history__content h3,
-.history__content h4,
-.history__content h5,
-.history__content h6 {
-  margin: 0 0 8px;
-}
-
-.history__content > :last-child {
-  margin-bottom: 0;
-}
-
-.history__content ul,
-.history__content ol {
-  padding-left: 20px;
-}
-
-.history__content code {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 0.9em;
-}
-
-.history__content pre {
-  background: #0d1117;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  overflow-x: auto;
-}
-
-.history__content pre code {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 0.85em;
-}
-
-.history__content blockquote {
-  border-left: 3px solid var(--border);
-  padding-left: 12px;
-  color: var(--muted);
-}
-
-.history__content table {
-  border-collapse: collapse;
-}
-
-.history__content th,
-.history__content td {
-  border: 1px solid var(--border);
-  padding: 4px 10px;
-  text-align: left;
-}
-
-.history__content a {
-  color: var(--accent);
-}
-
-.history__content img {
-  max-width: 100%;
+/* The typography plugin wraps inline code in backtick quotes — drop them. */
+.history__content :not(pre) > code::before,
+.history__content :not(pre) > code::after {
+  content: none;
 }
 
 .copilot-chat {

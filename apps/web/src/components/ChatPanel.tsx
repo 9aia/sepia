@@ -185,7 +185,7 @@ export function ChatPanel({
                           {message.toolName ? `${message.role}:${message.toolName}` : message.role}
                         </span>
                       </div>
-                      <div className="history__content">
+                      <div className="history__content prose prose-invert prose-sm">
                         <Markdown
                           extensions={markdownExtensions}
                           frontmatter={false}
