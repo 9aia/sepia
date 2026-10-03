@@ -37,6 +37,7 @@ Treat network access to the API as remote code execution.
 | `PORT`                          | `8787`                                        | API port.                                                          |
 | `SEPIA_TOKEN`                   | unset                                         | Bearer token required on all `/api/*` routes when set.             |
 | `SEPIA_DB`                      | `~/.local/share/devin/cli/sessions.db`        | Devin session store path (opened read-only).                       |
+| `SEPIA_CLINE_DIR`               | `~/.cline/data`                               | Cline data dir merged into the session list (read-only overlay).   |
 | `SEPIA_ORIGINS`                 | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated CORS allowlist for browser calls.                  |
 | `SEPIA_AGENT_URL`               | `http://localhost:<PORT>/api/agent`           | Where the CopilotKit runtime reaches the AG-UI agent endpoint.     |
 | `SEPIA_AGENT_<ID>_COMMAND`      | `devin acp` / `cline --acp`                   | Override the spawn argv per agent id (space-separated).            |

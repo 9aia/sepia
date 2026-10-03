@@ -11,7 +11,7 @@ import type { PermissionRequest } from "../lib/types";
 import { codeHighlighter, highlightThemeCss } from "../lib/highlight";
 import { respondToPermission, subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
-import { sepiaStore, takeoverSession } from "../lib/store";
+import { refreshHistory, sepiaStore, takeoverSession } from "../lib/store";
 import { ApprovalDialog } from "./ApprovalDialog";
 
 const PERMISSION_EVENT = "acp:permission_request";
@@ -56,6 +56,7 @@ export function ChatPanel() {
   const [mounted, setMounted] = useState(false);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>("connecting");
+  const [running, setRunning] = useState(false);
   const sessionId = session?.id ?? null;
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -84,13 +85,22 @@ export function ChatPanel() {
 
   useEffect(() => {
     setPermission(null);
+    setRunning(false);
     if (!sessionId) return;
     return subscribeSessionStream(
       sessionId,
       (event) => {
-        if (event.type !== "CUSTOM" || event.name !== PERMISSION_EVENT) return;
-        const parsed = parsePermission(event.value);
-        if (parsed) setPermission(parsed);
+        if (event.type === "CUSTOM" && event.name === PERMISSION_EVENT) {
+          const parsed = parsePermission(event.value);
+          if (parsed) setPermission(parsed);
+          return;
+        }
+        // The SSE feed mirrors the live turn lifecycle; no polling needed.
+        if (event.type === "RUN_STARTED") setRunning(true);
+        if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
+          setRunning(false);
+          refreshHistory(sessionId);
+        }
       },
       setStreamStatus,
     );
@@ -124,7 +134,7 @@ export function ChatPanel() {
           </span>
         </div>
         {readOnly && <span className="badge badge--readonly">read-only</span>}
-        {session.busy && <span className="badge badge--busy">busy</span>}
+        {(session.busy || running) && <span className="badge badge--busy">busy</span>}
         {streamStatus === "reconnecting" && (
           <span className="badge badge--reconnecting" role="status">
             reconnecting…

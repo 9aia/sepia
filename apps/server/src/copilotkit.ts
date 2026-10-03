@@ -43,9 +43,12 @@ export const createCopilotKitHandler = (options: CopilotKitOptions): CopilotKitH
     },
   });
   // The router in `app.ts` owns CORS; the runtime must not add its own headers.
+  // The v2 frontend provider sends single-route { method } envelopes, so the
+  // handler must mount in single-route mode or every call 404s.
   return createCopilotRuntimeHandler({
     runtime,
     basePath: options.basePath,
     cors: false,
+    mode: "single-route",
   });
 };

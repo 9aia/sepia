@@ -32,8 +32,10 @@ export function SessionList() {
   const error = useStore(sepiaStore, (state) => state.error);
   const creating = useStore(sepiaStore, (state) => state.creating);
   const createError = useStore(sepiaStore, (state) => state.createError);
+  const agents = useStore(sepiaStore, (state) => state.agents);
   const [cwd, setCwd] = useState("");
   const [title, setTitle] = useState("");
+  const [agent, setAgent] = useState("devin");
   const [filter, setFilter] = useState("");
   const [debouncedFilter] = useDebouncedValue(filter, { wait: 200 });
   const asideRef = useRef<HTMLElement | null>(null);
@@ -103,7 +105,11 @@ export function SessionList() {
     const trimmedCwd = cwd.trim();
     if (trimmedCwd === "") return;
     const trimmedTitle = title.trim();
-    createNewSession({ cwd: trimmedCwd, title: trimmedTitle === "" ? undefined : trimmedTitle });
+    createNewSession({
+      cwd: trimmedCwd,
+      agent,
+      title: trimmedTitle === "" ? undefined : trimmedTitle,
+    });
     setCwd("");
     setTitle("");
   };
@@ -133,6 +139,20 @@ export function SessionList() {
           value={title}
           onChange={(event) => setTitle(event.target.value)}
         />
+        {agents.length > 1 && (
+          <select
+            className="session-list__input"
+            aria-label="Agent"
+            value={agent}
+            onChange={(event) => setAgent(event.target.value)}
+          >
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        )}
         <button
           className="session-list__create"
           type="submit"

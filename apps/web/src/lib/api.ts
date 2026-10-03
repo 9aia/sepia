@@ -1,4 +1,5 @@
 import type {
+  AgentInfo,
   AgentKind,
   AttachResult,
   CreateSessionInput,
@@ -136,6 +137,12 @@ export async function attach(id: string, options?: { takeover?: boolean }): Prom
     method: "POST",
     body: options?.takeover === true ? JSON.stringify({ takeover: true }) : undefined,
   });
+}
+
+export async function listAgents(): Promise<AgentInfo[]> {
+  if (MOCK) return [{ id: "devin", label: "Devin" }];
+  const data = await request<{ agents: AgentInfo[] }>("/api/agents");
+  return data.agents;
 }
 
 export async function deleteSession(id: string): Promise<boolean> {

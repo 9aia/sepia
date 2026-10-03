@@ -12,6 +12,11 @@ export interface SessionSummary {
   busy: boolean;
 }
 
+export interface AgentInfo {
+  id: string;
+  label: string;
+}
+
 export interface CreateSessionInput {
   cwd: string;
   agent?: string;

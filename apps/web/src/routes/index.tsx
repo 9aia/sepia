@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ChatPanel } from "../components/ChatPanel";
 import { SessionList } from "../components/SessionList";
 import { isMock } from "../lib/api";
-import { refreshSessions } from "../lib/store";
+import { loadAgents, refreshSessions } from "../lib/store";
 
 export const Route = createFileRoute("/")({
   component: Home,
@@ -12,6 +12,7 @@ export const Route = createFileRoute("/")({
 function Home() {
   useEffect(() => {
     refreshSessions();
+    loadAgents();
   }, []);
 
   return (

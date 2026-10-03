@@ -7,3 +7,4 @@ coverage/
 **/coverage/
 *.log
 .history_*.md
+.vite-hooks/_/

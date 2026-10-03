@@ -1,9 +1,10 @@
 import { Store } from "@tanstack/react-store";
-import { attach, createSession, deleteSession, getHistory, listSessions } from "./api";
-import type { CreateSessionInput, HistoryMessage, SessionSummary } from "./types";
+import { attach, createSession, deleteSession, getHistory, listAgents, listSessions } from "./api";
+import type { AgentInfo, CreateSessionInput, HistoryMessage, SessionSummary } from "./types";
 
 export interface SepiaState {
   sessions: SessionSummary[];
+  agents: AgentInfo[];
   selectedId: string | null;
   loading: boolean;
   error: string | null;
@@ -18,6 +19,7 @@ export interface SepiaState {
 
 export const sepiaStore = new Store<SepiaState>({
   sessions: [],
+  agents: [],
   selectedId: null,
   loading: false,
   error: null,
@@ -62,6 +64,21 @@ export const selectSession = (id: string): void => {
           historyError: messageOf(err, "Failed to load history"),
         });
     });
+};
+
+export const loadAgents = (): void => {
+  listAgents()
+    .then((agents) => patch({ agents }))
+    .catch(() => undefined);
+};
+
+/** Refetches the stored backlog for `id` (e.g. after a run finishes). */
+export const refreshHistory = (id: string): void => {
+  getHistory(id)
+    .then((data) => {
+      if (stillSelected(id)) patch({ history: data.messages, historyTotal: data.total });
+    })
+    .catch(() => undefined);
 };
 
 export const refreshSessions = (): void => {

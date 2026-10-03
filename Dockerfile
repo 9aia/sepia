@@ -11,7 +11,9 @@
 FROM oven/bun:1.3.14 AS build
 WORKDIR /app
 COPY . .
-RUN bun install --frozen-lockfile && cd apps/web && bun run build
+# --ignore-scripts skips dev-tooling hooks (vp config needs git, absent here);
+# no dependency requires a postinstall.
+RUN bun install --frozen-lockfile --ignore-scripts && cd apps/web && bun run build
 
 FROM oven/bun:1.3.14 AS runtime
 WORKDIR /app

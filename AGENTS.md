@@ -66,6 +66,8 @@ values. Highlights — the full reference lives in `DEPLOY.md`:
 - `SEPIA_HOST` (default `127.0.0.1`) — non-loopback binds require `SEPIA_TOKEN`.
 - `SEPIA_TOKEN` — bearer auth on every `/api/*` route except `GET /api/health`.
 - `SEPIA_DB` — Devin store path; opened **read-only** (`layerReadonly`).
+- `SEPIA_CLINE_DIR` (default `~/.cline/data`) — Cline session dirs merged into
+  `GET /api/sessions` via `ClineRepository` (read-only overlay).
 - `SEPIA_ORIGINS`, `SEPIA_AGENT_URL`, `SEPIA_AGENT_<ID>_COMMAND`.
 - `SEPIA_IDLE_TTL_MS`/`SEPIA_SWEEP_MS` — idle live-session detach.
 - `SEPIA_LOCK_TTL_MS`, `SEPIA_HISTORY_LIMIT`, `SEPIA_SSE_KEEPALIVE_MS`.

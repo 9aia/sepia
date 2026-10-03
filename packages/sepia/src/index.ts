@@ -2,6 +2,7 @@ export * from "./Domain.js";
 export * from "./Storage.js";
 export * as Cline from "./Cline.js";
 export * as ClineIndex from "./ClineIndex.js";
+export * as ClineRepository from "./ClineRepository.js";
 export * as ClineStore from "./ClineStore.js";
 export * as Conversion from "./Conversion.js";
 export * as Devin from "./Devin.js";

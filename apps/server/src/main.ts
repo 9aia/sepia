@@ -1,7 +1,8 @@
-import { Layer, ManagedRuntime } from "effect";
-import { SqliteStorage } from "sepia-core";
+import { homedir } from "node:os";
+import { Effect, Layer, ManagedRuntime } from "effect";
+import { ClineRepository, SessionRepository, SqliteStorage } from "sepia-core";
 import { builtinAgents, spawnAgent } from "sepia-acp";
-import { ControlPlane, layer as controlPlaneLayer } from "sepia-session-control";
+import { ControlPlane, layer as controlPlaneLayer, mergeRepositories } from "sepia-session-control";
 import { createApp } from "./app";
 import { createCopilotKitHandler } from "./copilotkit";
 import { parseEnv } from "./env";
@@ -41,11 +42,23 @@ const agents = builtinAgents.map((spec) => {
   };
 });
 
+// Overlay Cline's on-disk sessions onto the Devin store so the UI lists both.
+// The overlay is read-only and degrades to empty when the dir is missing.
+const clineDir = process.env.SEPIA_CLINE_DIR ?? `${homedir()}/.cline/data`;
+
+const repoLayer = Layer.unwrapEffect(
+  Effect.gen(function* () {
+    const devin = yield* SessionRepository;
+    const cline = ClineRepository.makeClineSessionRepository({ dataDir: clineDir });
+    return Layer.succeed(SessionRepository, mergeRepositories(devin, [cline]));
+  }).pipe(Effect.provide(SqliteStorage.layerReadonly(env.dbPath))),
+);
+
 const layer = controlPlaneLayer({
   agents,
   defaultAgentId: "devin",
   probeCwd: process.cwd(),
-}).pipe(Layer.provide(SqliteStorage.layerReadonly(env.dbPath)));
+}).pipe(Layer.provide(repoLayer));
 
 const runtime = ManagedRuntime.make(layer);
 
