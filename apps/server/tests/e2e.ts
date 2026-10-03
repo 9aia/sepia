@@ -92,6 +92,12 @@ try {
   assert.match(sse, /"delta":"ok"|"delta": ?"ok"/, "missing agent text delta");
   assert.match(sse, /RUN_FINISHED/, "missing RUN_FINISHED");
 
+  const deleted = await fetch(`${base}/api/sessions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: auth,
+  });
+  assert.equal(deleted.status, 200, `expected 200 on delete, got ${deleted.status}`);
+
   console.log("e2e: PASS");
 } finally {
   server.stop(true);

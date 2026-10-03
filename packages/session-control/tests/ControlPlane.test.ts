@@ -107,6 +107,12 @@ class FakeConnection implements AcpConnection {
     this.cancelled.push(sessionId);
   }
 
+  deleted: string[] = [];
+
+  async deleteSession(sessionId: string): Promise<void> {
+    this.deleted.push(sessionId);
+  }
+
   respondToPermission(requestId: string, optionId: string | null): boolean {
     this.permissions.push({ requestId, optionId });
     return this.permissionSettled;
@@ -800,4 +806,29 @@ test("the idle sweep skips a session with an in-flight turn", async () => {
   await new Promise((resolve) => setTimeout(resolve, 200));
   expect(conn.closed).toBe(true);
   await Effect.runPromise(cp.closeAll());
+});
+
+test("deleteSession detaches a live session, then deletes through the agent", async () => {
+  const conn = new FakeConnection();
+  const { runtime, spawns } = fakeAgent(conn);
+  const cp = await makeService({ agents: [runtime] }, repository([session("s1", "/work")]));
+
+  await Effect.runPromise(cp.attach("s1"));
+  await Effect.runPromise(cp.deleteSession("s1"));
+
+  expect(conn.deleted).toEqual(["s1"]);
+  expect(spawns).toHaveLength(2);
+  expect(Either.isLeft(await runEither(cp.prompt("s1", "hi")))).toBe(true);
+});
+
+test("deleteSession fails for an unknown session", async () => {
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([]),
+  );
+
+  const result = await runEither(cp.deleteSession("nope"));
+
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) expect(result.left.code).toBe("not_found");
 });

@@ -7,6 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useThrottledCallback } from "@tanstack/react-pacer";
 import "@copilotkit/react-ui/styles.css";
 import type { HistoryMessage, PermissionRequest, SessionSummary } from "../lib/types";
+import { codeHighlighter, highlightThemeCss } from "../lib/highlight";
 import { respondToPermission, subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
 import { ApprovalDialog } from "./ApprovalDialog";
@@ -139,6 +140,7 @@ export function ChatPanel({
       </header>
 
       <div className="chat-panel__body" ref={bodyRef}>
+        <style>{highlightThemeCss}</style>
         {attachError !== null && (
           <div className="chat-panel__error" role="alert">
             {attachError}
@@ -188,6 +190,7 @@ export function ChatPanel({
                           extensions={markdownExtensions}
                           frontmatter={false}
                           headingIds={false}
+                          highlighter={codeHighlighter}
                         >
                           {message.content}
                         </Markdown>

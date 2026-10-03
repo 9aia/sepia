@@ -86,6 +86,8 @@ export interface AcpConnection {
   loadSession(sessionId: string, cwd: string): Promise<void>;
   prompt(sessionId: string, parts: ReadonlyArray<PromptPart>): Promise<void>;
   cancel(sessionId: string): Promise<void>;
+  /** Deletes a session from the agent's store; rejects when the agent refuses. */
+  deleteSession(sessionId: string): Promise<void>;
   /** Settles a pending permission request; returns false when the id is unknown. */
   respondToPermission(requestId: string, optionId: string | null): boolean;
   /** Bounded, prefixed tail of the agent's stderr for error reporting. */

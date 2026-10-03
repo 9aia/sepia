@@ -428,6 +428,40 @@ export const make = (
         yield* tryAcp("Failed to cancel prompt", () => live.conn.cancel(id));
       });
 
+    const deleteSession = (id: string): Effect.Effect<void, ControlError> =>
+      Effect.gen(function* () {
+        // A live handle keeps the session open inside the agent; drop ours first
+        // so our own lock does not make the delete fail.
+        const live = liveSessions.get(id);
+        yield* detach(id);
+
+        const maybe = yield* repo
+          .getById(id)
+          .pipe(Effect.mapError(storageFail("Failed to read session")));
+        const cwd = live?.cwd ?? (Option.isSome(maybe) ? maybe.value.workingDirectory : undefined);
+        const agentId =
+          live?.agentId ??
+          (Option.isSome(maybe) ? agentForBackend(maybe.value.backendType) : undefined);
+        if (cwd === undefined) {
+          return yield* Effect.fail(controlError("not_found", `Unknown session: ${id}`, undefined));
+        }
+        const agent =
+          options.agents.find((candidate) => candidate.id === agentId) ??
+          pickAgent(options.agents, options.defaultAgentId);
+        if (agent === undefined) {
+          return yield* Effect.fail(
+            controlError("unknown_agent", `No agent available for session: ${id}`, undefined),
+          );
+        }
+
+        const conn = yield* tryAcp("Failed to spawn agent", () => agent.spawn({ cwd }));
+        yield* tryAcp("Failed to delete session", () => conn.deleteSession(id)).pipe(
+          Effect.ensuring(
+            tryAcp("Failed to close agent connection", () => conn.close()).pipe(Effect.ignore),
+          ),
+        );
+      });
+
     const respondToPermission = (
       id: string,
       requestId: string,
@@ -497,6 +531,7 @@ export const make = (
       detach,
       prompt,
       cancel,
+      deleteSession,
       respondToPermission,
       subscribe,
       listAgents,

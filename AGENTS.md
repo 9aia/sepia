@@ -79,14 +79,11 @@ App packages pin exact versions; `effect`, `@effect/platform`, `typescript`,
 `latest`/`*`. Run `vp install` after changing deps (the lockfile is shared —
 never run concurrent installs).
 
-## Dead code candidates (not yet removed)
+## Removed (recoverable via git history)
 
 - `apps/website` — unrelated Vite starter.
-- `packages/utils` — nothing imports it.
+- `packages/utils` — unused.
 - `todo/repair-cline-session` — standalone legacy repair helper.
-
-Remove these once the repo is under version control; there is no VCS today, so
-deletion is irreversible.
 
 ## Constraints worth knowing
 

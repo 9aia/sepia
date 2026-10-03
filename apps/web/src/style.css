@@ -557,3 +557,34 @@ body {
   font: inherit;
   cursor: pointer;
 }
+
+.session-row {
+  position: absolute;
+}
+
+.session-item__delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.session-row:hover .session-item__delete,
+.session-item__delete:focus-visible {
+  opacity: 1;
+}
+
+.session-item__delete:hover {
+  background: var(--panel-2);
+  color: var(--danger);
+}

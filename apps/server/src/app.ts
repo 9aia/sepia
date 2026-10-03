@@ -277,6 +277,16 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       return respond(plane.createSession({ cwd, agentId, title }), cors, (value) => value, 201);
     }
 
+    if (
+      method === "DELETE" &&
+      segments[0] === "api" &&
+      segments[1] === "sessions" &&
+      segments.length === 3
+    ) {
+      const id = decodeURIComponent(segments[2] ?? "");
+      return respond(plane.deleteSession(id), cors, () => ({ ok: true }));
+    }
+
     if (segments[0] === "api" && segments[1] === "sessions" && segments.length === 4) {
       const id = decodeURIComponent(segments[2] ?? "");
       const action = segments[3];

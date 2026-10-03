@@ -36,6 +36,9 @@ rl.on("line", (line) => {
     case "session/list":
       send({ jsonrpc: "2.0", id, result: { sessions: [] } });
       break;
+    case "session/delete":
+      send({ jsonrpc: "2.0", id, result: {} });
+      break;
     case "session/prompt":
       send({
         jsonrpc: "2.0",

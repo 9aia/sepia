@@ -13,6 +13,7 @@ interface SessionListProps {
   createError: string | null;
   onSelect: (id: string) => void;
   onCreate: (input: CreateSessionInput) => void;
+  onDelete: (id: string) => void;
 }
 
 function formatUpdated(iso: string): string {
@@ -44,6 +45,7 @@ export function SessionList({
   createError,
   onSelect,
   onCreate,
+  onDelete,
 }: SessionListProps) {
   const [cwd, setCwd] = useState("");
   const [title, setTitle] = useState("");
@@ -228,6 +230,20 @@ export function SessionList({
                       </span>
                     )}
                   </div>
+                </button>
+                <button
+                  type="button"
+                  className="session-item__delete"
+                  aria-label={`Delete session ${session.title}`}
+                  title="Delete session"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (window.confirm(`Delete session "${session.title}"?`)) {
+                      onDelete(session.id);
+                    }
+                  }}
+                >
+                  ×
                 </button>
               </div>
             );

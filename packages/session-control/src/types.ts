@@ -103,6 +103,9 @@ export interface ControlPlaneService {
 
   readonly cancel: (id: string) => Effect.Effect<void, ControlError>;
 
+  /** Detaches if live, then deletes the session through its agent runtime. */
+  readonly deleteSession: (id: string) => Effect.Effect<void, ControlError>;
+
   readonly respondToPermission: (
     id: string,
     requestId: string,

@@ -138,6 +138,17 @@ export async function attach(id: string, options?: { takeover?: boolean }): Prom
   });
 }
 
+export async function deleteSession(id: string): Promise<boolean> {
+  if (MOCK) {
+    const index = MOCK_SESSIONS.findIndex((s) => s.id === id);
+    if (index !== -1) MOCK_SESSIONS.splice(index, 1);
+    return true;
+  }
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`DELETE /api/sessions/${id} failed: ${res.status}`);
+  return true;
+}
+
 export async function sendPrompt(id: string, text: string): Promise<boolean> {
   if (MOCK) return true;
   const data = await request<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(id)}/prompt`, {

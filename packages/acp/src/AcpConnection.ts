@@ -157,6 +157,9 @@ export const createAcpConnection = (
     cancel: async (sessionId) => {
       await conn.agent.notify(acp.methods.agent.session.cancel, { sessionId });
     },
+    deleteSession: async (sessionId) => {
+      await track(() => conn.agent.request(acp.methods.agent.session.delete, { sessionId }));
+    },
     respondToPermission: (requestId, optionId) => permissions.respond(requestId, optionId),
     recentStderr: () => options.stderr?.recent() ?? [],
     onUpdate: (listener) => {

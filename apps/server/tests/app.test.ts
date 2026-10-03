@@ -90,6 +90,12 @@ const makeFakePlane = (): FakePlane => {
       Effect.sync(() => {
         cancels.push(id);
       }),
+    deleteSession: (id) =>
+      id === "missing"
+        ? failure("session not found: missing", "not_found")
+        : Effect.sync(() => {
+            cancels.push(id);
+          }),
     respondToPermission: (id, requestId, optionId) =>
       optionId === "bad"
         ? failure("invalid option id", "invalid")
@@ -337,6 +343,20 @@ describe("createApp", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
+  it("DELETE /api/sessions/:id returns ok and maps missing sessions to 404", async () => {
+    const { plane } = makeFakePlane();
+    const ok = await createApp(plane)(
+      new Request("http://localhost/api/sessions/sess-1", { method: "DELETE" }),
+    );
+    const missing = await createApp(plane)(
+      new Request("http://localhost/api/sessions/missing", { method: "DELETE" }),
+    );
+
+    expect(ok.status).toBe(200);
+    await expect(ok.json()).resolves.toEqual({ ok: true });
+    expect(missing.status).toBe(404);
+  });
+
   it("POST /api/sessions/:id/permission forwards the decision", async () => {
     const { plane, permissions } = makeFakePlane();
     const response = await createApp(plane)(
@@ -418,6 +438,10 @@ describe("createApp", () => {
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
+
+    const snapshot = decoder.decode((await reader.read()).value);
+    expect(snapshot).toContain("MESSAGES_SNAPSHOT");
+    expect(snapshot).toContain('"role":"assistant"');
 
     push("sess-1", [{ type: EventType.RUN_STARTED, threadId: "x", runId: "y" } as Event]);
     const first = decoder.decode((await reader.read()).value);
@@ -643,6 +667,7 @@ describe("createApp", () => {
 
     expect(response.status).toBe(200);
     const reader = response.body!.getReader();
+    await reader.read();
     const frame = new TextDecoder().decode((await reader.read()).value);
     expect(frame).toContain("RUN_ERROR");
     expect(frame).toContain("agent process exited");

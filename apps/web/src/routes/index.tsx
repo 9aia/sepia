@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { ChatPanel } from "../components/ChatPanel";
 import { SessionList } from "../components/SessionList";
-import { attach, createSession, getHistory, isMock, listSessions } from "../lib/api";
+import { attach, createSession, deleteSession, getHistory, isMock, listSessions } from "../lib/api";
 import type { CreateSessionInput, HistoryMessage, SessionSummary } from "../lib/types";
 
 export const Route = createFileRoute("/")({
@@ -45,6 +45,27 @@ function Home() {
         setHistoryError(err instanceof Error ? err.message : "Failed to load history");
       });
   }, []);
+
+  const remove = useCallback(
+    (id: string) => {
+      deleteSession(id)
+        .then(() => {
+          setSessions((items) => items.filter((session) => session.id !== id));
+          if (selectedId === id) {
+            setSelectedId(null);
+            setHistory([]);
+            setHistoryTotal(0);
+            setReadOnly(false);
+            setAttachError(null);
+            setHistoryError(null);
+          }
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : "Failed to delete session");
+        });
+    },
+    [selectedId],
+  );
 
   const takeover = useCallback(
     (id: string) => {
@@ -116,6 +137,7 @@ function Home() {
         createError={createError}
         onSelect={selectSession}
         onCreate={create}
+        onDelete={remove}
       />
       <ChatPanel
         session={selected}

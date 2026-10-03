@@ -1,11 +1,13 @@
 import { Effect, Either } from "effect";
 import { EventType, encodeSse, sseHeaders, type Event } from "sepia-agui";
-import type { ControlPlaneService } from "sepia-session-control";
+import type { ControlPlaneService, HistoryMessage } from "sepia-session-control";
 import { DEFAULT_KEEPALIVE_MS, SseChannel } from "./sse-channel";
 
 export interface AguiAgentOptions {
   readonly keepAliveMs?: number;
 }
+
+const SNAPSHOT_HISTORY_LIMIT = 100;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -45,6 +47,19 @@ const readSessionId = (request: Request, input: Record<string, unknown>): string
   }
   return typeof input.threadId === "string" && input.threadId !== "" ? input.threadId : null;
 };
+
+const snapshotMessage = (
+  message: HistoryMessage,
+  index: number,
+): {
+  readonly id: string;
+  readonly role: "user" | "system" | "assistant";
+  readonly content: string;
+} => ({
+  id: `sepia-history-${index}`,
+  role: message.role === "user" || message.role === "system" ? message.role : "assistant",
+  content: message.content,
+});
 
 const json = (body: unknown, status: number): Response =>
   new Response(JSON.stringify(body), {
@@ -125,6 +140,24 @@ export const createAguiAgentHandler =
     } catch (error) {
       channel.close();
       return json({ error: messageOf(error) }, 400);
+    }
+
+    // Preload the stored backlog so the chat UI starts with context. A missing
+    // store entry (e.g. a freshly created session) just means no backlog.
+    const backlog = await Effect.runPromise(
+      Effect.either(plane.getHistory(sessionId, { limit: SNAPSHOT_HISTORY_LIMIT })),
+    );
+    if (Either.isRight(backlog) && backlog.right.messages.length > 0) {
+      channel.push(
+        encodeSse([
+          {
+            type: EventType.MESSAGES_SNAPSHOT,
+            threadId,
+            runId,
+            messages: backlog.right.messages.map(snapshotMessage),
+          } as Event,
+        ]),
+      );
     }
 
     const promptRun = Effect.runPromise(Effect.either(plane.prompt(sessionId, text)));
