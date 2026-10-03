@@ -1,0 +1,25 @@
+{
+  "name": "sepia-cli",
+  "version": "0.0.1",
+  "private": true,
+  "bin": {
+    "sepia": "./src/main.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/main.ts",
+    "start": "bun src/main.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/cli": "^0.77.0",
+    "@effect/platform": "^0.97.1",
+    "@effect/platform-bun": "^0.91.2",
+    "effect": "^3.22.1",
+    "sepia-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  }
+}

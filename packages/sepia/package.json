@@ -1,0 +1,32 @@
+{
+  "name": "sepia-core",
+  "version": "0.0.1",
+  "private": true,
+  "files": [
+    "src",
+    "drizzle"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.97.1",
+    "drizzle-orm": "^0.45.2",
+    "effect": "^3.22.1"
+  },
+  "devDependencies": {
+    "@types/bun": "1.1.0",
+    "@types/node": "^26.1.1",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2"
+  }
+}

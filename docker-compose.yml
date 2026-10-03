@@ -1,0 +1,52 @@
+# Self-hosted sepia: Caddy terminates the public port, injects the bearer token
+# for /api, and proxies the UI. The API binds the container network with
+# SEPIA_TOKEN set (required for non-loopback binds).
+services:
+  api:
+    build: .
+    command: ["bun", "apps/server/src/main.ts"]
+    environment:
+      SEPIA_HOST: 0.0.0.0
+      SEPIA_TOKEN: ${SEPIA_TOKEN:?set SEPIA_TOKEN in the environment}
+      SEPIA_DB: /data/devin/sessions.db
+      SEPIA_ORIGINS: ${SEPIA_ORIGINS:-http://localhost:8080}
+      # Agent binaries must be reachable in the container. Either bake/mount the
+      # devin and cline CLIs, or point these at wrapper commands:
+      # SEPIA_AGENT_DEVIN_COMMAND: devin acp
+      # SEPIA_AGENT_CLINE_COMMAND: cline --acp
+    volumes:
+      # The Devin session store is opened read-only by sepia.
+      - ${DEVIN_HOME:-~/.local/share/devin/cli}:/data/devin:ro
+    expose:
+      - "8787"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://localhost:8787/api/health'); process.exit(r.ok ? 0 : 1);",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build: .
+    command: ["bun", "apps/web/dist/server/server.js"]
+    expose:
+      - "3000"
+
+  proxy:
+    image: caddy:2-alpine
+    ports:
+      - "${SEPIA_PUBLIC_PORT:-8080}:80"
+    environment:
+      SEPIA_TOKEN: ${SEPIA_TOKEN:?set SEPIA_TOKEN in the environment}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started

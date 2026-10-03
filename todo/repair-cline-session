@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Repair a Cline session converted from Devin by sepia.
+
+Fixes AI_MissingToolResultsError ("Tool results are missing for tool calls ..."):
+1. hoists tool_result messages to directly after their assistant tool_use
+   message (sepia left plain text user messages sandwiched in between);
+2. synthesizes a placeholder result for tool calls that have no result at all.
+
+Idempotent: already-valid sessions are left untouched.
+
+Usage: repair-cline-session [path/to/<session>.messages.json]
+"""
+import json
+import shutil
+import sys
+import time
+from pathlib import Path
+
+DEFAULT = Path.home() / ".cline/data/sessions/1790701774000_iy67i/1790701774000_iy67i.messages.json"
+
+
+def content(m):
+    return m.get("content") if isinstance(m.get("content"), list) else []
+
+
+def tool_uses(m):
+    return [b for b in content(m) if isinstance(b, dict) and b.get("type") == "tool_use"]
+
+
+def tool_results(m):
+    return [b for b in content(m) if isinstance(b, dict) and b.get("type") == "tool_result"]
+
+
+def is_result_only(m):
+    c = content(m)
+    return m.get("role") == "user" and bool(tool_results(m)) and all(
+        isinstance(b, dict) and b.get("type") == "tool_result" for b in c
+    )
+
+
+def validate(msgs):
+    """Mirror of the AI SDK validation extracted from the cline binary."""
+    pending = set()
+    throws = []
+    for i, m in enumerate(msgs):
+        if m.get("role") == "assistant":
+            pending.update(b["id"] for b in tool_uses(m))
+        elif m.get("role") == "user":
+            has_text = any(isinstance(b, dict) and b.get("type") == "text" for b in content(m))
+            if has_text and pending:
+                throws.append((i, sorted(pending)))
+            pending.difference_update(b.get("tool_use_id") for b in tool_results(m))
+    if pending:
+        throws.append(("eof", sorted(pending)))
+    return throws
+
+
+def merge_consecutive(msgs):
+    """Merge runs of consecutive assistant messages into one.
+
+    Native sessions never have these; sepia split call/result pairs across
+    them (e.g. assistant[call] -> assistant[thinking] -> user[result]).
+    """
+    out = []
+    i = 0
+    merges = 0
+    while i < len(msgs):
+        m = msgs[i]
+        if m.get("role") == "assistant":
+            while i + 1 < len(msgs) and msgs[i + 1].get("role") == "assistant":
+                m["content"] = content(m) + content(msgs[i + 1])
+                i += 1
+                merges += 1
+        out.append(m)
+        i += 1
+    return out, merges
+
+
+def repair(msgs):
+    all_res_ids = {
+        b.get("tool_use_id") for m in msgs for b in tool_results(m)
+    }
+    out = []
+    i = 0
+    synth = 0
+    hoisted = 0
+    while i < len(msgs):
+        m = msgs[i]
+        out.append(m)
+        uses = tool_uses(m) if m.get("role") == "assistant" else []
+        if not uses:
+            i += 1
+            continue
+        pending = {b["id"] for b in uses}
+        res_msgs, others = [], []
+        j = i + 1
+        # scan the run of user messages following the assistant message
+        while j < len(msgs) and pending and msgs[j].get("role") == "user":
+            n = msgs[j]
+            rids = {b.get("tool_use_id") for b in tool_results(n)}
+            if is_result_only(n) and (rids & pending):
+                res_msgs.append(n)
+                pending -= rids
+            else:
+                others.append(n)
+            j += 1
+        if pending:
+            late = sorted(x for x in pending if x in all_res_ids)
+            if late:
+                sys.exit(f"ABORT at msg {i}: results for {late} appear after the next "
+                         "assistant message — manual review needed")
+            for tid in sorted(pending):
+                out.append({
+                    "id": f"msg_{i}_tool_{tid}",
+                    "role": "user",
+                    "ts": m.get("ts"),
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tid,
+                        "name": "execute",
+                        "content": "(no output captured during Devin → Cline conversion)",
+                    }],
+                })
+                synth += 1
+        if res_msgs and others:
+            hoisted += 1
+        out.extend(res_msgs)
+        out.extend(others)
+        i = j
+    return out, synth, hoisted
+
+
+def main():
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT
+    data = json.loads(path.read_text())
+    msgs = data["messages"]
+    before = validate(msgs)
+    if not before:
+        print(f"OK: {path} already passes validation ({len(msgs)} messages), no changes")
+        return
+    merged, merges = merge_consecutive(msgs)
+    fixed, synth, hoisted = repair(merged)
+    after = validate(fixed)
+    if after:
+        print("REPAIR FAILED, remaining violations:")
+        for i, ids in after[:10]:
+            print("  at", i, ids)
+        sys.exit(1)
+    if len(fixed) != len(merged) + synth:
+        sys.exit(f"ABORT: message count mismatch {len(msgs)} -> {len(fixed)}")
+    bak = path.with_name(path.name + f".bak-{int(time.time())}")
+    shutil.copy2(path, bak)
+    data["messages"] = fixed
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    print(f"REPAIRED {path}")
+    print(f"  violations: {len(before)} -> 0")
+    print(f"  merged {merges} stray assistant msg(s); results hoisted in {hoisted} place(s); "
+          f"{synth} synthetic result(s) added")
+    print(f"  backup: {bak}")
+
+
+if __name__ == "__main__":
+    main()

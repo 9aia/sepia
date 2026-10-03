@@ -1,0 +1,28 @@
+{
+  "name": "sepia-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/main.ts",
+    "start": "bun src/main.ts",
+    "check": "tsc --noEmit",
+    "test": "vitest run && bun tests/e2e.ts"
+  },
+  "dependencies": {
+    "@ag-ui/client": "0.0.59",
+    "@copilotkit/runtime": "1.74.0",
+    "@effect/platform": "^0.97.1",
+    "@effect/platform-bun": "^0.91.2",
+    "effect": "^3.22.1",
+    "sepia-acp": "workspace:*",
+    "sepia-agui": "workspace:*",
+    "sepia-core": "workspace:*",
+    "sepia-session-control": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.1.0",
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  }
+}
