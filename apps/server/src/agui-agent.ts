@@ -133,8 +133,18 @@ export const createAguiAgentHandler =
       channel.push(encodeSse(tagged));
     };
 
+    // Preload the stored backlog so the chat UI starts with context. The
+    // snapshot must not precede RUN_STARTED — clients allocate the run's
+    // message array on RUN_STARTED, so an early MESSAGES_SNAPSHOT crashes
+    // them. Buffer it and flush right after the run opens.
+    let snapshot: Event[] | null = null;
+
     const listener = (events: ReadonlyArray<Event>): void => {
       emit(events);
+      if (snapshot !== null && events.some((event) => event.type === EventType.RUN_STARTED)) {
+        emit(snapshot);
+        snapshot = null;
+      }
       if (events.some((event) => event.type === EventType.RUN_FINISHED)) finish();
     };
 
@@ -145,22 +155,18 @@ export const createAguiAgentHandler =
       return json({ error: messageOf(error) }, 400);
     }
 
-    // Preload the stored backlog so the chat UI starts with context. A missing
-    // store entry (e.g. a freshly created session) just means no backlog.
     const backlog = await run(
       Effect.either(plane.getHistory(sessionId, { limit: SNAPSHOT_HISTORY_LIMIT })),
     );
     if (Either.isRight(backlog) && backlog.right.messages.length > 0) {
-      channel.push(
-        encodeSse([
-          {
-            type: EventType.MESSAGES_SNAPSHOT,
-            threadId,
-            runId,
-            messages: backlog.right.messages.map(snapshotMessage),
-          } as Event,
-        ]),
-      );
+      snapshot = [
+        {
+          type: EventType.MESSAGES_SNAPSHOT,
+          threadId,
+          runId,
+          messages: backlog.right.messages.map(snapshotMessage),
+        } as Event,
+      ];
     }
 
     const promptRun = run(Effect.either(plane.prompt(sessionId, text)));

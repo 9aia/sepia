@@ -14,6 +14,7 @@ export interface SepiaState {
   historyTotal: number;
   readOnly: boolean;
   attachError: string | null;
+  attachReady: string | null;
   historyError: string | null;
 }
 
@@ -30,6 +31,7 @@ export const sepiaStore = new Store<SepiaState>({
   readOnly: false,
   attachError: null,
   historyError: null,
+  attachReady: null,
 });
 
 const patch = (update: Partial<SepiaState>): void => {
@@ -43,10 +45,17 @@ const messageOf = (err: unknown, fallback: string): string =>
 const stillSelected = (id: string): boolean => sepiaStore.state.selectedId === id;
 
 export const selectSession = (id: string): void => {
-  patch({ selectedId: id, readOnly: false, attachError: null, historyError: null });
+  patch({
+    selectedId: id,
+    readOnly: false,
+    attachError: null,
+    historyError: null,
+    attachReady: null,
+  });
   attach(id)
     .then((result) => {
-      if (stillSelected(id)) patch({ readOnly: result.readOnly });
+      if (stillSelected(id))
+        patch({ readOnly: result.readOnly, attachReady: result.attached ? id : null });
     })
     .catch((err: unknown) => {
       if (stillSelected(id))
@@ -121,6 +130,7 @@ export const removeSession = (id: string): void => {
           readOnly: false,
           attachError: null,
           historyError: null,
+          attachReady: null,
         });
       }
     })
@@ -133,7 +143,8 @@ export const takeoverSession = (id: string): void => {
   patch({ attachError: null });
   attach(id, { takeover: true })
     .then((result) => {
-      if (stillSelected(id)) patch({ readOnly: result.readOnly });
+      if (stillSelected(id))
+        patch({ readOnly: result.readOnly, attachReady: result.attached ? id : null });
       refreshSessions();
     })
     .catch((err: unknown) => {

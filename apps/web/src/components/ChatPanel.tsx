@@ -52,6 +52,7 @@ export function ChatPanel() {
   const historyTotal = useStore(sepiaStore, (state) => state.historyTotal);
   const readOnly = useStore(sepiaStore, (state) => state.readOnly);
   const attachError = useStore(sepiaStore, (state) => state.attachError);
+  const attachReady = useStore(sepiaStore, (state) => state.attachReady);
   const historyError = useStore(sepiaStore, (state) => state.historyError);
   const [mounted, setMounted] = useState(false);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
@@ -86,7 +87,9 @@ export function ChatPanel() {
   useEffect(() => {
     setPermission(null);
     setRunning(false);
-    if (!sessionId) return;
+    // The stream subscribes to live-session events; it only exists once the
+    // agent is attached, otherwise every request just races a 400.
+    if (!sessionId || attachReady !== sessionId) return;
     return subscribeSessionStream(
       sessionId,
       (event) => {
@@ -104,7 +107,7 @@ export function ChatPanel() {
       },
       setStreamStatus,
     );
-  }, [sessionId]);
+  }, [sessionId, attachReady]);
 
   const resolvePermission = useCallback(
     (optionId: string | null) => {

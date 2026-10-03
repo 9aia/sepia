@@ -439,14 +439,17 @@ describe("createApp", () => {
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
 
+    push("sess-1", [{ type: EventType.RUN_STARTED, threadId: "x", runId: "y" } as Event]);
+    const first = decoder.decode((await reader.read()).value);
+    // The run opens before the snapshot: clients allocate messages[] on
+    // RUN_STARTED, so an earlier snapshot would apply to undefined state.
+    expect(first).toContain("RUN_STARTED");
+    expect(first).toContain('"threadId":"t-1"');
+    expect(first).toContain('"runId":"r-1"');
+
     const snapshot = decoder.decode((await reader.read()).value);
     expect(snapshot).toContain("MESSAGES_SNAPSHOT");
     expect(snapshot).toContain('"role":"assistant"');
-
-    push("sess-1", [{ type: EventType.RUN_STARTED, threadId: "x", runId: "y" } as Event]);
-    const first = decoder.decode((await reader.read()).value);
-    expect(first).toContain('"threadId":"t-1"');
-    expect(first).toContain('"runId":"r-1"');
 
     push("sess-1", [{ type: EventType.RUN_FINISHED, threadId: "x", runId: "y" } as Event]);
     await reader.read();
@@ -667,7 +670,8 @@ describe("createApp", () => {
 
     expect(response.status).toBe(200);
     const reader = response.body!.getReader();
-    await reader.read();
+    // The prompt rejects before RUN_STARTED, so the buffered snapshot never
+    // flushes; the first frame is the run error.
     const frame = new TextDecoder().decode((await reader.read()).value);
     expect(frame).toContain("RUN_ERROR");
     expect(frame).toContain("agent process exited");
