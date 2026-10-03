@@ -6,21 +6,13 @@ import { streamingMarkdownExtension } from "@tanstack/markdown/extensions/stream
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useThrottledCallback } from "@tanstack/react-pacer";
 import "@copilotkit/react-ui/styles.css";
-import type { HistoryMessage, PermissionRequest, SessionSummary } from "../lib/types";
+import { useStore } from "@tanstack/react-store";
+import type { PermissionRequest } from "../lib/types";
 import { codeHighlighter, highlightThemeCss } from "../lib/highlight";
 import { respondToPermission, subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
+import { sepiaStore, takeoverSession } from "../lib/store";
 import { ApprovalDialog } from "./ApprovalDialog";
-
-interface ChatPanelProps {
-  session: SessionSummary | null;
-  history: HistoryMessage[];
-  historyTotal: number;
-  readOnly: boolean;
-  attachError: string | null;
-  historyError: string | null;
-  onTakeover: (id: string) => void;
-}
 
 const PERMISSION_EVENT = "acp:permission_request";
 
@@ -51,15 +43,16 @@ function parsePermission(value: unknown): PermissionRequest | null {
   };
 }
 
-export function ChatPanel({
-  session,
-  history,
-  historyTotal,
-  readOnly,
-  attachError,
-  historyError,
-  onTakeover,
-}: ChatPanelProps) {
+export function ChatPanel() {
+  const session = useStore(
+    sepiaStore,
+    (state) => state.sessions.find((s) => s.id === state.selectedId) ?? null,
+  );
+  const history = useStore(sepiaStore, (state) => state.history);
+  const historyTotal = useStore(sepiaStore, (state) => state.historyTotal);
+  const readOnly = useStore(sepiaStore, (state) => state.readOnly);
+  const attachError = useStore(sepiaStore, (state) => state.attachError);
+  const historyError = useStore(sepiaStore, (state) => state.historyError);
   const [mounted, setMounted] = useState(false);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>("connecting");
@@ -209,7 +202,7 @@ export function ChatPanel({
             <button
               type="button"
               className="chat-panel__takeover"
-              onClick={() => onTakeover(session.id)}
+              onClick={() => takeoverSession(session.id)}
             >
               Take over
             </button>

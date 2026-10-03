@@ -2,19 +2,8 @@ import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useHotkey } from "@tanstack/react-hotkeys";
-import type { CreateSessionInput, SessionSummary } from "../lib/types";
-
-interface SessionListProps {
-  sessions: SessionSummary[];
-  selectedId: string | null;
-  loading: boolean;
-  error: string | null;
-  creating: boolean;
-  createError: string | null;
-  onSelect: (id: string) => void;
-  onCreate: (input: CreateSessionInput) => void;
-  onDelete: (id: string) => void;
-}
+import { useStore } from "@tanstack/react-store";
+import { createNewSession, removeSession, selectSession, sepiaStore } from "../lib/store";
 
 function formatUpdated(iso: string): string {
   const then = new Date(iso).getTime();
@@ -36,17 +25,13 @@ const inFormField = (): boolean => {
   );
 };
 
-export function SessionList({
-  sessions,
-  selectedId,
-  loading,
-  error,
-  creating,
-  createError,
-  onSelect,
-  onCreate,
-  onDelete,
-}: SessionListProps) {
+export function SessionList() {
+  const sessions = useStore(sepiaStore, (state) => state.sessions);
+  const selectedId = useStore(sepiaStore, (state) => state.selectedId);
+  const loading = useStore(sepiaStore, (state) => state.loading);
+  const error = useStore(sepiaStore, (state) => state.error);
+  const creating = useStore(sepiaStore, (state) => state.creating);
+  const createError = useStore(sepiaStore, (state) => state.createError);
   const [cwd, setCwd] = useState("");
   const [title, setTitle] = useState("");
   const [filter, setFilter] = useState("");
@@ -79,7 +64,7 @@ export function SessionList({
     const session = filtered[index];
     if (session === undefined) return;
     virtualizer.scrollToIndex(index, { align: "auto" });
-    onSelect(session.id);
+    selectSession(session.id);
   };
 
   useHotkey("Mod+K", () => filterRef.current?.focus(), { preventDefault: true });
@@ -118,7 +103,7 @@ export function SessionList({
     const trimmedCwd = cwd.trim();
     if (trimmedCwd === "") return;
     const trimmedTitle = title.trim();
-    onCreate({ cwd: trimmedCwd, title: trimmedTitle === "" ? undefined : trimmedTitle });
+    createNewSession({ cwd: trimmedCwd, title: trimmedTitle === "" ? undefined : trimmedTitle });
     setCwd("");
     setTitle("");
   };
@@ -210,7 +195,7 @@ export function SessionList({
                 <button
                   type="button"
                   className={"session-item" + (selected ? " session-item--selected" : "")}
-                  onClick={() => onSelect(session.id)}
+                  onClick={() => selectSession(session.id)}
                 >
                   <div className="session-item__top">
                     <span className="session-item__title">{session.title}</span>
@@ -239,7 +224,7 @@ export function SessionList({
                   onClick={(event) => {
                     event.stopPropagation();
                     if (window.confirm(`Delete session "${session.title}"?`)) {
-                      onDelete(session.id);
+                      removeSession(session.id);
                     }
                   }}
                 >
