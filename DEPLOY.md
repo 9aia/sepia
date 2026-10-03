@@ -48,6 +48,9 @@ Treat network access to the API as remote code execution.
 | `SEPIA_SSE_KEEPALIVE_MS`        | `15000`                                       | SSE keep-alive frame interval; `0` disables.                       |
 | `SEPIA_INHERIT_ENV`             | unset                                         | `1` forwards the whole parent env to agents (allowlist otherwise). |
 | `SEPIA_DEBUG`                   | unset                                         | `1` streams agent stderr into the server log.                      |
+| `SEPIA_OTEL`                    | `1`                                           | `0` disables OTLP telemetry export.                                |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`   | `http://localhost:4318`                       | OTLP/HTTP collector endpoint (LGTM in `lgtm/`).                    |
+| `OTEL_SERVICE_NAME`             | `sepia-server`                                | OTel resource service name.                                        |
 | `COPILOTKIT_TELEMETRY_DISABLED` | unset                                         | `true` disables CopilotKit's anonymous telemetry.                  |
 
 ## Agent authentication

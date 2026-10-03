@@ -13,6 +13,8 @@ import type { CopilotKitHandler } from "./copilotkit";
 import { keepAliveMsFromEnv, SseChannel } from "./sse-channel";
 
 export interface AppOptions {
+  /** Runs effects; pass `runtime.runPromise` so spans/metrics reach the OTLP runtime. */
+  readonly run?: EffectRunner;
   /** Mounted at `/api/copilotkit`; omitted in tests, where the route reports 501. */
   readonly copilotkitHandler?: CopilotKitHandler;
   /** When set, every `/api/*` route except `GET /api/health` requires a bearer token. */
@@ -106,15 +108,24 @@ const errorResponse = (error: unknown, cors: Record<string, string>): Response =
   return jsonResponse({ error: message, code }, CODE_STATUS[code], cors);
 };
 
+export type EffectRunner = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
+
 const respond = async <A>(
+  run: EffectRunner,
   effect: Effect.Effect<A, ControlError>,
   cors: Record<string, string>,
-  shape: (value: A) => unknown = (value) => value,
-  status = 200,
+  opts: {
+    readonly shape?: (value: A) => unknown;
+    readonly status?: number;
+    readonly span?: string;
+  } = {},
 ): Promise<Response> => {
+  const shape = opts.shape ?? ((value: A) => value);
+  const status = opts.status ?? 200;
+  const spanned = opts.span === undefined ? effect : effect.pipe(Effect.withSpan(opts.span));
   // `Effect.either` keeps the raw `ControlError` (with its `code`) rather than the
   // `FiberFailure` wrapper that `runPromise` would reject with.
-  const result = await Effect.runPromise(Effect.either(effect));
+  const result = await run(Effect.either(spanned));
   if (Either.isLeft(result)) return errorResponse(result.left, cors);
   return jsonResponse(shape(result.right), status, cors);
 };
@@ -129,10 +140,11 @@ const segmentsEqual = (segments: ReadonlyArray<string>, pattern: ReadonlyArray<s
   segments.length === pattern.length && pattern.every((part, index) => part === segments[index]);
 
 const healthResponse = async (
+  run: EffectRunner,
   plane: ControlPlaneService,
   cors: Record<string, string>,
 ): Promise<Response> => {
-  const healthy = await Effect.runPromise(
+  const healthy = await run(
     plane.listSessions().pipe(
       Effect.timeoutTo({
         duration: `${HEALTH_TIMEOUT_MS} millis`,
@@ -148,6 +160,7 @@ const healthResponse = async (
 };
 
 const streamResponse = async (
+  run: EffectRunner,
   plane: ControlPlaneService,
   id: string,
   signal: AbortSignal,
@@ -163,7 +176,7 @@ const streamResponse = async (
     channel.push(encodeSse(events));
   };
 
-  const subscribed = await Effect.runPromise(Effect.either(plane.subscribe(id, listener)));
+  const subscribed = await run(Effect.either(plane.subscribe(id, listener)));
   if (Either.isLeft(subscribed)) {
     channel.close();
     return errorResponse(subscribed.left, cors);
@@ -200,7 +213,8 @@ const streamResponse = async (
 
 export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) => {
   const keepAliveMs = options.keepAliveMs ?? keepAliveMsFromEnv(process.env.SEPIA_SSE_KEEPALIVE_MS);
-  const aguiAgent = createAguiAgentHandler(plane, { keepAliveMs });
+  const run: EffectRunner = options.run ?? Effect.runPromise;
+  const aguiAgent = createAguiAgentHandler(plane, { keepAliveMs, run });
   const allowedOrigins =
     options.allowedOrigins === undefined ? ALLOWED_ORIGINS : new Set(options.allowedOrigins);
   const logger = options.logger ?? ((line: string) => console.log(line));
@@ -209,6 +223,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     const url = new URL(request.url);
     const method = request.method.toUpperCase();
     const cors = corsHeaders(request.headers.get("origin"), allowedOrigins);
+    const span = `http.${method.toLowerCase()} ${url.pathname}`;
 
     if (method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
@@ -217,7 +232,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
 
     if (method === "GET" && segmentsEqual(segments, ["api", "health"])) {
-      return healthResponse(plane, cors);
+      return healthResponse(run, plane, cors);
     }
 
     if (segments[0] === "api" && !isAuthorized(request, options.token)) {
@@ -249,7 +264,10 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
 
     if (method === "GET" && segmentsEqual(segments, ["api", "sessions"])) {
       const withLocks = url.searchParams.get("withLocks") === "1";
-      return respond(plane.listSessions({ withLocks }), cors, (sessions) => ({ sessions }));
+      return respond(run, plane.listSessions({ withLocks }), cors, {
+        shape: (sessions) => ({ sessions }),
+        span,
+      });
     }
 
     if (method === "POST" && segmentsEqual(segments, ["api", "sessions"])) {
@@ -274,7 +292,10 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       if (title !== undefined && typeof title !== "string") {
         return jsonResponse({ error: "title must be a string" }, 400, cors);
       }
-      return respond(plane.createSession({ cwd, agentId, title }), cors, (value) => value, 201);
+      return respond(run, plane.createSession({ cwd, agentId, title }), cors, {
+        status: 201,
+        span,
+      });
     }
 
     if (
@@ -284,7 +305,10 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       segments.length === 3
     ) {
       const id = decodeURIComponent(segments[2] ?? "");
-      return respond(plane.deleteSession(id), cors, () => ({ ok: true }));
+      return respond(run, plane.deleteSession(id), cors, {
+        shape: () => ({ ok: true }),
+        span,
+      });
     }
 
     if (segments[0] === "api" && segments[1] === "sessions" && segments.length === 4) {
@@ -301,11 +325,18 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           }
           limit = value;
         }
-        return respond(plane.getHistory(id, limit === undefined ? undefined : { limit }), cors);
+        return respond(
+          run,
+          plane.getHistory(id, limit === undefined ? undefined : { limit }),
+          cors,
+          {
+            span,
+          },
+        );
       }
 
       if (method === "GET" && action === "stream") {
-        return streamResponse(plane, id, request.signal, cors, keepAliveMs);
+        return streamResponse(run, plane, id, request.signal, cors, keepAliveMs);
       }
 
       if (method === "POST" && action === "attach") {
@@ -321,7 +352,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         } catch {
           return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
         }
-        return respond(plane.attach(id, { takeover }), cors);
+        return respond(run, plane.attach(id, { takeover }), cors, { span });
       }
 
       if (method === "POST" && action === "prompt") {
@@ -334,11 +365,17 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         if (!isRecord(body) || typeof body.text !== "string" || body.text.trim() === "") {
           return jsonResponse({ error: "text is required" }, 400, cors);
         }
-        return respond(plane.prompt(id, body.text), cors, () => ({ ok: true }));
+        return respond(run, plane.prompt(id, body.text), cors, {
+          shape: () => ({ ok: true }),
+          span,
+        });
       }
 
       if (method === "POST" && action === "cancel") {
-        return respond(plane.cancel(id), cors, () => ({ ok: true }));
+        return respond(run, plane.cancel(id), cors, {
+          shape: () => ({ ok: true }),
+          span,
+        });
       }
 
       if (method === "POST" && action === "permission") {
@@ -355,9 +392,10 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         if (optionId !== null && typeof optionId !== "string") {
           return jsonResponse({ error: "optionId must be a string or null" }, 400, cors);
         }
-        return respond(plane.respondToPermission(id, body.requestId, optionId), cors, () => ({
-          ok: true,
-        }));
+        return respond(run, plane.respondToPermission(id, body.requestId, optionId), cors, {
+          span,
+          shape: () => ({ ok: true }),
+        });
       }
     }
 

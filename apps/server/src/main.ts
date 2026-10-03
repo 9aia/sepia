@@ -6,6 +6,7 @@ import { ControlPlane, layer as controlPlaneLayer, mergeRepositories } from "sep
 import { createApp } from "./app";
 import { createCopilotKitHandler } from "./copilotkit";
 import { parseEnv } from "./env";
+import { otelLayer } from "./telemetry";
 
 const isLoopback = (value: string): boolean =>
   value === "localhost" || value === "::1" || value === "[::1]" || value.startsWith("127.");
@@ -54,11 +55,18 @@ const repoLayer = Layer.unwrapEffect(
   }).pipe(Effect.provide(SqliteStorage.layerReadonly(env.dbPath))),
 );
 
-const layer = controlPlaneLayer({
+const appLayer = controlPlaneLayer({
   agents,
   defaultAgentId: "devin",
   probeCwd: process.cwd(),
 }).pipe(Layer.provide(repoLayer));
+
+const layer = env.otel.enabled
+  ? Layer.mergeAll(
+      appLayer,
+      otelLayer({ endpoint: env.otel.endpoint, serviceName: env.otel.serviceName }),
+    )
+  : appLayer;
 
 const runtime = ManagedRuntime.make(layer);
 
@@ -80,6 +88,7 @@ const server = Bun.serve({
     copilotkitHandler,
     token: env.token,
     allowedOrigins: env.origins,
+    run: (effect) => runtime.runPromise(effect),
   }),
 });
 console.log(`sepia-server listening on ${server.url.href}`);

@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { Effect, Either, Layer, Option } from "effect";
+import { Effect, Either, Layer, Metric, Option } from "effect";
 import type { AcpConnection, AcpSessionInfo } from "sepia-acp";
 import { createTranslator, type Event, type Translator } from "sepia-agui";
 import { SessionRepository } from "sepia-core";
@@ -20,6 +20,12 @@ import {
   type SessionSummary,
   type Unsubscribe,
 } from "./types.js";
+
+// Exported over OTLP when the server merges the telemetry layer; no-ops otherwise.
+const metricAttaches = Metric.counter("sepia_attach_total");
+const metricCreates = Metric.counter("sepia_sessions_created_total");
+const metricDeletes = Metric.counter("sepia_sessions_deleted_total");
+const metricPrompts = Metric.counter("sepia_prompts_total");
 
 interface LiveSession {
   readonly conn: AcpConnection;
@@ -180,7 +186,7 @@ export const make = (
             ? summary
             : { ...summary, locked: lock.locked, lockHolderPid: lock.lockHolderPid };
         });
-      });
+      }).pipe(Effect.withSpan("sepia.control.list_sessions"));
 
     const historyLimit = (historyOptions?: HistoryOptions): number =>
       historyOptions?.limit !== undefined && Number.isFinite(historyOptions.limit)
@@ -211,7 +217,11 @@ export const make = (
           })),
           total,
         };
-      });
+      }).pipe(
+        Effect.withSpan("sepia.control.get_history", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
 
     const agentForSession = (backendType: string): AgentRuntime | undefined =>
       options.agents.find((agent) => agent.id === agentForBackend(backendType)) ??
@@ -294,7 +304,11 @@ export const make = (
           touchIdle(live);
           liveSessions.set(id, live);
           return { attached: true, readOnly: false };
-        }),
+        }).pipe(
+          Effect.withSpan("sepia.control.attach_work", {
+            attributes: { "sepia.session.id": id },
+          }),
+        ),
       );
 
     const attach = (
@@ -320,7 +334,12 @@ export const make = (
           try: () => pending,
           catch: (cause) => cause as ControlError,
         });
-      });
+      }).pipe(
+        Effect.tap((result) => (result.attached ? Metric.increment(metricAttaches) : Effect.void)),
+        Effect.withSpan("sepia.control.attach", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
 
     const createSession = (createOptions: {
       readonly cwd: string;
@@ -375,7 +394,15 @@ export const make = (
         touchIdle(live);
         liveSessions.set(id, live);
         return { id };
-      });
+      }).pipe(
+        Effect.tap(() => Metric.increment(metricCreates)),
+        Effect.withSpan("sepia.control.create_session", {
+          attributes: {
+            "sepia.agent.id": createOptions.agentId ?? options.defaultAgentId ?? "",
+            "sepia.cwd": createOptions.cwd,
+          },
+        }),
+      );
 
     const detach = (id: string): Effect.Effect<void> =>
       Effect.gen(function* () {
@@ -387,7 +414,11 @@ export const make = (
         yield* tryAcp("Failed to close agent connection", () => live.conn.close()).pipe(
           Effect.ignore,
         );
-      });
+      }).pipe(
+        Effect.withSpan("sepia.control.detach", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
 
     const requireLive = (id: string): Effect.Effect<LiveSession, ControlError> =>
       Effect.gen(function* () {
@@ -420,13 +451,22 @@ export const make = (
             }),
           ),
         );
-      });
+      }).pipe(
+        Effect.tap(() => Metric.increment(metricPrompts)),
+        Effect.withSpan("sepia.control.prompt", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
 
     const cancel = (id: string): Effect.Effect<void, ControlError> =>
       Effect.gen(function* () {
         const live = yield* requireLive(id);
         yield* tryAcp("Failed to cancel prompt", () => live.conn.cancel(id));
-      });
+      }).pipe(
+        Effect.withSpan("sepia.control.cancel", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
 
     const deleteSession = (id: string): Effect.Effect<void, ControlError> =>
       Effect.gen(function* () {
@@ -460,7 +500,12 @@ export const make = (
             tryAcp("Failed to close agent connection", () => conn.close()).pipe(Effect.ignore),
           ),
         );
-      });
+      }).pipe(
+        Effect.tap(() => Metric.increment(metricDeletes)),
+        Effect.withSpan("sepia.control.delete_session", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
 
     const respondToPermission = (
       id: string,
@@ -479,7 +524,11 @@ export const make = (
             controlError("not_found", `Unknown permission request: ${requestId}`, undefined),
           );
         }
-      });
+      }).pipe(
+        Effect.withSpan("sepia.control.respond_to_permission", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
 
     const subscribe = (
       id: string,

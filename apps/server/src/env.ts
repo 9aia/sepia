@@ -7,6 +7,11 @@ export interface ServerEnv {
   readonly token: string | undefined;
   readonly origins: ReadonlyArray<string>;
   readonly agentUrl: string;
+  readonly otel: {
+    readonly enabled: boolean;
+    readonly endpoint: string;
+    readonly serviceName: string;
+  };
 }
 
 const DEFAULT_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"];
@@ -29,6 +34,12 @@ export const parseEnv = (env: NodeJS.ProcessEnv = process.env): ServerEnv => {
     .map((value) => value.trim())
     .filter((value) => value !== "");
 
+  const otelEndpoint =
+    env.OTEL_EXPORTER_OTLP_ENDPOINT?.replace(/\/+$/, "") ?? "http://localhost:4318";
+  if (env.SEPIA_OTEL !== "0" && !/^https?:\/\//.test(otelEndpoint)) {
+    throw new Error(`OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL, got "${otelEndpoint}"`);
+  }
+
   return {
     dbPath,
     port,
@@ -36,5 +47,10 @@ export const parseEnv = (env: NodeJS.ProcessEnv = process.env): ServerEnv => {
     token: env.SEPIA_TOKEN,
     origins: configuredOrigins.length > 0 ? configuredOrigins : DEFAULT_ORIGINS,
     agentUrl: env.SEPIA_AGENT_URL ?? `http://localhost:${port}/api/agent`,
+    otel: {
+      enabled: env.SEPIA_OTEL !== "0",
+      endpoint: otelEndpoint,
+      serviceName: env.OTEL_SERVICE_NAME ?? "sepia-server",
+    },
   };
 };

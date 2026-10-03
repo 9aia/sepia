@@ -5,6 +5,8 @@ import { DEFAULT_KEEPALIVE_MS, SseChannel } from "./sse-channel";
 
 export interface AguiAgentOptions {
   readonly keepAliveMs?: number;
+  /** Runs effects; pass `runtime.runPromise` so spans/metrics reach the OTLP runtime. */
+  readonly run?: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
 }
 
 const SNAPSHOT_HISTORY_LIMIT = 100;
@@ -75,6 +77,7 @@ const json = (body: unknown, status: number): Response =>
 export const createAguiAgentHandler =
   (plane: ControlPlaneService, options: AguiAgentOptions = {}) =>
   async (request: Request): Promise<Response> => {
+    const run = options.run ?? Effect.runPromise;
     let input: unknown;
     try {
       input = await request.json();
@@ -95,7 +98,7 @@ export const createAguiAgentHandler =
 
     let attached;
     try {
-      attached = await Effect.runPromise(plane.attach(sessionId));
+      attached = await run(plane.attach(sessionId));
     } catch (error) {
       return json({ error: messageOf(error) }, 400);
     }
@@ -121,7 +124,7 @@ export const createAguiAgentHandler =
 
     // A disconnected client should not leave the agent working on an abandoned turn.
     const cancelTurn = (): void => {
-      void Effect.runPromise(plane.cancel(sessionId)).catch(() => undefined);
+      void run(plane.cancel(sessionId)).catch(() => undefined);
     };
 
     const emit = (events: ReadonlyArray<Event>): void => {
@@ -136,7 +139,7 @@ export const createAguiAgentHandler =
     };
 
     try {
-      unsubscribe = await Effect.runPromise(plane.subscribe(sessionId, listener));
+      unsubscribe = await run(plane.subscribe(sessionId, listener));
     } catch (error) {
       channel.close();
       return json({ error: messageOf(error) }, 400);
@@ -144,7 +147,7 @@ export const createAguiAgentHandler =
 
     // Preload the stored backlog so the chat UI starts with context. A missing
     // store entry (e.g. a freshly created session) just means no backlog.
-    const backlog = await Effect.runPromise(
+    const backlog = await run(
       Effect.either(plane.getHistory(sessionId, { limit: SNAPSHOT_HISTORY_LIMIT })),
     );
     if (Either.isRight(backlog) && backlog.right.messages.length > 0) {
@@ -160,7 +163,7 @@ export const createAguiAgentHandler =
       );
     }
 
-    const promptRun = Effect.runPromise(Effect.either(plane.prompt(sessionId, text)));
+    const promptRun = run(Effect.either(plane.prompt(sessionId, text)));
 
     // A busy rejection is synchronous; race one tick so we can answer 409 before
     // committing to a stream instead of surfacing it as a RUN_ERROR event.

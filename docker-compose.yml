@@ -1,6 +1,9 @@
 # Self-hosted sepia: Caddy terminates the public port, injects the bearer token
 # for /api, and proxies the UI. The API binds the container network with
 # SEPIA_TOKEN set (required for non-loopback binds).
+include:
+  - lgtm/docker-compose.yml
+
 services:
   api:
     build: .
@@ -10,6 +13,8 @@ services:
       SEPIA_TOKEN: ${SEPIA_TOKEN:?set SEPIA_TOKEN in the environment}
       SEPIA_DB: /data/devin/sessions.db
       SEPIA_ORIGINS: ${SEPIA_ORIGINS:-http://localhost:8080}
+      SEPIA_OTEL: ${SEPIA_OTEL:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://lgtm:4318}
       # Agent binaries must be reachable in the container. Either bake/mount the
       # devin and cline CLIs, or point these at wrapper commands:
       # SEPIA_AGENT_DEVIN_COMMAND: devin acp

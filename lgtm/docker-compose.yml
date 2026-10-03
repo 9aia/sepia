@@ -1,0 +1,20 @@
+name: sepia-lgtm
+
+# All-in-one observability backend (Grafana + Loki + Tempo + Mimir + OTel
+# Collector). Receives sepia-server telemetry on OTLP/HTTP :4318.
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.34.0
+    restart: unless-stopped
+    ports:
+      - "3100:3000" # Grafana UI (sepia-web owns :3000)
+      - "4318:4318" # OTLP/HTTP — what sepia-server exports to
+      - "4317:4317" # OTLP/gRPC, exposed for future exporters
+    environment:
+      # Defaults are fine for a local/selfhosted stack; override if exposed.
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+    volumes:
+      - lgtm-data:/data
+
+volumes:
+  lgtm-data:
