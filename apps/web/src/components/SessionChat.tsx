@@ -1,16 +1,18 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useStickToBottomContext } from "use-stick-to-bottom";
 import type { HistoryMessage } from "../lib/types";
 import type { LiveMessage } from "../lib/liveMessages";
 import { cancel, sendPrompt } from "../lib/api";
 import { useHistory } from "../hooks/query/useHistory";
 import { Button } from "./ui/button";
 import {
-  Conversation,
-  ConversationContent,
-  ConversationScrollButton,
-} from "./ai-elements/conversation";
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "./ui/message-scroller";
 import { Message, MessageContent, MessageResponse } from "./ai-elements/message";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./ai-elements/reasoning";
 import { Tool, ToolContent, ToolHeader } from "./ai-elements/tool";
@@ -88,7 +90,7 @@ function RowContent({ row }: { readonly row: Row }) {
   );
 }
 
-/** Virtualized rows; lives inside Conversation so it can borrow its scroller. */
+/** Virtualized rows inside the message-scroller viewport. */
 function ChatRows({
   rows,
   truncated,
@@ -96,52 +98,57 @@ function ChatRows({
   readonly rows: ReadonlyArray<Row>;
   readonly truncated: { readonly shown: number; readonly total: number };
 }) {
-  const { scrollRef } = useStickToBottomContext();
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
-    getScrollElement: () => scrollRef.current as HTMLElement | null,
+    getScrollElement: () => viewportRef.current,
     estimateSize: () => 72,
     overscan: 10,
   });
 
   return (
-    <ConversationContent>
-      {truncated.shown < truncated.total && (
-        <div className="history__truncated">
-          showing last {truncated.shown} of {truncated.total}
+    <MessageScrollerViewport ref={viewportRef}>
+      <MessageScrollerContent>
+        {truncated.shown < truncated.total && (
+          <div className="history__truncated">
+            showing last {truncated.shown} of {truncated.total}
+          </div>
+        )}
+        <div
+          className="history__rows"
+          style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const row = rows[virtualRow.index];
+            if (row === undefined) return null;
+            const isTurnStart = row.message.role === "user";
+            const key =
+              row.kind === "history"
+                ? `h-${row.message.createdAt}-${virtualRow.index}`
+                : `l-${row.message.id}`;
+            return (
+              <MessageScrollerItem
+                key={key}
+                messageId={key}
+                scrollAnchor={isTurnStart}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                className="history__row"
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <RowContent row={row} />
+              </MessageScrollerItem>
+            );
+          })}
         </div>
-      )}
-      <div
-        className="history__rows"
-        style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}
-      >
-        {virtualizer.getVirtualItems().map((virtualRow) => {
-          const row = rows[virtualRow.index];
-          if (row === undefined) return null;
-          const key =
-            row.kind === "history"
-              ? `h-${row.message.createdAt}-${virtualRow.index}`
-              : `l-${row.message.id}`;
-          return (
-            <div
-              key={key}
-              data-index={virtualRow.index}
-              ref={virtualizer.measureElement}
-              className="history__row"
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                transform: `translateY(${virtualRow.start}px)`,
-              }}
-            >
-              <RowContent row={row} />
-            </div>
-          );
-        })}
-      </div>
-    </ConversationContent>
+      </MessageScrollerContent>
+    </MessageScrollerViewport>
   );
 }
 
@@ -197,21 +204,23 @@ export function SessionChat({
 
   return (
     <>
-      <Conversation className="chat-conversation">
-        {rows.length > 0 ? (
-          <ChatRows
-            rows={rows}
-            truncated={{ shown: history.length, total: historyQuery.data?.total ?? 0 }}
-          />
-        ) : (
-          <ConversationContent>
-            <p className="chat-panel__loading">
-              {historyQuery.isLoading ? "Loading history…" : "No messages yet."}
-            </p>
-          </ConversationContent>
-        )}
-        <ConversationScrollButton />
-      </Conversation>
+      <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+        <MessageScroller className="chat-conversation">
+          {rows.length > 0 ? (
+            <ChatRows
+              rows={rows}
+              truncated={{ shown: history.length, total: historyQuery.data?.total ?? 0 }}
+            />
+          ) : (
+            <MessageScrollerViewport>
+              <p className="chat-panel__loading">
+                {historyQuery.isLoading ? "Loading history…" : "No messages yet."}
+              </p>
+            </MessageScrollerViewport>
+          )}
+          <MessageScrollerButton direction="end" />
+        </MessageScroller>
+      </MessageScrollerProvider>
 
       {promptError !== null && (
         <div className="chat-panel__error" role="alert">

@@ -267,6 +267,9 @@ body {
 
 /* The conversation is its own scroll region above the composer. */
 .chat-conversation {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
