@@ -13,7 +13,13 @@ import { KEYBINDS, formatKey, resolveKey } from "../lib/keybinds";
 import { Kbd } from "./ui/kbd";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
-import { isPushSupported, subscribePush, unsubscribePush, updatePushPrefs } from "../lib/push";
+import {
+  isPushSupported,
+  pushState,
+  subscribePush,
+  unsubscribePush,
+  updatePushPrefs,
+} from "../lib/push";
 import { useAgents } from "../hooks/query/useAgents";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -119,6 +125,27 @@ function NotificationsSection() {
   const [busy, setBusy] = useState<string | null>(null);
   const supported = isPushSupported();
   const denied = supported && Notification.permission === "denied";
+
+  // Reconcile the stored toggle with the real subscription — subs can be
+  // pruned server-side (404/410) or cleared in browser settings.
+  useEffect(() => {
+    let cancelled = false;
+    void pushState().then((state) => {
+      if (cancelled) return;
+      const current = settingsStore.state.notifications;
+      if (state === "subscribed" && !current.enabled) {
+        setSettings({ notifications: { ...current, enabled: true } });
+      } else if (current.enabled && state === "granted") {
+        // Browser dropped the subscription — re-register to repair.
+        void updatePushPrefs({ done: current.done, permission: current.permission });
+      } else if (current.enabled && state !== "subscribed") {
+        setSettings({ notifications: { ...current, enabled: false } });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const setNotif = (patch: Partial<typeof n>): void => {
     const next = { ...n, ...patch };

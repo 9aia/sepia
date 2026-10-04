@@ -9,12 +9,29 @@ export interface NotificationPrefs {
 export const isPushSupported = (): boolean =>
   "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 
-const urlBase64ToUint8Array = (base64: string): Uint8Array<ArrayBuffer> => {
+/** VAPID keys ship as base64url — pushManager.subscribe wants raw bytes. */
+export const urlBase64ToUint8Array = (base64: string): Uint8Array<ArrayBuffer> => {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
   const raw = atob((base64 + padding).replace(/-/g, "+").replace(/_/g, "/"));
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
+};
+
+/**
+ * Where this browser stands: "subscribed" means an active push subscription
+ * exists; "granted"/"denied"/"default" mirror Notification.permission.
+ */
+export type PushState = "unsupported" | "denied" | "default" | "granted" | "subscribed";
+
+export const pushState = async (): Promise<PushState> => {
+  if (!isPushSupported()) return "unsupported";
+  const permission = Notification.permission;
+  if (permission !== "granted") return permission;
+  // `getRegistration` (not `ready`) — `ready` hangs until a SW activates.
+  const registration = await navigator.serviceWorker.getRegistration();
+  const subscription = await registration?.pushManager.getSubscription();
+  return subscription == null ? "granted" : "subscribed";
 };
 
 const headers = (): Record<string, string> => ({
