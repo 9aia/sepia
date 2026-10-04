@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowUp01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../../hooks/query/useUserInfo";
+import { setKeybindsOpen } from "../../lib/store";
 import { ProfileDialog } from "../ProfileDialog";
 import { SettingsDialog } from "../SettingsDialog";
 import { Button } from "../ui/button";
@@ -9,14 +10,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
-interface UserProfileProps {
-  readonly modKey: string;
-}
-
-export function UserProfile({ modKey }: UserProfileProps) {
+export function UserProfile() {
   const { data: user } = useUserInfo();
   const [dialog, setDialog] = useState<"profile" | "settings" | null>(null);
   const username = user?.username ?? "…";
@@ -48,15 +47,16 @@ export function UserProfile({ modKey }: UserProfileProps) {
         <DropdownMenuContent align="start" className="w-56">
           <DropdownMenuItem onClick={() => setDialog("profile")}>Profile</DropdownMenuItem>
           <DropdownMenuItem onClick={() => setDialog("settings")}>Settings</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setKeybindsOpen(true)}>
+            Keyboard shortcuts
+            <DropdownMenuShortcut>?</DropdownMenuShortcut>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
       <ProfileDialog open={dialog === "profile"} onOpenChange={(o) => !o && setDialog(null)} />
-      <SettingsDialog
-        open={dialog === "settings"}
-        modKey={modKey}
-        onOpenChange={(o) => !o && setDialog(null)}
-      />
+      <SettingsDialog open={dialog === "settings"} onOpenChange={(o) => !o && setDialog(null)} />
     </div>
   );
 }

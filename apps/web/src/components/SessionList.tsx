@@ -186,7 +186,7 @@ export function SessionList() {
         onClose={() => setDetails(null)}
       />
 
-      <UserProfile modKey={modKey} />
+      <UserProfile />
     </Sidebar>
   );
 }
