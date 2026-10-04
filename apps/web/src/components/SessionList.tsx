@@ -122,6 +122,7 @@ export function SessionList() {
   }, [createCwd]);
   const [debouncedFilter] = useDebouncedValue(filter, { wait: 200 });
   const asideRef = useRef<HTMLDivElement | null>(null);
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
 
   const filtered = useMemo(() => {
@@ -197,7 +198,7 @@ export function SessionList() {
         </div>
       </div>
 
-      <ScrollArea className="flex min-h-0 flex-1 flex-col">
+      <ScrollArea className="flex min-h-0 flex-1 flex-col" viewportRef={bodyScrollRef}>
         <div className="flex flex-col gap-1.5 border-b border-border px-4 py-3">
           <Button
             variant="secondary"
@@ -260,6 +261,7 @@ export function SessionList() {
               <SessionTree
                 sessions={filtered}
                 selectedId={selectedId}
+                scrollRef={bodyScrollRef}
                 hotkeyTarget={asideRef}
                 onSelect={setSelectedId}
                 onDetails={(id, rename) => setDetailsFor({ id, rename })}

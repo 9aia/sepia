@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useTree } from "@headless-tree/react";
 import { syncDataLoaderFeature } from "@headless-tree/core";
@@ -331,6 +332,8 @@ function SessionItemRow({
 interface SessionTreeProps {
   readonly sessions: ReadonlyArray<SessionSummary>;
   readonly selectedId: string | null;
+  /** Shared sidebar scroller the tree virtualizes against. */
+  readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly hotkeyTarget: RefObject<HTMLElement | null>;
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
@@ -341,6 +344,7 @@ interface SessionTreeProps {
 export function SessionTree({
   sessions,
   selectedId,
+  scrollRef,
   hotkeyTarget,
   onSelect,
   onDetails,
@@ -500,8 +504,28 @@ export function SessionTree({
 
   const items = tree.getItems();
 
+  // The tree virtualizes against the sidebar's shared scroll element —
+  // scrollMargin is where the list starts inside that scroller (sections sit
+  // above), so scrollToIndex lands correctly.
+  const [scrollMargin, setScrollMargin] = useState(0);
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    const scroller = scrollRef?.current;
+    if (!el || !scroller) return;
+    const margin =
+      el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    if (margin !== scrollMargin) setScrollMargin(margin);
+  });
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollRef?.current ?? null,
+    estimateSize: () => 76,
+    overscan: 8,
+    scrollMargin,
+  });
+
   const scrollToIndex = (index: number): void => {
-    listRef.current?.querySelector(`[data-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
+    virtualizer.scrollToIndex(index, { align: "auto" });
   };
 
   // Keep the selected session's row visible (its group may be collapsed).
@@ -571,29 +595,46 @@ export function SessionTree({
   return (
     <div className="p-2" ref={listRef}>
       <Tree tree={tree} indent={14}>
-        {items.map((item, index) => {
-          const data = item.getItemData();
-          return (
-            <div
-              key={item.getId()}
-              data-index={index}
-              className="group/row border-b border-border/50"
-            >
-              {data?.kind === "dir" ? (
-                <GroupRow item={item} data={data} sessions={sessions} onNewSession={onNewSession} />
-              ) : data?.kind === "session" ? (
-                <SessionItemRow
-                  item={item}
-                  session={data.session}
-                  selected={sessionKey(data.session) === selectedId}
-                  onSelect={onSelect}
-                  onDetails={onDetails}
-                  onDelete={onDelete}
-                />
-              ) : null}
-            </div>
-          );
-        })}
+        <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+          {virtualizer.getVirtualItems().map((row) => {
+            const item = items[row.index];
+            if (item === undefined) return null;
+            const data = item.getItemData();
+            return (
+              <div
+                key={item.getId()}
+                data-index={row.index}
+                ref={virtualizer.measureElement}
+                className="group/row border-b border-border/50"
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${row.start - scrollMargin}px)`,
+                }}
+              >
+                {data?.kind === "dir" ? (
+                  <GroupRow
+                    item={item}
+                    data={data}
+                    sessions={sessions}
+                    onNewSession={onNewSession}
+                  />
+                ) : data?.kind === "session" ? (
+                  <SessionItemRow
+                    item={item}
+                    session={data.session}
+                    selected={sessionKey(data.session) === selectedId}
+                    onSelect={onSelect}
+                    onDetails={onDetails}
+                    onDelete={onDelete}
+                  />
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       </Tree>
     </div>
   );
