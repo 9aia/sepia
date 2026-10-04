@@ -182,11 +182,7 @@ describe("POST/PATCH/DELETE wrappers", () => {
 
   it("restoreSession posts the selector with confirm: true", async () => {
     stubFetch(jsonOk({ restored: [{ path: "/w/a.ts", action: "written" }], skipped: [] }));
-    const result = await restoreSession(
-      "s 1",
-      { path: "a.ts", toolCallId: "c9" },
-      "cline",
-    );
+    const result = await restoreSession("s 1", { path: "a.ts", toolCallId: "c9" }, "cline");
     expect(result.restored).toHaveLength(1);
     expect(calls[0]?.url).toBe("/api/sessions/s%201/restore?agent=cline");
     expect(calls[0]?.init?.method).toBe("POST");

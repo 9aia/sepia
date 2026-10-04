@@ -16,9 +16,9 @@ describe("restoreSummary", () => {
   });
 
   it("singularizes one file and reports nothing-to-restore", () => {
-    expect(
-      restoreSummary({ restored: [{ path: "/a", action: "written" }], skipped: [] }),
-    ).toBe("1 file restored");
+    expect(restoreSummary({ restored: [{ path: "/a", action: "written" }], skipped: [] })).toBe(
+      "1 file restored",
+    );
     expect(restoreSummary({ restored: [], skipped: [] })).toBe("Nothing to restore");
   });
 });
