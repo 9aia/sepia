@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { Effect, Either, Layer, Metric, Option } from "effect";
+import { Effect, Either, Layer, Metric, Option, Runtime } from "effect";
 import type { AcpConnection, AcpSessionInfo } from "sepia-acp";
 import { createTranslator, type Event, type Translator } from "sepia-agui";
 import { SessionRepository } from "sepia-core";
@@ -227,8 +227,12 @@ export const make = (
       options.agents.find((agent) => agent.id === agentForBackend(backendType)) ??
       pickAgent(options.agents, options.defaultAgentId);
 
+    // Mutable cell refreshed inside method gens; sweepIdle uses whatever the
+    // last request fiber saw (or the make-time ambient if none ran yet).
+    let attachRuntime: Runtime.Runtime<never> = yield* Effect.runtime<never>();
+
     const performAttach = (id: string, takeover: boolean): Promise<AttachResult> =>
-      Effect.runPromise(
+      Runtime.runPromise(attachRuntime)(
         Effect.gen(function* () {
           const maybe = yield* repo
             .getById(id)
@@ -317,6 +321,11 @@ export const make = (
     ): Effect.Effect<AttachResult, ControlError> =>
       Effect.gen(function* () {
         if (liveSessions.has(id)) return { attached: true, readOnly: false };
+
+        // Captured here (not at make-time): the request fiber's refs carry the
+        // OTLP tracer and the parent span, so performAttach's nested runPromise
+        // exports and parents correctly. A make-time capture sees neither.
+        attachRuntime = yield* Effect.runtime<never>();
 
         // Claim the id before the first await so concurrent attaches share one spawn.
         let pending = pendingAttaches.get(id);
@@ -554,7 +563,7 @@ export const make = (
       for (const [id, live] of liveSessions) {
         if (live.busy || live.listeners.size > 0 || live.idleSince === null) continue;
         if (now - live.idleSince < idleTtlMs) continue;
-        void Effect.runPromise(detach(id)).catch((error: unknown) =>
+        void Runtime.runPromise(attachRuntime)(detach(id)).catch((error: unknown) =>
           console.error(`sepia-session-control: idle detach failed for ${id}:`, error),
         );
       }

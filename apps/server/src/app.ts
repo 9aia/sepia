@@ -126,7 +126,10 @@ const respond = async <A>(
   // `Effect.either` keeps the raw `ControlError` (with its `code`) rather than the
   // `FiberFailure` wrapper that `runPromise` would reject with.
   const result = await run(Effect.either(spanned));
-  if (Either.isLeft(result)) return errorResponse(result.left, cors);
+  if (Either.isLeft(result)) {
+    void run(Effect.logWarning(`request failed: ${errorMessage(result.left)}`));
+    return errorResponse(result.left, cors);
+  }
   return jsonResponse(shape(result.right), status, cors);
 };
 
@@ -217,13 +220,14 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
   const aguiAgent = createAguiAgentHandler(plane, { keepAliveMs, run });
   const allowedOrigins =
     options.allowedOrigins === undefined ? ALLOWED_ORIGINS : new Set(options.allowedOrigins);
-  const logger = options.logger ?? ((line: string) => console.log(line));
+  // Routed through Effect's logger so lines hit both stdout and the OTLP log
+  // exporter when the telemetry layer is installed.
+  const logger = options.logger ?? ((line: string) => void run(Effect.logInfo(line)));
 
   const route = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const method = request.method.toUpperCase();
     const cors = corsHeaders(request.headers.get("origin"), allowedOrigins);
-    const span = `http.${method.toLowerCase()} ${url.pathname}`;
 
     if (method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
@@ -266,7 +270,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       const withLocks = url.searchParams.get("withLocks") === "1";
       return respond(run, plane.listSessions({ withLocks }), cors, {
         shape: (sessions) => ({ sessions }),
-        span,
+        span: "http.get /api/sessions",
       });
     }
 
@@ -294,7 +298,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       }
       return respond(run, plane.createSession({ cwd, agentId, title }), cors, {
         status: 201,
-        span,
+        span: "http.post /api/sessions",
       });
     }
 
@@ -307,7 +311,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       const id = decodeURIComponent(segments[2] ?? "");
       return respond(run, plane.deleteSession(id), cors, {
         shape: () => ({ ok: true }),
-        span,
+        span: "http.delete /api/sessions/:id",
       });
     }
 
@@ -329,9 +333,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           run,
           plane.getHistory(id, limit === undefined ? undefined : { limit }),
           cors,
-          {
-            span,
-          },
+          { span: "http.get /api/sessions/:id/history" },
         );
       }
 
@@ -352,7 +354,9 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         } catch {
           return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
         }
-        return respond(run, plane.attach(id, { takeover }), cors, { span });
+        return respond(run, plane.attach(id, { takeover }), cors, {
+          span: "http.post /api/sessions/:id/attach",
+        });
       }
 
       if (method === "POST" && action === "prompt") {
@@ -367,14 +371,14 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         }
         return respond(run, plane.prompt(id, body.text), cors, {
           shape: () => ({ ok: true }),
-          span,
+          span: "http.post /api/sessions/:id/prompt",
         });
       }
 
       if (method === "POST" && action === "cancel") {
         return respond(run, plane.cancel(id), cors, {
           shape: () => ({ ok: true }),
-          span,
+          span: "http.post /api/sessions/:id/cancel",
         });
       }
 
@@ -393,7 +397,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           return jsonResponse({ error: "optionId must be a string or null" }, 400, cors);
         }
         return respond(run, plane.respondToPermission(id, body.requestId, optionId), cors, {
-          span,
+          span: "http.post /api/sessions/:id/permission",
           shape: () => ({ ok: true }),
         });
       }
