@@ -460,6 +460,12 @@ export function SessionChat({
               </span>
             </div>
           )}
+          {running && !liveMessages.some((m) => !m.done) && (
+            <div className="flex items-center gap-2 px-4 py-3 text-sm">
+              <RowAvatar role="assistant" />
+              <span className="shimmer-text">Thinking…</span>
+            </div>
+          )}
           {rows.length > 0 ? (
             <ChatRows
               rows={rows}
