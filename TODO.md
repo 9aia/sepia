@@ -1,39 +1,47 @@
 # TODO
 
-## Multi-node / federation — `docs/protocol.md`
+## Federation (docs/protocol.md)
 
-- [ ] `GET /api/node` — `{ id, name, version, protocol, agents, capabilities }`,
-      stable id in `$SEPIA_HOME/node.json`, `name` defaults to hostname
-- [ ] UI node registry — `{ url, token, name }` in settings; node picker UI
-- [ ] Merged session/project lists keyed `node:agent:id`, machine badges,
-      actions routed to the owning node
-- [ ] `GET /api/events` — node SSE feed (session/meta/project/heartbeat),
-      replaces per-node polling
-- [x] `sepia pair` — short-code → long-lived credential exchange
-- [ ] `bun --compile` single binary serving API + built UI
-- [ ] Gateway/proxy mode for unreachable peers (phase 3)
+- [x] `GET /api/node` — identity + capabilities
+- [x] Node registry + merged lists keyed `node:agent:id` + machine badges
+- [x] `GET /api/events` — node SSE feed
+- [x] `sepia pair` — code → credential; `POST /api/pair` filesystem-gated
+- [x] `bun --compile` binary — `sepia serve` serves API + embedded SPA
+- [x] `meta.spans` — per-run agent/node provenance + transcript markers
+- [x] Resume anywhere — `POST /import` + `GET /export` (full-IR, flat fallback)
+- [ ] Gateway/proxy mode for unreachable peers (phase 3 — defer)
 
-## Web app
+## Session IR (docs/session-formats.md)
 
-- [ ] `tests/e2e/reply.spec.ts` — flaky sent-row assertion (optimistic→history
-      handoff timing); the prompt lands but the row check is racy
-- [ ] Reasoning/tool-call polish — streaming state parity with the old
-      ai-elements behavior
-- [ ] `vp run -r build` for apps/web — production bundle check + SW registration
-      in the built output
-- [ ] Mobile pass — dialogs/sheet widths, drawer height, toast stacking on
-      small screens
+- [x] IR v2 — usage/cost, tool status + exitCode/durationMs, parent/agent
+      lineage, model/requestId/finishReason — read + write + wire + render
+- [x] Content blocks — image/audio/file attachments survive the IR
+- [ ] Thinking signatures — replay-safe signed thinking (Devin `signature`,
+      Claude `redacted_thinking`); currently text-only
+- [ ] Checkpoints/file-diff refs — Cline checkpoint metadata, Devin
+      tool-call file diffs
+- [ ] Sub-agent children in session details (we have `parentSessionId`;
+      list "Sub-agents" rows in the drawer)
+- [ ] Prompt attachments — `POST /prompt` is text-only today; widening
+      PromptPart needs the ACP call shape
 
-## Server
+## New adapters (docs/session-formats.md has the layouts)
 
-- [x] `POST /api/pair` — one-time-code → credential (protocol doc)
-- [ ] `/api/events` — the node event feed
-- [ ] `SEPIA_HOME` — node.json + meta + push store consolidation
-- [ ] Gateway proxying (defer)
+- [ ] Claude Code — `~/.claude/projects/*/<session>.jsonl`
+- [ ] Cursor — `~/.cursor/chats/<ws>/<chat>/store.db` blobs + global
+      `state.vscdb` `cursorDiskKV` bubbles (no per-session store)
 
 ## Housekeeping
 
-- [ ] `node_modules`/`dist` leftovers in `todo/` (root-owned dir) — needs
-      `sudo rm -rf ~/GitHub/9aia/sepia/todo`
-- [ ] `ai/` dep on apps/web — still needed by `prompt-input.tsx` types;
-      check if a lighter type-only path exists
+- [ ] sepia-core 100% coverage — `bun:sqlite` modules can't run under Node
+      vitest; needs a Bun-side coverage run or threshold split
+- [ ] `ai/` dep on apps/web — still pulled by `prompt-input.tsx` types;
+      check a lighter type-only path
+- [x] `todo/` root-owned dir — removed
+
+## Deferred notes
+
+- Old `import` targets receiving `{session}` 400 — flat-history path only
+  works old→new, not new→old (`docs/protocol.md` notes it).
+- `sepia-server` `serve.ts` throws instead of `process.exit` (clean for the
+  binary wrapper; callers must handle).
