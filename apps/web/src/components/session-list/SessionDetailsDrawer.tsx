@@ -311,7 +311,7 @@ export function SessionDetailsDrawer({
                   render={
                     <Button variant="outline" className="w-full justify-start">
                       <HugeiconsIcon icon={ArrowReloadHorizontalIcon} strokeWidth={2} />
-                      Convert
+                      Convert to…
                     </Button>
                   }
                 />
