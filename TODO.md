@@ -1,47 +1,44 @@
 # TODO
 
-## Federation (docs/protocol.md)
+## All shipped
 
-- [x] `GET /api/node` — identity + capabilities
-- [x] Node registry + merged lists keyed `node:agent:id` + machine badges
-- [x] `GET /api/events` — node SSE feed
-- [x] `sepia pair` — code → credential; `POST /api/pair` filesystem-gated
-- [x] `bun --compile` binary — `sepia serve` serves API + embedded SPA
-- [x] `meta.spans` — per-run agent/node provenance + transcript markers
-- [x] Resume anywhere — `POST /import` + `GET /export` (full-IR, flat fallback)
-- [ ] Gateway/proxy mode for unreachable peers (phase 3 — defer)
+Federation (node identity, peers, events, pair, binary, spans, resume,
+gateway), IR v2 (usage, tool status, lineage, model, blocks, thinking
+signatures, checkpoints+diffs, file restore), 4 adapters (devin, cline,
+claude, cursor), session-details tabs (Reports/Prompt/Rules/Skills),
+sub-agent tree, sidebar config, mobile polish, coverage, takeover,
+folder-by-node, real takeover errors.
 
-## Session IR (docs/session-formats.md)
+## Remaining
 
-- [x] IR v2 — usage/cost, tool status + exitCode/durationMs, parent/agent
-      lineage, model/requestId/finishReason — read + write + wire + render
-- [x] Content blocks — image/audio/file attachments survive the IR
-- [ ] Thinking signatures — replay-safe signed thinking (Devin `signature`,
-      Claude `redacted_thinking`); currently text-only
-- [ ] Checkpoints/file-diff refs — Cline checkpoint metadata, Devin
-      tool-call file diffs
-- [ ] Sub-agent children in session details (we have `parentSessionId`;
-      list "Sub-agents" rows in the drawer)
-- [x] Prompt attachments — `POST /prompt` takes `{text, attachments}` (ACP
-      content blocks); composer has paste/drop/picker chips
+### Worth doing
 
-## New adapters (docs/session-formats.md has the layouts)
+- [ ] Keybinds coverage — matching layer under-tested
+  (useAppHotkey/useGlobalHotkey matching, overrides, conflicts)
+- [ ] `store.db` write path for Cursor — save/delete goes to the
+  agent-transcripts projection only; canonical store.db stays read-only
+  (resumed cursor sessions won't open in Cursor itself)
+- [ ] HTTPS gateway upstreams — managed registry stores host/port only,
+  scheme dropped; a `https://` peer loses TLS
+- [ ] Live `terminal`/`content` ToolCallContent — normalize drops non-diff
+  content (terminal output refs never reach live rows)
+- [ ] Session rewind — restore is file-level only; no IR deletion model
+  for truncating a conversation to a checkpoint
 
-- [ ] Claude Code — `~/.claude/projects/*/<session>.jsonl`
-- [ ] Cursor — `~/.cursor/chats/<ws>/<chat>/store.db` blobs + global
-      `state.vscdb` `cursorDiskKV` bubbles (no per-session store)
+### Deferred by design
 
-## Housekeeping
+- [ ] Gateway: `sessionCapabilities`/`promptCapabilities` read — we never
+  probe what a peer's agent advertises; attachments are sent blind
+- [ ] `sepia` CLI `import/export`/`install` for claude/cursor — adapters
+  have the IR but no CLI verbs wired
+- [ ] `lockHolderPid` across agents — only the default agent's
+  `session/list` is probed; a cline-held session's holder is invisible
+  to the devin probe
+- [ ] Mid-attach replay — attaching mid-tool-call drops args (no
+  TOOL_CALL_START → the row gets no accumulated args)
 
-- [ ] sepia-core 100% coverage — `bun:sqlite` modules can't run under Node
-      vitest; needs a Bun-side coverage run or threshold split
-- [ ] `ai/` dep on apps/web — still pulled by `prompt-input.tsx` types;
-      check a lighter type-only path
-- [x] `todo/` root-owned dir — removed
+### Housekeeping
 
-## Deferred notes
-
-- Old `import` targets receiving `{session}` 400 — flat-history path only
-  works old→new, not new→old (`docs/protocol.md` notes it).
-- `sepia-server` `serve.ts` throws instead of `process.exit` (clean for the
-  binary wrapper; callers must handle).
+- [ ] `AGENTS.md` stale claims (sqlite stub note, coverage policy)
+- [ ] `package.json` script name vs `vp` built-in drift (`vp dev` vs
+  `vp run dev`)
