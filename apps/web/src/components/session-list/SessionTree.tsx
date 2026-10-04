@@ -13,8 +13,16 @@ import {
   resolveSession,
   sessionKey,
 } from "../../lib/format";
+import {
+  SESSION_TREE_ROOT,
+  sessionDirId,
+  treeFromSessions,
+  type SessionTreeData,
+} from "../../lib/sessionTree";
+import { nodeName } from "../../lib/nodes";
 import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
 import { useCreateProject } from "../../hooks/query/useProjects";
+import { useMultiNode, useNodeLabel } from "../../hooks/query/useNodes";
 import { useUiState } from "../../hooks/query/useConfig";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -61,11 +69,9 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 
-type TreeData =
-  | { readonly kind: "dir"; readonly label: string; readonly cwd: string; readonly count: number }
-  | { readonly kind: "session"; readonly session: SessionSummary };
+type TreeData = SessionTreeData;
 
-const ROOT_ID = "root";
+const ROOT_ID = SESSION_TREE_ROOT;
 
 /** Shared action items for a directory row (context menu + ⋯ dropdown). */
 function DirActions({
@@ -79,17 +85,21 @@ function DirActions({
   readonly data: TreeData & { kind: "dir" };
   readonly sessions: ReadonlyArray<SessionSummary>;
   onShowDetails: () => void;
-  onNewSession: (cwd: string) => void;
+  onNewSession: (cwd: string, node?: string) => void;
 }) {
   const createProject = useCreateProject();
   const patch = usePatchSessionMeta();
+  // In grouped mode dirs carry their node — same-path folders on different
+  // machines are separate rows, so membership must match node too.
   const members = sessions.filter(
-    (session) => session.cwd === data.cwd || session.cwd.startsWith(`${data.cwd}/`),
+    (session) =>
+      nodeKey(session.node) === nodeKey(data.node) &&
+      (session.cwd === data.cwd || session.cwd.startsWith(`${data.cwd}/`)),
   );
   const createFromFolder = (): void => {
-    // The folder may merge same-path sessions from several nodes — create the
-    // project on the newest member's node and only enroll same-node rows
-    // (projects are node-local).
+    // Members are already same-node (grouped dirs filter by it) — create the
+    // project on that node and only enroll same-node rows (projects are
+    // node-local).
     const node = members[0]?.node;
     createProject.mutate(
       { name: projectName(data.cwd), node },
@@ -118,7 +128,7 @@ function DirActions({
   };
   return (
     <>
-      <Item onClick={() => onNewSession(data.cwd)}>
+      <Item onClick={() => onNewSession(data.cwd, data.node)}>
         <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
         New session here
       </Item>
@@ -147,6 +157,9 @@ function DirDetailsDialog({
   readonly open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  // Grouped dirs carry their owning node — surface it so same-path folders
+  // on two machines stay distinguishable here too.
+  const nodeLabel = useNodeLabel(data.node);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -161,6 +174,12 @@ function DirDetailsDialog({
               {data.cwd}
             </span>
           </div>
+          {data.node !== undefined && (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-muted-foreground">Node</span>
+              <span>{nodeLabel}</span>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-4">
             <span className="text-muted-foreground">Sessions</span>
             <span>{data.count}</span>
@@ -180,7 +199,7 @@ function GroupRow({
   item: ItemInstance<TreeData>;
   data: TreeData & { kind: "dir" };
   sessions: ReadonlyArray<SessionSummary>;
-  onNewSession: (cwd: string) => void;
+  onNewSession: (cwd: string, node?: string) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   return (
@@ -232,6 +251,27 @@ function GroupRow({
       </ContextMenu>
       <DirDetailsDialog data={data} open={detailsOpen} onOpenChange={setDetailsOpen} />
     </>
+  );
+}
+
+/** Top-level machine group in multi-node mode — just a labeled folder row. */
+function NodeRow({
+  item,
+  data,
+}: {
+  item: ItemInstance<TreeData>;
+  data: TreeData & { kind: "node" };
+}) {
+  const label = useNodeLabel(data.node);
+  return (
+    <TreeItem item={item} className="w-full">
+      <TreeItemLabel className="rounded-md bg-transparent hover:bg-accent/60">
+        <span className="flex-1 truncate font-semibold" title={label}>
+          {label}
+        </span>
+        <span className="text-xs text-muted-foreground">{data.count}</span>
+      </TreeItemLabel>
+    </TreeItem>
   );
 }
 
@@ -366,7 +406,7 @@ interface SessionTreeProps {
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
   onDelete: (session: SessionSummary) => void;
-  onNewSession: (cwd: string) => void;
+  onNewSession: (cwd: string, node?: string) => void;
 }
 
 export function SessionTree({
@@ -384,87 +424,13 @@ export function SessionTree({
   // Build a nested directory tree from session cwds — each path segment is a
   // collapsible dir node; sessions hang off the dir for their exact cwd.
   // Single-child dir chains fold GitHub-style (home/luis/GitHub → one node).
-  const { dataMap, childrenMap, rootChildren, dirIds } = useMemo(() => {
-    interface DirNode {
-      label: string;
-      path: string;
-      children: string[];
-      sessionCount: number;
-    }
-    const dirs = new Map<string, DirNode>();
-    const sessionIdsByDir = new Map<string, string[]>();
-    const dataMap = new Map<string, TreeData>();
-
-    const dirFor = (path: string): DirNode => {
-      const existing = dirs.get(path);
-      if (existing !== undefined) return existing;
-      const node: DirNode = {
-        label: projectName(path) || "/",
-        path,
-        children: [],
-        sessionCount: 0,
-      };
-      dirs.set(path, node);
-      return node;
-    };
-
-    for (const session of sessions) {
-      // agent:id — bare ids collide across agents and would overwrite rows.
-      const id = `session:${sessionKey(session)}`;
-      dataMap.set(id, { kind: "session", session });
-      const segments = session.cwd.split("/").filter(Boolean);
-      let prefix = "";
-      let parent = dirFor("/");
-      for (const segment of segments) {
-        prefix += `/${segment}`;
-        const dir = dirFor(prefix);
-        const dirId = `dir:${prefix}`;
-        if (!parent.children.includes(dirId)) parent.children.push(dirId);
-        parent = dir;
-      }
-      const leafIds = sessionIdsByDir.get(parent.path) ?? [];
-      leafIds.push(id);
-      sessionIdsByDir.set(parent.path, leafIds);
-    }
-
-    // Attach sessions to their leaf dir + fold single-child dir chains.
-    const finalData = new Map<string, TreeData>(dataMap);
-    const finalChildren = new Map<string, string[]>();
-    const dirIds: string[] = [];
-    const walk = (path: string): string => {
-      // Fold chains of dirs with exactly one dir child into "a/b/c" labels,
-      // keeping the deepest path as the id so dir:<cwd> lookups still work.
-      let merged = dirs.get(path)!;
-      let labels = merged.label;
-      while (merged.children.length === 1 && sessionIdsByDir.get(merged.path) === undefined) {
-        merged = dirs.get(merged.children[0]!.slice(4))!;
-        labels = `${labels}/${merged.label}`;
-      }
-      const kids = merged.children;
-      const sessionKids = sessionIdsByDir.get(merged.path) ?? [];
-      const dirId = `dir:${merged.path}`;
-      finalData.set(dirId, { kind: "dir", label: labels, cwd: merged.path, count: 0 });
-      const entries: string[] = [];
-      let total = sessionKids.length;
-      for (const kid of [...kids, ...sessionKids]) {
-        if (kid.startsWith("dir:")) {
-          const compactedId = walk(kid.slice(4));
-          entries.push(compactedId);
-          total += (finalData.get(compactedId) as { count: number }).count;
-        } else {
-          entries.push(kid);
-        }
-      }
-      finalChildren.set(dirId, entries);
-      (finalData.get(dirId) as { count: number }).count = total;
-      dirIds.push(dirId);
-      return dirId;
-    };
-    const rootChildren = dirs.get("/")?.children ?? [];
-    const compactedRoots = rootChildren.map((top) => walk(top.slice(4)));
-    finalChildren.set(ROOT_ID, compactedRoots);
-    return { dataMap: finalData, childrenMap: finalChildren, rootChildren: compactedRoots, dirIds };
-  }, [sessions]);
+  // Once peers are registered the tree gains a node level so identical cwds
+  // on different machines never merge into one folder.
+  const multi = useMultiNode();
+  const { dataMap, childrenMap, rootChildren, dirIds } = useMemo(
+    () => treeFromSessions(sessions, { groupByNode: multi }),
+    [sessions, multi],
+  );
 
   // Controlled expandedItems: headless-tree's internal state and useTree's
   // injected React state drift apart (identical-object bail + stale merges
@@ -484,10 +450,14 @@ export function SessionTree({
     getItemName: (item) => {
       const data = item.getItemData();
       if (data?.kind === "dir") return data.label;
+      if (data?.kind === "node") return nodeName(data.node);
       if (data?.kind === "session") return data.session.title;
       return "sessions";
     },
-    isItemFolder: (item) => item.getItemData()?.kind === "dir" || item.getId() === ROOT_ID,
+    isItemFolder: (item) => {
+      const kind = item.getItemData()?.kind;
+      return kind === "dir" || kind === "node" || item.getId() === ROOT_ID;
+    },
     dataLoader: {
       // Stale ids (filtered-out sessions still referenced by focus/expanded
       // state) hit getItem before the next rebuild — a throw crashes the
@@ -516,7 +486,7 @@ export function SessionTree({
   useEffect(() => {
     tree.rebuildTree();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions]);
+  }, [sessions, multi]);
 
   // Auto-expand only dirs that haven't been seen yet — a blanket merge here
   // re-ran whenever sessions changed identity and undid user collapses.
@@ -602,7 +572,7 @@ export function SessionTree({
   const selectedGroup = (): ItemInstance<TreeData> | undefined => {
     const session = resolveSession(sessions, selectedId);
     if (session === undefined) return undefined;
-    return tree.getItemInstance(`dir:${session.cwd}`);
+    return tree.getItemInstance(sessionDirId(session.cwd, session.node, multi));
   };
   useAppHotkey(
     "nav.collapse",
@@ -643,7 +613,9 @@ export function SessionTree({
                   transform: `translateY(${row.start - scrollMargin}px)`,
                 }}
               >
-                {data?.kind === "dir" ? (
+                {data?.kind === "node" ? (
+                  <NodeRow item={item} data={data} />
+                ) : data?.kind === "dir" ? (
                   <GroupRow
                     item={item}
                     data={data}

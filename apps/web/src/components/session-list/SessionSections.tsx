@@ -658,7 +658,7 @@ function FoldersSection({
   readonly selectedId: string | null;
   readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly hotkeyTarget: RefObject<HTMLElement | null>;
-  onNewSession: (cwd: string) => void;
+  onNewSession: (cwd: string, node?: string) => void;
 } & RowHandlers) {
   const [open, setOpen] = useUiState("ui.section.folders", true);
   return (
@@ -690,7 +690,7 @@ interface SessionSectionsProps {
   /** Shared sidebar scroller the folders tree virtualizes against. */
   readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly hotkeyTarget: RefObject<HTMLElement | null>;
-  onNewSession: (cwd: string) => void;
+  onNewSession: (cwd: string, node?: string) => void;
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
   onDelete: (session: SessionSummary) => void;

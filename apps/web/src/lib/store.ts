@@ -15,6 +15,8 @@ export interface SepiaState {
   detailsFor: { id: string; rename: boolean } | null;
   /** Pending cwd for "New session here" — consumed by SessionList. */
   createCwd: string | null;
+  /** Node the pending "New session here" targets; null = this machine. */
+  createNode: string | null;
   /** Working directory new sessions are created in; null = fall back to defaults. */
   cwd: string | null;
   /** Session a "New project" dialog should create-for and assign; null = closed. */
@@ -29,6 +31,7 @@ export const sepiaStore = new Store<SepiaState>({
   settingsSection: null,
   detailsFor: null,
   createCwd: null,
+  createNode: null,
   cwd: null,
   newProjectFor: null,
   replyTo: null,
@@ -61,8 +64,12 @@ export const setNewProjectFor = (sessionId: string | null): void => {
   sepiaStore.setState((prev) => ({ ...prev, newProjectFor: sessionId }));
 };
 
-export const setCreateCwd = (cwd: string | null): void => {
-  sepiaStore.setState((prev) => ({ ...prev, createCwd: cwd }));
+export const setCreateCwd = (cwd: string | null, node?: string): void => {
+  sepiaStore.setState((prev) => ({
+    ...prev,
+    createCwd: cwd,
+    createNode: cwd === null ? null : (node ?? null),
+  }));
 };
 
 export const setReplyTo = (replyTo: ReplyQuote | null): void => {

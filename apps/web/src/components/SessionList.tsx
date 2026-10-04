@@ -28,7 +28,7 @@ import { useCreateProject } from "../hooks/query/useProjects";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { modelArgsFor } from "../lib/models";
-import { bareProjectId, projectKey, resolveSession, sessionKey } from "../lib/format";
+import { bareProjectId, isLocalNode, projectKey, resolveSession, sessionKey } from "../lib/format";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
 import { ButtonGroup } from "./ui/button-group";
@@ -100,6 +100,7 @@ export function SessionList() {
     deleteMutation.mutate({ id: session.id, agent: session.agent });
   };
   const createCwd = useStore(sepiaStore, (state) => state.createCwd);
+  const createNode = useStore(sepiaStore, (state) => state.createNode);
   const cwd = useStore(sepiaStore, (state) => state.cwd);
   const { data: user } = useUserInfo();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -117,21 +118,24 @@ export function SessionList() {
   // The dir new sessions spawn in: explicit pick > settings default >
   // most recent session's > home.
   const resolvedCwd = cwd ?? settings.defaultCwd ?? sessions[0]?.cwd ?? user?.homedir ?? "/";
-  const create = (dir: string): void => {
+  const create = (dir: string, node?: string): void => {
     if (isMobile) setOpenMobile(false);
     const agent = settings.defaultAgent ?? agents[0]?.id;
     createMutation.mutate({
       cwd: dir,
       agent,
+      node,
       ...modelArgsFor(agent ?? "", null, settings),
     });
   };
-  // "New session here" from a dir row → set the context dir and create.
+  // "New session here" from a dir row → set the context dir and create on
+  // the folder's node (a peer path isn't a usable local default cwd).
   useEffect(() => {
     if (createCwd === null) return;
+    const node = createNode ?? undefined;
     setCreateCwd(null);
-    setCwd(createCwd);
-    create(createCwd);
+    if (isLocalNode(node)) setCwd(createCwd);
+    create(createCwd, node);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createCwd]);
   const [debouncedFilter] = useDebouncedValue(filter, { wait: 200 });
