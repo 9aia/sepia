@@ -546,9 +546,18 @@ function ProjectsSection({
               {open && (
                 <div className="ml-4 flex flex-col gap-1 border-l border-border/50 pl-3">
                   {members.length === 0 && (
-                    <p className="px-3 py-1 text-xs text-muted-foreground">
-                      No sessions — start one with + or use &quot;Projects…&quot; on a session.
-                    </p>
+                    <div className="mr-1 flex items-center gap-2 rounded-md border border-dashed border-border/60 px-2.5 py-2 text-xs text-muted-foreground">
+                      <HugeiconsIcon
+                        icon={FolderLibraryIcon}
+                        strokeWidth={2}
+                        className="size-3.5 shrink-0 opacity-60"
+                      />
+                      <span className="min-w-0">
+                        Empty — use <span className="font-medium text-foreground/80">+</span> above,
+                        or move a session in via its{" "}
+                        <span className="font-medium text-foreground/80">Projects…</span> action.
+                      </span>
+                    </div>
                   )}
                   {members.map((session) => (
                     <SectionSessionRow
