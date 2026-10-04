@@ -10,6 +10,13 @@ export interface SessionSummary {
   lockHolderPid: number | null;
   source: string;
   busy: boolean;
+  pinned: boolean;
+  projectId: string | null;
+}
+
+export interface Project {
+  id: string;
+  name: string;
 }
 
 export interface AgentInfo {

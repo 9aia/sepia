@@ -113,6 +113,41 @@ export async function listAgents(): Promise<AgentInfo[]> {
   return data.agents;
 }
 
+export interface SessionMetaPatch {
+  title?: string;
+  pinned?: boolean;
+  projectId?: string | null;
+}
+
+export async function patchSessionMeta(id: string, patch: SessionMetaPatch): Promise<boolean> {
+  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+  return res.ok;
+}
+
+export async function listProjects(): Promise<{ projects: import("./types").Project[] }> {
+  return request(`/api/projects`);
+}
+
+export async function createProject(name: string): Promise<{ project: import("./types").Project }> {
+  return request(`/api/projects`, { method: "POST", body: JSON.stringify({ name }) });
+}
+
+export async function renameProject(id: string, name: string): Promise<boolean> {
+  const res = await sepiaFetch(`/api/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+  return res.ok;
+}
+
+export async function deleteProject(id: string): Promise<boolean> {
+  const res = await sepiaFetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+  return res.ok;
+}
+
 export async function renameSession(id: string, title: string): Promise<boolean> {
   const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, {
     method: "PATCH",

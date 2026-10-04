@@ -223,17 +223,9 @@ export function SessionDetailsDrawer({
               </div>
             </div>
 
-            <DrawerFooter className="flex-row justify-end gap-2">
-              <DrawerClose render={<Button variant="outline" />}>Close</DrawerClose>
-              <Button variant="destructive" onClick={() => setConfirmOpen(true)}>
-                <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-                Delete
-              </Button>
-              <Button variant="outline" onClick={() => setRenameOpen(true)}>
-                <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-                Rename
-              </Button>
+            <DrawerFooter className="flex-col gap-2">
               <Button
+                className="w-full justify-start"
                 onClick={() => {
                   onOpen(session.id);
                   onClose();
@@ -242,6 +234,25 @@ export function SessionDetailsDrawer({
                 <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} />
                 Open session
               </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => setRenameOpen(true)}
+              >
+                <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
+                Rename
+              </Button>
+              <Button
+                variant="destructive"
+                className="w-full justify-start"
+                onClick={() => setConfirmOpen(true)}
+              >
+                <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                Delete
+              </Button>
+              <DrawerClose render={<Button variant="ghost" className="w-full justify-start" />}>
+                Close
+              </DrawerClose>
             </DrawerFooter>
             <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
               <AlertDialogContent>

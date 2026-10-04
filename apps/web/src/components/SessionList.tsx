@@ -21,6 +21,8 @@ import { settingsStore } from "../lib/settings";
 import { SessionTree } from "./session-list/SessionTree";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
 import { SessionDetailsDrawer } from "./session-list/SessionDetailsDrawer";
+import { SessionSections } from "./session-list/SessionSections";
+import { getRecents } from "../lib/recents";
 import { UserProfile } from "./session-list/UserProfile";
 
 const DATE_CUTOFFS: Record<Exclude<DateFilter, "all">, number> = {
@@ -95,6 +97,15 @@ export function SessionList() {
       .sort(sorters[sort]);
   }, [sessions, debouncedFilter, agentFilter, dateFilter, statusFilter, sort]);
 
+  const recentSessions = useMemo(() => {
+    const byId = new Map(filtered.map((s) => [s.id, s]));
+    return getRecents()
+      .map((id) => byId.get(id))
+      .filter((s): s is NonNullable<typeof s> => s !== undefined);
+    // selectedId change refreshes the MRU
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, selectedId]);
+
   useHotkey("N", () => {
     if (inFormField()) return;
     setAdvancedOpen(true);
@@ -148,6 +159,15 @@ export function SessionList() {
           onDateFilterChange={setDateFilter}
           onStatusFilterChange={setStatusFilter}
           onSortChange={setSort}
+        />
+
+        <SessionSections
+          sessions={filtered}
+          recentSessions={recentSessions}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onDetails={(id, rename) => setDetailsFor({ id, rename })}
+          onDelete={(id) => deleteMutation.mutate(id)}
         />
 
         {loading && <SessionTreeSkeleton />}

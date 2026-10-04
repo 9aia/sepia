@@ -6,6 +6,7 @@ import { syncDataLoaderFeature } from "@headless-tree/core";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import type { ItemInstance } from "@headless-tree/core";
 import type { SessionSummary } from "../../lib/types";
+import { formatUpdated, projectName } from "../../lib/format";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -13,6 +14,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "../ui/context-menu";
 import {
@@ -20,20 +24,20 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
   Copy01Icon,
-  Delete02Icon,
-  Edit02Icon,
   FolderDetailsIcon,
-  FolderOpenIcon,
-  InformationCircleIcon,
   MoreVerticalIcon,
 } from "@hugeicons/core-free-icons";
 import { ScrollBar } from "../ui/scroll-area";
+import { SessionActions } from "./SessionActions";
 import { Tree, TreeItem, TreeItemLabel } from "../reui/tree";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import {
@@ -52,23 +56,6 @@ type TreeData =
   | { readonly kind: "session"; readonly session: SessionSummary };
 
 const ROOT_ID = "root";
-
-function formatUpdated(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const diffMinutes = Math.round((Date.now() - then) / 60000);
-  if (diffMinutes < 1) return "just now";
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
-  const hours = Math.round(diffMinutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
-const projectName = (cwd: string): string => {
-  const trimmed = cwd.replace(/\/+$/, "");
-  const last = trimmed.split("/").pop();
-  return last === undefined || last === "" ? cwd : last;
-};
 
 /** Shared action items for a directory row (context menu + ⋯ dropdown). */
 function DirActions({
@@ -200,59 +187,6 @@ function GroupRow({
   );
 }
 
-/** Shared action items used by both the context menu and the ⋯ dropdown. */
-function SessionActions({
-  Item,
-  Separator,
-  session,
-  onSelect,
-  onDetails,
-  onRequestDelete,
-}: {
-  readonly Item: typeof ContextMenuItem;
-  readonly Separator: typeof ContextMenuSeparator;
-  readonly session: SessionSummary;
-  onSelect: (id: string) => void;
-  onDetails: (id: string, rename: boolean) => void;
-  onRequestDelete: (id: string) => void;
-}) {
-  const copy = (value: string) =>
-    void navigator.clipboard.writeText(value).then(
-      () => {},
-      () => undefined,
-    );
-  return (
-    <>
-      <Item onClick={() => onSelect(session.id)}>
-        <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} />
-        Open
-      </Item>
-      <Item onClick={() => onDetails(session.id, true)}>
-        <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-        Rename…
-      </Item>
-      <Item onClick={() => onDetails(session.id, false)}>
-        <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
-        Details
-      </Item>
-      <Separator />
-      <Item onClick={() => copy(session.id)}>
-        <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
-        Copy session ID
-      </Item>
-      <Item onClick={() => copy(session.cwd)}>
-        <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
-        Copy path
-      </Item>
-      <Separator />
-      <Item variant="destructive" onClick={() => onRequestDelete(session.id)}>
-        <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-        Delete
-      </Item>
-    </>
-  );
-}
-
 function SessionItemRow({
   item,
   session,
@@ -316,6 +250,9 @@ function SessionItemRow({
               <SessionActions
                 Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
                 Separator={DropdownMenuSeparator}
+                Sub={DropdownMenuSub as unknown as typeof ContextMenuSub}
+                SubTrigger={DropdownMenuSubTrigger as unknown as typeof ContextMenuSubTrigger}
+                SubContent={DropdownMenuSubContent as unknown as typeof ContextMenuSubContent}
                 session={session}
                 onSelect={onSelect}
                 onDetails={onDetails}
@@ -328,6 +265,9 @@ function SessionItemRow({
           <SessionActions
             Item={ContextMenuItem}
             Separator={ContextMenuSeparator}
+            Sub={ContextMenuSub}
+            SubTrigger={ContextMenuSubTrigger}
+            SubContent={ContextMenuSubContent}
             session={session}
             onSelect={onSelect}
             onDetails={onDetails}

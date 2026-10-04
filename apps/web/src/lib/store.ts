@@ -1,4 +1,5 @@
 import { Store } from "@tanstack/react-store";
+import { pushRecent } from "./recents";
 
 /**
  * Client-only UI state. Server state (sessions, history, agents, attach
@@ -21,6 +22,7 @@ export const sepiaStore = new Store<SepiaState>({
 });
 
 export const setSelectedId = (id: string | null): void => {
+  if (id !== null) pushRecent(id);
   sepiaStore.setState((prev) => ({ ...prev, selectedId: id }));
 };
 

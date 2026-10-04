@@ -301,10 +301,15 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       const withLocks = url.searchParams.get("withLocks") === "1";
       return respond(run, plane.listSessions({ withLocks }), cors, {
         shape: (sessions) => ({
-          sessions: sessions.map((session) => ({
-            ...session,
-            title: options.meta?.titleOf(session.id) ?? session.title,
-          })),
+          sessions: sessions.map((session) => {
+            const meta = options.meta?.of(session.id);
+            return {
+              ...session,
+              title: meta?.title ?? session.title,
+              pinned: meta?.pinned ?? false,
+              projectId: meta?.projectId ?? null,
+            };
+          }),
         }),
         span: "http.get /api/sessions",
       });
@@ -358,11 +363,98 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       if (!isRecord(patchBody)) {
         return jsonResponse({ error: "Expected a JSON object body" }, 400, cors);
       }
-      const title = patchBody.title;
-      if (typeof title !== "string" || title.trim() === "" || title.length > 200) {
-        return jsonResponse({ error: "title must be a non-empty string (max 200)" }, 400, cors);
+      const patch: Record<string, unknown> = {};
+      if ("title" in patchBody) {
+        const title = patchBody.title;
+        if (typeof title !== "string" || title.trim() === "" || title.length > 200) {
+          return jsonResponse({ error: "title must be a non-empty string (max 200)" }, 400, cors);
+        }
+        patch.title = title.trim();
       }
-      meta.rename(id, title.trim());
+      if ("pinned" in patchBody) {
+        if (typeof patchBody.pinned !== "boolean") {
+          return jsonResponse({ error: "pinned must be a boolean" }, 400, cors);
+        }
+        patch.pinned = patchBody.pinned;
+      }
+      if ("projectId" in patchBody) {
+        const projectId = patchBody.projectId;
+        if (projectId !== null && typeof projectId !== "string") {
+          return jsonResponse({ error: "projectId must be a string or null" }, 400, cors);
+        }
+        patch.projectId = projectId;
+      }
+      if (Object.keys(patch).length === 0) {
+        return jsonResponse({ error: "Nothing to patch" }, 400, cors);
+      }
+      meta.patch(id, patch);
+      return jsonResponse({ ok: true }, 200, cors);
+    }
+
+    if (method === "GET" && segmentsEqual(segments, ["api", "projects"])) {
+      const meta = options.meta;
+      if (meta === undefined) {
+        return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
+      }
+      return jsonResponse({ projects: meta.listProjects() }, 200, cors);
+    }
+
+    if (method === "POST" && segmentsEqual(segments, ["api", "projects"])) {
+      const meta = options.meta;
+      if (meta === undefined) {
+        return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(request);
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+      }
+      const name = isRecord(body) ? body.name : undefined;
+      if (typeof name !== "string" || name.trim() === "" || name.length > 100) {
+        return jsonResponse({ error: "name must be a non-empty string (max 100)" }, 400, cors);
+      }
+      return jsonResponse({ project: meta.createProject(name.trim()) }, 201, cors);
+    }
+
+    if (
+      method === "PATCH" &&
+      segments[0] === "api" &&
+      segments[1] === "projects" &&
+      segments.length === 3
+    ) {
+      const meta = options.meta;
+      if (meta === undefined) {
+        return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
+      }
+      const projectId = decodeURIComponent(segments[2] ?? "");
+      let body: unknown;
+      try {
+        body = await readJsonBody(request);
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+      }
+      const name = isRecord(body) ? body.name : undefined;
+      if (typeof name !== "string" || name.trim() === "" || name.length > 100) {
+        return jsonResponse({ error: "name must be a non-empty string (max 100)" }, 400, cors);
+      }
+      if (!meta.renameProject(projectId, name.trim())) {
+        return jsonResponse({ error: "Unknown project" }, 404, cors);
+      }
+      return jsonResponse({ ok: true }, 200, cors);
+    }
+
+    if (
+      method === "DELETE" &&
+      segments[0] === "api" &&
+      segments[1] === "projects" &&
+      segments.length === 3
+    ) {
+      const meta = options.meta;
+      if (meta === undefined) {
+        return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
+      }
+      meta.deleteProject(decodeURIComponent(segments[2] ?? ""));
       return jsonResponse({ ok: true }, 200, cors);
     }
 
