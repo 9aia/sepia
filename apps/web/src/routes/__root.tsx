@@ -4,6 +4,7 @@ import { settingsStore } from "../lib/settings";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
+import { Toaster } from "../components/ui/sonner";
 import { AlertCircleIcon, FileNotFoundIcon } from "@hugeicons/core-free-icons";
 import { EmptyScreen } from "../components/EmptyScreen";
 import { Button } from "../components/ui/button";
@@ -81,6 +82,7 @@ function RootComponent() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider delay={300}>
           <Outlet />
+          <Toaster />
         </TooltipProvider>
       </QueryClientProvider>
     </RootDocument>

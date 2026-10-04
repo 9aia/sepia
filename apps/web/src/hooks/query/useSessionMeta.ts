@@ -1,3 +1,4 @@
+import { toastError, toastSuccess } from "../../lib/toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { patchSessionMeta, type SessionMetaPatch } from "../../lib/api";
 import { sessionsCollection } from "../../lib/db";
@@ -46,6 +47,11 @@ export const usePatchSessionMeta = () => {
         }
       });
       await tx.when("settled");
+      if (patch.title !== undefined) toastSuccess("Session renamed");
+      else if (patch.archived === true) toastSuccess("Session archived");
+      else if (patch.archived === false) toastSuccess("Session unarchived");
+      else if (patch.projectIds !== undefined) toastSuccess("Projects updated");
     },
+    onError: (error) => toastError("Couldn't update the session", error),
   });
 };

@@ -1,3 +1,4 @@
+import { toastError } from "../../lib/toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createSession } from "../../lib/api";
 import type { CreateSessionInput } from "../../lib/types";
@@ -8,6 +9,7 @@ export const useCreateSession = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateSessionInput) => createSession(input),
+    onError: (error) => toastError("Couldn't create the session", error),
     onSuccess: ({ id, agentId }) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
       // Selection keys are agent:id — the server echoes which agent spawned it.

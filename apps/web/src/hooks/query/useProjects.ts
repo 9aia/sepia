@@ -1,3 +1,4 @@
+import { toastError, toastSuccess } from "../../lib/toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLiveQuery } from "@tanstack/react-db";
 import { convertSession, createProject } from "../../lib/api";
@@ -27,7 +28,9 @@ export const useCreateProject = () => {
         ...old.filter((p) => p.id !== project.id),
         project,
       ]);
+      toastSuccess("Project created");
     },
+    onError: (error) => toastError("Couldn't create the project", error),
   });
 };
 
@@ -42,7 +45,9 @@ export const useRenameProject = () =>
         draft.name = name;
       });
       await tx.when("settled");
+      toastSuccess("Project renamed");
     },
+    onError: (error) => toastError("Couldn't rename the project", error),
   });
 
 /**
@@ -59,7 +64,9 @@ export const useDeleteProject = () => {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      toastSuccess("Project deleted");
     },
+    onError: (error) => toastError("Couldn't delete the project", error),
   });
 };
 
@@ -70,6 +77,8 @@ export const useConvertSession = () => {
       convertSession(id, agent, fromAgent),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      toastSuccess("Session converted");
     },
+    onError: (error) => toastError("Couldn't convert the session", error),
   });
 };

@@ -1,3 +1,4 @@
+import { toastError, toastSuccess } from "../../lib/toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { deleteSession } from "../../lib/api";
 import { sepiaStore, setSelectedId } from "../../lib/store";
@@ -32,6 +33,8 @@ export const useDeleteSession = () => {
       // selectedId is the agent:id key; bare ids from old links match too.
       const selected = sepiaStore.state.selectedId;
       if (selected === key || selected === id) setSelectedId(null);
+      toastSuccess("Session deleted");
     },
+    onError: (error) => toastError("Couldn't delete the session", error),
   });
 };
