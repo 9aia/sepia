@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AlertCircleIcon, BotIcon, Loading03Icon } from "@hugeicons/core-free-icons";
-import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
+import { ArrowDown01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { useSessions } from "../hooks/query/useSessions";
@@ -20,6 +20,8 @@ import {
 
 import type { LiveMessage } from "../lib/liveMessages";
 import { cancel, sendPrompt, type StreamStatus } from "../lib/api";
+import { sepiaStore, setReplyTo } from "../lib/store";
+import { formatReplyPrompt, replyAuthorLabel, type ReplyQuote } from "../lib/reply";
 import { settingsStore } from "../lib/settings";
 import { buildRows, type ChatRow } from "../lib/historyRows";
 import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
@@ -27,11 +29,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
 import { BubbleContent } from "./bubble";
-import { Message, MessageAvatar, MessageContent, MessageCopy, MessageFooter } from "./message";
+import {
+  Message,
+  MessageAvatar,
+  MessageContent,
+  MessageCopy,
+  MessageFooter,
+  MessageReply,
+} from "./message";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { parseSystemContext, type SystemContext } from "../lib/systemContext";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { ErrorBanner } from "./ErrorBanner";
+import { Button } from "./ui/button";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -387,6 +397,7 @@ export function SessionChat({
   const history = useMemo(() => flattenHistory(historyQuery.data), [historyQuery.data]);
   const [submitting, setSubmitting] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
+  const replyTo = useStore(sepiaStore, (state) => state.replyTo);
   // Held by another process → the send asks to take over first.
   const [takeoverPrompt, setTakeoverPrompt] = useState<string | null>(null);
 
@@ -396,11 +407,15 @@ export function SessionChat({
   }, [history, liveMessages]);
 
   const send = (text: string): void => {
+    // Consume any pending reply — the quote rides inside the sent prompt.
+    const reply = sepiaStore.state.replyTo;
+    if (reply !== null) setReplyTo(null);
+    const prompt = reply !== null ? formatReplyPrompt(reply, text) : text;
     setSubmitting(true);
     setPromptError(null);
     // Optimistic — the row shows instantly; rolled back if the send fails.
-    const liveId = onUserMessage(text);
-    sendPrompt(sessionId, text, agent)
+    const liveId = onUserMessage(prompt);
+    sendPrompt(sessionId, prompt, agent)
       .then((ok) => {
         if (!ok) {
           onRemoveLiveMessage(liveId);
@@ -504,6 +519,7 @@ export function SessionChat({
 
       <PromptInput onSubmit={onSubmit} className="shrink-0 border-t border-border px-4 pb-4 pt-3">
         <PromptInputBody>
+          {replyTo !== null && <ReplyPreview quote={replyTo} />}
           <PromptInputTextarea placeholder="Prompt the agent…" />
         </PromptInputBody>
         <PromptInputFooter>
@@ -624,10 +640,44 @@ function MessageRow({
           )}
         </BubbleContent>
         <MessageFooter>
-          <MessageCopy text={() => content} />
-          {createdAt !== undefined && <span>{formatMessageTime(createdAt)}</span>}
+          {role === "assistant" ? (
+            <>
+              {createdAt !== undefined && <span>{formatMessageTime(createdAt)}</span>}
+              <MessageReply onReply={() => setReplyTo({ role, content, createdAt })} />
+              <MessageCopy text={() => content} />
+            </>
+          ) : (
+            <>
+              <MessageReply onReply={() => setReplyTo({ role, content, createdAt })} />
+              <MessageCopy text={() => content} />
+              {createdAt !== undefined && <span>{formatMessageTime(createdAt)}</span>}
+            </>
+          )}
         </MessageFooter>
       </MessageContent>
     </Message>
+  );
+}
+
+/** Compact quote card shown inside the composer while a reply is pending. */
+function ReplyPreview({ quote }: { readonly quote: ReplyQuote }) {
+  return (
+    <div className="mx-3 mt-2 flex items-start gap-1 border-l-2 border-primary/50 pl-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-medium text-foreground/80">{replyAuthorLabel(quote.role)}</div>
+        <p className="m-0 line-clamp-2 text-xs whitespace-pre-wrap text-muted-foreground">
+          {quote.content}
+        </p>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Dismiss reply"
+        title="Dismiss reply"
+        onClick={() => setReplyTo(null)}
+      >
+        <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+      </Button>
+    </div>
   );
 }

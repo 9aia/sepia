@@ -1,5 +1,6 @@
 import { Store } from "@tanstack/react-store";
 import { pushRecent } from "./recents";
+import type { ReplyQuote } from "./reply";
 
 /**
  * Client-only UI state. Server state (sessions, history, agents, attach
@@ -18,6 +19,8 @@ export interface SepiaState {
   cwd: string | null;
   /** Session a "New project" dialog should create-for and assign; null = closed. */
   newProjectFor: string | null;
+  /** Message the composer is quoting; cleared on session switch and on send. */
+  replyTo: ReplyQuote | null;
 }
 
 export const sepiaStore = new Store<SepiaState>({
@@ -28,11 +31,14 @@ export const sepiaStore = new Store<SepiaState>({
   createCwd: null,
   cwd: null,
   newProjectFor: null,
+  replyTo: null,
 });
 
 export const setSelectedId = (id: string | null): void => {
   if (id !== null) pushRecent(id);
-  sepiaStore.setState((prev) => ({ ...prev, selectedId: id }));
+  sepiaStore.setState((prev) =>
+    prev.selectedId === id ? prev : { ...prev, selectedId: id, replyTo: null },
+  );
 };
 
 export const setSettingsOpen = (open: boolean, section?: string): void => {
@@ -57,4 +63,8 @@ export const setNewProjectFor = (sessionId: string | null): void => {
 
 export const setCreateCwd = (cwd: string | null): void => {
   sepiaStore.setState((prev) => ({ ...prev, createCwd: cwd }));
+};
+
+export const setReplyTo = (replyTo: ReplyQuote | null): void => {
+  sepiaStore.setState((prev) => ({ ...prev, replyTo }));
 };
