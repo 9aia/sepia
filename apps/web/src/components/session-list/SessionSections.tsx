@@ -180,7 +180,6 @@ function FlatSection({
       <h3 className="flex items-center gap-1.5 px-3 pt-3 pb-0.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />
         {label}
-        <span className="font-normal">{sessions.length}</span>
       </h3>
       {shown.map((session) => (
         <SectionSessionRow
@@ -312,7 +311,6 @@ function ProjectsSection({
               <span className="min-w-0 flex-1 truncate font-medium" title={project.name}>
                 {project.name}
               </span>
-              <span className="text-xs text-muted-foreground">{members.length}</span>
             </button>
             <DropdownMenu>
               <DropdownMenuTrigger
