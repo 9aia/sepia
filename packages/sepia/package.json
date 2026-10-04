@@ -13,9 +13,12 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && bun test",
+    "test:node": "vitest run",
+    "test:bun": "bun test",
     "test:coverage": "vitest run --coverage",
     "coverage": "vitest run --coverage",
+    "coverage:bun": "bun test --coverage",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
   },

@@ -6,7 +6,6 @@ import {
   StopIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { ChatStatus } from "ai";
 import {
   createContext,
   useContext,
@@ -36,6 +35,9 @@ import {
   InputGroupTextarea,
 } from "./ui/input-group";
 import { Spinner } from "./ui/spinner";
+
+/** Same shape as the AI SDK's `ChatStatus`, inlined to avoid depending on `ai`. */
+export type ChatStatus = "submitted" | "streaming" | "ready" | "error";
 
 export interface PromptInputMessage {
   text: string;
