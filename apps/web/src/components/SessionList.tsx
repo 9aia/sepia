@@ -230,6 +230,10 @@ export function SessionList() {
           />
         )}
 
+        <h3 className="flex items-center gap-1.5 px-3 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} className="size-3.5" />
+          Folders
+        </h3>
         <SessionTree
           sessions={filtered}
           selectedId={selectedId}
