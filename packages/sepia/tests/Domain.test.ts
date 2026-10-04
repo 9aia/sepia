@@ -55,3 +55,34 @@ test("Session round-trips through Schema.decodeUnknown", () => {
   expect(decoded.nodes[1].role).toBe("assistant");
   expect(decoded.promptHistory[0].content).toBe("hello");
 });
+
+test("MessageNode blocks decode absent, encode and round-trip", () => {
+  const withBlocks = MessageNode.make({
+    nodeId: 0,
+    role: "user",
+    content: "look at this",
+    blocks: [
+      { type: "text", text: "look at this" },
+      { type: "image", data: "aGk=", mimeType: "image/png" },
+      { type: "file", uri: "file:///work/a.ts", name: "a.ts", size: 12 },
+      { type: "audio", data: "AAE=", mimeType: "audio/wav" },
+    ],
+    createdAt: 1700000000,
+    metadata: null,
+  });
+  const encoded = Effect.runSync(Schema.encode(MessageNode)(withBlocks));
+  const decoded = Effect.runSync(Schema.decodeUnknown(MessageNode)(encoded));
+  expect(decoded.blocks).toEqual(withBlocks.blocks);
+
+  // A block-less node encodes no `blocks` key and decodes to an empty list.
+  const plain = MessageNode.make({
+    nodeId: 1,
+    role: "assistant",
+    content: "hi",
+    createdAt: 1700000001,
+    metadata: null,
+  });
+  const plainEncoded = Effect.runSync(Schema.encode(MessageNode)(plain)) as Record<string, unknown>;
+  expect(plainEncoded.blocks).toEqual([]);
+  expect(Effect.runSync(Schema.decodeUnknown(MessageNode)(plainEncoded)).blocks).toEqual([]);
+});

@@ -2,9 +2,9 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { join } from "node:path";
-import { Effect, Either } from "effect";
+import { Effect, Either, Schema } from "effect";
 import { encodeSse, sseHeaders, type Event } from "sepia-agui";
-import { Conversion, ClineStore, openSessionsDb, Session, SqliteStorage } from "sepia-core";
+import { Block, Conversion, ClineStore, openSessionsDb, Session, SqliteStorage } from "sepia-core";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Layer } from "effect";
@@ -374,6 +374,9 @@ const defaultImportSession =
   };
 
 const HISTORY_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "tool"]);
+
+/** Guard for the `blocks` field of an imported history item — malformed entries drop, not reject. */
+const isHistoryBlock = Schema.is(Block);
 
 export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) => {
   const keepAliveMs = options.keepAliveMs ?? keepAliveMsFromEnv(process.env.SEPIA_SSE_KEEPALIVE_MS);
@@ -846,6 +849,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
             ...(typeof item.model === "string" ? { model: item.model } : {}),
             ...(typeof item.requestId === "string" ? { requestId: item.requestId } : {}),
             ...(typeof item.finishReason === "string" ? { finishReason: item.finishReason } : {}),
+            ...(Array.isArray(item.blocks) ? { blocks: item.blocks.filter(isHistoryBlock) } : {}),
             ...(item.toolStatus === "pending" ||
             item.toolStatus === "success" ||
             item.toolStatus === "error"

@@ -895,6 +895,239 @@ test("sessionRow records sub-agent lineage the index carries", () => {
   expect(row.is_subagent).toBe(1);
 });
 
+test("import lifts image and document blocks off user messages", async () => {
+  const session = await importedSession("attachments", [
+    {
+      id: "u0",
+      role: "user",
+      content: [
+        { type: "text", text: '<user_input mode="act">look at these</user_input>' },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "aGk=" },
+        },
+        {
+          type: "document",
+          title: "spec.md",
+          source: { type: "url", url: "file:///work/spec.md", media_type: "text/markdown" },
+        },
+      ],
+      ts: 1,
+    },
+    {
+      id: "u1",
+      role: "user",
+      content: [
+        { type: "text", text: "and this" },
+        { type: "image", source: { type: "url", url: "https://x/y.png" } },
+        // Entries that carry nothing renderable are skipped, not fatal.
+        { type: "image", source: { type: "base64" } },
+        { type: "document", source: null },
+        { type: "mystery", payload: 1 },
+        "junk",
+      ],
+      ts: 2,
+    },
+    {
+      // Flat field spellings — a block may carry data/url/media_type on
+      // itself rather than under `source`.
+      id: "u2",
+      role: "user",
+      content: [
+        { type: "text", text: "flat fields" },
+        { type: "image", data: "AAE=", media_type: "image/jpeg" },
+        { type: "image", data: "AAF=", mimeType: "image/gif" },
+        { type: "image", url: "https://flat/i.png" },
+        { type: "document", url: "file:///b.md", text: "doc body" },
+        { type: "document", source: { type: "base64", data: "AAI=" } },
+        { type: "document", source: { type: "text", text: "src body" } },
+        { type: "document", data: "AAQ=" },
+      ],
+      ts: 3,
+    },
+    {
+      // A tool result rides a user-role message in this format — its content
+      // stays a tool concern and never becomes a block.
+      id: "u3",
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "orphan", name: "exec", content: "x" }],
+      ts: 4,
+    },
+  ]);
+
+  const users = Cline.visibleNodes(session).filter((n) => n.role === "user");
+
+  // The first user message seeds the tree — its attachments land there.
+  expect(users[0]?.blocks).toEqual([
+    { type: "text", text: '<user_input mode="act">look at these</user_input>' },
+    { type: "image", data: "aGk=", mimeType: "image/png" },
+    {
+      type: "file",
+      uri: "file:///work/spec.md",
+      name: "spec.md",
+      mimeType: "text/markdown",
+    },
+  ]);
+
+  // Later user messages keep their own blocks.
+  expect(users[1]?.blocks).toEqual([
+    { type: "text", text: "and this" },
+    { type: "image", uri: "https://x/y.png" },
+  ]);
+
+  // Flat spellings map the same way; a document's own text becomes the
+  // file block's embedded text.
+  expect(users[2]?.blocks).toEqual([
+    { type: "text", text: "flat fields" },
+    { type: "image", data: "AAE=", mimeType: "image/jpeg" },
+    { type: "image", data: "AAF=", mimeType: "image/gif" },
+    { type: "image", uri: "https://flat/i.png" },
+    { type: "file", uri: "file:///b.md", text: "doc body" },
+    { type: "file", data: "AAI=" },
+    { type: "file", text: "src body" },
+    { type: "file", data: "AAQ=" },
+  ]);
+
+  // The orphaned tool result decays to "[tool output]" text with no blocks.
+  expect(users[3]?.content).toContain("[tool output]");
+  expect(users[3]?.blocks).toEqual([]);
+});
+
+test("import survives a log whose first turn isn't a text-bearing user message", async () => {
+  const session = await importedSession("nouser", [
+    {
+      id: "a0",
+      role: "assistant",
+      content: [{ type: "text", text: "booted mid-flight" }],
+      ts: 1,
+    },
+    {
+      id: "u0",
+      role: "user",
+      content: [
+        { type: "image", source: { type: "url", url: "https://x/i.png" } },
+        { type: "text" },
+        { type: "text", text: "" },
+        { type: "text", text: "now with text" },
+      ],
+      ts: 2,
+    },
+  ]);
+
+  // The first text-bearing user message seeds the tree — non-text items
+  // ahead of its text, an empty text block, and the image all land on the
+  // seed node's blocks; the message is not emitted twice.
+  const users = Cline.visibleNodes(session).filter((n) => n.role === "user");
+  expect(users).toHaveLength(1);
+  expect(users[0]?.content).toBe("now with text");
+  expect(users[0]?.blocks).toEqual([
+    { type: "image", uri: "https://x/i.png" },
+    { type: "text", text: "" },
+    { type: "text", text: "now with text" },
+  ]);
+});
+
+test("import tolerates empty, missing and mixed user content", async () => {
+  const session = await importedSession("mixed", [
+    // No content field at all.
+    { id: "u_pre", role: "user", ts: 0 },
+    // A text entry with no text, mixed with a tool result: the text half is
+    // dropped (a tool-result message is not a prompt) and the orphan decays.
+    {
+      id: "u0",
+      role: "user",
+      content: [
+        { type: "text" },
+        { type: "tool_result", tool_use_id: "or", name: "exec", content: "y" },
+        // A result entry may even lack the call id entirely.
+        { type: "tool_result", name: "exec", content: "z" },
+      ],
+      ts: 1,
+    },
+    { id: "u1", role: "user", content: [{ type: "text", text: "go" }], ts: 2 },
+    // A prompt turn whose only text entry carries no text emits nothing.
+    { id: "u2", role: "user", content: [{ type: "text" }], ts: 3 },
+  ]);
+
+  // The "go" turn seeds the tree; the orphaned results decay to tool-output
+  // text; the empty/missing contents produce nothing.
+  const users = session.nodes.filter((n) => n.role === "user");
+  expect(users.map((n) => n.content)).toEqual(["go", "[tool output]\ny", "[tool output]\nz"]);
+  expect(users.every((n) => n.blocks.length === 0)).toBe(true);
+});
+
+test("import builds a session from a log with no user text at all", async () => {
+  const session = await importedSession("assistantonly", [
+    {
+      id: "a0",
+      role: "assistant",
+      content: [{ type: "text", text: "spoke unprompted" }],
+      ts: 1,
+    },
+  ]);
+
+  // The seed user node stays empty — nothing to lift text or blocks from.
+  const users = session.nodes.filter((n) => n.role === "user");
+  expect(users).toHaveLength(1);
+  expect(users[0]?.content).toBe("");
+  expect(users[0]?.blocks).toEqual([]);
+});
+
+test("import keeps a text-only content array off node.blocks", async () => {
+  const session = await importedSession("textonly", [
+    { id: "u0", role: "user", content: [{ type: "text", text: "go" }], ts: 1 },
+    { id: "u1", role: "user", content: [{ type: "text", text: "more" }], ts: 2 },
+    { id: "u2", role: "user", content: "bare string", ts: 3 },
+  ]);
+
+  for (const node of session.nodes) {
+    expect(node.blocks).toEqual([]);
+  }
+});
+
+test("export writes user blocks back as provider content entries", () => {
+  const session = makeSession([
+    makeNode({ nodeId: 0, role: "system", content: "sys" }),
+    MessageNode.make({
+      nodeId: 1,
+      role: "user",
+      content: "with attachments",
+      blocks: [
+        { type: "text", text: "with attachments" },
+        { type: "image", data: "aGk=", mimeType: "image/png" },
+        { type: "image", data: "aGk=" },
+        { type: "image", uri: "https://x/y.png" },
+        { type: "image" },
+        { type: "audio", data: "AAE=", mimeType: "audio/wav" },
+        { type: "audio" },
+        { type: "file", name: "spec.md", uri: "file:///work/spec.md" },
+        { type: "file", uri: "file:///a.ts", text: "const a=1" },
+        { type: "file" },
+      ],
+      createdAt: 1700000000,
+      metadata: null,
+    }),
+  ]);
+
+  const messages = Cline.sessionMessages(session, "imported-session")
+    .messages as ReadonlyArray<any>;
+
+  // Text stays a single block from `content`; each attachment maps to the
+  // provider form (embedded image) or degrades to a mention.
+  expect(messages[0].content).toEqual([
+    { type: "text", text: "with attachments" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "aGk=" } },
+    { type: "image", source: { type: "base64", data: "aGk=" } },
+    { type: "image", source: { type: "url", url: "https://x/y.png" } },
+    { type: "text", text: "[image]" },
+    { type: "text", text: "[audio: audio/wav]" },
+    { type: "text", text: "[audio: attachment]" },
+    { type: "text", text: "[file: spec.md]" },
+    { type: "text", text: "[file: file:///a.ts]\nconst a=1" },
+    { type: "text", text: "[file: attachment]" },
+  ]);
+});
+
 test("needsMigration only fires when a required table is missing", () => {
   expect(needsMigration(new Set(["sessions", "message_nodes", "prompt_history"]))).toBe(false);
   expect(

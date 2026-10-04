@@ -8,6 +8,7 @@ import {
   PromptHistoryEntry,
   Session,
   ToolCall,
+  type Block,
   type TokenUsage,
   type ToolResultInfo,
 } from "./Domain.js";
@@ -63,6 +64,113 @@ const asList = (value: unknown): ReadonlyArray<unknown> => {
 };
 
 const makeToolCallId = (): string => `chatcmpl-tool-${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+
+const strField = (obj: Record<string, unknown>, key: string): string | undefined =>
+  typeof obj[key] === "string" ? (obj[key] as string) : undefined;
+
+/**
+ * One entry of a Cline message `content` array mapped onto the IR block
+ * union. `tool_use`/`tool_result`/`thinking` entries have their own IR
+ * fields and return undefined here; `image`/`document` are the provider's
+ * attachment forms — `source` carries `base64`/`url`/`text` variants.
+ */
+const blockFromCline = (item: unknown): Block | undefined => {
+  if (item === null || typeof item !== "object") return undefined;
+  const c = item as Record<string, unknown>;
+  const source =
+    c.source !== null && typeof c.source === "object"
+      ? (c.source as Record<string, unknown>)
+      : undefined;
+  const sourceField = (key: string): string | undefined =>
+    source === undefined ? undefined : strField(source, key);
+  switch (c.type) {
+    case "text": {
+      const text = strField(c, "text");
+      return text === undefined ? undefined : { type: "text", text };
+    }
+    case "image": {
+      const data = strField(c, "data") ?? sourceField("data");
+      const uri = strField(c, "url") ?? sourceField("url");
+      if (data === undefined && uri === undefined) return undefined;
+      const mimeType =
+        sourceField("media_type") ?? strField(c, "media_type") ?? strField(c, "mimeType");
+      return {
+        type: "image",
+        ...(data === undefined ? {} : { data }),
+        ...(uri === undefined ? {} : { uri }),
+        ...(mimeType === undefined ? {} : { mimeType }),
+      };
+    }
+    case "document": {
+      const text = sourceField("text") ?? strField(c, "text");
+      const data = sourceField("data") ?? strField(c, "data");
+      const uri = sourceField("url") ?? strField(c, "url");
+      if (text === undefined && data === undefined && uri === undefined) return undefined;
+      const mimeType =
+        sourceField("media_type") ?? strField(c, "media_type") ?? strField(c, "mimeType");
+      return {
+        type: "file",
+        ...(uri === undefined ? {} : { uri }),
+        ...(strField(c, "title") === undefined ? {} : { name: strField(c, "title") }),
+        ...(mimeType === undefined ? {} : { mimeType }),
+        ...(text === undefined ? {} : { text }),
+        ...(data === undefined ? {} : { data }),
+      };
+    }
+    default:
+      return undefined;
+  }
+};
+
+/**
+ * The block list a Cline user message's `content` array carries. Kept only
+ * when a non-text block is present — an all-text list duplicates `content`.
+ */
+const blocksFromClineContent = (content: ReadonlyArray<unknown>): ReadonlyArray<Block> => {
+  const blocks = content.flatMap((item) => {
+    const block = blockFromCline(item);
+    return block === undefined ? [] : [block];
+  });
+  return blocks.some((block) => block.type !== "text") ? blocks : [];
+};
+
+/**
+ * An IR block back into the Cline log's provider-shaped content form. Text
+ * blocks are skipped — the node's `content` already writes one — while
+ * file/audio blocks degrade to a text mention, the only honest form the log
+ * format has for an attachment reference.
+ */
+const toClineContentBlock = (block: Block): unknown => {
+  switch (block.type) {
+    case "text":
+      return undefined;
+    case "image": {
+      if (block.data !== undefined) {
+        return {
+          type: "image",
+          source: {
+            type: "base64",
+            ...(block.mimeType === undefined ? {} : { media_type: block.mimeType }),
+            data: block.data,
+          },
+        };
+      }
+      if (block.uri !== undefined) {
+        return { type: "image", source: { type: "url", url: block.uri } };
+      }
+      return { type: "text", text: `[image]` };
+    }
+    case "audio":
+      return { type: "text", text: `[audio: ${block.mimeType ?? "attachment"}]` };
+    case "file": {
+      const label = `[file: ${block.name ?? block.uri ?? "attachment"}]`;
+      return {
+        type: "text",
+        text: block.text === undefined ? label : `${label}\n${block.text}`,
+      };
+    }
+  }
+};
 
 /**
  * Sub-agent session ids embed their lineage: `<parent>__teamtask__<agent>__<rand>`
@@ -323,12 +431,14 @@ const buildUserNode = (
   parentNodeId: Option.Option<number>,
   text: string,
   createdAt: number,
+  blocks: ReadonlyArray<Block> = [],
 ): MessageNode =>
   MessageNode.make({
     nodeId,
     parentNodeId,
     role: "user",
     content: sanitize(text),
+    blocks,
     createdAt,
     metadata: null,
   });
@@ -526,21 +636,21 @@ const buildSession = (
     buildSystemNode(nid, parent, `<rules type="always-on"></rules>`, createdAt, false),
   );
 
-  const firstUserText = (() => {
+  const firstUser = (() => {
     for (const m of messages) {
       if (m.role === "user") {
         for (const c of m.content ?? []) {
           if (c.type === "text" && c.text) {
-            return cleanUserText(c.text);
+            return { text: cleanUserText(c.text), blocks: blocksFromClineContent(m.content) };
           }
         }
       }
     }
-    return "";
+    return { text: "", blocks: [] as ReadonlyArray<Block> };
   })();
 
   const nUser = addNode(Option.some(n1), (nid, parent) =>
-    buildUserNode(nid, parent, firstUserText, createdAt),
+    buildUserNode(nid, parent, firstUser.text, createdAt, firstUser.blocks),
   );
   const nSkills = addNode(Option.some(nUser), (nid, parent) =>
     buildSystemNode(nid, parent, "<available_skills></available_skills>", createdAt, false),
@@ -577,7 +687,8 @@ const buildSession = (
           }
           lastToolResultNode = null;
           const parent = Option.some(lastRenderedAssistantNode);
-          addNode(parent, (nid, p) => buildUserNode(nid, p, text, ts));
+          const blocks = blocksFromClineContent(content);
+          addNode(parent, (nid, p) => buildUserNode(nid, p, text, ts, blocks));
           lastRenderedAssistantNode = nodes[nodes.length - 1].nodeId;
         }
       }
@@ -963,10 +1074,15 @@ export const sessionMessages = (session: Session, sessionId: string): Record<str
 
   for (const node of relevantNodes) {
     if (node.role === "user") {
+      const content: Array<unknown> = [{ type: "text", text: node.content }];
+      for (const block of node.blocks) {
+        const mapped = toClineContentBlock(block);
+        if (mapped !== undefined) content.push(mapped);
+      }
       messages.push({
         id: nextId(),
         role: "user",
-        content: [{ type: "text", text: node.content }],
+        content,
         ts: node.createdAt * 1000,
       });
       continue;

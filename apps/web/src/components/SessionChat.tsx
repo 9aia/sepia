@@ -36,7 +36,8 @@ import {
 } from "./ui/alert-dialog";
 
 import type { LiveMessage } from "../lib/liveMessages";
-import type { MessageUsage, RunSpan } from "../lib/types";
+import type { HistoryBlock, MessageUsage, RunSpan } from "../lib/types";
+import { attachmentViews } from "../lib/blocks";
 import { finishReasonLabel, formatUsage, usageLabel } from "../lib/format";
 import { spanNodeLabel } from "../lib/nodes";
 import { cancel, sendPrompt, type StreamStatus } from "../lib/api";
@@ -108,6 +109,7 @@ function RowContent({ row }: { readonly row: ChatRow }) {
       <MessageRow
         role={message.role === "user" ? "user" : "assistant"}
         content={message.content}
+        blocks={message.blocks}
         createdAt={message.createdAt}
         usage={message.usage}
         finishReason={message.finishReason}
@@ -679,18 +681,54 @@ function ModelSelect({ sessionId, agent }: { readonly sessionId: string; readonl
 const formatMessageTime = (ms: number): string =>
   new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+/** Non-text content blocks — inline images and file chips under the text. */
+function Attachments({ blocks }: { readonly blocks: ReadonlyArray<HistoryBlock> }) {
+  const views = attachmentViews(blocks);
+  if (views.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      {views.map((view, i) =>
+        view.kind === "image" ? (
+          <img
+            key={i}
+            src={view.src}
+            alt={view.alt}
+            loading="lazy"
+            className="max-h-48 max-w-full rounded-lg border border-border/60 object-contain"
+          />
+        ) : (
+          <span
+            key={i}
+            title={view.name}
+            className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/60 bg-background/40 px-2 py-1 text-xs text-muted-foreground"
+          >
+            <HugeiconsIcon icon={File01Icon} className="size-3.5 shrink-0" strokeWidth={2} />
+            <span className="min-w-0 truncate">{view.name}</span>
+            {view.detail !== "" && (
+              <span className="shrink-0 text-muted-foreground/60">{view.detail}</span>
+            )}
+          </span>
+        ),
+      )}
+    </div>
+  );
+}
+
 /** ReUI Message anatomy: side-anchored avatar, surface, footer with copy +
  * time. Assistant renders ghost (document-style); user is a tinted bubble
  * aligned to the row's end. */
 function MessageRow({
   role,
   content,
+  blocks,
   createdAt,
   usage,
   finishReason,
 }: {
   readonly role: "user" | "assistant";
   readonly content: string;
+  /** Content blocks the store recorded — attachments render under the text. */
+  readonly blocks?: ReadonlyArray<HistoryBlock>;
   readonly createdAt?: number;
   /** IR v2 token metrics — renders a compact ↑in ↓out in the footer. */
   readonly usage?: MessageUsage;
@@ -714,6 +752,7 @@ function MessageRow({
           ) : (
             <MessageResponse>{content}</MessageResponse>
           )}
+          {blocks !== undefined && <Attachments blocks={blocks} />}
         </BubbleContent>
         <MessageFooter>
           {role === "assistant" ? (

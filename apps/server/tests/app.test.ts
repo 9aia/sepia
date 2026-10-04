@@ -1270,6 +1270,52 @@ describe("createApp", () => {
     ]);
   });
 
+  it("POST /api/sessions/import accepts content blocks on history items", async () => {
+    const { plane } = makeFakePlane();
+    const captured: Session[] = [];
+    const app = createApp(plane, {
+      convert: { dbPath: "/unused", clineDir: "/unused" },
+      importSession: (session) =>
+        Effect.sync(() => {
+          captured.push(session);
+          return "imported-blocks";
+        }),
+    });
+
+    const response = await app(
+      post("/api/sessions/import", {
+        agent: "devin",
+        history: [
+          {
+            role: "user",
+            content: "see attached",
+            createdAt: 1_700_000_000_000,
+            blocks: [
+              { type: "text", text: "see attached" },
+              { type: "image", data: "aGk=", mimeType: "image/png" },
+              // Malformed entries drop rather than fail the import.
+              { type: "mystery" },
+              { nope: true },
+            ],
+          },
+          { role: "assistant", content: "done", createdAt: 1_700_000_001_000 },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    const session = captured[0]!;
+    expect(session.nodes[0]?.blocks).toEqual([
+      { type: "text", text: "see attached" },
+      { type: "image", data: "aGk=", mimeType: "image/png" },
+    ]);
+    expect(session.nodes[1]?.blocks).toEqual([]);
+
+    // And they re-encode on the wire form /export would serve.
+    const reencoded = Conversion.sessionToJson(session).nodes ?? [];
+    expect(reencoded[0]?.blocks).toHaveLength(2);
+  });
+
   it("POST /api/sessions/import maps an executor failure to 500 internal", async () => {
     const { plane } = makeFakePlane();
     const app = createApp(plane, {

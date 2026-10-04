@@ -1,4 +1,5 @@
 import type { HistoryMessage, RunSpan } from "./types";
+import { hasAttachments } from "./blocks";
 import type { LiveMessage } from "./liveMessages";
 import type { SystemContext } from "./systemContext";
 
@@ -63,10 +64,24 @@ export const buildRows = (
   for (const message of history) {
     if (message.role === "system") continue;
     // Empty assistant nodes carry the turn's tool_calls in the IR — the calls
-    // themselves surface as `tool` rows, so a blank bubble is pure noise.
-    if (message.role === "assistant" && message.content.trim() === "") continue;
+    // themselves surface as `tool` rows, so a blank bubble is pure noise. A
+    // message whose only payload is an attachment is not blank, though.
+    if (
+      message.role === "assistant" &&
+      message.content.trim() === "" &&
+      !hasAttachments(message.blocks)
+    ) {
+      continue;
+    }
     const prev = conversation[conversation.length - 1];
-    if (prev !== undefined && prev.role === message.role && prev.content === message.content) {
+    if (
+      prev !== undefined &&
+      prev.role === message.role &&
+      prev.content === message.content &&
+      // Two identical texts that carry different attachments are not the
+      // same turn — devin rewrites prompt text verbatim, attachments included.
+      JSON.stringify(prev.blocks ?? null) === JSON.stringify(message.blocks ?? null)
+    ) {
       continue;
     }
     conversation.push(message);

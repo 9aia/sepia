@@ -7,7 +7,7 @@
 import { Context, Schema, type Effect } from "effect";
 import type { AcpConnection } from "sepia-acp";
 import type { Event } from "sepia-agui";
-import type { Session, TokenUsage, ToolCallStatus } from "sepia-core";
+import type { Block, Session, TokenUsage, ToolCallStatus } from "sepia-core";
 
 /**
  * One run span of a session: which agent on which Sepia node continued it.
@@ -46,6 +46,12 @@ export interface SessionSummary {
 export interface HistoryMessage {
   readonly role: "user" | "assistant" | "tool" | "system";
   readonly content: string;
+  /**
+   * The message's content blocks — present only when the store recorded
+   * non-text content (images, file attachments). `content` is the joined
+   * text projection and stays canonical.
+   */
+  readonly blocks?: ReadonlyArray<Block>;
   readonly createdAt: number;
   readonly toolName?: string;
   /** Token metrics the agent's store recorded for this message. */

@@ -231,6 +231,7 @@ export const make = (
             return {
               role: node.role,
               content: node.content,
+              blocks: node.blocks.length === 0 ? undefined : node.blocks,
               createdAt: node.createdAt * 1000,
               toolName: Option.getOrUndefined(node.toolName),
               usage: Option.getOrUndefined(node.usage),

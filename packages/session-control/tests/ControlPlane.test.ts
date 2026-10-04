@@ -322,6 +322,39 @@ test("returns history in node order with millisecond timestamps", async () => {
   });
 });
 
+test("history surfaces a node's content blocks when the store recorded them", async () => {
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([
+      session("s1", "/work", [
+        new MessageNode({
+          nodeId: 1,
+          role: "user",
+          content: "see attached",
+          createdAt: 10,
+          metadata: null,
+          blocks: [
+            { type: "text", text: "see attached" },
+            { type: "image", data: "aGk=", mimeType: "image/png" },
+            { type: "file", uri: "file:///work/spec.md", name: "spec.md" },
+          ],
+        }),
+        node(2, "assistant", "done", 11),
+      ]),
+    ]),
+  );
+
+  const page = await Effect.runPromise(cp.getHistory("s1"));
+
+  expect(page.messages[0]?.blocks).toEqual([
+    { type: "text", text: "see attached" },
+    { type: "image", data: "aGk=", mimeType: "image/png" },
+    { type: "file", uri: "file:///work/spec.md", name: "spec.md" },
+  ]);
+  // Plain messages carry no blocks field at all.
+  expect(page.messages[1]?.blocks).toBeUndefined();
+});
+
 test("returns the last limit messages and the full node count", async () => {
   const nodes = Array.from({ length: 10 }, (_, index) =>
     node(index + 1, "user", `m${index + 1}`, index + 1),

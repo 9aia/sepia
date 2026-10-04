@@ -5,6 +5,7 @@ import {
   PromptHistoryEntry,
   Session,
   ToolCall,
+  type Block,
   type ToolCallStatus,
   type TokenUsage,
   type ToolResultInfo,
@@ -14,6 +15,127 @@ const toIso = (ts: number): string => new Date(ts * 1000).toISOString();
 
 const finiteNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const stringField = (obj: Record<string, unknown>, key: string): string | undefined =>
+  typeof obj[key] === "string" ? (obj[key] as string) : undefined;
+
+const present = <K extends string>(key: K, value: string | number | undefined) =>
+  value === undefined ? {} : { [key]: value };
+
+/**
+ * One entry of `chisel/acp-content-blocks` — the ACP `ContentBlock` the client
+ * sent — mapped onto the IR union. `resource`/`resource_link` both land on
+ * `file` (embedded vs referenced); kinds the IR can't express are dropped.
+ */
+const blockFromAcp = (raw: unknown): Block | undefined => {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const b = raw as Record<string, unknown>;
+  switch (b.type) {
+    case "text": {
+      const text = stringField(b, "text");
+      return text === undefined ? undefined : { type: "text", text };
+    }
+    case "image":
+      return {
+        type: "image",
+        ...present("data", stringField(b, "data")),
+        ...present("mimeType", stringField(b, "mimeType")),
+        ...present("uri", stringField(b, "uri")),
+      };
+    case "audio":
+      return {
+        type: "audio",
+        ...present("data", stringField(b, "data")),
+        ...present("mimeType", stringField(b, "mimeType")),
+      };
+    case "resource_link":
+      return {
+        type: "file",
+        ...present("uri", stringField(b, "uri")),
+        ...present("name", stringField(b, "name") ?? stringField(b, "title")),
+        ...present("mimeType", stringField(b, "mimeType")),
+        ...present("size", finiteNumber(b.size)),
+      };
+    case "resource": {
+      const res = b.resource;
+      if (res === null || typeof res !== "object") return undefined;
+      const r = res as Record<string, unknown>;
+      return {
+        type: "file",
+        ...present("uri", stringField(r, "uri")),
+        ...present("mimeType", stringField(r, "mimeType")),
+        ...present("text", stringField(r, "text")),
+        ...present("data", stringField(r, "blob")),
+      };
+    }
+    default:
+      return undefined;
+  }
+};
+
+/**
+ * The block list a chat message records under
+ * `metadata.extensions["chisel/acp-content-blocks"]`. Kept only when a
+ * non-text block is present — an all-text list duplicates `content` exactly.
+ */
+export const blocksFromAcp = (raw: unknown): ReadonlyArray<Block> => {
+  if (!Array.isArray(raw)) return [];
+  const blocks = raw.flatMap((item) => {
+    const block = blockFromAcp(item);
+    return block === undefined ? [] : [block];
+  });
+  return blocks.some((block) => block.type !== "text") ? blocks : [];
+};
+
+/**
+ * An IR block back into the ACP shape the `chisel/acp-content-blocks`
+ * extension carries. Embedded files write as `resource`, referenced ones as
+ * `resource_link` — matching how the split arrives on read.
+ */
+const blockToAcp = (block: Block): unknown => {
+  switch (block.type) {
+    case "text":
+      return { type: "text", text: block.text };
+    case "image":
+      return {
+        type: "image",
+        ...present("data", block.data),
+        ...present("mimeType", block.mimeType),
+        ...present("uri", block.uri),
+      };
+    case "audio":
+      return {
+        type: "audio",
+        ...present("data", block.data),
+        ...present("mimeType", block.mimeType),
+      };
+    case "file": {
+      if (block.text !== undefined || block.data !== undefined) {
+        // ACP `resource` (an embedded payload) has no name slot — a named
+        // attachment keeps its name only while it stays a `resource_link`.
+        return {
+          type: "resource",
+          resource: {
+            uri: block.uri ?? "",
+            ...present("mimeType", block.mimeType),
+            ...(block.text !== undefined ? { text: block.text } : { blob: block.data }),
+          },
+        };
+      }
+      return {
+        type: "resource_link",
+        uri: block.uri ?? block.name ?? "",
+        name: block.name ?? block.uri ?? "",
+        ...present("mimeType", block.mimeType),
+        ...present("size", block.size),
+      };
+    }
+  }
+};
+
+/** The extension entry a saved chat_message gets when the node carries blocks. */
+const contentBlocksExtension = (node: MessageNode): Record<string, unknown> =>
+  node.blocks.length === 0 ? {} : { "chisel/acp-content-blocks": node.blocks.map(blockToAcp) };
 
 /** ACP tool-call status → the IR's coarser lifecycle. */
 export const fromAcpToolCallStatus = (status: unknown): ToolCallStatus | undefined => {
@@ -110,7 +232,7 @@ export const buildChatMessage = (node: MessageNode, generationModel: string): un
           request_id: null,
           metrics: null,
           finish_reason: null,
-          extensions: {},
+          extensions: contentBlocksExtension(node),
           created_at: toIso(node.createdAt),
           telemetry: { source: "user", operation: "input" },
         },
@@ -127,7 +249,7 @@ export const buildChatMessage = (node: MessageNode, generationModel: string): un
         "summarized_from" in nodeMeta &&
         nodeMeta.is_system_prefix !== true;
 
-      const extensions: Record<string, unknown> = {};
+      const extensions: Record<string, unknown> = contentBlocksExtension(node);
       if (isRendered && node.toolCalls.length > 0) {
         const ext: Record<string, unknown> = {};
         for (const tc of node.toolCalls) {
@@ -172,6 +294,7 @@ export const buildChatMessage = (node: MessageNode, generationModel: string): un
       const toolName = Option.getOrElse(node.toolName, () => "unknown");
       const result = Option.getOrUndefined(node.toolResult);
       const extensions: Record<string, unknown> = {
+        ...contentBlocksExtension(node),
         "chisel/tool_result_meta": {
           success: result === undefined ? true : result.status !== "error",
           kind: toolName,
@@ -274,6 +397,9 @@ export const parseChatMessage = (
   const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content ?? "");
   const meta = msg.metadata as Record<string, unknown> | null | undefined;
   const extensions = meta?.extensions;
+  const blocks = blocksFromAcp(
+    (extensions as Record<string, unknown> | null | undefined)?.["chisel/acp-content-blocks"],
+  );
   const toolCalls = parseToolCalls(msg.tool_calls, toolCallStatusMap(extensions));
   const thinking =
     msg.thinking && typeof (msg.thinking as any).thinking === "string"
@@ -295,6 +421,7 @@ export const parseChatMessage = (
     parentNodeId,
     role,
     content,
+    blocks,
     toolCalls,
     toolCallId,
     toolName,
@@ -368,6 +495,7 @@ export const applyToolCallOutcomes = (
       parentNodeId: node.parentNodeId,
       role: node.role,
       content: node.content,
+      blocks: node.blocks,
       toolCalls: node.toolCalls.map((tc) => {
         const outcome = outcomes.get(tc.id);
         return outcome === undefined ? tc : withOutcome(tc, outcome);

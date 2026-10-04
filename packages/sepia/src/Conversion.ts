@@ -3,6 +3,7 @@ import * as Cline from "./Cline.js";
 import { ClineStore } from "./ClineStore.js";
 import * as Devin from "./Devin.js";
 import {
+  Block,
   ConversionError,
   MessageNode,
   PromptHistoryEntry,
@@ -221,6 +222,12 @@ export const listSessions = () =>
 export interface ImportedHistoryMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
   readonly content: string;
+  /**
+   * Non-text content the message carried (images, attachments) plus its text
+   * blocks — present only when the store recorded them; `content` alone is
+   * the whole message otherwise.
+   */
+  readonly blocks?: ReadonlyArray<Block>;
   /** Epoch milliseconds. */
   readonly createdAt: number;
   readonly toolName?: string;
@@ -258,6 +265,7 @@ export const sessionFromHistory = (input: {
       parentNodeId: index === 0 ? Option.none<number>() : Option.some(index - 1),
       role: message.role,
       content: message.content,
+      ...(message.blocks === undefined ? {} : { blocks: message.blocks }),
       createdAt: historyMessageSeconds(message.createdAt, now),
       toolName:
         typeof message.toolName === "string" && message.toolName !== ""
@@ -345,6 +353,7 @@ const MessageNodeJson = Schema.Struct({
   parentNodeId: Schema.OptionFromUndefinedOr(Schema.Number),
   role: Role,
   content: Schema.String,
+  blocks: Schema.optionalWith(Schema.Array(Block), { default: () => [] }),
   toolCalls: Schema.optionalWith(Schema.Array(ToolCallJson), { default: () => [] }),
   toolCallId: Schema.OptionFromUndefinedOr(Schema.String),
   toolName: Schema.OptionFromUndefinedOr(Schema.String),

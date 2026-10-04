@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { Option } from "effect";
 import {
   applyToolCallOutcomes,
+  blocksFromAcp,
   buildChatMessage,
   defaultCogsJson,
   defaultSessionMetadata,
@@ -509,6 +510,219 @@ describe("tool call outcomes", () => {
     const plain = [node({ role: "user" })];
     const outcomes = new Map([["c1", { status: "success" as const }]]);
     expect(applyToolCallOutcomes(plain, outcomes)[0]).toBe(plain[0]);
+  });
+});
+
+describe("content blocks", () => {
+  it("reads the ACP content-block extension into node.blocks", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "user",
+        content: "check this",
+        metadata: {
+          extensions: {
+            "chisel/acp-content-blocks": [
+              { type: "text", text: "check this" },
+              {
+                type: "image",
+                data: "aGk=",
+                mimeType: "image/png",
+                uri: "file:///shot.png",
+              },
+              { type: "audio", data: "AAE=", mimeType: "audio/wav" },
+              {
+                type: "resource_link",
+                uri: "file:///work/spec.md",
+                name: "spec.md",
+                mimeType: "text/markdown",
+                size: 512,
+              },
+              {
+                type: "resource",
+                resource: { uri: "file:///work/a.ts", mimeType: "text/plain", text: "const a=1" },
+              },
+              {
+                type: "resource",
+                resource: { uri: "file:///work/b.bin", blob: "AAEC" },
+              },
+              { type: "mystery" },
+              "junk",
+            ],
+          },
+        },
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+
+    expect(parsed.blocks).toEqual([
+      { type: "text", text: "check this" },
+      { type: "image", data: "aGk=", mimeType: "image/png", uri: "file:///shot.png" },
+      { type: "audio", data: "AAE=", mimeType: "audio/wav" },
+      {
+        type: "file",
+        uri: "file:///work/spec.md",
+        name: "spec.md",
+        mimeType: "text/markdown",
+        size: 512,
+      },
+      { type: "file", uri: "file:///work/a.ts", mimeType: "text/plain", text: "const a=1" },
+      { type: "file", uri: "file:///work/b.bin", data: "AAEC" },
+    ]);
+  });
+
+  it("keeps an all-text block list off the node — content already covers it", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "user",
+        content: "plain",
+        metadata: {
+          extensions: {
+            "chisel/acp-content-blocks": [
+              { type: "text", text: "plain" },
+              { type: "text" },
+              { type: "embedded" },
+            ],
+          },
+        },
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    expect(parsed.blocks).toEqual([]);
+
+    // A block list that isn't a list, or no extension at all, reads empty too.
+    expect(
+      parseChatMessage(
+        { role: "user", content: "x", metadata: { extensions: {} } },
+        null,
+        0,
+        Option.none(),
+        0,
+      ).blocks,
+    ).toEqual([]);
+    expect(
+      parseChatMessage(
+        {
+          role: "user",
+          content: "x",
+          metadata: {
+            extensions: { "chisel/acp-content-blocks": { type: "text", text: "x" } },
+          },
+        },
+        null,
+        0,
+        Option.none(),
+        0,
+      ).blocks,
+    ).toEqual([]);
+  });
+
+  it("reads resource_link fields the store may carry in place of name", () => {
+    expect(
+      blocksFromAcp([
+        { type: "resource_link", uri: "file:///a", title: "Doc A" },
+        { type: "resource", resource: 42 },
+        { type: "resource", resource: {} },
+      ]),
+    ).toEqual([{ type: "file", uri: "file:///a", name: "Doc A" }, { type: "file" }]);
+  });
+
+  it("writes node.blocks back as the chisel/acp-content-blocks extension", () => {
+    const user = buildChatMessage(
+      node({
+        role: "user",
+        content: "with file",
+        blocks: [
+          { type: "text", text: "with file" },
+          { type: "image", data: "aGk=", mimeType: "image/png" },
+          { type: "file", uri: "file:///work/spec.md", name: "spec.md", size: 512 },
+          { type: "file", uri: "file:///a.ts", text: "const a=1", mimeType: "text/plain" },
+          { type: "file", name: "orphan.bin", data: "AAEC" },
+          { type: "file", name: "name-only.txt" },
+          { type: "file" },
+          { type: "audio", data: "AAE=", mimeType: "audio/wav" },
+        ],
+      }),
+      "m",
+    ) as { metadata: { extensions: Record<string, unknown> } };
+
+    expect(user.metadata.extensions["chisel/acp-content-blocks"]).toEqual([
+      { type: "text", text: "with file" },
+      { type: "image", data: "aGk=", mimeType: "image/png" },
+      {
+        type: "resource_link",
+        uri: "file:///work/spec.md",
+        name: "spec.md",
+        size: 512,
+      },
+      {
+        type: "resource",
+        resource: { uri: "file:///a.ts", mimeType: "text/plain", text: "const a=1" },
+      },
+      { type: "resource", resource: { uri: "", blob: "AAEC" } },
+      { type: "resource_link", uri: "name-only.txt", name: "name-only.txt" },
+      { type: "resource_link", uri: "", name: "" },
+      { type: "audio", data: "AAE=", mimeType: "audio/wav" },
+    ]);
+
+    // Parse it back — the extension round-trips to the same IR blocks.
+    const reparsed = parseChatMessage(user, null, 0, Option.none(), 0);
+    expect(reparsed.blocks).toEqual([
+      { type: "text", text: "with file" },
+      { type: "image", data: "aGk=", mimeType: "image/png" },
+      { type: "file", uri: "file:///work/spec.md", name: "spec.md", size: 512 },
+      { type: "file", uri: "file:///a.ts", mimeType: "text/plain", text: "const a=1" },
+      // ACP's embedded `resource` has no name slot — "orphan.bin" is lost.
+      { type: "file", uri: "", data: "AAEC" },
+      { type: "file", uri: "name-only.txt", name: "name-only.txt" },
+      { type: "file", uri: "", name: "" },
+      { type: "audio", data: "AAE=", mimeType: "audio/wav" },
+    ]);
+  });
+
+  it("writes no extension when the node carries no blocks", () => {
+    const user = buildChatMessage(node({ role: "user" }), "m") as {
+      metadata: { extensions: Record<string, unknown> };
+    };
+    expect(user.metadata.extensions).toEqual({});
+  });
+
+  it("merges blocks into assistant and tool extensions", () => {
+    const blocks = [{ type: "image", uri: "https://x/y.png" }] as const;
+    const assistant = buildChatMessage(node({ role: "assistant", blocks: [...blocks] }), "m") as {
+      metadata: { extensions: Record<string, unknown> };
+    };
+    expect(assistant.metadata.extensions["chisel/acp-content-blocks"]).toEqual([
+      { type: "image", uri: "https://x/y.png" },
+    ]);
+
+    const tool = buildChatMessage(
+      node({ role: "tool", toolCallId: Option.some("c1"), blocks: [...blocks] }),
+      "m",
+    ) as { metadata: { extensions: Record<string, unknown> } };
+    expect(tool.metadata.extensions["chisel/acp-content-blocks"]).toEqual([
+      { type: "image", uri: "https://x/y.png" },
+    ]);
+    expect(tool.metadata.extensions["chisel/tool_result_meta"]).toMatchObject({ success: true });
+  });
+
+  it("survives the applyToolCallOutcomes rebuild", () => {
+    const blocks = [{ type: "file", uri: "file:///a" }] as const;
+    const nodes = [
+      node({
+        role: "assistant",
+        toolCalls: [ToolCall.make({ id: "c1", name: "exec", arguments: {} })],
+        blocks: [...blocks],
+      }),
+    ];
+    const outcomes = new Map([["c1", { status: "success" as const }]]);
+    const enriched = applyToolCallOutcomes(nodes, outcomes);
+    expect(enriched[0]?.blocks).toEqual([{ type: "file", uri: "file:///a" }]);
   });
 });
 

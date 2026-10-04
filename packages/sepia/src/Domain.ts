@@ -46,6 +46,53 @@ export class ToolCall extends Schema.Class<ToolCall>("ToolCall")({
   ),
 }) {}
 
+/**
+ * One piece of message content beyond the flat `content` string — the shape
+ * mirrors what the stores actually carry: Devin persists the ACP
+ * `ContentBlock[]` a prompt was sent with under
+ * `metadata.extensions["chisel/acp-content-blocks"]`, and Cline/Claude-style
+ * transcripts keep `image`/`document` entries in the message `content` array.
+ *
+ * When `blocks` is populated it holds the complete ordered block list —
+ * text blocks included — so `content` stays the joined text projection and
+ * writes can replay the list verbatim.
+ */
+export const TextBlock = Schema.Struct({
+  type: Schema.Literal("text"),
+  text: Schema.String,
+});
+
+/** `data` is base64; `uri` covers linked (not embedded) images. */
+export const ImageBlock = Schema.Struct({
+  type: Schema.Literal("image"),
+  data: Schema.optional(Schema.String),
+  mimeType: Schema.optional(Schema.String),
+  uri: Schema.optional(Schema.String),
+});
+
+export const AudioBlock = Schema.Struct({
+  type: Schema.Literal("audio"),
+  data: Schema.optional(Schema.String),
+  mimeType: Schema.optional(Schema.String),
+});
+
+/**
+ * A file the message references (`uri`/`name` — ACP `resource_link`) or
+ * embeds (`text`/`data` — ACP `resource`, base64 for `data`).
+ */
+export const FileBlock = Schema.Struct({
+  type: Schema.Literal("file"),
+  uri: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  mimeType: Schema.optional(Schema.String),
+  size: Schema.optional(Schema.Number),
+  text: Schema.optional(Schema.String),
+  data: Schema.optional(Schema.String),
+});
+
+export const Block = Schema.Union(TextBlock, ImageBlock, AudioBlock, FileBlock);
+export type Block = Schema.Schema.Type<typeof Block>;
+
 export class PromptHistoryEntry extends Schema.Class<PromptHistoryEntry>("PromptHistoryEntry")({
   content: Schema.String,
   timestamp: Schema.Number,
@@ -59,6 +106,13 @@ export class MessageNode extends Schema.Class<MessageNode>("MessageNode")({
   ),
   role: Role,
   content: Schema.String,
+  /**
+   * The message's content blocks, populated only when the store recorded
+   * non-text content (images, file attachments). `content` remains the
+   * canonical text projection — joined text blocks — so readers that don't
+   * know about blocks lose nothing.
+   */
+  blocks: Schema.Array(Block).pipe(Schema.optionalWith({ default: () => [] })),
   toolCalls: Schema.Array(ToolCall).pipe(Schema.optionalWith({ default: () => [] })),
   toolCallId: Schema.OptionFromSelf(Schema.String).pipe(
     Schema.optionalWith({ default: () => Option.none() }),

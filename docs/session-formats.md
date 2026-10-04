@@ -314,7 +314,7 @@ Fields each agent persists vs. what the IR normalizes:
 | Tool timing                  | ✅ tool_call_timing                      | ❌                                 | ✅ timingInfo                        | ❌                                        | ❌                              |
 | Reasoning/thinking           | ✅ text + **signature**                  | ✅ thinking                        | ⚠️ redacted-reasoning (opaque)       | ✅ thinking / redacted_thinking           | ⚠️ text only, signature dropped |
 | File diffs / edits           | via tool args                            | via editor args                    | ✅ suggestedCodeBlocks/diffHistories | via Edit tool args + file-history backups | ❌ args only                    |
-| Images/attachments           | ❓                                       | ❌                                 | ✅ images, attached chunks           | ✅ image/document blocks                  | ❌ content is string            |
+| Images/attachments           | ✅ chisel/acp-content-blocks (ACP)       | image/document blocks              | ✅ images, attached chunks           | ✅ image/document blocks                  | ✅ blocks (non-text only)       |
 | Sub-agent/task trees         | ⚠️ subagent_heads table                  | ✅ parent_session_id/agent_id/team | ✅ subComposerIds                    | ✅ isSidechain + Task tool                | ❌                              |
 | Checkpoints/file history     | ❌                                       | ✅ checkpoint-scratch git          | ✅ originalFileStates                | ✅ file-history-snapshot                  | ❌                              |
 | Compaction/summaries         | ✅ summarized_from row meta              | ✅ .compaction.json                | ✅ summarizedComposers               | ✅ isCompactSummary+compact_boundary      | ⚠️ raw in node.metadata         |
@@ -347,9 +347,11 @@ Fields each agent persists vs. what the IR normalizes:
    round-tripped (currently dropped at `Devin.ts:163-166`).
 5. **Per-message model + requestId** — mixed-model sessions (sub-agents,
    model switches) can't be represented; `session.model` is single.
-6. **Attachments / content blocks** — `content: string` cannot express
-   Claude's image/document blocks or Cursor's attached file chunks;
-   images in user prompts are silently lost on import.
+6. ~~Attachments / content blocks~~ — **done**: `MessageNode.blocks` holds
+   the ordered block list (`text|image|audio|file`) when a store records
+   non-text content — Devin's `chisel/acp-content-blocks` (ACP blocks) and
+   Cline `image`/`document` entries map in and out; `content` stays the
+   text projection.
 7. **Lifecycle/status on Session** — Cline's `status`/`exit_code`/`pid`,
    Devin's `hidden`/locks, Claude's implicit completeness. Needed for a
    correct "resumable vs. live vs. failed" listing.

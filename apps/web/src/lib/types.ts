@@ -84,9 +84,29 @@ export interface MessageUsage {
 
 export type ToolCallStatus = "pending" | "success" | "error";
 
+/**
+ * One content block of a history message — the wire form of the IR `Block`
+ * union (sepia-core Domain.ts). Present only when the agent's store recorded
+ * non-text content; `content` remains the joined text projection.
+ */
+export type HistoryBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data?: string; mimeType?: string; uri?: string }
+  | { type: "audio"; data?: string; mimeType?: string }
+  | {
+      type: "file";
+      uri?: string;
+      name?: string;
+      mimeType?: string;
+      size?: number;
+      text?: string;
+      data?: string;
+    };
+
 export interface HistoryMessage {
   role: HistoryRole;
   content: string;
+  blocks?: HistoryBlock[];
   createdAt: number;
   toolName?: string;
   usage?: MessageUsage;
