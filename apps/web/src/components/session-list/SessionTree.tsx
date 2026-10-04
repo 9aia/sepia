@@ -466,8 +466,21 @@ export function SessionTree({
     return { dataMap: finalData, childrenMap: finalChildren, rootChildren: compactedRoots, dirIds };
   }, [sessions]);
 
+  // Controlled expandedItems: headless-tree's internal state and useTree's
+  // injected React state drift apart (identical-object bail + stale merges
+  // undo collapses). Owning expansion in React keeps them consistent.
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const [, bumpRender] = useState(0);
   const tree = useTree<TreeData>({
     rootItemId: ROOT_ID,
+    state: { expandedItems: expanded },
+    setExpandedItems: setExpanded,
+    // config.setState fires on every internal change; force a re-render for
+    // non-controlled state (focus, selection). Deferred — setConfig can call
+    // it mid-render.
+    setState: () => {
+      queueMicrotask(() => bumpRender((v) => v + 1));
+    },
     getItemName: (item) => {
       const data = item.getItemData();
       if (data?.kind === "dir") return data.label;
@@ -481,31 +494,37 @@ export function SessionTree({
     },
     initialState: { expandedItems: rootChildren },
     features: [syncDataLoaderFeature],
+    // Folders toggle via the item's built-in onClick — toggling here too
+    // would double-collapse and re-expand. primaryAction is only for
+    // the select behavior.
     onPrimaryAction: (item) => {
       const data = item.getItemData();
       if (data?.kind === "session") {
         onSelect(data.session.id);
-      } else if (item.isExpanded()) {
-        item.collapse();
-      } else {
-        item.expand();
       }
     },
     indent: 14,
   });
 
-  // Auto-expand groups that appear (new sessions, filter hits) without
-  // disturbing groups the user collapsed manually. rebuildTree is required
-  // because headless-tree only materializes items on an explicit rebuild —
-  // the dataLoader alone doesn't trigger one.
-  const dirsKey = dirIds.join(",");
+  // headless-tree only materializes items on an explicit rebuild — the
+  // dataLoader alone doesn't trigger one.
   useEffect(() => {
-    tree.applySubStateUpdate("expandedItems", (prev) => [
-      ...new Set([...(prev ?? []), ...dirsKey.split(",").filter(Boolean)]),
-    ]);
     tree.rebuildTree();
-    // sessions covers adds/updates inside an existing dir that dirsKey misses.
-  }, [sessions, dirsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions]);
+
+  // Auto-expand only dirs that haven't been seen yet — a blanket merge here
+  // re-ran whenever sessions changed identity and undid user collapses.
+  const dirsKey = dirIds.join(",");
+  const seenDirs = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const fresh = dirsKey.split(",").filter((id) => id !== "" && !seenDirs.current.has(id));
+    seenDirs.current = new Set(dirsKey.split(",").filter(Boolean));
+    if (fresh.length === 0) return;
+    tree.applySubStateUpdate("expandedItems", (prev) => [...new Set([...(prev ?? []), ...fresh])]);
+    tree.rebuildTree();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirsKey]);
 
   const items = tree.getItems();
 
