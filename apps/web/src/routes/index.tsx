@@ -23,7 +23,7 @@ function Home() {
   }, [sessions, selectedId]);
 
   return (
-    <div className="layout">
+    <div className="app-shell">
       {isMock && <div className="mock-banner">MOCK DATA — no API server connected</div>}
       <SessionList />
       <ChatPanel />
