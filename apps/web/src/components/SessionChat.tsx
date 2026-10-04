@@ -469,7 +469,7 @@ export function SessionChat({
       <MessageScrollerProvider autoScroll defaultScrollPosition="end">
         <MessageScroller className="relative flex min-h-0 flex-1 flex-col">
           {streamStatus === "reconnecting" && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+            <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
               <span className="flex items-center gap-2 rounded-full border border-border bg-popover/95 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur-sm">
                 <HugeiconsIcon
                   icon={Loading03Icon}

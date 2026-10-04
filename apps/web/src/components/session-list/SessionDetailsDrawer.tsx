@@ -10,12 +10,14 @@ import {
   PinIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
+import { ChevronDownIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
 import { sessionKey } from "../../lib/format";
 import { useRenameSession } from "../../hooks/query/useRenameSession";
 import { useAgents } from "../../hooks/query/useAgents";
 import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { useConvertSession, useProjects } from "../../hooks/query/useProjects";
 import {
   AlertDialog,
@@ -220,18 +222,6 @@ export function SessionDetailsDrawer({
 
             <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-4 py-3">
               <div className="mt-2 divide-y divide-border/50">
-                <Detail label="ID" copyValue={session.id}>
-                  <span className="font-mono text-xs">{session.id}</span>
-                </Detail>
-                <Detail label="Working directory" copyValue={session.cwd}>
-                  <span className="font-mono text-xs" title={session.cwd}>
-                    {session.cwd}
-                  </span>
-                </Detail>
-                <Detail label="Agent">
-                  <Badge variant="secondary">{session.agent}</Badge>
-                </Detail>
-                <Detail label="Source">{session.source}</Detail>
                 <Detail label="Last active">{new Date(session.updatedAt).toLocaleString()}</Detail>
                 <Detail label="Status">
                   {session.locked ? (
@@ -248,6 +238,30 @@ export function SessionDetailsDrawer({
                   )}
                 </Detail>
               </div>
+              <Collapsible className="mt-2">
+                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-md px-1 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
+                  Advanced
+                  <HugeiconsIcon
+                    icon={ChevronDownIcon}
+                    strokeWidth={2}
+                    className="size-3.5 transition-transform group-data-open/collapsible:rotate-180"
+                  />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="divide-y divide-border/50">
+                  <Detail label="ID" copyValue={session.id}>
+                    <span className="font-mono text-xs">{session.id}</span>
+                  </Detail>
+                  <Detail label="Working directory" copyValue={session.cwd}>
+                    <span className="font-mono text-xs" title={session.cwd}>
+                      {session.cwd}
+                    </span>
+                  </Detail>
+                  <Detail label="Agent">
+                    <Badge variant="secondary">{session.agent}</Badge>
+                  </Detail>
+                  <Detail label="Source">{session.source}</Detail>
+                </CollapsibleContent>
+              </Collapsible>
             </div>
 
             <DrawerFooter className="flex-col gap-2">
