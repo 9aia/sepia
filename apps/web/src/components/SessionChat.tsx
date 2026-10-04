@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { HistoryMessage } from "../lib/types";
 import type { LiveMessage } from "../lib/liveMessages";
@@ -92,8 +92,19 @@ function RowContent({ row }: { readonly row: Row }) {
 }
 
 /** Virtualized rows inside the message-scroller viewport. */
-function ChatRows({ rows }: { readonly rows: ReadonlyArray<Row> }) {
+function ChatRows({
+  rows,
+  hasNextPage,
+  fetchingNext,
+  onLoadEarlier,
+}: {
+  readonly rows: ReadonlyArray<Row>;
+  readonly hasNextPage: boolean;
+  readonly fetchingNext: boolean;
+  onLoadEarlier: () => void;
+}) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => viewportRef.current,
@@ -101,9 +112,32 @@ function ChatRows({ rows }: { readonly rows: ReadonlyArray<Row> }) {
     overscan: 10,
   });
 
+  // Scroll-to-top pagination: the sentinel at the top of the content triggers
+  // the next page; preserveScrollOnPrepend keeps the reader's position.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const root = viewportRef.current;
+    if (sentinel === null || root === null || !hasNextPage) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) onLoadEarlier();
+      },
+      { root, rootMargin: "80px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNextPage, onLoadEarlier]);
+
   return (
     <MessageScrollerViewport ref={viewportRef}>
       <MessageScrollerContent className="px-4">
+        {hasNextPage && (
+          <div ref={sentinelRef} className="flex justify-center py-2" aria-hidden={!fetchingNext}>
+            {fetchingNext && (
+              <span className="text-xs text-muted-foreground">Loading earlier…</span>
+            )}
+          </div>
+        )}
         <div className="relative mt-2.5" style={{ height: `${virtualizer.getTotalSize()}px` }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index];
@@ -161,7 +195,6 @@ export function SessionChat({
   onTakeover,
 }: SessionChatProps) {
   const historyQuery = useHistory(sessionId);
-  const historyPages = historyQuery.data?.pages ?? [];
   const history = useMemo(() => flattenHistory(historyQuery.data), [historyQuery.data]);
   const [submitting, setSubmitting] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
@@ -190,26 +223,21 @@ export function SessionChat({
       .finally(() => setSubmitting(false));
   };
 
+  const loadEarlier = useCallback(() => {
+    if (!historyQuery.isFetchingNextPage) void historyQuery.fetchNextPage();
+  }, [historyQuery]);
+
   return (
     <>
-      {historyQuery.hasNextPage && (
-        <div className="flex justify-center py-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void historyQuery.fetchNextPage()}
-            disabled={historyQuery.isFetchingNextPage}
-          >
-            {historyQuery.isFetchingNextPage
-              ? "Loading…"
-              : `Load earlier messages (${historyPages.at(-1)?.start ?? 0} more)`}
-          </Button>
-        </div>
-      )}
       <MessageScrollerProvider autoScroll defaultScrollPosition="end">
         <MessageScroller className="relative flex min-h-0 flex-1 flex-col">
           {rows.length > 0 ? (
-            <ChatRows rows={rows} />
+            <ChatRows
+              rows={rows}
+              hasNextPage={historyQuery.hasNextPage}
+              fetchingNext={historyQuery.isFetchingNextPage}
+              onLoadEarlier={loadEarlier}
+            />
           ) : (
             <MessageScrollerViewport>
               <p className="p-4 text-muted-foreground">
