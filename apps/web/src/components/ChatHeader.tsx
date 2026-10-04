@@ -61,7 +61,6 @@ export function ChatHeader({ session, readOnly, running, streamStatus }: ChatHea
         </span>
       </button>
       <div className="flex shrink-0 items-center gap-2">
-        {readOnly && <Badge variant="secondary">read-only</Badge>}
         {(session.busy || running) && <Badge variant="destructive">busy</Badge>}
         {streamStatus === "reconnecting" && (
           <Badge variant="outline" role="status">
