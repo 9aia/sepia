@@ -169,7 +169,10 @@ export function ChatPanel() {
   // Optimistic — returns the id so a failed send can roll the row back.
   const addUserMessage = useCallback((text: string): string => {
     const id = `user-${Date.now()}`;
-    setLiveMessages((messages) => [...messages, { id, role: "user", content: text, done: true }]);
+    setLiveMessages((messages) => [
+      ...messages,
+      { id, createdAt: Date.now(), role: "user", content: text, done: true },
+    ]);
     return id;
   }, []);
   const removeLiveMessage = useCallback((id: string): void => {

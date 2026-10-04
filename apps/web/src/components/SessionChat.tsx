@@ -26,7 +26,8 @@ import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
-import { Bubble, BubbleContent } from "./bubble";
+import { BubbleContent } from "./bubble";
+import { Message, MessageAvatar, MessageContent, MessageCopy, MessageFooter } from "./message";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { parseSystemContext, type SystemContext } from "../lib/systemContext";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -71,24 +72,12 @@ function RowContent({ row }: { readonly row: ChatRow }) {
         </Tool>
       );
     }
-    const role = message.role === "user" ? "user" : "assistant";
-    const error = parseErrorPayload(message.content);
     return (
-      <Bubble
-        align={role === "user" ? "end" : "start"}
-        variant={role === "user" ? "default" : "ghost"}
-      >
-        <div className={`flex flex-col gap-1.5 ${role === "user" ? "items-end" : "items-start"}`}>
-          <RowAvatar role={role} />
-          <BubbleContent variant={role === "user" ? "default" : "ghost"}>
-            {error !== null ? (
-              <ErrorMessage error={error} />
-            ) : (
-              <MessageResponse>{message.content}</MessageResponse>
-            )}
-          </BubbleContent>
-        </div>
-      </Bubble>
+      <MessageRow
+        role={message.role === "user" ? "user" : "assistant"}
+        content={message.content}
+        createdAt={message.createdAt}
+      />
     );
   }
 
@@ -123,26 +112,12 @@ function RowContent({ row }: { readonly row: ChatRow }) {
       </Reasoning>
     );
   }
-  const role = message.role === "user" ? "user" : "assistant";
-  // Agents put JSON error payloads in assistant content — a user pasting the
-  // same JSON should still render as text.
-  const error = role === "assistant" ? parseErrorPayload(message.content) : null;
   return (
-    <Bubble
-      align={role === "user" ? "end" : "start"}
-      variant={role === "user" ? "default" : "ghost"}
-    >
-      <div className={`flex flex-col gap-1.5 ${role === "user" ? "items-end" : "items-start"}`}>
-        <RowAvatar role={role} />
-        <BubbleContent variant={role === "user" ? "default" : "ghost"}>
-          {error !== null ? (
-            <ErrorMessage error={error} />
-          ) : (
-            <MessageResponse>{message.content}</MessageResponse>
-          )}
-        </BubbleContent>
-      </div>
-    </Bubble>
+    <MessageRow
+      role={message.role === "user" ? "user" : "assistant"}
+      content={message.content}
+      createdAt={message.createdAt}
+    />
   );
 }
 
@@ -611,5 +586,48 @@ function ModelSelect({ sessionId, agent }: { readonly sessionId: string; readonl
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+const formatMessageTime = (ms: number): string =>
+  new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/** ReUI Message anatomy: side-anchored avatar, surface, footer with copy +
+ * time. Assistant renders ghost (document-style); user is a tinted bubble
+ * aligned to the row's end. */
+function MessageRow({
+  role,
+  content,
+  createdAt,
+}: {
+  readonly role: "user" | "assistant";
+  readonly content: string;
+  readonly createdAt?: number;
+}) {
+  // Agents put JSON error payloads in assistant content — a user pasting the
+  // same JSON should still render as text.
+  const error = role === "assistant" ? parseErrorPayload(content) : null;
+  return (
+    <Message align={role === "user" ? "end" : "start"}>
+      <MessageAvatar>
+        <RowAvatar role={role} />
+      </MessageAvatar>
+      <MessageContent>
+        <BubbleContent
+          variant={role === "user" ? "default" : "ghost"}
+          className={role === "user" ? "max-w-[80%]" : "max-w-none"}
+        >
+          {error !== null ? (
+            <ErrorMessage error={error} />
+          ) : (
+            <MessageResponse>{content}</MessageResponse>
+          )}
+        </BubbleContent>
+        <MessageFooter>
+          <MessageCopy text={() => content} />
+          {createdAt !== undefined && <span>{formatMessageTime(createdAt)}</span>}
+        </MessageFooter>
+      </MessageContent>
+    </Message>
   );
 }

@@ -3,6 +3,7 @@ import type { AgUiEvent } from "./api";
 /** A message assembled from live AG-UI stream events (or an optimistic echo). */
 export interface LiveMessage {
   readonly id: string;
+  readonly createdAt?: number;
   readonly role: "user" | "assistant" | "reasoning" | "tool" | "status";
   readonly content: string;
   readonly toolName?: string;
