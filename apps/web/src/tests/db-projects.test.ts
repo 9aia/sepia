@@ -1,7 +1,9 @@
 import { QueryClient } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { createProject, deleteProject, listProjects, renameProject } from "../lib/api";
 import { createProjectsCollection } from "../lib/db-projects";
+import { projectKey } from "../lib/format";
+import { nodesStore } from "../lib/nodes";
 import type { Project } from "../lib/types";
 import { queryKeys } from "../hooks/query/keys";
 
@@ -29,6 +31,11 @@ describe("projectsCollection", () => {
     vi.clearAllMocks();
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockedListProjects.mockResolvedValue({ projects });
+    nodesStore.setState(() => ({ self: null, peers: [] }));
+  });
+
+  afterEach(() => {
+    nodesStore.setState(() => ({ self: null, peers: [] }));
   });
 
   it("syncs GET /api/projects into items keyed by id", async () => {
@@ -99,11 +106,35 @@ describe("projectsCollection", () => {
     // What useCreateProject's onSuccess does — the cache write syncs in.
     const { project } = await createProject("Three");
     queryClient.setQueryData<Project[]>(queryKeys.projects, (old = []) => [
-      ...old.filter((p) => p.id !== project.id),
+      ...old.filter((p) => projectKey(p) !== projectKey(project)),
       project,
     ]);
     expect(collection.get("p3")?.name).toBe("Three");
     expect(mockedCreateProject).toHaveBeenCalledWith("Three");
+  });
+
+  it("create flow in multi-node: the `local` tag lands under the merged `local:` key", async () => {
+    // A registered peer makes listAllProjects stamp every row with its node
+    // segment; the created project must carry the same tag or its key won't
+    // match what the next merged fetch produces.
+    nodesStore.setState(() => ({
+      self: null,
+      peers: [{ id: "node_peer1", name: "peerbox", url: "https://peer.example", token: null }],
+    }));
+    mockedCreateProject.mockResolvedValue({ project: { id: "p3", name: "Three" } });
+    const collection = createProjectsCollection(queryClient);
+    await collection.preload();
+    expect(collection.has("local:p1")).toBe(true);
+    expect(collection.has("node_peer1:p1")).toBe(true);
+
+    const { project } = await createProject("Three");
+    const tagged = { ...project, node: "local" };
+    expect(projectKey(tagged)).toBe("local:p3");
+    queryClient.setQueryData<Project[]>(queryKeys.projects, (old = []) => [
+      ...old.filter((p) => projectKey(p) !== projectKey(tagged)),
+      tagged,
+    ]);
+    expect(collection.get("local:p3")?.name).toBe("Three");
   });
 
   it("mirrors query-cache updates into the collection", async () => {

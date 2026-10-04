@@ -29,7 +29,7 @@ import { useCreateProject } from "../hooks/query/useProjects";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { modelArgsFor } from "../lib/models";
-import { resolveSession, sessionKey } from "../lib/format";
+import { bareProjectId, projectKey, resolveSession, sessionKey } from "../lib/format";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
 import { ButtonGroup } from "./ui/button-group";
@@ -365,18 +365,25 @@ export function SessionList() {
           onSubmit={(_state, name) => {
             setNewProjectFor(null);
             createProject.mutate(
-              { name },
+              // Create on the session's own node — a local-only project can't
+              // hold a peer session (and the merged list keys it `node:id`).
+              { name, node: newProjectSession?.node },
               {
                 onSuccess: ({ project }) => {
-                  const ids = newProjectSession?.projectIds ?? [];
-                  if (newProjectSession !== undefined && !ids.includes(project.id)) {
-                    patch.mutate({
-                      // newProjectFor is the agent:id key — the API needs the bare id.
-                      id: newProjectSession.id,
-                      agent: newProjectSession.agent,
-                      patch: { projectIds: [...ids, project.id] },
-                    });
-                  }
+                  if (newProjectSession === undefined) return;
+                  const key = projectKey(project);
+                  // Drop any prior reference to this project (bare or
+                  // namespaced) so the merged list never sees it twice.
+                  const ids = newProjectSession.projectIds.filter(
+                    (id) => id !== key && bareProjectId(id) !== project.id,
+                  );
+                  patch.mutate({
+                    // newProjectFor is the agent:id key — the API needs the bare id.
+                    id: newProjectSession.id,
+                    agent: newProjectSession.agent,
+                    node: newProjectSession.node,
+                    patch: { projectIds: [...ids, key] },
+                  });
                 },
               },
             );
