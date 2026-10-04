@@ -480,19 +480,21 @@ export function SessionChat({
               </span>
             </div>
           )}
-          {running && !liveMessages.some((m) => !m.done) && (
-            <div className="flex items-center gap-2 px-4 py-3 text-sm">
-              <RowAvatar role="assistant" />
-              <span className="shimmer-text">Thinking…</span>
-            </div>
-          )}
           {rows.length > 0 ? (
-            <ChatRows
-              rows={rows}
-              hasNextPage={historyQuery.hasNextPage}
-              fetchingNext={historyQuery.isFetchingNextPage}
-              onLoadEarlier={loadEarlier}
-            />
+            <>
+              <ChatRows
+                rows={rows}
+                hasNextPage={historyQuery.hasNextPage}
+                fetchingNext={historyQuery.isFetchingNextPage}
+                onLoadEarlier={loadEarlier}
+              />
+              {running && !liveMessages.some((m) => !m.done) && (
+                <div className="mx-auto flex w-full max-w-3xl items-center gap-2 px-4 py-3 text-sm">
+                  <RowAvatar role="assistant" />
+                  <span className="shimmer-text">Thinking…</span>
+                </div>
+              )}
+            </>
           ) : (
             <MessageScrollerViewport>
               {historyQuery.isLoading ? (
