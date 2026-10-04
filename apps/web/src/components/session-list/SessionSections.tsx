@@ -173,11 +173,11 @@ export function SectionHeader({
   readonly action?: React.ReactNode;
 }) {
   return (
-    <div className="group/section flex items-center justify-between px-3 pt-3 pb-1">
+    <div className="flex items-center justify-between px-3 pt-3 pb-1">
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-1 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        className="flex items-center gap-1 rounded-md px-1 py-0.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
         aria-expanded={open}
       >
         {label}
@@ -211,7 +211,7 @@ function FlatSection({
   if (sessions.length === 0) return null;
   const shown = showAll ? sessions : sessions.slice(0, limit);
   return (
-    <section>
+    <section className="group/section">
       <SectionHeader label={label} open={open} onToggle={() => setOpen((v) => !v)} />
       {open && (
         <>
@@ -315,7 +315,7 @@ function ProjectsSection({
 
   const [open, setOpen] = useState(true);
   return (
-    <section>
+    <section className="group/section">
       <SectionHeader
         label="Projects"
         open={open}

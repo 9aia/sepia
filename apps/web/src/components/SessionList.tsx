@@ -236,22 +236,24 @@ export function SessionList() {
           />
         )}
 
-        <SectionHeader
-          label="Folders"
-          open={foldersOpen}
-          onToggle={() => setFoldersOpen((v) => !v)}
-        />
-        {foldersOpen && (
-          <SessionTree
-            sessions={filtered}
-            selectedId={selectedId}
-            hotkeyTarget={asideRef}
-            onSelect={setSelectedId}
-            onDetails={(id, rename) => setDetailsFor({ id, rename })}
-            onDelete={(id) => deleteMutation.mutate(id)}
-            onNewSession={setCreateCwd}
+        <section className="group/section">
+          <SectionHeader
+            label="Folders"
+            open={foldersOpen}
+            onToggle={() => setFoldersOpen((v) => !v)}
           />
-        )}
+          {foldersOpen && (
+            <SessionTree
+              sessions={filtered}
+              selectedId={selectedId}
+              hotkeyTarget={asideRef}
+              onSelect={setSelectedId}
+              onDetails={(id, rename) => setDetailsFor({ id, rename })}
+              onDelete={(id) => deleteMutation.mutate(id)}
+              onNewSession={setCreateCwd}
+            />
+          )}
+        </section>
       </ScrollArea>
 
       <SessionDetailsDrawer
