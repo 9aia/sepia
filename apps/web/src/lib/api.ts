@@ -4,6 +4,7 @@ import type {
   CreateSessionInput,
   HistoryPage,
   SessionSummary,
+  UserInfo,
 } from "./types";
 
 const TOKEN_KEY = "sepia:token";
@@ -95,6 +96,11 @@ export async function attach(id: string, options?: { takeover?: boolean }): Prom
     method: "POST",
     body: options?.takeover === true ? JSON.stringify({ takeover: true }) : undefined,
   });
+}
+
+export async function getUserInfo(): Promise<UserInfo> {
+  const data = await request<{ user: UserInfo }>("/api/user");
+  return data.user;
 }
 
 export async function listAgents(): Promise<AgentInfo[]> {

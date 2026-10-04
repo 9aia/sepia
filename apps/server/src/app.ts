@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { hostname, userInfo } from "node:os";
 import { Effect, Either } from "effect";
 import { encodeSse, sseHeaders, type Event } from "sepia-agui";
 import type {
@@ -253,6 +254,24 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         status: response.status,
         headers: { ...Object.fromEntries(response.headers), ...cors },
       });
+    }
+
+    if (method === "GET" && segmentsEqual(segments, ["api", "user"])) {
+      const info = userInfo();
+      return jsonResponse(
+        {
+          user: {
+            username: info.username,
+            homedir: info.homedir,
+            shell: info.shell,
+            hostname: hostname(),
+            platform: process.platform,
+            arch: process.arch,
+          },
+        },
+        200,
+        cors,
+      );
     }
 
     if (method === "GET" && segmentsEqual(segments, ["api", "agents"])) {

@@ -18,9 +18,10 @@ import {
   type SortKey,
   type StatusFilter,
 } from "./session-list/FilterBar";
+import { settingsStore } from "../lib/settings";
 import { SessionTree } from "./session-list/SessionTree";
 import { SessionDetailsDrawer } from "./session-list/SessionDetailsDrawer";
-import { ShortcutsFooter } from "./session-list/ShortcutsFooter";
+import { UserProfile } from "./session-list/UserProfile";
 
 const DATE_CUTOFFS: Record<Exclude<DateFilter, "all">, number> = {
   day: 24 * 60 * 60 * 1000,
@@ -51,6 +52,7 @@ export function SessionList() {
   const { data: agents = [] } = useAgents();
   const deleteMutation = useDeleteSession();
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
+  const settings = useStore(settingsStore);
   const [filter, setFilter] = useState("");
   const [agentFilter, setAgentFilter] = useState<string[]>([]);
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
@@ -113,7 +115,8 @@ export function SessionList() {
         <CreateForm
           cwdRef={cwdRef}
           agents={agents}
-          defaultCwd={sessions[0]?.cwd}
+          defaultCwd={settings.defaultCwd ?? sessions[0]?.cwd}
+          defaultAgent={settings.defaultAgent}
           open={advancedOpen}
           onOpenChange={setAdvancedOpen}
         />
@@ -183,7 +186,7 @@ export function SessionList() {
         onClose={() => setDetails(null)}
       />
 
-      <ShortcutsFooter modKey={modKey} />
+      <UserProfile modKey={modKey} />
     </Sidebar>
   );
 }

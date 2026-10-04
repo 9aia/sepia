@@ -54,3 +54,12 @@ export interface PermissionOption {
   label: string;
   kind?: string;
 }
+
+export interface UserInfo {
+  username: string;
+  homedir: string;
+  shell: string | null;
+  hostname: string;
+  platform: string;
+  arch: string;
+}

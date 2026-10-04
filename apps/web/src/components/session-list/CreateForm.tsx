@@ -11,19 +11,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 interface CreateFormProps {
   readonly cwdRef: RefObject<HTMLInputElement | null>;
   readonly agents: ReadonlyArray<AgentInfo>;
-  /** Pre-fills cwd — the most recently updated session's directory. */
+  /** Pre-fills cwd — the settings default or most recent session's directory. */
   readonly defaultCwd: string | undefined;
+  /** Preselects the agent — settings default, else first registered. */
+  readonly defaultAgent: string | null;
   readonly open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export function CreateForm({ cwdRef, agents, defaultCwd, open, onOpenChange }: CreateFormProps) {
+export function CreateForm({
+  cwdRef,
+  agents,
+  defaultCwd,
+  defaultAgent,
+  open,
+  onOpenChange,
+}: CreateFormProps) {
   const createMutation = useCreateSession();
   const form = useForm({
     defaultValues: {
       cwd: defaultCwd ?? "",
       title: "",
-      agent: agents[0]?.id ?? "devin",
+      agent: defaultAgent ?? agents[0]?.id ?? "devin",
     },
     onSubmit: async ({ value }) => {
       try {
@@ -49,12 +58,12 @@ export function CreateForm({ cwdRef, agents, defaultCwd, open, onOpenChange }: C
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultCwd]);
   useEffect(() => {
-    const first = agents[0]?.id;
-    if (first !== undefined && form.getFieldValue("agent") === "") {
-      form.setFieldValue("agent", first);
+    const next = defaultAgent ?? agents[0]?.id;
+    if (next !== undefined && form.getFieldValue("agent") === "") {
+      form.setFieldValue("agent", next);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents]);
+  }, [agents, defaultAgent]);
 
   // One-click create with the prefilled defaults; opens the advanced section
   // instead when there's nothing to prefill.
