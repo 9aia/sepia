@@ -133,6 +133,8 @@ function RowContent({ row }: { readonly row: ChatRow }) {
         status={message.toolStatus}
         exitCode={message.exitCode}
         durationMs={message.durationMs}
+        diffs={message.diffs}
+        locations={message.locations}
       />
     );
   }

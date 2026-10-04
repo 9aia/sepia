@@ -1,5 +1,11 @@
 import type { AgUiEvent } from "./api";
-import type { HistoryBlock, MessageUsage, ToolCallStatus } from "./types";
+import type {
+  HistoryBlock,
+  MessageUsage,
+  ToolCallStatus,
+  ToolFileDiff,
+  ToolLocation,
+} from "./types";
 
 /** A message assembled from live AG-UI stream events (or an optimistic echo). */
 export interface LiveMessage {
@@ -12,6 +18,9 @@ export interface LiveMessage {
   /** Tool-call input JSON, kept apart from `content` (the result) so each can render on its own. */
   readonly args?: string;
   readonly toolName?: string;
+  /** Files the call touched / changed — the ACP `locations`/`diffs` payload. */
+  readonly locations?: ReadonlyArray<ToolLocation>;
+  readonly diffs?: ReadonlyArray<ToolFileDiff>;
   /** Outcome of the tool call once the stream settles it (IR v2 fields ride along). */
   readonly toolStatus?: ToolCallStatus;
   readonly exitCode?: number;
@@ -44,6 +53,56 @@ const num = (v: unknown): number | undefined =>
 
 const nonEmpty = (v: unknown): string | undefined =>
   typeof v === "string" && v !== "" ? v : undefined;
+
+const record = (v: unknown): Record<string, unknown> | undefined =>
+  typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined;
+
+/** `{path, line?}` entries off a live event; undefined when nothing parses. */
+const locationsOf = (v: unknown): ReadonlyArray<ToolLocation> | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  const out: ToolLocation[] = [];
+  for (const item of v) {
+    const loc = record(item);
+    const path = nonEmpty(loc?.["path"]);
+    if (loc === undefined || path === undefined) continue;
+    const line = num(loc["line"]);
+    out.push(line === undefined ? { path } : { path, line });
+  }
+  return out.length === 0 ? undefined : out;
+};
+
+/** `{path, oldText?, newText?}` entries off a live event. */
+const diffsOf = (v: unknown): ReadonlyArray<ToolFileDiff> | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  const out: ToolFileDiff[] = [];
+  for (const item of v) {
+    const diff = record(item);
+    const path = nonEmpty(diff?.["path"]);
+    if (diff === undefined || path === undefined) continue;
+    const oldText = typeof diff["oldText"] === "string" ? (diff["oldText"] as string) : undefined;
+    const newText = typeof diff["newText"] === "string" ? (diff["newText"] as string) : undefined;
+    out.push({
+      path,
+      ...(oldText === undefined ? {} : { oldText }),
+      ...(newText === undefined ? {} : { newText }),
+    });
+  }
+  return out.length === 0 ? undefined : out;
+};
+
+/**
+ * File fields arriving on a tool event (or the `acp:tool_call_update`
+ * custom event). A present snapshot replaces the row's — the agent sends
+ * the call's current footprint, not a delta to append.
+ */
+const fileFields = (event: AgUiEvent | Record<string, unknown>) => {
+  const locations = locationsOf(event["locations"]);
+  const diffs = diffsOf(event["diffs"]);
+  return {
+    ...(locations === undefined ? {} : { locations }),
+    ...(diffs === undefined ? {} : { diffs }),
+  };
+};
 
 /** IR names win; ACP-style statuses map onto them. */
 const toolStatusOf = (v: unknown): ToolCallStatus | undefined => {
@@ -134,6 +193,7 @@ export function applyAguiEvent(
         toolName: typeof event.toolCallName === "string" ? event.toolCallName : undefined,
         content: "",
         done: false,
+        ...fileFields(event),
       });
     case "TOOL_CALL_ARGS":
       return update(messages, toolCallId, (m) => ({ ...m, args: (m.args ?? "") + delta }));
@@ -152,7 +212,17 @@ export function applyAguiEvent(
         ...(toolStatus !== undefined ? { toolStatus } : {}),
         ...(exitCode !== undefined ? { exitCode } : {}),
         ...(durationMs !== undefined ? { durationMs } : {}),
+        ...fileFields(event),
       }));
+    }
+    case "CUSTOM": {
+      // The Translator's mid-call file carrier — `{toolCallId, locations?,
+      // diffs?}` — lands while the tool event stream is still open.
+      if (event.name !== "acp:tool_call_update") return messages.slice();
+      const value = record(event.value);
+      const id = nonEmpty(value?.["toolCallId"]);
+      if (value === undefined || id === undefined) return messages.slice();
+      return update(messages, id, (m) => ({ ...m, ...fileFields(value) }));
     }
     default:
       return messages.slice();

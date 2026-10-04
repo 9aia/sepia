@@ -42,6 +42,36 @@ describe("applyAguiEvent", () => {
     expect(m[0]?.done).toBe(true);
   });
 
+  it("folds locations/diffs from tool events into the live row", () => {
+    let m = applyAguiEvent(
+      [],
+      ev("TOOL_CALL_START", {
+        toolCallId: "t1",
+        toolCallName: "edit_file",
+        locations: [{ path: "/a", line: 3 }],
+        diffs: [{ path: "/a", oldText: "x", newText: "y" }],
+      }),
+    );
+    expect(m[0]?.locations).toEqual([{ path: "/a", line: 3 }]);
+    expect(m[0]?.diffs).toEqual([{ path: "/a", oldText: "x", newText: "y" }]);
+
+    // A mid-call snapshot rides the custom event; the latest payload wins.
+    m = applyAguiEvent(
+      m,
+      ev("CUSTOM", {
+        name: "acp:tool_call_update",
+        value: { toolCallId: "t1", diffs: [{ path: "/b", newText: "created" }] },
+      }),
+    );
+    expect(m[0]?.diffs).toEqual([{ path: "/b", newText: "created" }]);
+    expect(m[0]?.locations).toEqual([{ path: "/a", line: 3 }]);
+
+    m = applyAguiEvent(m, ev("TOOL_CALL_END", { toolCallId: "t1", status: "completed" }));
+    expect(m[0]?.done).toBe(true);
+    expect(m[0]?.toolStatus).toBe("success");
+    expect(m[0]?.diffs).toEqual([{ path: "/b", newText: "created" }]);
+  });
+
   it("content for a missing messageId is a no-op", () => {
     const m = applyAguiEvent([], ev("TEXT_MESSAGE_CONTENT", { messageId: "ghost", delta: "x" }));
     expect(m).toHaveLength(0);

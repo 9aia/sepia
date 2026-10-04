@@ -35,7 +35,61 @@ test("normalizes tool_call", () => {
     status: "in_progress",
     toolKind: "read",
     rawInput: { path: "/a" },
+    locations: [{ path: "/a", line: 3 }],
+    diffs: [],
+  });
+});
+
+test("normalizes diff content on tool_call and tool_call_update", () => {
+  const content = [
+    { type: "diff", path: "/a", oldText: "x", newText: "y" },
+    { type: "diff", path: "/b", newText: "new file" },
+    { type: "content", content: { type: "text", text: "done" } },
+    { type: "diff" },
+  ];
+  expect(
+    normalizeUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t1",
+      title: "Edit file",
+      status: "in_progress",
+      kind: "edit",
+      rawInput: {},
+      content,
+    }),
+  ).toEqual({
+    kind: "tool_call",
+    toolCallId: "t1",
+    title: "Edit file",
+    status: "in_progress",
+    toolKind: "edit",
+    rawInput: {},
+    locations: [],
+    diffs: [
+      { path: "/a", oldText: "x", newText: "y" },
+      { path: "/b", newText: "new file" },
+    ],
+  });
+  expect(
+    normalizeUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t1",
+      status: "completed",
+      content,
+      locations: [{ path: "/a" }],
+      rawInput: { path: "/a" },
+    }),
+  ).toEqual({
+    kind: "tool_call_update",
+    toolCallId: "t1",
+    status: "completed",
+    rawInput: { path: "/a" },
+    rawOutput: undefined,
     locations: [{ path: "/a" }],
+    diffs: [
+      { path: "/a", oldText: "x", newText: "y" },
+      { path: "/b", newText: "new file" },
+    ],
   });
 });
 

@@ -102,11 +102,15 @@ export function createTranslator(options?: {
         const events: Event[] = [];
         closeText(events);
         closeReasoning(events);
+        // `locations`/`diffs` are non-standard fields — the AG-UI schemas are
+        // passthrough, so they ride the event to the client verbatim.
         events.push({
           type: EventType.TOOL_CALL_START,
           toolCallId: update.toolCallId,
           toolCallName: update.title,
-        });
+          ...(update.locations.length === 0 ? {} : { locations: update.locations }),
+          ...(update.diffs.length === 0 ? {} : { diffs: update.diffs }),
+        } as Event);
         events.push({
           type: EventType.TOOL_CALL_ARGS,
           toolCallId: update.toolCallId,
@@ -117,13 +121,14 @@ export function createTranslator(options?: {
       }
       case "tool_call_update": {
         const events: Event[] = [];
-        if ("rawInput" in update && update.rawInput !== undefined) {
+        if (update.rawInput !== undefined) {
           events.push({
             type: EventType.TOOL_CALL_ARGS,
             toolCallId: update.toolCallId,
             delta: toJson(update.rawInput),
           });
         }
+        const { locations, diffs } = update;
         if (
           (update.status === "completed" || update.status === "failed") &&
           openToolCalls.has(update.toolCallId)
@@ -136,8 +141,27 @@ export function createTranslator(options?: {
               content: toJson(update.rawOutput),
             });
           }
-          events.push({ type: EventType.TOOL_CALL_END, toolCallId: update.toolCallId });
+          events.push({
+            type: EventType.TOOL_CALL_END,
+            toolCallId: update.toolCallId,
+            status: update.status,
+            ...(locations === undefined ? {} : { locations }),
+            ...(diffs === undefined ? {} : { diffs }),
+          } as Event);
           openToolCalls.delete(update.toolCallId);
+        } else if (
+          (locations !== undefined || diffs !== undefined) &&
+          openToolCalls.has(update.toolCallId)
+        ) {
+          // A mid-call file update has no AG-UI tool event to ride — a named
+          // custom event carries it so the live row can fold it in.
+          events.push(
+            custom("acp:tool_call_update", {
+              toolCallId: update.toolCallId,
+              ...(locations === undefined ? {} : { locations }),
+              ...(diffs === undefined ? {} : { diffs }),
+            }),
+          );
         }
         return events;
       }

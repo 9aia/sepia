@@ -46,6 +46,7 @@ test("closes text before a tool call and orders the tool events", () => {
       toolKind: "read",
       rawInput: { path: "/tmp/a" },
       locations: [],
+      diffs: [],
     }),
     ...translator.translate({
       kind: "tool_call_update",
@@ -122,6 +123,7 @@ test("endTurn is idempotent about closing events", () => {
       toolKind: "other",
       rawInput: {},
       locations: [],
+      diffs: [],
     }),
     ...translator.endTurn(),
   ];

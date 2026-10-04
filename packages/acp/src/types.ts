@@ -27,6 +27,18 @@ export interface AcpSessionInfo {
 
 export interface ToolCallLocation {
   readonly path: string;
+  readonly line?: number;
+}
+
+/**
+ * A file change reported in a tool call's `content` — the ACP
+ * `{type:"diff", path, oldText?, newText?}` entries. Absent `oldText` marks
+ * a create, absent `newText` a delete.
+ */
+export interface ToolCallDiff {
+  readonly path: string;
+  readonly oldText?: string;
+  readonly newText?: string;
 }
 
 /** Normalized subset of ACP `session/update` notifications that we render. */
@@ -42,13 +54,17 @@ export type AcpSessionUpdate =
       readonly toolKind: string;
       readonly rawInput: unknown;
       readonly locations: ReadonlyArray<ToolCallLocation>;
+      readonly diffs: ReadonlyArray<ToolCallDiff>;
     }
   | {
       readonly kind: "tool_call_update";
       readonly toolCallId: string;
       readonly status: string;
       readonly title?: string;
+      readonly rawInput?: unknown;
       readonly rawOutput?: unknown;
+      readonly locations?: ReadonlyArray<ToolCallLocation>;
+      readonly diffs?: ReadonlyArray<ToolCallDiff>;
     }
   | {
       readonly kind: "plan";

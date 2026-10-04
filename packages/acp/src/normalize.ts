@@ -2,6 +2,7 @@ import type {
   AcpSessionUpdate,
   PermissionOption,
   PermissionRequest,
+  ToolCallDiff,
   ToolCallLocation,
 } from "./types.js";
 
@@ -24,9 +25,36 @@ export const asNumberOrNull = (value: unknown): number | null => {
 
 const textOf = (content: unknown): string => asString(asRecord(content).text) ?? "";
 
-const locationOf = (value: unknown): ToolCallLocation => ({
-  path: asString(asRecord(value).path) ?? "",
-});
+const locationOf = (value: unknown): ToolCallLocation => {
+  const loc = asRecord(value);
+  const line = asNumberOrNull(loc.line);
+  return { path: asString(loc.path) ?? "", ...(line === null ? {} : { line }) };
+};
+
+/**
+ * `diff` entries of a tool call's `content` — `{type:"diff", path, oldText?,
+ * newText?}`. Other content kinds (terminal output, wrapped content blocks)
+ * are not file changes and stay out.
+ */
+const diffOf = (value: unknown): ToolCallDiff | null => {
+  const c = asRecord(value);
+  if (asString(c.type) !== "diff") return null;
+  const path = asString(c.path);
+  if (path === undefined) return null;
+  const oldText = asString(c.oldText);
+  const newText = asString(c.newText);
+  return {
+    path,
+    ...(oldText === undefined ? {} : { oldText }),
+    ...(newText === undefined ? {} : { newText }),
+  };
+};
+
+const diffsOf = (content: unknown): ReadonlyArray<ToolCallDiff> =>
+  asArray(content).flatMap((item) => {
+    const diff = diffOf(item);
+    return diff === null ? [] : [diff];
+  });
 
 const optionOf = (value: unknown): PermissionOption => {
   const option = asRecord(value);
@@ -57,15 +85,21 @@ export const normalizeUpdate = (update: unknown): AcpSessionUpdate => {
         toolKind: asString(u.kind) ?? "",
         rawInput: u.rawInput,
         locations: asArray(u.locations).map(locationOf),
+        diffs: diffsOf(u.content),
       };
     case "tool_call_update": {
       const title = asString(u.title);
+      const locations = asArray(u.locations).map(locationOf);
+      const diffs = diffsOf(u.content);
       return {
         kind: "tool_call_update",
         toolCallId: asString(u.toolCallId) ?? "",
         status: asString(u.status) ?? "",
         ...(title === undefined ? {} : { title }),
+        ...(u.rawInput === undefined ? {} : { rawInput: u.rawInput }),
         rawOutput: u.rawOutput,
+        ...(locations.length === 0 ? {} : { locations }),
+        ...(diffs.length === 0 ? {} : { diffs }),
       };
     }
     case "plan":

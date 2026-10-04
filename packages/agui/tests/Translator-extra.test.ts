@@ -1,7 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { EventType } from "@ag-ui/core";
 import type { ToolCallArgsEvent } from "@ag-ui/core";
-import type { AcpSessionUpdate } from "sepia-acp";
 import { createTranslator } from "../src/Translator.js";
 
 const types = (events: ReadonlyArray<{ type: EventType }>): EventType[] =>
@@ -18,15 +17,15 @@ test("a tool_call_update carrying rawInput emits another TOOL_CALL_ARGS", () => 
       toolKind: "execute",
       rawInput: { cmd: "ls" },
       locations: [],
+      diffs: [],
     }),
     ...translator.translate({
       kind: "tool_call_update",
       toolCallId: "call-1",
       status: "in_progress",
-      // `rawInput` rides along on real devin updates although the frozen
-      // AcpSessionUpdate type doesn't declare it — the translator reads it.
+      // `rawInput` rides along on real devin updates — a second ARGS frame.
       rawInput: { cmd: "ls -la" },
-    } as AcpSessionUpdate),
+    }),
   ];
   const args = events.filter(
     (event): event is ToolCallArgsEvent => event.type === EventType.TOOL_CALL_ARGS,
@@ -46,6 +45,7 @@ test("a completed tool_call_update without rawOutput skips TOOL_CALL_RESULT", ()
       toolKind: "execute",
       rawInput: {},
       locations: [],
+      diffs: [],
     }),
     ...translator.translate({
       kind: "tool_call_update",
@@ -71,6 +71,7 @@ test("a failed status also closes the tool call", () => {
       toolKind: "execute",
       rawInput: {},
       locations: [],
+      diffs: [],
     }),
     ...translator.translate({
       kind: "tool_call_update",
@@ -93,10 +94,70 @@ test("an in-progress update on an open call emits no END", () => {
     toolKind: "execute",
     rawInput: {},
     locations: [],
+    diffs: [],
   });
   expect(
     translator.translate({ kind: "tool_call_update", toolCallId: "call-1", status: "running" }),
   ).toEqual([]);
+});
+
+test("forwards locations and diffs on the tool events", () => {
+  const translator = createTranslator({ threadId: "t", runId: "r", messageId: "m" });
+  const start = translator.translate({
+    kind: "tool_call",
+    toolCallId: "call-1",
+    title: "edit_file",
+    status: "pending",
+    toolKind: "edit",
+    rawInput: { path: "/a" },
+    locations: [{ path: "/a", line: 2 }],
+    diffs: [{ path: "/a", oldText: "x", newText: "y" }],
+  });
+  expect(start[0]).toMatchObject({
+    type: EventType.TOOL_CALL_START,
+    locations: [{ path: "/a", line: 2 }],
+    diffs: [{ path: "/a", oldText: "x", newText: "y" }],
+  });
+
+  const end = translator.translate({
+    kind: "tool_call_update",
+    toolCallId: "call-1",
+    status: "completed",
+    diffs: [{ path: "/b", newText: "created" }],
+  });
+  expect(end.at(-1)).toMatchObject({
+    type: EventType.TOOL_CALL_END,
+    status: "completed",
+    diffs: [{ path: "/b", newText: "created" }],
+  });
+});
+
+test("a mid-call file update rides a custom event", () => {
+  const translator = createTranslator({ threadId: "t", runId: "r", messageId: "m" });
+  translator.translate({
+    kind: "tool_call",
+    toolCallId: "call-1",
+    title: "edit_file",
+    status: "pending",
+    toolKind: "edit",
+    rawInput: {},
+    locations: [],
+    diffs: [],
+  });
+  expect(
+    translator.translate({
+      kind: "tool_call_update",
+      toolCallId: "call-1",
+      status: "in_progress",
+      locations: [{ path: "/a" }],
+    }),
+  ).toEqual([
+    {
+      type: EventType.CUSTOM,
+      name: "acp:tool_call_update",
+      value: { toolCallId: "call-1", locations: [{ path: "/a" }] },
+    },
+  ]);
 });
 
 test("startRun resets state so a second run mints fresh ids", () => {
