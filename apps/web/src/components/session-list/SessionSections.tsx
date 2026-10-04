@@ -314,6 +314,11 @@ function ProjectsSection({
                 strokeWidth={2}
                 className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
               />
+              <HugeiconsIcon
+                icon={FolderLibraryIcon}
+                strokeWidth={2}
+                className="size-4 shrink-0 text-muted-foreground"
+              />
               <span className="min-w-0 flex-1 truncate font-medium" title={project.name}>
                 {project.name}
               </span>
