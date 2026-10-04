@@ -91,10 +91,8 @@ html.light {
     outline-color: var(--ring);
   }
   *:focus-visible {
-    /* Tailwind ring = box-shadow over these vars — a visible gap between
-     * the element edge and the ring. Outlines get the same offset. */
-    --tw-ring-offset-width: 4px;
-    --tw-ring-offset-color: var(--background);
+    /* Outline-based focus gets the same gap the ring-offset-4 utilities
+     * give ring-based focus. */
     outline-offset: 4px;
   }
 }

@@ -96,7 +96,7 @@ function SectionSessionRow({
         <ContextMenuTrigger className="group/row relative block">
           <button
             type="button"
-            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent/60 focus-visible:ring-1 focus-visible:ring-primary/50 ${
+            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent/60 focus-visible:ring-1 focus-visible:ring-offset-4 focus-visible:ring-offset-background focus-visible:ring-primary/50 ${
               selected ? "bg-accent/80" : ""
             }`}
             onClick={() => onSelect(sessionKey(session))}
