@@ -181,22 +181,24 @@ function FlatSection({
   const shown = showAll ? sessions : sessions.slice(0, limit);
   return (
     <section>
-      <h3 className="flex items-center gap-1.5 px-3 pt-3 pb-0.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+      <h3 className="flex items-center gap-1.5 px-3 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />
         {label}
       </h3>
-      {shown.map((session) => (
-        <SectionSessionRow
-          key={session.id}
-          session={session}
-          selected={session.id === selectedId}
-          {...handlers}
-        />
-      ))}
+      <div className="flex flex-col gap-0.5">
+        {shown.map((session) => (
+          <SectionSessionRow
+            key={session.id}
+            session={session}
+            selected={session.id === selectedId}
+            {...handlers}
+          />
+        ))}
+      </div>
       {sessions.length > limit && (
         <button
           type="button"
-          className="w-full px-3 py-1 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+          className="mt-0.5 w-full px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
           onClick={() => setShowAll((v) => !v)}
         >
           {showAll ? "Show less" : `Show ${sessions.length - limit} more`}
@@ -281,7 +283,7 @@ function ProjectsSection({
 
   return (
     <section>
-      <div className="flex items-center justify-between px-3 pt-3 pb-0.5">
+      <div className="flex items-center justify-between px-3 pt-3 pb-1">
         <h3 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} className="size-3.5" />
           Projects
@@ -358,10 +360,10 @@ function ProjectsSection({
               </DropdownMenuContent>
             </DropdownMenu>
             {open && (
-              <div className="ml-4 border-l border-border/50 pl-1">
+              <div className="ml-4 flex flex-col gap-0.5 border-l border-border/50 pl-1.5">
                 {members.length === 0 && (
                   <p className="px-3 py-1 text-xs text-muted-foreground">
-                    No sessions — use &quot;Move to project&quot; on a session.
+                    No sessions — use &quot;Manage in projects&quot; on a session.
                   </p>
                 )}
                 {members.map((session) => (
