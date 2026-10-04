@@ -67,6 +67,11 @@ values. Highlights — the full reference lives in `DEPLOY.md`:
 - `SEPIA_DB` — Devin store path; opened **read-only** (`layerReadonly`).
 - `SEPIA_CLINE_DIR` (default `~/.cline/data`) — Cline session dirs merged into
   `GET /api/sessions` via `ClineRepository` (read-only overlay).
+- `SEPIA_CLAUDE_DIR` (default `~/.claude`) — Claude Code `projects/*.jsonl`
+  transcripts merged into `GET /api/sessions` via `ClaudeCodeRepository`
+  (read-only overlay). Live attach/prompt needs `claude-agent-acp`
+  (`@agentclientprotocol/claude-agent-acp`); without it Claude sessions are
+  list/history only.
 - `SEPIA_ORIGINS`, `SEPIA_AGENT_<ID>_COMMAND`.
 - `SEPIA_IDLE_TTL_MS`/`SEPIA_SWEEP_MS` — idle live-session detach.
 - `SEPIA_LOCK_TTL_MS`, `SEPIA_HISTORY_LIMIT`, `SEPIA_SSE_KEEPALIVE_MS`.

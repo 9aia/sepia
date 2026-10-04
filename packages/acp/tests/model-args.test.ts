@@ -20,6 +20,11 @@ describe("modelArgs", () => {
     expect(modelArgs("devin", undefined, ["f1"])).toEqual(["--refusal-fallback", "f1"]);
   });
 
+  it("claude takes no spawn-time model flags", () => {
+    expect(modelArgs("claude", "claude-opus-4-5", ["f1"])).toEqual([]);
+    expect(modelArgs("claude", undefined, undefined)).toEqual([]);
+  });
+
   it("other agents get --model only", () => {
     expect(modelArgs("cursor", "m1", ["f1"])).toEqual(["--model", "m1"]);
     expect(modelArgs("cursor", undefined, undefined)).toEqual([]);
@@ -30,7 +35,7 @@ describe("resolveAgent — error details", () => {
   it("lists the known agents, including overrides", () => {
     const override: AgentSpec = { id: "custom", label: "C", command: ["c"] };
     expect(() => resolveAgent("nope", [override])).toThrow(
-      'Unknown agent "nope"; known agents: custom, devin, cline',
+      'Unknown agent "nope"; known agents: custom, devin, cline, claude',
     );
   });
 
@@ -41,7 +46,7 @@ describe("resolveAgent — error details", () => {
 });
 
 describe("builtinAgents", () => {
-  it("devin and cline are the only builtins", () => {
-    expect(builtinAgents.map((a) => a.id)).toEqual(["devin", "cline"]);
+  it("devin, cline and claude are the builtins", () => {
+    expect(builtinAgents.map((a) => a.id)).toEqual(["devin", "cline", "claude"]);
   });
 });

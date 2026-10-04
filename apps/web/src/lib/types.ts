@@ -1,4 +1,4 @@
-export type AgentKind = "devin" | "cline";
+export type AgentKind = "devin" | "cline" | "claude";
 
 /**
  * One run span of a session — which agent on which node continued it. The

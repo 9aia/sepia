@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import { Effect, Layer, ManagedRuntime } from "effect";
-import { ClineRepository, SessionRepository, SqliteStorage } from "sepia-core";
+import {
+  ClaudeCodeRepository,
+  ClineRepository,
+  SessionRepository,
+  SqliteStorage,
+} from "sepia-core";
 import { builtinAgents, spawnAgent } from "sepia-acp";
 import { ControlPlane, layer as controlPlaneLayer, mergeRepositories } from "sepia-session-control";
 import { createApp } from "./app";
@@ -52,15 +57,20 @@ export const startServer = async (env: ServerEnv): Promise<ReturnType<typeof Bun
     };
   });
 
-  // Overlay Cline's on-disk sessions onto the Devin store so the UI lists both.
-  // The overlay is read-only and degrades to empty when the dir is missing.
+  // Overlay Cline's and Claude Code's on-disk sessions onto the Devin store
+  // so the UI lists all three. Both overlays are read-only and degrade to
+  // empty when the dir is missing.
   const clineDir = process.env.SEPIA_CLINE_DIR ?? `${homedir()}/.cline/data`;
+  const claudeDir = process.env.SEPIA_CLAUDE_DIR ?? `${homedir()}/.claude`;
 
   const repoLayer = Layer.unwrapEffect(
     Effect.gen(function* () {
       const devin = yield* SessionRepository;
       const cline = ClineRepository.makeClineSessionRepository({ dataDir: clineDir });
-      return Layer.succeed(SessionRepository, mergeRepositories(devin, [cline]));
+      const claude = ClaudeCodeRepository.makeClaudeCodeSessionRepository({
+        projectsDir: `${claudeDir}/projects`,
+      });
+      return Layer.succeed(SessionRepository, mergeRepositories(devin, [cline, claude]));
     }).pipe(Effect.provide(SqliteStorage.layerReadonly(env.dbPath))),
   );
 

@@ -40,8 +40,9 @@ const repo = (
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect);
 
 describe("agentForBackend", () => {
-  it("maps cline backends to cline, everything else to devin", () => {
+  it("maps each store backend to its agent, everything else to devin", () => {
     expect(agentForBackend("cline")).toBe("cline");
+    expect(agentForBackend("claude")).toBe("claude");
     expect(agentForBackend("windsurf")).toBe("devin");
     expect(agentForBackend("anything")).toBe("devin");
   });

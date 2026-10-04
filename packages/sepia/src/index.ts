@@ -1,5 +1,7 @@
 export * from "./Domain.js";
 export * from "./Storage.js";
+export * as ClaudeCode from "./ClaudeCode.js";
+export * as ClaudeCodeRepository from "./ClaudeCodeRepository.js";
 export * as Cline from "./Cline.js";
 export * as ClineIndex from "./ClineIndex.js";
 export * as ClineRepository from "./ClineRepository.js";

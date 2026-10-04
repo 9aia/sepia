@@ -3,7 +3,7 @@ import type { Session, SessionRepositoryService } from "sepia-core";
 
 /** Maps a store backend to the agent that can resume it. */
 export const agentForBackend = (backendType: string): string =>
-  backendType === "cline" ? "cline" : "devin";
+  backendType === "cline" || backendType === "claude" ? backendType : "devin";
 
 /**
  * Overlays one primary repository (Devin's store) with extra read sources

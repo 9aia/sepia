@@ -17,6 +17,8 @@ const ALLOWED_ENV_KEYS = [
   "LC_ALL",
   "TERM",
   "WINDSURF_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "CLAUDE_CODE_OAUTH_TOKEN",
 ] as const;
 
 /**
