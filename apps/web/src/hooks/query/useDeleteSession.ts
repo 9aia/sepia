@@ -3,36 +3,38 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { deleteSession } from "../../lib/api";
 import { sepiaStore, setSelectedId } from "../../lib/store";
 import { sessionsCollection } from "../../lib/db";
-import { resolveSession, sessionKey } from "../../lib/format";
+import { findSessionRow, sessionKey } from "../../lib/format";
+import { nodeTarget } from "../../lib/nodes";
 import { queryKeys } from "./keys";
 
 export const useDeleteSession = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, agent }: { id: string; agent?: string }) => {
-      // Ids collide across agents; `agent:id` is the collection key. A bare
-      // id (old links) resolves by id only, like resolveSession elsewhere.
-      const scoped = agent === undefined || agent === "" ? id : `${agent}:${id}`;
-      const row = resolveSession([...sessionsCollection.state.values()], scoped);
+    mutationFn: async ({ id, agent, node }: { id: string; agent?: string; node?: string }) => {
+      // Ids collide across agents and nodes; locate the row the way
+      // resolveSession would — collection key is `node:agent:id` (or
+      // `agent:id` single-node). Bare ids resolve on the local node.
+      const row = findSessionRow([...sessionsCollection.state.values()], { id, agent, node });
       if (row === undefined) {
         // Not synced into the collection — e.g. a pending created-but-
-        // unflushed session. The server still handles the delete; the row
-        // never reaches the collection, so nothing rolls back client-side.
-        await deleteSession(id, agent);
-        return scoped;
+        // unflushed session. The owning node still handles the delete; the
+        // row never reaches the collection, so nothing rolls back here.
+        await deleteSession(id, agent, nodeTarget(node));
+        return id;
       }
       const key = sessionKey(row);
-      // Optimistic delete; the collection's onDelete issues the agent-scoped
+      // Optimistic delete; the collection's onDelete issues the routed
       // DELETE and rolls the row back in on failure.
       await sessionsCollection.delete(key).when("settled");
       return key;
     },
-    onSuccess: (key, { id, agent }) => {
-      queryClient.removeQueries({ queryKey: queryKeys.history(id, agent) });
+    onSuccess: (key, { id, agent, node }) => {
+      queryClient.removeQueries({ queryKey: queryKeys.history(id, agent, node) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-      // selectedId is the agent:id key; bare ids from old links match too.
+      // selectedId is the scoped key; the legacy/bare forms match too.
       const selected = sepiaStore.state.selectedId;
-      if (selected === key || selected === id) setSelectedId(null);
+      const legacy = agent === undefined || agent === "" ? id : `${agent}:${id}`;
+      if (selected === key || selected === id || selected === legacy) setSelectedId(null);
       toastSuccess("Session deleted");
     },
     onError: (error) => toastError("Couldn't delete the session", error),

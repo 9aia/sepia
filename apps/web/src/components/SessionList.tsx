@@ -364,19 +364,22 @@ export function SessionList() {
           onClose={() => setNewProjectFor(null)}
           onSubmit={(_state, name) => {
             setNewProjectFor(null);
-            createProject.mutate(name, {
-              onSuccess: ({ project }) => {
-                const ids = newProjectSession?.projectIds ?? [];
-                if (newProjectSession !== undefined && !ids.includes(project.id)) {
-                  patch.mutate({
-                    // newProjectFor is the agent:id key — the API needs the bare id.
-                    id: newProjectSession.id,
-                    agent: newProjectSession.agent,
-                    patch: { projectIds: [...ids, project.id] },
-                  });
-                }
+            createProject.mutate(
+              { name },
+              {
+                onSuccess: ({ project }) => {
+                  const ids = newProjectSession?.projectIds ?? [];
+                  if (newProjectSession !== undefined && !ids.includes(project.id)) {
+                    patch.mutate({
+                      // newProjectFor is the agent:id key — the API needs the bare id.
+                      id: newProjectSession.id,
+                      agent: newProjectSession.agent,
+                      patch: { projectIds: [...ids, project.id] },
+                    });
+                  }
+                },
               },
-            });
+            );
           }}
         />
       )}

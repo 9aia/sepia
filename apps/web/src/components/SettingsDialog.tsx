@@ -21,6 +21,8 @@ import {
   updatePushPrefs,
 } from "../lib/push";
 import { useAgents } from "../hooks/query/useAgents";
+import { NodesSection } from "./NodesSection";
+import { ServersSection } from "./settings/ServersSection";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
@@ -229,6 +231,8 @@ function NotificationsSection() {
 const SECTIONS = [
   { id: "general", label: "General" },
   { id: "models", label: "Models" },
+  { id: "nodes", label: "Nodes" },
+  { id: "servers", label: "Servers" },
   { id: "keyboard", label: "Keyboard" },
   { id: "notifications", label: "Notifications" },
 ] as const;
@@ -439,6 +443,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   );
                 })}
               </section>
+              <NodesSection />
+              <ServersSection />
               {hasKeyboard && <KeyboardSection />}
               <NotificationsSection />
             </div>

@@ -232,7 +232,9 @@ describe("createApp", () => {
 
     expect(response.status).toBe(204);
     expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
-    expect(response.headers.get("access-control-allow-methods")).toBe("GET,POST,OPTIONS");
+    expect(response.headers.get("access-control-allow-methods")).toBe(
+      "GET,POST,PATCH,DELETE,OPTIONS",
+    );
     expect(response.headers.get("access-control-allow-headers")).toBe("content-type,authorization");
   });
 

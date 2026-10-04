@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 
 export interface ServerEnv {
   readonly dbPath: string;
@@ -6,6 +6,16 @@ export interface ServerEnv {
   readonly host: string;
   readonly token: string | undefined;
   readonly metaPath: string;
+  /** Sepia-owned data dir — node.json, meta.json. */
+  readonly home: string;
+  /** Stable node identity file (see src/node.ts). */
+  readonly nodePath: string;
+  /** Display name reported by GET /api/node; defaults to the hostname. */
+  readonly nodeName: string;
+  /** Encrypted managed-server registry (Settings → Servers). */
+  readonly serversPath: string;
+  /** 256-bit hex key file encrypting serversPath (SEPIA_SERVERS_KEY overrides). */
+  readonly serversKeyPath: string;
   readonly origins: ReadonlyArray<string>;
   readonly otel: {
     readonly enabled: boolean;
@@ -40,12 +50,22 @@ export const parseEnv = (env: NodeJS.ProcessEnv = process.env): ServerEnv => {
     throw new Error(`OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL, got "${otelEndpoint}"`);
   }
 
+  const home = env.SEPIA_HOME ?? `${homedir()}/.local/share/sepia`;
+
   return {
     dbPath,
     port,
     host: env.SEPIA_HOST ?? "127.0.0.1",
     token: env.SEPIA_TOKEN,
-    metaPath: env.SEPIA_META ?? `${homedir()}/.local/share/sepia/meta.json`,
+    metaPath: env.SEPIA_META ?? `${home}/meta.json`,
+    home,
+    nodePath: env.SEPIA_NODE ?? `${home}/node.json`,
+    nodeName:
+      env.SEPIA_NAME !== undefined && env.SEPIA_NAME.trim() !== "" ? env.SEPIA_NAME : hostname(),
+    serversPath: env.SEPIA_SERVERS ?? `${home}/servers.json`,
+    serversKeyPath:
+      env.SEPIA_SERVERS_KEY_PATH ??
+      `${env.XDG_CONFIG_HOME ?? `${homedir()}/.config`}/sepia/servers.key`,
     origins: configuredOrigins.length > 0 ? configuredOrigins : DEFAULT_ORIGINS,
     otel: {
       enabled: env.SEPIA_OTEL !== "0",

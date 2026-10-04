@@ -13,7 +13,7 @@ import {
 import { ChevronDownIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
-import { sessionKey } from "../../lib/format";
+import { nodeKey, projectKey, sessionKey } from "../../lib/format";
 import { useRenameSession } from "../../hooks/query/useRenameSession";
 import { useAgents } from "../../hooks/query/useAgents";
 import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
@@ -127,7 +127,7 @@ function RenameDialog({
   const rename = (): void => {
     if (!dirty) return;
     renameMutation.mutate(
-      { id: session.id, title: title.trim(), agent: session.agent },
+      { id: session.id, title: title.trim(), agent: session.agent, node: session.node },
       { onSuccess: () => onOpenChange(false) },
     );
   };
@@ -280,6 +280,7 @@ export function SessionDetailsDrawer({
                   patch.mutate({
                     id: session.id,
                     agent: session.agent,
+                    node: session.node,
                     patch: { pinned: !session.pinned },
                   })
                 }
@@ -297,32 +298,37 @@ export function SessionDetailsDrawer({
                   }
                 />
                 <DropdownMenuContent align="start" className="w-(--anchor-width)">
-                  {projects.length === 0 && (
+                  {projects.filter((p) => nodeKey(p.node) === nodeKey(session.node)).length ===
+                    0 && (
                     <DropdownMenuItem disabled>
                       <span className="text-muted-foreground">No projects yet</span>
                     </DropdownMenuItem>
                   )}
-                  {projects.map((project) => (
-                    <DropdownMenuItem
-                      key={project.id}
-                      closeOnClick={false}
-                      onClick={() => {
-                        const ids = session.projectIds.includes(project.id)
-                          ? session.projectIds.filter((p) => p !== project.id)
-                          : [...session.projectIds, project.id];
-                        patch.mutate({
-                          id: session.id,
-                          agent: session.agent,
-                          patch: { projectIds: ids },
-                        });
-                      }}
-                    >
-                      {project.name}
-                      {session.projectIds.includes(project.id) && (
-                        <span className="ml-auto text-xs text-primary">✓</span>
-                      )}
-                    </DropdownMenuItem>
-                  ))}
+                  {projects
+                    .filter((p) => nodeKey(p.node) === nodeKey(session.node))
+                    .map((project) => (
+                      <DropdownMenuItem
+                        key={projectKey(project)}
+                        closeOnClick={false}
+                        onClick={() => {
+                          const key = projectKey(project);
+                          const ids = session.projectIds.includes(key)
+                            ? session.projectIds.filter((p) => p !== key)
+                            : [...session.projectIds, key];
+                          patch.mutate({
+                            id: session.id,
+                            agent: session.agent,
+                            node: session.node,
+                            patch: { projectIds: ids },
+                          });
+                        }}
+                      >
+                        {project.name}
+                        {session.projectIds.includes(projectKey(project)) && (
+                          <span className="ml-auto text-xs text-primary">✓</span>
+                        )}
+                      </DropdownMenuItem>
+                    ))}
                 </DropdownMenuContent>
               </DropdownMenu>
               <DropdownMenu>
@@ -345,6 +351,7 @@ export function SessionDetailsDrawer({
                             id: session.id,
                             agent: agent.id,
                             fromAgent: session.agent,
+                            node: session.node,
                           })
                         }
                       >

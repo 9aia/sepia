@@ -47,7 +47,11 @@ describe("projectsCollection", () => {
       draft.name = "Uno";
     });
     expect(collection.get("p1")?.name).toBe("Uno");
-    expect(mockedRenameProject).toHaveBeenCalledWith("p1", "Uno");
+    expect(mockedRenameProject).toHaveBeenCalledWith(
+      "p1",
+      "Uno",
+      expect.objectContaining({ baseUrl: "" }),
+    );
     await tx.when("settled");
   });
 
@@ -70,7 +74,10 @@ describe("projectsCollection", () => {
 
     const tx = collection.delete("p2");
     expect(collection.has("p2")).toBe(false);
-    expect(mockedDeleteProject).toHaveBeenCalledWith("p2");
+    expect(mockedDeleteProject).toHaveBeenCalledWith(
+      "p2",
+      expect.objectContaining({ baseUrl: "" }),
+    );
     await tx.when("settled");
   });
 

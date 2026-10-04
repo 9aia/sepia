@@ -12,7 +12,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
-import { sessionKey } from "../../lib/format";
+import { nodeKey, projectKey, sessionKey } from "../../lib/format";
 import { setNewProjectFor } from "../../lib/store";
 import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
 import { useConvertSession, useProjects } from "../../hooks/query/useProjects";
@@ -59,16 +59,25 @@ export function SessionActions({
   const { data: projects } = useProjects();
   const { data: agents = [] } = useAgents();
   const convertTargets = agents.filter((a) => a.id !== session.agent);
+  // Projects are node-local — only offer ones living on this session's node.
+  const sameNodeProjects = projects.filter(
+    (project) => nodeKey(project.node) === nodeKey(session.node),
+  );
   const copy = (value: string) =>
     void navigator.clipboard.writeText(value).then(
       () => {},
       () => undefined,
     );
-  const toggleProject = (projectId: string) => {
-    const ids = session.projectIds.includes(projectId)
-      ? session.projectIds.filter((p) => p !== projectId)
-      : [...session.projectIds, projectId];
-    patch.mutate({ id: session.id, agent: session.agent, patch: { projectIds: ids } });
+  const toggleProject = (key: string) => {
+    const ids = session.projectIds.includes(key)
+      ? session.projectIds.filter((p) => p !== key)
+      : [...session.projectIds, key];
+    patch.mutate({
+      id: session.id,
+      agent: session.agent,
+      node: session.node,
+      patch: { projectIds: ids },
+    });
   };
   return (
     <>
@@ -80,7 +89,12 @@ export function SessionActions({
       )}
       <Item
         onClick={() =>
-          patch.mutate({ id: session.id, agent: session.agent, patch: { pinned: !session.pinned } })
+          patch.mutate({
+            id: session.id,
+            agent: session.agent,
+            node: session.node,
+            patch: { pinned: !session.pinned },
+          })
         }
       >
         <HugeiconsIcon icon={PinIcon} strokeWidth={2} />
@@ -91,6 +105,7 @@ export function SessionActions({
           patch.mutate({
             id: session.id,
             agent: session.agent,
+            node: session.node,
             patch: { archived: !session.archived },
           })
         }
@@ -117,16 +132,20 @@ export function SessionActions({
             <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
             New project…
           </Item>
-          {projects.length > 0 && <Separator />}
-          {projects.length === 0 && (
+          {sameNodeProjects.length > 0 && <Separator />}
+          {sameNodeProjects.length === 0 && (
             <Item disabled>
               <span className="text-muted-foreground">No projects yet</span>
             </Item>
           )}
-          {projects.map((project) => (
-            <Item key={project.id} closeOnClick={false} onClick={() => toggleProject(project.id)}>
+          {sameNodeProjects.map((project) => (
+            <Item
+              key={projectKey(project)}
+              closeOnClick={false}
+              onClick={() => toggleProject(projectKey(project))}
+            >
               {project.name}
-              {session.projectIds.includes(project.id) && (
+              {session.projectIds.includes(projectKey(project)) && (
                 <span className="ml-auto text-xs text-primary">✓</span>
               )}
             </Item>
@@ -144,7 +163,12 @@ export function SessionActions({
               <Item
                 key={agent.id}
                 onClick={() =>
-                  convert.mutate({ id: session.id, agent: agent.id, fromAgent: session.agent })
+                  convert.mutate({
+                    id: session.id,
+                    agent: agent.id,
+                    fromAgent: session.agent,
+                    node: session.node,
+                  })
                 }
               >
                 {agent.label}

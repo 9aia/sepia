@@ -5,6 +5,12 @@ export interface SessionSummary {
   title: string;
   cwd: string;
   agent: AgentKind;
+  /**
+   * Owning node id, present once peers are registered: `"local"` for this
+   * machine, the peer's id otherwise. Absent in single-node mode so keys and
+   * URLs stay `agent:id` exactly as before (docs/protocol.md).
+   */
+  node?: string;
   updatedAt: string;
   locked: boolean;
   lockHolderPid: number | null;
@@ -19,6 +25,18 @@ export interface SessionSummary {
 export interface Project {
   id: string;
   name: string;
+  /** Owning node id — see SessionSummary.node. */
+  node?: string;
+}
+
+/** GET /api/node — a federated node's self-description. */
+export interface NodeDescriptor {
+  id: string;
+  name: string;
+  version: string;
+  protocol: number;
+  agents: string[];
+  capabilities: string[];
 }
 
 export interface AgentInfo {

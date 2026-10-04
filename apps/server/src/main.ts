@@ -6,6 +6,9 @@ import { ControlPlane, layer as controlPlaneLayer, mergeRepositories } from "sep
 import { createApp } from "./app";
 import { parseEnv } from "./env";
 import { createMetaStore } from "./meta";
+import { loadNodeIdentity } from "./node";
+import { createServerStore } from "./servers";
+import { createTunnelManager } from "./ssh";
 import { otelLayer } from "./telemetry";
 
 const isLoopback = (value: string): boolean =>
@@ -79,6 +82,8 @@ const plane = await runtime.runPromise(ControlPlane).catch((error: unknown) => {
   process.exit(1);
 });
 
+const tunnels = createTunnelManager({ keyDir: `${env.home}/ssh-keys` });
+
 const server = Bun.serve({
   hostname: env.host,
   port: env.port,
@@ -88,6 +93,9 @@ const server = Bun.serve({
     run: (effect) => runtime.runPromise(effect),
     meta: createMetaStore(env.metaPath),
     convert: { dbPath: env.dbPath, clineDir },
+    node: loadNodeIdentity(env.nodePath, env.nodeName),
+    servers: createServerStore(env.serversPath, env.serversKeyPath),
+    tunnels,
   }),
 });
 console.log(`sepia-server listening on ${server.url.href}`);
@@ -97,6 +105,7 @@ const shutdown = (signal: NodeJS.Signals): void => {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`sepia-server received ${signal}, shutting down`);
+  tunnels.closeAll();
   void runtime
     .runPromise(plane.closeAll())
     .catch(() => undefined)

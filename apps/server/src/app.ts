@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,10 @@ import type {
 } from "sepia-session-control";
 import { createAguiAgentHandler } from "./agui-agent";
 import type { MetaStore } from "./meta";
+import { PROTOCOL_VERSION, type NodeIdentity } from "./node";
+import type { ServerStore } from "./servers";
+import { handleServersRoute } from "./servers-routes";
+import type { TunnelManager } from "./ssh";
 import { keepAliveMsFromEnv, SseChannel } from "./sse-channel";
 import { makePushStore, notifyForEvents } from "./push";
 
@@ -35,6 +39,15 @@ export interface AppOptions {
   readonly meta?: MetaStore;
   /** Enables `POST /api/sessions/:id/convert` — needs the stores it converts between. */
   readonly convert?: { readonly dbPath: string; readonly clineDir: string };
+  /**
+   * Node identity reported by `GET /api/node` (docs/protocol.md). Absent → an
+   * ephemeral id is minted for the process lifetime (tests, embedded use).
+   */
+  readonly node?: NodeIdentity;
+  /** Managed-server registry; absent → /api/servers returns 501. */
+  readonly servers?: ServerStore;
+  /** SSH tunnel manager backing ssh-enabled registry entries. */
+  readonly tunnels?: TunnelManager;
 }
 
 const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([
@@ -59,9 +72,13 @@ const corsHeaders = (
   allowed: ReadonlySet<string>,
 ): Record<string, string> => {
   const headers: Record<string, string> = { vary: "Origin" };
-  if (origin !== null && allowed.has(origin)) {
+  // "*" in SEPIA_ORIGINS echoes any Origin back — bearer auth (not CORS) is
+  // the gate, and federation UIs on other machines must be able to call in.
+  if (origin !== null && (allowed.has(origin) || allowed.has("*"))) {
     headers["access-control-allow-origin"] = origin;
-    headers["access-control-allow-methods"] = "GET,POST,OPTIONS";
+    // PATCH/DELETE cover session meta, projects, config and deletes for
+    // remote (federated) callers; same-origin calls don't consult this.
+    headers["access-control-allow-methods"] = "GET,POST,PATCH,DELETE,OPTIONS";
     headers["access-control-allow-headers"] = "content-type,authorization";
   }
   return headers;
@@ -238,6 +255,13 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
   // Routed through Effect's logger so lines hit both stdout and the OTLP log
   // exporter when the telemetry layer is installed.
   const logger = options.logger ?? ((line: string) => void run(Effect.logInfo(line)));
+  // Without a persisted identity the node still answers /api/node — peers just
+  // see a fresh id every boot, which is correct for throwaway instances.
+  const node: NodeIdentity = options.node ?? {
+    id: `node_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
+    name: hostname(),
+    version: "0.0.0",
+  };
 
   const route = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -370,6 +394,40 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         200,
         cors,
       );
+    }
+
+    // Node metadata — the one endpoint every federated client hits first.
+    if (method === "GET" && segmentsEqual(segments, ["api", "node"])) {
+      return jsonResponse(
+        {
+          id: node.id,
+          name: node.name,
+          version: node.version,
+          protocol: PROTOCOL_VERSION,
+          agents: plane.listAgents().map((agent) => agent.id),
+          capabilities: ["sessions", "projects", "push", "events"],
+        },
+        200,
+        cors,
+      );
+    }
+
+    if (segments[0] === "api" && segments[1] === "servers") {
+      const store = options.servers;
+      const tunnels = options.tunnels;
+      if (store === undefined || tunnels === undefined) {
+        return jsonResponse(
+          { error: "Server management is not configured on this server" },
+          501,
+          cors,
+        );
+      }
+      const handled = await handleServersRoute(request, segments.slice(2), {
+        store,
+        tunnels,
+        cors,
+      });
+      return handled ?? jsonResponse({ error: "Not found" }, 404, cors);
     }
 
     if (method === "GET" && segmentsEqual(segments, ["api", "agents"])) {

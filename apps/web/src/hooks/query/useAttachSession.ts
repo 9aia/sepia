@@ -1,9 +1,12 @@
 import { useMutation } from "@tanstack/react-query";
 import { attach } from "../../lib/api";
+import { nodeTarget } from "../../lib/nodes";
 
 interface AttachInput {
   readonly id: string;
   readonly agent?: string;
+  /** Owning node id — routes the attach to the right machine. */
+  readonly node?: string;
   readonly takeover?: boolean;
   readonly model?: string;
   readonly fallbacks?: ReadonlyArray<string>;
@@ -16,6 +19,6 @@ interface AttachInput {
  */
 export const useAttachSession = () =>
   useMutation({
-    mutationFn: ({ id, agent, takeover, model, fallbacks }: AttachInput) =>
-      attach(id, { takeover, model, fallbacks, agent }),
+    mutationFn: ({ id, agent, node, takeover, model, fallbacks }: AttachInput) =>
+      attach(id, { takeover, model, fallbacks, agent }, nodeTarget(node)),
   });

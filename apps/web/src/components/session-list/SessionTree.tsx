@@ -5,7 +5,14 @@ import { useTree } from "@headless-tree/react";
 import { syncDataLoaderFeature } from "@headless-tree/core";
 import type { ItemInstance } from "@headless-tree/core";
 import type { SessionSummary } from "../../lib/types";
-import { formatUpdated, projectName, resolveSession, sessionKey } from "../../lib/format";
+import {
+  formatUpdated,
+  nodeKey,
+  projectKey,
+  projectName,
+  resolveSession,
+  sessionKey,
+} from "../../lib/format";
 import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
 import { useCreateProject } from "../../hooks/query/useProjects";
 import { useUiState } from "../../hooks/query/useConfig";
@@ -40,6 +47,7 @@ import {
   MoreVerticalIcon,
 } from "@hugeicons/core-free-icons";
 import { SessionActions } from "./SessionActions";
+import { NodeBadge } from "./NodeBadge";
 import { Tree, TreeItem, TreeItemLabel } from "../reui/tree";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import {
@@ -79,18 +87,28 @@ function DirActions({
     (session) => session.cwd === data.cwd || session.cwd.startsWith(`${data.cwd}/`),
   );
   const createFromFolder = (): void => {
-    createProject.mutate(projectName(data.cwd), {
-      onSuccess: ({ project }) => {
-        for (const session of members) {
-          if (session.projectIds.includes(project.id)) continue;
-          patch.mutate({
-            id: session.id,
-            agent: session.agent,
-            patch: { projectIds: [...session.projectIds, project.id] },
-          });
-        }
+    // The folder may merge same-path sessions from several nodes — create the
+    // project on the newest member's node and only enroll same-node rows
+    // (projects are node-local).
+    const node = members[0]?.node;
+    createProject.mutate(
+      { name: projectName(data.cwd), node },
+      {
+        onSuccess: ({ project }) => {
+          const key = projectKey(project);
+          for (const session of members) {
+            if (nodeKey(session.node) !== nodeKey(project.node)) continue;
+            if (session.projectIds.includes(key)) continue;
+            patch.mutate({
+              id: session.id,
+              agent: session.agent,
+              node: session.node,
+              patch: { projectIds: [...session.projectIds, key] },
+            });
+          }
+        },
       },
-    });
+    );
   };
   const copy = (): void => {
     void navigator.clipboard.writeText(data.cwd).then(
@@ -249,6 +267,7 @@ function SessionItemRow({
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <span>{formatUpdated(session.updatedAt)}</span>
+                  <NodeBadge node={session.node} />
                   {session.locked && (
                     <Badge
                       variant="destructive"

@@ -31,16 +31,16 @@ schema — the three tables sepia writes are `sessions`, `message_nodes`,
 ### Tables (real schema, superset of `DbSchema.ts`)
 
 - `sessions(id, working_directory, backend_type, model, agent_mode,
-  created_at, last_activity_at, title, main_chain_id, shell_last_seen_index,
-  cogs_json, workspace_dirs, hidden, metadata)` — `metadata` carries
+created_at, last_activity_at, title, main_chain_id, shell_last_seen_index,
+cogs_json, workspace_dirs, hidden, metadata)` — `metadata` carries
   `total_credit_cost`, `total_acu_cost`, `response_dimensions` (cumulative
   token/message metrics for the UI).
 - `message_nodes(row_id, session_id, node_id, parent_node_id, chat_message,
-  created_at, metadata)` — `chat_message` is a JSON blob (below); `metadata`
+created_at, metadata)` — `chat_message` is a JSON blob (below); `metadata`
   is row-level: `{summarized_from, num_tokens_preceding, is_system_prefix}`.
 - `prompt_history(id, content, timestamp, session_id, is_shell)`.
 - **`tool_call_state(session_id, tool_call_id, tool_call_json,
-  tool_call_update_json)`** — serialised **ACP** `ToolCall` /
+tool_call_update_json)`** — serialised **ACP** `ToolCall` /
   `ToolCallUpdate` objects (`title`, `kind`, `status`, `locations`,
   `rawInput`, `_meta.cognition.ai/inferenceToolName`). **Sepia ignores this
   table entirely** — it is the authoritative tool-call status/lifecycle view.
@@ -98,10 +98,10 @@ read** (and rewritten as `null` on save, `Devin.ts:91-96`): `num_tokens`,
 
 - `transcripts/<session-id>.json` — **ATIF-v1.7** export (Agent Trajectory
   Interchange Format): `{schema_version, agent{name,version,model_name,
-  tool_definitions}, steps[{step_id,timestamp,source,message,model_name,
-  reasoning_content,tool_calls[{tool_call_id,function_name,arguments}],
-  observation{results}}], final_metrics{total_prompt_tokens,
-  total_completion_tokens,total_cached_tokens,total_steps}}`. A second,
+tool_definitions}, steps[{step_id,timestamp,source,message,model_name,
+reasoning_content,tool_calls[{tool_call_id,function_name,arguments}],
+observation{results}}], final_metrics{total_prompt_tokens,
+total_completion_tokens,total_cached_tokens,total_steps}}`. A second,
   richer transcript of the same session — includes reasoning text.
 - `summaries/history_<hex>.md` — generated session summaries.
 - `session_locks/<id>.lock` — live-process locks.
@@ -121,15 +121,15 @@ and installs via `ClineStore` + `ClineIndex.ts`.
 ### Per-session directory
 
 - `<id>.json` — **manifest**: `{version, session_id, source:"cli", pid,
-  started_at, ended_at (ISO), exit_code, status
-  (running|idle|pending|completed|failed), interactive, provider, model,
-  cwd, workspace_root, team_name, enable_tools, enable_spawn, enable_teams,
-  prompt, metadata{title, systemPrompt, mode, sessionHistoryOrigin},
-  messages_path}`. Sepia's `sessionManifest` (`Cline.ts:750`) reproduces
+started_at, ended_at (ISO), exit_code, status
+(running|idle|pending|completed|failed), interactive, provider, model,
+cwd, workspace_root, team_name, enable_tools, enable_spawn, enable_teams,
+prompt, metadata{title, systemPrompt, mode, sessionHistoryOrigin},
+messages_path}`. Sepia's `sessionManifest` (`Cline.ts:750`) reproduces
   this.
 - `<id>.messages.json` — **transcript**: `{version, updated_at, agent,
-  sessionId, origin{source,mode,sessionId,version}, system_prompt,
-  messages[]}`.
+sessionId, origin{source,mode,sessionId,version}, system_prompt,
+messages[]}`.
 
 ### `messages[]` entry shape
 
@@ -168,11 +168,12 @@ prefix with a `<SYSTEM_NOTICE>` summary injected. Orphaned `tool_result`s
 ### Index + sub-agents
 
 `db/sessions.db`:
+
 - `sessions` — columns in `ClineIndex.SESSION_COLUMNS` (`ClineIndex.ts:11`),
   including **`parent_session_id`, `parent_agent_id`, `agent_id`,
   `conversation_id`, `is_subagent`, `team_name`** — a real parent/child tree.
 - `subagent_spawn_queue(root_session_id, parent_agent_id, task,
-  system_prompt, created_at, consumed_at)` — queued sub-agent spawns.
+system_prompt, created_at, consumed_at)` — queued sub-agent spawns.
 
 Sub-agent sessions have ids `<parent>__teamtask__<task>__<rand>` with their
 own manifest dir, **but their `messages_path` points inside the parent's
@@ -197,22 +198,22 @@ one **global** KV store; neither is per-session-file like Claude Code.
 
 - `chats/<workspace-hash>/<chat-uuid>/` per chat:
   - `meta.json` — `{schemaVersion, createdAtMs, updatedAtMs, title,
-    hasConversation}`.
+hasConversation}`.
   - `prompt_history.json` — plain JSON array of submitted prompt strings.
   - `store.db` (SQLite): `blobs(id TEXT PK, data BLOB)` +
     `meta(key,value)`.
     - `meta['0']` is **hex-encoded JSON**: `{agentId, latestRootBlobId,
-      name, mode, isRunEverything, createdAt, lastUsedModel}`.
+name, mode, isRunEverything, createdAt, lastUsedModel}`.
     - `blobs` is a **content-addressed store** (id = SHA-256). Values are
       either AI-SDK-style JSON messages or protobuf-ish binary blobs:
       - `{"role":"system","content":"…system prompt…"}`
       - `{"role":"user","content":[{"type":"text","text":"<user_query>…"}],
-          "providerOptions":{"cursor":{"requestId":"…"}}}`
+"providerOptions":{"cursor":{"requestId":"…"}}}`
       - `{"role":"assistant","content":[{"type":"redacted-reasoning",
-          "data":"<opaque>"},{"type":"text",…},{"type":"tool-call",
-          "toolCallId":"tool_…","toolName":"Shell","input":{…}}]}`
+"data":"<opaque>"},{"type":"text",…},{"type":"tool-call",
+"toolCallId":"tool_…","toolName":"Shell","input":{…}}]}`
       - `{"role":"tool","content":[{"type":"tool-result","toolCallId":"…",
-          "toolName":"Shell","result":"Exit code: 0\n\nCommand output:…"}]}`
+"toolName":"Shell","result":"Exit code: 0\n\nCommand output:…"}]}`
     - **Thinking is `redacted-reasoning` — opaque/encrypted**, not
       recoverable as text from this store.
     - The binary blobs (length-prefixed, embedded string fields) appear to
@@ -241,10 +242,10 @@ bubbles on this machine):
 - `bubbleId:<composerId>:<bubbleId>` — message bubble, ~80 fields: `type`
   (1=user/2=assistant), `text`, `richText`, `thinking{text}`,
   `allThinkingBlocks`, `toolFormerData{tool(enum),toolCallId,status,
-  params/rawArgs}`, `suggestedCodeBlocks`, `assistantSuggestedDiffs`,
+params/rawArgs}`, `suggestedCodeBlocks`, `assistantSuggestedDiffs`,
   `diffHistories`, `fileDiffTrajectories` (**file diffs**),
   `tokenCount{inputTokens,outputTokens}`, `timingInfo{clientRpcSendTime,
-  clientSettleTime}`, `usageUuid`, `requestId`, `serverBubbleId`,
+clientSettleTime}`, `usageUuid`, `requestId`, `serverBubbleId`,
   `modelInfo{modelName}`, `images`, `attachedFileCodeChunksMetadataOnly`,
   `webCitations`, `aiWebSearchResults`, `relevantFiles`, `humanChanges`,
   `supportedTools`, `todos`, `consoleLogs`, `multiFileLinterErrors`.
@@ -271,24 +272,24 @@ like Devin's node forest), `timestamp` (ISO ms), `cwd`, `gitBranch`,
 `slug`.
 
 - `summary` — `{summary, leafUuid}` — one-line session title for listings.
-- `user` — `message.content` is a string *or* block array: `text`,
+- `user` — `message.content` is a string _or_ block array: `text`,
   `tool_result{tool_use_id,content,is_error}`, `image{source{
-  type:base64,media_type,data}}`, document blocks. Sidecar fields:
+type:base64,media_type,data}}`, document blocks. Sidecar fields:
   `toolUseResult` (structured result incl. Task-agent `status`,
   `agentId`), `isCompactSummary`, `isVisibleInTranscriptOnly`, `isMeta`,
   `thinkingMetadata`, `todos`.
 - `assistant` — `message{model:"claude-opus-4-5-…", id:"msg_…",
-  content[], stop_reason, usage{input_tokens,output_tokens,
-  cache_creation_input_tokens,cache_read_input_tokens,
-  cache_creation{ephemeral_5m…,ephemeral_1h…},service_tier}}`, `requestId`.
+content[], stop_reason, usage{input_tokens,output_tokens,
+cache_creation_input_tokens,cache_read_input_tokens,
+cache_creation{ephemeral_5m…,ephemeral_1h…},service_tier}}`, `requestId`.
   Content blocks: `text`, `thinking{thinking,signature?}` /
   `redacted_thinking`, `tool_use{id:"toolu_…",name,input}` — incl.
   `Task{description,prompt,subagent_type}` for sub-agents, `server_tool_use`.
 - `system` — `subtype` ∈ `init|stop_hook_summary|local_command|
-  compact_boundary`; `level`; `compactMetadata{trigger,preTokens}`;
+compact_boundary`; `level`; `compactMetadata{trigger,preTokens}`;
   `logicalParentUuid`.
 - `file-history-snapshot` — `{messageId,snapshot{trackedFileBackups{
-  path:{backupFileName,version,backupTime}}}}` — **checkpoints**.
+path:{backupFileName,version,backupTime}}}}` — **checkpoints**.
 - `queue-operation` — queued prompts.
 
 **Resumable via**: `claude --resume <session-id>` / `-c`; the JSONL is the
@@ -299,30 +300,30 @@ sidechains reconstructable via `parentUuid`+`isSidechain`).
 
 Fields each agent persists vs. what the IR normalizes:
 
-| Field | Devin | Cline | Cursor | Claude Code | IR today |
-|---|---|---|---|---|---|
-| Message tree (branch/rewind) | ✅ parent_node_id | ❌ flat | headers list | ✅ parentUuid | ✅ parentNodeId |
-| Timestamps per message | ✅ ISO+epoch | ✅ ms | ✅ ms/ISO | ✅ ISO | ✅ createdAt (s) |
-| Token usage per message | ✅ metrics.* | ✅ metrics | ✅ tokenCount | ✅ usage (incl. cache tiers) | ❌ dropped |
-| Cost / credits | ✅ session metadata (acu/credit) | ~ cost field | ~ usageUuid | service_tier only | ❌ |
-| Model per message | ✅ generation_model | ✅ modelInfo | ✅ modelInfo/lastUsedModel | ✅ message.model | ❌ session only |
-| Request id | ✅ request_id | ❌ | ✅ requestId | ✅ requestId | ❌ |
-| Tool call args | ✅ arguments | ✅ input | ✅ toolFormerData | ✅ input | ✅ |
-| Tool call result | ✅ tool node + terminal_output ext | ✅ tool_result | ✅ tool-result | ✅ tool_result(+toolUseResult) | ✅ tool node |
-| Tool call status/error | ✅ tool_call_state + result_meta.success | result.success | status field | is_error | ❌ assumed success |
-| Tool timing | ✅ tool_call_timing | ❌ | ✅ timingInfo | ❌ | ❌ |
-| Reasoning/thinking | ✅ text + **signature** | ✅ thinking | ⚠️ redacted-reasoning (opaque) | ✅ thinking / redacted_thinking | ⚠️ text only, signature dropped |
-| File diffs / edits | via tool args | via editor args | ✅ suggestedCodeBlocks/diffHistories | via Edit tool args + file-history backups | ❌ args only |
-| Images/attachments | ❓ | ❌ | ✅ images, attached chunks | ✅ image/document blocks | ❌ content is string |
-| Sub-agent/task trees | ⚠️ subagent_heads table | ✅ parent_session_id/agent_id/team | ✅ subComposerIds | ✅ isSidechain + Task tool | ❌ |
-| Checkpoints/file history | ❌ | ✅ checkpoint-scratch git | ✅ originalFileStates | ✅ file-history-snapshot | ❌ |
-| Compaction/summaries | ✅ summarized_from row meta | ✅ .compaction.json | ✅ summarizedComposers | ✅ isCompactSummary+compact_boundary | ⚠️ raw in node.metadata |
-| Prompt history | ✅ prompt_history table | prompt field/manifest | ✅ prompt_history.json | user entries | ✅ promptHistory |
-| Shell/exec identity | ✅ terminal_id, cwd, exit_code | run_commands items | Shell tool | Bash tool | ❌ flattened to exec |
-| Session status/lifecycle | locks + hidden flag | ✅ status, exit_code, pid | status | implicit | ❌ |
-| Git context (branch/sha) | ❌ | ❌ | branches field | ✅ gitBranch | ❌ |
-| Web citations | ❌ | fetch tool | ✅ webCitations | WebSearch result blocks | ❌ |
-| Todos/plans | ❌ | team tasks | ✅ todos, plans/*.md | ✅ todos files, TodoWrite | ❌ |
+| Field                        | Devin                                    | Cline                              | Cursor                               | Claude Code                               | IR today                        |
+| ---------------------------- | ---------------------------------------- | ---------------------------------- | ------------------------------------ | ----------------------------------------- | ------------------------------- |
+| Message tree (branch/rewind) | ✅ parent_node_id                        | ❌ flat                            | headers list                         | ✅ parentUuid                             | ✅ parentNodeId                 |
+| Timestamps per message       | ✅ ISO+epoch                             | ✅ ms                              | ✅ ms/ISO                            | ✅ ISO                                    | ✅ createdAt (s)                |
+| Token usage per message      | ✅ metrics.*                             | ✅ metrics                         | ✅ tokenCount                        | ✅ usage (incl. cache tiers)              | ❌ dropped                      |
+| Cost / credits               | ✅ session metadata (acu/credit)         | ~ cost field                       | ~ usageUuid                          | service_tier only                         | ❌                              |
+| Model per message            | ✅ generation_model                      | ✅ modelInfo                       | ✅ modelInfo/lastUsedModel           | ✅ message.model                          | ❌ session only                 |
+| Request id                   | ✅ request_id                            | ❌                                 | ✅ requestId                         | ✅ requestId                              | ❌                              |
+| Tool call args               | ✅ arguments                             | ✅ input                           | ✅ toolFormerData                    | ✅ input                                  | ✅                              |
+| Tool call result             | ✅ tool node + terminal_output ext       | ✅ tool_result                     | ✅ tool-result                       | ✅ tool_result(+toolUseResult)            | ✅ tool node                    |
+| Tool call status/error       | ✅ tool_call_state + result_meta.success | result.success                     | status field                         | is_error                                  | ❌ assumed success              |
+| Tool timing                  | ✅ tool_call_timing                      | ❌                                 | ✅ timingInfo                        | ❌                                        | ❌                              |
+| Reasoning/thinking           | ✅ text + **signature**                  | ✅ thinking                        | ⚠️ redacted-reasoning (opaque)       | ✅ thinking / redacted_thinking           | ⚠️ text only, signature dropped |
+| File diffs / edits           | via tool args                            | via editor args                    | ✅ suggestedCodeBlocks/diffHistories | via Edit tool args + file-history backups | ❌ args only                    |
+| Images/attachments           | ❓                                       | ❌                                 | ✅ images, attached chunks           | ✅ image/document blocks                  | ❌ content is string            |
+| Sub-agent/task trees         | ⚠️ subagent_heads table                  | ✅ parent_session_id/agent_id/team | ✅ subComposerIds                    | ✅ isSidechain + Task tool                | ❌                              |
+| Checkpoints/file history     | ❌                                       | ✅ checkpoint-scratch git          | ✅ originalFileStates                | ✅ file-history-snapshot                  | ❌                              |
+| Compaction/summaries         | ✅ summarized_from row meta              | ✅ .compaction.json                | ✅ summarizedComposers               | ✅ isCompactSummary+compact_boundary      | ⚠️ raw in node.metadata         |
+| Prompt history               | ✅ prompt_history table                  | prompt field/manifest              | ✅ prompt_history.json               | user entries                              | ✅ promptHistory                |
+| Shell/exec identity          | ✅ terminal_id, cwd, exit_code           | run_commands items                 | Shell tool                           | Bash tool                                 | ❌ flattened to exec            |
+| Session status/lifecycle     | locks + hidden flag                      | ✅ status, exit_code, pid          | status                               | implicit                                  | ❌                              |
+| Git context (branch/sha)     | ❌                                       | ❌                                 | branches field                       | ✅ gitBranch                              | ❌                              |
+| Web citations                | ❌                                       | fetch tool                         | ✅ webCitations                      | WebSearch result blocks                   | ❌                              |
+| Todos/plans                  | ❌                                       | team tasks                         | ✅ todos, plans/*.md                 | ✅ todos files, TodoWrite                 | ❌                              |
 
 ### Ranked gaps
 

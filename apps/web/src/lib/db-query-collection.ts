@@ -177,6 +177,18 @@ export function createQueryCollection<TItem extends object, TKey extends string 
           if (event.action.type !== "success" && event.action.type !== "setState") return;
           if (hashKey(event.query.queryKey) !== keyHash) return;
           const data = event.query.state.data;
+          // A manual cache write (setQueryData marks the action `manual`;
+          // setState is a direct write) is newer than any fetch already in
+          // flight — the in-flight response was read before the write. Cancel
+          // it silently so its stale resolution can't dispatch a 'success'
+          // that would overwrite the cache and delete the new row from the
+          // collection (e.g. a project vanishing right after "Create").
+          const manualWrite =
+            event.action.type === "setState" ||
+            (event.action.type === "success" && event.action.manual === true);
+          if (manualWrite && event.query.state.fetchStatus === "fetching") {
+            void event.query.cancel({ silent: true });
+          }
           if (Array.isArray(data)) apply(data as TItem[]);
         });
 

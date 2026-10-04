@@ -1,5 +1,6 @@
 import { useInfiniteQuery, type InfiniteData } from "@tanstack/react-query";
 import { getHistory } from "../../lib/api";
+import { nodeTarget } from "../../lib/nodes";
 import type { HistoryMessage, HistoryPage } from "../../lib/types";
 import { queryKeys } from "./keys";
 
@@ -19,15 +20,19 @@ export const flattenHistory = (data: InfiniteData<HistoryPage> | undefined): His
  * live SSE feed invalidates this key when a run finishes so the pane re-syncs
  * without polling.
  */
-export const useHistory = (sessionId: string | null, agent?: string) =>
+export const useHistory = (sessionId: string | null, agent?: string, node?: string) =>
   useInfiniteQuery({
-    queryKey: queryKeys.history(sessionId ?? "", agent),
+    queryKey: queryKeys.history(sessionId ?? "", agent, node),
     queryFn: ({ pageParam }) =>
-      getHistory(sessionId as string, {
-        limit: PAGE_SIZE,
-        before: pageParam === 0 ? undefined : pageParam,
-        agent,
-      }),
+      getHistory(
+        sessionId as string,
+        {
+          limit: PAGE_SIZE,
+          before: pageParam === 0 ? undefined : pageParam,
+          agent,
+        },
+        nodeTarget(node),
+      ),
     enabled: sessionId !== null && sessionId !== "",
     initialPageParam: 0,
     getNextPageParam: (last) => (last.start > 0 ? last.start : undefined),

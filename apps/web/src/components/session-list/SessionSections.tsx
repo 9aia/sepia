@@ -15,7 +15,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { Project, SessionSummary } from "../../lib/types";
-import { formatUpdated, sessionKey } from "../../lib/format";
+import { formatUpdated, nodeKey, projectKey, sessionKey } from "../../lib/format";
 import { useCreateSession } from "../../hooks/query/useCreateSession";
 import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
@@ -72,6 +72,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Input } from "../ui/input";
+import { NodeBadge } from "./NodeBadge";
 import { SessionActions } from "./SessionActions";
 
 interface RowHandlers {
@@ -104,6 +105,7 @@ function SectionSessionRow({
             <span className="min-w-0 flex-1 truncate font-medium" title={session.title}>
               {session.title}
             </span>
+            <NodeBadge node={session.node} />
             <span className="shrink-0 text-xs text-muted-foreground">
               {formatUpdated(session.updatedAt)}
             </span>
@@ -119,6 +121,7 @@ function SectionSessionRow({
               patch.mutate({
                 id: session.id,
                 agent: session.agent,
+                node: session.node,
                 patch: { pinned: session.pinned !== true },
               });
             }}
@@ -268,7 +271,7 @@ export function FlatSection({
           <div className="flex flex-col gap-1.5 px-2">
             {shown.map((session) => (
               <SectionSessionRow
-                key={session.id}
+                key={sessionKey(session)}
                 session={session}
                 selected={sessionKey(session) === selectedId}
                 {...handlers}
@@ -408,7 +411,8 @@ function ProjectsSection({
   const settings = useStore(settingsStore);
 
   // Bucket members per project in one pass instead of filtering `sessions`
-  // once per project row on every render.
+  // once per project row on every render. Keys are node-namespaced
+  // (`node:id`) — session.projectIds are already namespaced by the merge.
   const membersByProject = useMemo(() => {
     const map = new Map<string, SessionSummary[]>();
     for (const session of sessions) {
@@ -423,23 +427,30 @@ function ProjectsSection({
 
   const newSessionIn = (project: Project, members: ReadonlyArray<SessionSummary>): void => {
     // Spawn in the newest member's cwd — or the resolved fallback when the
-    // project is still empty — then enroll the session in the project.
+    // project is still empty — on the node that owns the project, then
+    // enroll the session via its namespaced project key.
     const cwd = members[0]?.cwd ?? resolvedCwd;
     const agent = settings.defaultAgent ?? agents[0]?.id;
     void createSession
-      .mutateAsync({ cwd, agent, ...modelArgsFor(agent ?? "", null, settings) })
+      .mutateAsync({
+        cwd,
+        agent,
+        node: project.node,
+        ...modelArgsFor(agent ?? "", null, settings),
+      })
       .then(({ id, agentId }) =>
         patchSession.mutate({
           id,
           agent: agentId ?? agent,
-          patch: { projectIds: [project.id] },
+          node: project.node,
+          patch: { projectIds: [projectKey(project)] },
         }),
       );
   };
 
   const submitName = (state: ProjectDialogState, name: string): void => {
-    if (state.id === undefined) createProject.mutate(name);
-    else renameProject.mutate({ id: state.id, name });
+    if (state.id === undefined) createProject.mutate({ name });
+    else renameProject.mutate({ key: state.id, name });
     setDialog(null);
   };
 
@@ -467,17 +478,20 @@ function ProjectsSection({
       )}
       {open &&
         projects.map((project) => {
-          const members = membersByProject.get(project.id) ?? [];
-          const open = !collapsed[project.id];
+          const members = membersByProject.get(projectKey(project)) ?? [];
+          const open = !collapsed[projectKey(project)];
           return (
-            <ContextMenu key={project.id}>
+            <ContextMenu key={projectKey(project)}>
               <ContextMenuTrigger className="group/row relative block">
                 <div className="relative px-1.5">
                   <button
                     type="button"
                     className="flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/60"
                     onClick={() =>
-                      setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
+                      setCollapsed((prev) => ({
+                        ...prev,
+                        [projectKey(project)]: !prev[projectKey(project)],
+                      }))
                     }
                   >
                     <HugeiconsIcon
@@ -493,6 +507,12 @@ function ProjectsSection({
                     <span className="min-w-0 flex-1 truncate font-medium" title={project.name}>
                       {project.name}
                     </span>
+                    {/* Indented so the hover-reveal action icons don't cover it. */}
+                    {project.node !== undefined && (
+                      <span className="mr-12 shrink-0">
+                        <NodeBadge node={project.node} />
+                      </span>
+                    )}
                   </button>
                   <Button
                     variant="ghost"
@@ -528,7 +548,7 @@ function ProjectsSection({
                         Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
                         onDetails={setDetailsFor}
                         onAdd={setAddFor}
-                        onRename={(p) => setDialog({ id: p.id, name: p.name })}
+                        onRename={(p) => setDialog({ id: projectKey(p), name: p.name })}
                         onDelete={setDeleteFor}
                       />
                     </DropdownMenuContent>
@@ -541,7 +561,7 @@ function ProjectsSection({
                   Item={ContextMenuItem}
                   onDetails={setDetailsFor}
                   onAdd={setAddFor}
-                  onRename={(p) => setDialog({ id: p.id, name: p.name })}
+                  onRename={(p) => setDialog({ id: projectKey(p), name: p.name })}
                   onDelete={setDeleteFor}
                 />
               </ContextMenuContent>
@@ -561,7 +581,7 @@ function ProjectsSection({
                   )}
                   {members.map((session) => (
                     <SectionSessionRow
-                      key={session.id}
+                      key={sessionKey(session)}
                       session={session}
                       selected={sessionKey(session) === selectedId}
                       {...handlers}
@@ -578,7 +598,7 @@ function ProjectsSection({
       {detailsFor !== null && (
         <ProjectDetailsDialog
           project={detailsFor}
-          members={membersByProject.get(detailsFor.id) ?? []}
+          members={membersByProject.get(projectKey(detailsFor)) ?? []}
           onClose={() => setDetailsFor(null)}
           onSelectSession={(id) => {
             handlers.onSelect(id);
@@ -601,7 +621,7 @@ function ProjectsSection({
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              onClick={() => deleteFor !== null && deleteProject.mutate(deleteFor.id)}
+              onClick={() => deleteFor !== null && deleteProject.mutate(projectKey(deleteFor))}
             >
               Delete
             </AlertDialogAction>
@@ -641,7 +661,7 @@ export function SessionSections({
     q
       .from({ s: sessionsCollection })
       .where(({ s }) => eq(s.pinned, true))
-      .select(({ s }) => ({ id: s.id, agent: s.agent })),
+      .select(({ s }) => ({ id: s.id, agent: s.agent, node: s.node })),
   );
   const pinned = useMemo(() => {
     const keys = new Set(pinnedRows.map(sessionKey));
@@ -723,7 +743,7 @@ function ProjectDetailsDialog({
           )}
           {members.map((session) => (
             <button
-              key={session.id}
+              key={sessionKey(session)}
               type="button"
               className="rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/60"
               onClick={() => onSelectSession(sessionKey(session))}
@@ -752,9 +772,11 @@ function AddSessionDialog({
 }) {
   const patch = usePatchSessionMeta();
   const [filter, setFilter] = useState("");
+  // Projects are node-local — only sessions on the same node can join.
   const candidates = sessions.filter(
     (s) =>
-      !s.projectIds.includes(project.id) &&
+      nodeKey(s.node) === nodeKey(project.node) &&
+      !s.projectIds.includes(projectKey(project)) &&
       s.title.toLowerCase().includes(filter.trim().toLowerCase()),
   );
   const add = (session: SessionSummary): void =>
@@ -762,7 +784,8 @@ function AddSessionDialog({
       {
         id: session.id,
         agent: session.agent,
-        patch: { projectIds: [...session.projectIds, project.id] },
+        node: session.node,
+        patch: { projectIds: [...session.projectIds, projectKey(project)] },
       },
       { onSuccess: onClose },
     );
@@ -788,7 +811,7 @@ function AddSessionDialog({
             )}
             {candidates.map((session) => (
               <button
-                key={session.id}
+                key={sessionKey(session)}
                 type="button"
                 className="rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/60"
                 onClick={() => add(session)}

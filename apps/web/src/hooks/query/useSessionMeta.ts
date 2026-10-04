@@ -2,19 +2,25 @@ import { toastError, toastSuccess } from "../../lib/toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { patchSessionMeta, type SessionMetaPatch } from "../../lib/api";
 import { sessionsCollection } from "../../lib/db";
-import { resolveSession, sessionKey } from "../../lib/format";
+import { bareProjectId, findSessionRow, sessionKey } from "../../lib/format";
+import { nodeTarget } from "../../lib/nodes";
 import { queryKeys } from "./keys";
 
-const findRow = (id: string, agent?: string) => {
-  const scoped = agent === undefined || agent === "" ? id : `${agent}:${id}`;
-  return resolveSession([...sessionsCollection.state.values()], scoped);
-};
+const findRow = (id: string, agent?: string, node?: string) =>
+  findSessionRow([...sessionsCollection.state.values()], { id, agent, node });
+
+/** Merged rows carry node-namespaced project refs; the wire wants bare ids. */
+const wirePatch = (patch: SessionMetaPatch): SessionMetaPatch => ({
+  ...patch,
+  ...(patch.projectIds !== undefined ? { projectIds: patch.projectIds.map(bareProjectId) } : {}),
+});
 
 /**
  * Optimistic session-meta writes: the draft applies to the collection
- * instantly, the collection's `onUpdate` handler PATCHes the server and
- * converges the query cache, and a failure rolls the row back to its last
- * synced state. Rows not yet in the collection fall back to a direct PATCH.
+ * instantly, the collection's `onUpdate` handler routes the PATCH to the
+ * owning node and converges the query cache, and a failure rolls the row
+ * back to its last synced state. Rows not yet in the collection fall back to
+ * a direct PATCH on their node.
  */
 export const usePatchSessionMeta = () => {
   const queryClient = useQueryClient();
@@ -22,18 +28,20 @@ export const usePatchSessionMeta = () => {
     mutationFn: async ({
       id,
       agent,
+      node,
       patch,
     }: {
       id: string;
       agent?: string;
+      node?: string;
       patch: SessionMetaPatch;
     }) => {
-      const row = findRow(id, agent);
+      const row = findRow(id, agent, node);
       if (row === undefined) {
         // Not in the collection yet — e.g. a just-created session that only
         // exists as a server-side pending row until the next fetch. The API
         // can already patch it; the row syncs in on the refetch.
-        if (!(await patchSessionMeta(id, patch, agent))) {
+        if (!(await patchSessionMeta(id, wirePatch(patch), agent, nodeTarget(node)))) {
           throw new Error("The server rejected the session update");
         }
         await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });

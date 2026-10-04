@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLiveQuery } from "@tanstack/react-db";
-import { listSessions } from "../../lib/api";
+import { listAllSessions } from "../../lib/nodes";
 import { sessionsCollection } from "../../lib/db";
 import { queryKeys } from "./keys";
 
@@ -13,7 +13,7 @@ import { queryKeys } from "./keys";
  * token gate) that the collection's status flags can't express.
  */
 export const useSessions = () => {
-  const query = useQuery({ queryKey: queryKeys.sessions, queryFn: listSessions });
+  const query = useQuery({ queryKey: queryKeys.sessions, queryFn: listAllSessions });
   // orderBy keeps the server's newest-first listing even as rows move —
   // collection insertion order alone wouldn't reflect updatedAt reorders.
   const live = useLiveQuery((q) =>

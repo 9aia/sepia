@@ -3,28 +3,14 @@ import type {
   AttachResult,
   CreateSessionInput,
   HistoryPage,
+  NodeDescriptor,
   SessionSummary,
   UserInfo,
 } from "./types";
+import { localTarget, type ApiTarget } from "./targets";
 
-const TOKEN_KEY = "sepia:token";
-
-export const getToken = (): string | null => {
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
-};
-
-export const setToken = (token: string | null): void => {
-  try {
-    if (token === null || token === "") localStorage.removeItem(TOKEN_KEY);
-    else localStorage.setItem(TOKEN_KEY, token);
-  } catch {
-    // Storage unavailable (private mode); the gate keeps asking.
-  }
-};
+export { getToken, setToken } from "./token";
+export type { ApiTarget } from "./targets";
 
 export class AuthError extends Error {
   constructor() {
@@ -42,15 +28,24 @@ const friendlyHttpError = (status: number): string => {
   return `Request failed (${status})`;
 };
 
-async function sepiaFetch(path: string, init?: RequestInit): Promise<Response> {
-  const token = getToken();
+/**
+ * Every API call targets a node: `target.baseUrl` prefixes the path ("" for
+ * the same-origin server) and `target.token` authenticates it. The default
+ * target is the local node, so same-origin call sites never pass one.
+ */
+async function sepiaFetch(
+  path: string,
+  init?: RequestInit,
+  target: ApiTarget = localTarget(),
+): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(path, {
+    res = await fetch(`${target.baseUrl}${path}`, {
       ...init,
+      signal: target.timeoutMs === undefined ? init?.signal : AbortSignal.timeout(target.timeoutMs),
       headers: {
         ...(init?.body !== undefined ? { "content-type": "application/json" } : undefined),
-        ...(token !== null ? { authorization: `Bearer ${token}` } : undefined),
+        ...(target.token !== null ? { authorization: `Bearer ${target.token}` } : undefined),
       },
     });
   } catch {
@@ -60,8 +55,8 @@ async function sepiaFetch(path: string, init?: RequestInit): Promise<Response> {
   return res;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await sepiaFetch(path, init);
+async function request<T>(path: string, init?: RequestInit, target?: ApiTarget): Promise<T> {
+  const res = await sepiaFetch(path, init, target);
   if (!res.ok) {
     throw new Error(friendlyHttpError(res.status));
   }
@@ -72,30 +67,44 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const agentQuery = (agent?: string): string =>
   agent === undefined || agent === "" ? "" : `?agent=${encodeURIComponent(agent)}`;
 
-export async function listSessions(): Promise<SessionSummary[]> {
-  const data = await request<{ sessions: SessionSummary[] }>("/api/sessions");
+export async function getNode(target?: ApiTarget): Promise<NodeDescriptor> {
+  return request<NodeDescriptor>("/api/node", undefined, target);
+}
+
+export async function listSessions(target?: ApiTarget): Promise<SessionSummary[]> {
+  const data = await request<{ sessions: SessionSummary[] }>("/api/sessions", undefined, target);
   return data.sessions;
 }
 
 export async function createSession(
   input: CreateSessionInput,
+  target?: ApiTarget,
 ): Promise<{ id: string; agentId?: string }> {
-  return request<{ id: string; agentId?: string }>("/api/sessions", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return request<{ id: string; agentId?: string }>(
+    "/api/sessions",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    target,
+  );
 }
 
 export async function getHistory(
   id: string,
   options?: { limit?: number; before?: number; agent?: string },
+  target?: ApiTarget,
 ): Promise<HistoryPage> {
   const params = new URLSearchParams();
   if (options?.limit !== undefined) params.set("limit", String(options.limit));
   if (options?.before !== undefined) params.set("before", String(options.before));
   if (options?.agent !== undefined) params.set("agent", options.agent);
   const query = params.size === 0 ? "" : `?${params.toString()}`;
-  return request<HistoryPage>(`/api/sessions/${encodeURIComponent(id)}/history${query}`);
+  return request<HistoryPage>(
+    `/api/sessions/${encodeURIComponent(id)}/history${query}`,
+    undefined,
+    target,
+  );
 }
 
 export interface AttachOptions {
@@ -105,7 +114,11 @@ export interface AttachOptions {
   readonly agent?: string;
 }
 
-export async function attach(id: string, options?: AttachOptions): Promise<AttachResult> {
+export async function attach(
+  id: string,
+  options?: AttachOptions,
+  target?: ApiTarget,
+): Promise<AttachResult> {
   const body: Record<string, unknown> = {};
   if (options?.takeover === true) body.takeover = true;
   if (options?.model !== undefined) body.model = options.model;
@@ -116,6 +129,7 @@ export async function attach(id: string, options?: AttachOptions): Promise<Attac
       method: "POST",
       body: Object.keys(body).length === 0 ? undefined : JSON.stringify(body),
     },
+    target,
   );
 }
 
@@ -129,8 +143,8 @@ export async function getUserInfo(): Promise<UserInfo> {
   return data.user;
 }
 
-export async function listAgents(): Promise<AgentInfo[]> {
-  const data = await request<{ agents: AgentInfo[] }>("/api/agents");
+export async function listAgents(target?: ApiTarget): Promise<AgentInfo[]> {
+  const data = await request<{ agents: AgentInfo[] }>("/api/agents", undefined, target);
   return data.agents;
 }
 
@@ -157,32 +171,54 @@ export async function patchSessionMeta(
   id: string,
   patch: SessionMetaPatch,
   agent?: string,
+  target?: ApiTarget,
 ): Promise<boolean> {
-  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}${agentQuery(agent)}`, {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-  });
+  const res = await sepiaFetch(
+    `/api/sessions/${encodeURIComponent(id)}${agentQuery(agent)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    },
+    target,
+  );
   return res.ok;
 }
 
-export async function listProjects(): Promise<{ projects: import("./types").Project[] }> {
-  return request(`/api/projects`);
+export async function listProjects(
+  target?: ApiTarget,
+): Promise<{ projects: import("./types").Project[] }> {
+  return request(`/api/projects`, undefined, target);
 }
 
-export async function createProject(name: string): Promise<{ project: import("./types").Project }> {
-  return request(`/api/projects`, { method: "POST", body: JSON.stringify({ name }) });
+export async function createProject(
+  name: string,
+  target?: ApiTarget,
+): Promise<{ project: import("./types").Project }> {
+  return request(`/api/projects`, { method: "POST", body: JSON.stringify({ name }) }, target);
 }
 
-export async function renameProject(id: string, name: string): Promise<boolean> {
-  const res = await sepiaFetch(`/api/projects/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ name }),
-  });
+export async function renameProject(
+  id: string,
+  name: string,
+  target?: ApiTarget,
+): Promise<boolean> {
+  const res = await sepiaFetch(
+    `/api/projects/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    },
+    target,
+  );
   return res.ok;
 }
 
-export async function deleteProject(id: string): Promise<boolean> {
-  const res = await sepiaFetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+export async function deleteProject(id: string, target?: ApiTarget): Promise<boolean> {
+  const res = await sepiaFetch(
+    `/api/projects/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    target,
+  );
   return res.ok;
 }
 
@@ -190,47 +226,76 @@ export async function convertSession(
   id: string,
   agent: string,
   fromAgent?: string,
+  target?: ApiTarget,
 ): Promise<{ sessionId: string }> {
-  return request(`/api/sessions/${encodeURIComponent(id)}/convert${agentQuery(fromAgent)}`, {
-    method: "POST",
-    body: JSON.stringify({ agent }),
-  });
+  return request(
+    `/api/sessions/${encodeURIComponent(id)}/convert${agentQuery(fromAgent)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ agent }),
+    },
+    target,
+  );
 }
 
-export async function renameSession(id: string, title: string, agent?: string): Promise<boolean> {
-  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}${agentQuery(agent)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ title }),
-  });
+export async function renameSession(
+  id: string,
+  title: string,
+  agent?: string,
+  target?: ApiTarget,
+): Promise<boolean> {
+  const res = await sepiaFetch(
+    `/api/sessions/${encodeURIComponent(id)}${agentQuery(agent)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    },
+    target,
+  );
   if (!res.ok) throw new Error(friendlyHttpError(res.status));
   return true;
 }
 
-export async function deleteSession(id: string, agent?: string): Promise<boolean> {
-  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}${agentQuery(agent)}`, {
-    method: "DELETE",
-  });
+export async function deleteSession(
+  id: string,
+  agent?: string,
+  target?: ApiTarget,
+): Promise<boolean> {
+  const res = await sepiaFetch(
+    `/api/sessions/${encodeURIComponent(id)}${agentQuery(agent)}`,
+    {
+      method: "DELETE",
+    },
+    target,
+  );
   if (!res.ok) throw new Error(friendlyHttpError(res.status));
   return true;
 }
 
-export async function sendPrompt(id: string, text: string, agent?: string): Promise<boolean> {
+export async function sendPrompt(
+  id: string,
+  text: string,
+  agent?: string,
+  target?: ApiTarget,
+): Promise<boolean> {
   const data = await request<{ ok: boolean }>(
     `/api/sessions/${encodeURIComponent(id)}/prompt${agentQuery(agent)}`,
     {
       method: "POST",
       body: JSON.stringify({ text }),
     },
+    target,
   );
   return data.ok;
 }
 
-export async function cancel(id: string, agent?: string): Promise<boolean> {
+export async function cancel(id: string, agent?: string, target?: ApiTarget): Promise<boolean> {
   const data = await request<{ ok: boolean }>(
     `/api/sessions/${encodeURIComponent(id)}/cancel${agentQuery(agent)}`,
     {
       method: "POST",
     },
+    target,
   );
   return data.ok;
 }
@@ -240,10 +305,12 @@ export async function respondToPermission(
   requestId: string,
   optionId: string | null,
   agent?: string,
+  target?: ApiTarget,
 ): Promise<boolean> {
   const data = await request<{ ok: boolean }>(
     `/api/sessions/${encodeURIComponent(id)}/permission${agentQuery(agent)}`,
     { method: "POST", body: JSON.stringify({ requestId, optionId }) },
+    target,
   );
   return data.ok;
 }
@@ -262,14 +329,16 @@ export function subscribeSessionStream(
   onEvent: (event: AgUiEvent) => void,
   onStatus?: (status: StreamStatus) => void,
   agent?: string,
+  target: ApiTarget = localTarget(),
 ): () => void {
   if (typeof EventSource === "undefined") return () => {};
   const params = new URLSearchParams();
-  const token = getToken();
-  if (token !== null) params.set("access_token", token);
+  if (target.token !== null) params.set("access_token", target.token);
   if (agent !== undefined) params.set("agent", agent);
   const query = params.size === 0 ? "" : `?${params.toString()}`;
-  const source = new EventSource(`/api/sessions/${encodeURIComponent(id)}/stream${query}`);
+  const source = new EventSource(
+    `${target.baseUrl}/api/sessions/${encodeURIComponent(id)}/stream${query}`,
+  );
   onStatus?.("connecting");
   source.onopen = () => onStatus?.("live");
   // EventSource retries automatically; surface the gap instead of stalling silently.
