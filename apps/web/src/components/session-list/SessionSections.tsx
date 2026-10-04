@@ -173,11 +173,11 @@ export function SectionHeader({
   readonly action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between px-3 pt-3 pb-1">
+    <div className="flex items-center justify-between px-3 pt-5 pb-1">
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-1 rounded-md px-1 py-0.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+        className="flex items-center gap-1 rounded-md px-1 py-0.5 text-left text-base font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
         aria-expanded={open}
       >
         {label}
@@ -215,7 +215,7 @@ function FlatSection({
       <SectionHeader label={label} open={open} onToggle={() => setOpen((v) => !v)} />
       {open && (
         <>
-          <div className="flex flex-col gap-0.5">
+          <div className="flex flex-col gap-1">
             {shown.map((session) => (
               <SectionSessionRow
                 key={session.id}
@@ -228,7 +228,7 @@ function FlatSection({
           {sessions.length > limit && (
             <button
               type="button"
-              className="mt-0.5 w-full px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+              className="mt-1 w-full px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => setShowAll((v) => !v)}
             >
               {showAll ? "Show less" : `Show ${sessions.length - limit} more`}
@@ -399,7 +399,7 @@ function ProjectsSection({
                 </DropdownMenuContent>
               </DropdownMenu>
               {open && (
-                <div className="ml-4 flex flex-col gap-0.5 border-l border-border/50 pl-1.5">
+                <div className="ml-4 flex flex-col gap-1 border-l border-border/50 pl-1.5">
                   {members.length === 0 && (
                     <p className="px-3 py-1 text-xs text-muted-foreground">
                       No sessions — use &quot;Projects…&quot; on a session.
@@ -477,7 +477,7 @@ export function SessionSections({
   const pinned = sessions.filter((s) => s.pinned === true);
   if (pinned.length === 0 && recentSessions.length === 0 && projects.length === 0) return null;
   return (
-    <div className="shrink-0 border-t border-border pb-1">
+    <div className="shrink-0 border-t border-border pb-2">
       <FlatSection
         label="Pinned"
         limit={5}
@@ -582,7 +582,7 @@ function AddSessionDialog({
           autoFocus
         />
         <ScrollArea className="max-h-64">
-          <div className="flex flex-col gap-0.5">
+          <div className="flex flex-col gap-1">
             {candidates.length === 0 && (
               <p className="px-1 py-2 text-sm text-muted-foreground">
                 {filter.trim() === "" ? "All sessions are already in this project." : "No matches."}
