@@ -93,7 +93,7 @@ function SectionSessionRow({
         <ContextMenuTrigger className="group/row relative block">
           <button
             type="button"
-            className={`mx-1.5 flex w-auto items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent/60 focus-visible:ring-1 focus-visible:ring-primary/50 ${
+            className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent/60 focus-visible:ring-1 focus-visible:ring-primary/50 ${
               selected ? "bg-accent/80" : ""
             }`}
             onClick={() => onSelect(sessionKey(session))}
@@ -239,7 +239,7 @@ function FlatSection({
       <SectionHeader label={label} open={open} onToggle={() => setOpen((v) => !v)} />
       {open && (
         <>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 px-1.5">
             {shown.map((session) => (
               <SectionSessionRow
                 key={session.id}
@@ -379,10 +379,10 @@ function ProjectsSection({
           const open = !collapsed[project.id];
           return (
             <div key={project.id} className="group/row">
-              <div className="relative">
+              <div className="relative px-1.5">
                 <button
                   type="button"
-                  className="mx-1.5 flex w-auto items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+                  className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
                   onClick={() =>
                     setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
                   }
@@ -454,7 +454,7 @@ function ProjectsSection({
                 </DropdownMenu>
               </div>
               {open && (
-                <div className="ml-4 flex flex-col gap-1 border-l border-border/50 pl-1.5">
+                <div className="ml-4 flex flex-col gap-1 border-l border-border/50 pl-3">
                   {members.length === 0 && (
                     <p className="px-3 py-1 text-xs text-muted-foreground">
                       No sessions — use &quot;Projects…&quot; on a session.
@@ -580,7 +580,7 @@ function ProjectDetailsDialog({
             {members.length} session{members.length === 1 ? "" : "s"}
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 px-1.5">
           {members.length === 0 && (
             <p className="text-sm text-muted-foreground">No sessions in this project.</p>
           )}
@@ -639,7 +639,7 @@ function AddSessionDialog({
           autoFocus
         />
         <ScrollArea className="max-h-64">
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 px-1.5">
             {candidates.length === 0 && (
               <p className="px-1 py-2 text-sm text-muted-foreground">
                 {filter.trim() === "" ? "All sessions are already in this project." : "No matches."}
