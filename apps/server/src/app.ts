@@ -313,7 +313,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
               ...session,
               title: meta?.title ?? session.title,
               pinned: meta?.pinned ?? false,
-              projectId: meta?.projectId ?? null,
+              projectIds: meta?.projectIds ?? [],
               model: meta?.model ?? null,
             };
           }),
@@ -411,12 +411,12 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         }
         patch.pinned = patchBody.pinned;
       }
-      if ("projectId" in patchBody) {
-        const projectId = patchBody.projectId;
-        if (projectId !== null && typeof projectId !== "string") {
-          return jsonResponse({ error: "projectId must be a string or null" }, 400, cors);
+      if ("projectIds" in patchBody) {
+        const projectIds = patchBody.projectIds;
+        if (!Array.isArray(projectIds) || !projectIds.every((p) => typeof p === "string")) {
+          return jsonResponse({ error: "projectIds must be an array of strings" }, 400, cors);
         }
-        patch.projectId = projectId;
+        patch.projectIds = projectIds;
       }
       if ("model" in patchBody) {
         const model = patchBody.model;

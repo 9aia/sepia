@@ -60,9 +60,12 @@ export function SessionActions({
       () => {},
       () => undefined,
     );
-  const setProject = (projectId: string | null) =>
-    patch.mutate({ id: session.id, patch: { projectId } });
-  const inProject = session.projectId !== null && session.projectId !== undefined;
+  const toggleProject = (projectId: string) => {
+    const ids = session.projectIds.includes(projectId)
+      ? session.projectIds.filter((p) => p !== projectId)
+      : [...session.projectIds, projectId];
+    patch.mutate({ id: session.id, patch: { projectIds: ids } });
+  };
   return (
     <>
       <Item onClick={() => onSelect(session.id)}>
@@ -85,24 +88,22 @@ export function SessionActions({
       <Sub>
         <SubTrigger>
           <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} />
-          Move to project
+          Manage in projects
         </SubTrigger>
-        <SubContent className="w-48">
+        <SubContent className="w-52">
           {projects.length === 0 && (
             <Item disabled>
               <span className="text-muted-foreground">No projects yet</span>
             </Item>
           )}
           {projects.map((project) => (
-            <Item key={project.id} onClick={() => setProject(project.id)}>
+            <Item key={project.id} closeOnClick={false} onClick={() => toggleProject(project.id)}>
               {project.name}
-              {session.projectId === project.id && (
+              {session.projectIds.includes(project.id) && (
                 <span className="ml-auto text-xs text-primary">✓</span>
               )}
             </Item>
           ))}
-          {inProject && <Separator />}
-          {inProject && <Item onClick={() => setProject(null)}>Remove from project</Item>}
         </SubContent>
       </Sub>
       {convertTargets.length > 0 && (

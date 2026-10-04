@@ -11,7 +11,7 @@ export interface SessionSummary {
   source: string;
   busy: boolean;
   pinned: boolean;
-  projectId: string | null;
+  projectIds: string[];
   model: string | null;
 }
 

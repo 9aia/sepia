@@ -295,7 +295,7 @@ function ProjectsSection({
         <p className="px-3 py-1 text-xs text-muted-foreground">No projects yet.</p>
       )}
       {projects.map((project) => {
-        const members = sessions.filter((s) => s.projectId === project.id);
+        const members = sessions.filter((s) => s.projectIds.includes(project.id));
         const open = !collapsed[project.id];
         return (
           <div key={project.id} className="group/row relative">

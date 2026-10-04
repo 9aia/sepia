@@ -20,7 +20,7 @@ export interface SessionSummary {
   readonly busy: boolean;
   /** Sepia-overlay metadata (not part of the agent's own store). */
   readonly pinned?: boolean;
-  readonly projectId?: string | null;
+  readonly projectIds?: ReadonlyArray<string>;
 }
 
 export interface HistoryMessage {

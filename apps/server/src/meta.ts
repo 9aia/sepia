@@ -11,7 +11,7 @@ import { dirname } from "node:path";
 export interface SessionMeta {
   readonly title?: string;
   readonly pinned?: boolean;
-  readonly projectId?: string | null;
+  readonly projectIds?: ReadonlyArray<string>;
   /** Preferred spawn model for this session — applied on next attach. */
   readonly model?: string | null;
 }
@@ -46,17 +46,41 @@ export const createMetaStore = (path: string): MetaStore => {
     renameSync(tmp, path);
   };
 
+  // Migrates older shapes: v1 flat map, singular projectId.
+  const normalizeSession = (value: unknown): SessionMeta => {
+    const rec = typeof value === "object" && value !== null ? value : {};
+    const raw = rec as Record<string, unknown>;
+    return {
+      title: typeof raw.title === "string" ? raw.title : undefined,
+      pinned: raw.pinned === true,
+      projectIds: Array.isArray(raw.projectIds)
+        ? raw.projectIds.filter((p): p is string => typeof p === "string")
+        : typeof raw.projectId === "string"
+          ? [raw.projectId]
+          : [],
+      model: raw.model === null || typeof raw.model === "string" ? raw.model : undefined,
+    };
+  };
+
   if (existsSync(path)) {
     try {
       const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
       if (typeof parsed === "object" && parsed !== null) {
         const record = parsed as Record<string, unknown>;
-        if (typeof record.sessions === "object" && record.sessions !== null) {
-          data = record as unknown as MetaFile;
-        } else {
-          // v1 format: a flat Record<sessionId, SessionMeta>.
-          data = { sessions: record as Record<string, SessionMeta>, projects: {} };
+        // v2: { sessions, projects } — else v1 flat Record<sessionId, SessionMeta>.
+        const rawSessions =
+          typeof record.sessions === "object" && record.sessions !== null
+            ? (record.sessions as Record<string, unknown>)
+            : record;
+        const rawProjects =
+          typeof record.projects === "object" && record.projects !== null
+            ? (record.projects as Record<string, { name: string }>)
+            : {};
+        const sessions: Record<string, SessionMeta> = {};
+        for (const [id, value] of Object.entries(rawSessions)) {
+          sessions[id] = normalizeSession(value);
         }
+        data = { sessions, projects: rawProjects };
       }
     } catch {
       // A corrupt or half-written file degrades to empty rather than failing.
@@ -101,7 +125,9 @@ export const createMetaStore = (path: string): MetaStore => {
       const sessions = Object.fromEntries(
         Object.entries(data.sessions).map(([sid, meta]) => [
           sid,
-          meta.projectId === id ? { ...meta, projectId: null } : meta,
+          meta.projectIds?.includes(id) === true
+            ? { ...meta, projectIds: meta.projectIds.filter((p) => p !== id) }
+            : meta,
         ]),
       );
       data = { sessions, projects };

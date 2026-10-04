@@ -274,7 +274,7 @@ export function SessionDetailsDrawer({
                   render={
                     <Button variant="outline" className="w-full justify-start">
                       <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} />
-                      Move to project
+                      Manage in projects
                     </Button>
                   }
                 />
@@ -287,23 +287,20 @@ export function SessionDetailsDrawer({
                   {projects.map((project) => (
                     <DropdownMenuItem
                       key={project.id}
-                      onClick={() =>
-                        patch.mutate({ id: session.id, patch: { projectId: project.id } })
-                      }
+                      closeOnClick={false}
+                      onClick={() => {
+                        const ids = session.projectIds.includes(project.id)
+                          ? session.projectIds.filter((p) => p !== project.id)
+                          : [...session.projectIds, project.id];
+                        patch.mutate({ id: session.id, patch: { projectIds: ids } });
+                      }}
                     >
                       {project.name}
-                      {session.projectId === project.id && (
+                      {session.projectIds.includes(project.id) && (
                         <span className="ml-auto text-xs text-primary">✓</span>
                       )}
                     </DropdownMenuItem>
                   ))}
-                  {session.projectId !== null && session.projectId !== undefined && (
-                    <DropdownMenuItem
-                      onClick={() => patch.mutate({ id: session.id, patch: { projectId: null } })}
-                    >
-                      Remove from project
-                    </DropdownMenuItem>
-                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
               <DropdownMenu>
