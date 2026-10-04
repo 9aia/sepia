@@ -10,10 +10,8 @@
     "test": "vitest run && bun tests/e2e.ts"
   },
   "dependencies": {
-    "@ag-ui/client": "0.0.59",
     "@effect/opentelemetry": "0.64.0",
     "@effect/platform": "^0.97.1",
-    "@effect/platform-bun": "^0.91.2",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/resources": "2.11.0",
     "@opentelemetry/sdk-logs": "0.222.0",

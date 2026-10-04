@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStickToBottomContext } from "use-stick-to-bottom";
 import type { HistoryMessage } from "../lib/types";
 import type { LiveMessage } from "../lib/liveMessages";
-import { sendPrompt } from "../lib/api";
+import { cancel, sendPrompt } from "../lib/api";
 import { useHistory } from "../hooks/query/useHistory";
 import { Button } from "./ui/button";
 import {
@@ -235,7 +235,8 @@ export function SessionChat({
             <PromptInputTools />
             <PromptInputSubmit
               status={running ? "streaming" : submitting ? "submitted" : "ready"}
-              disabled={running || submitting}
+              disabled={submitting}
+              onStop={() => void cancel(sessionId)}
             />
           </PromptInputFooter>
         </PromptInput>

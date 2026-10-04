@@ -3,7 +3,7 @@
 Sepia is a self-hosted control plane for coding-agent sessions. Two processes
 run side by side:
 
-- **API** (`sepia-server`, Bun, `:8787`) — REST + AG-UI SSE + CopilotKit
+- **API** (`sepia-server`, Bun, `:8787`) — REST + AG-UI SSE + AG-UI agent endpoint
   runtime. Spawns `devin acp` / `cline --acp` subprocesses that can read and
   modify files in session working directories.
 - **Web** (`sepia-web`, TanStack Start, `:3000`) — the browser UI. Proxies
@@ -31,27 +31,25 @@ Treat network access to the API as remote code execution.
 
 ## Configuration (API)
 
-| Variable                        | Default                                       | Purpose                                                            |
-| ------------------------------- | --------------------------------------------- | ------------------------------------------------------------------ |
-| `SEPIA_HOST`                    | `127.0.0.1`                                   | Bind address. Non-loopback requires `SEPIA_TOKEN`.                 |
-| `PORT`                          | `8787`                                        | API port.                                                          |
-| `SEPIA_TOKEN`                   | unset                                         | Bearer token required on all `/api/*` routes when set.             |
-| `SEPIA_DB`                      | `~/.local/share/devin/cli/sessions.db`        | Devin session store path (opened read-only).                       |
-| `SEPIA_CLINE_DIR`               | `~/.cline/data`                               | Cline data dir merged into the session list (read-only overlay).   |
-| `SEPIA_ORIGINS`                 | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated CORS allowlist for browser calls.                  |
-| `SEPIA_AGENT_URL`               | `http://localhost:<PORT>/api/agent`           | Where the CopilotKit runtime reaches the AG-UI agent endpoint.     |
-| `SEPIA_AGENT_<ID>_COMMAND`      | `devin acp` / `cline --acp`                   | Override the spawn argv per agent id (space-separated).            |
-| `SEPIA_IDLE_TTL_MS`             | `600000`                                      | Detach live sessions idle this long; `0` disables.                 |
-| `SEPIA_SWEEP_MS`                | `30000`                                       | Idle-sweep interval.                                               |
-| `SEPIA_LOCK_TTL_MS`             | `5000`                                        | Lock-probe result cache.                                           |
-| `SEPIA_HISTORY_LIMIT`           | `500`                                         | Default tail limit for `GET .../history`.                          |
-| `SEPIA_SSE_KEEPALIVE_MS`        | `15000`                                       | SSE keep-alive frame interval; `0` disables.                       |
-| `SEPIA_INHERIT_ENV`             | unset                                         | `1` forwards the whole parent env to agents (allowlist otherwise). |
-| `SEPIA_DEBUG`                   | unset                                         | `1` streams agent stderr into the server log.                      |
-| `SEPIA_OTEL`                    | `1`                                           | `0` disables OTLP telemetry export.                                |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`   | `http://localhost:4318`                       | OTLP/HTTP collector endpoint (LGTM in `lgtm/`).                    |
-| `OTEL_SERVICE_NAME`             | `sepia-server`                                | OTel resource service name.                                        |
-| `COPILOTKIT_TELEMETRY_DISABLED` | unset                                         | `true` disables CopilotKit's anonymous telemetry.                  |
+| Variable                      | Default                                       | Purpose                                                            |
+| ----------------------------- | --------------------------------------------- | ------------------------------------------------------------------ |
+| `SEPIA_HOST`                  | `127.0.0.1`                                   | Bind address. Non-loopback requires `SEPIA_TOKEN`.                 |
+| `PORT`                        | `8787`                                        | API port.                                                          |
+| `SEPIA_TOKEN`                 | unset                                         | Bearer token required on all `/api/*` routes when set.             |
+| `SEPIA_DB`                    | `~/.local/share/devin/cli/sessions.db`        | Devin session store path (opened read-only).                       |
+| `SEPIA_CLINE_DIR`             | `~/.cline/data`                               | Cline data dir merged into the session list (read-only overlay).   |
+| `SEPIA_ORIGINS`               | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated CORS allowlist for browser calls.                  |
+| `SEPIA_AGENT_<ID>_COMMAND`    | `devin acp` / `cline --acp`                   | Override the spawn argv per agent id (space-separated).            |
+| `SEPIA_IDLE_TTL_MS`           | `600000`                                      | Detach live sessions idle this long; `0` disables.                 |
+| `SEPIA_SWEEP_MS`              | `30000`                                       | Idle-sweep interval.                                               |
+| `SEPIA_LOCK_TTL_MS`           | `5000`                                        | Lock-probe result cache.                                           |
+| `SEPIA_HISTORY_LIMIT`         | `500`                                         | Default tail limit for `GET .../history`.                          |
+| `SEPIA_SSE_KEEPALIVE_MS`      | `15000`                                       | SSE keep-alive frame interval; `0` disables.                       |
+| `SEPIA_INHERIT_ENV`           | unset                                         | `1` forwards the whole parent env to agents (allowlist otherwise). |
+| `SEPIA_DEBUG`                 | unset                                         | `1` streams agent stderr into the server log.                      |
+| `SEPIA_OTEL`                  | `1`                                           | `0` disables OTLP telemetry export.                                |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318`                       | OTLP/HTTP collector endpoint (LGTM in `lgtm/`).                    |
+| `OTEL_SERVICE_NAME`           | `sepia-server`                                | OTel resource service name.                                        |
 
 ## Agent authentication
 
@@ -127,9 +125,3 @@ subprocesses (releasing their session locks), so plain `systemctl stop` is safe.
   excluded).
 - Agent stderr is captured into a bounded buffer (`recentStderr`); stream it
   live with `SEPIA_DEBUG=1`.
-
-## Telemetry
-
-`@copilotkit/runtime` emits anonymous telemetry on boot. Disable it with
-`COPILOTKIT_TELEMETRY_DISABLED=true` (confirmed against the installed version;
-the flag is printed at startup).

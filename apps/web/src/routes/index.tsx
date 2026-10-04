@@ -4,7 +4,6 @@ import { useStore } from "@tanstack/react-store";
 import { ChatPanel } from "../components/ChatPanel";
 import { SessionList } from "../components/SessionList";
 import { useSessions } from "../hooks/query/useSessions";
-import { isMock } from "../lib/api";
 import { sepiaStore, setSelectedId } from "../lib/store";
 
 export const Route = createFileRoute("/")({
@@ -24,7 +23,6 @@ function Home() {
 
   return (
     <div className="app-shell">
-      {isMock && <div className="mock-banner">MOCK DATA — no API server connected</div>}
       <SessionList />
       <ChatPanel />
     </div>

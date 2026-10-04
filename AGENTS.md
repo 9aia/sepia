@@ -40,9 +40,8 @@ them from a web UI over the Agent Client Protocol (ACP).
 | `packages/agui`            | `sepia-agui`            | Translate ACP session updates into AG-UI events; SSE encoding         |
 | `packages/session-control` | `sepia-session-control` | Control plane: lists sessions, owns one live agent per session, locks |
 | `apps/sepia`               | `sepia-cli`             | CLI (`list`, `import`, `export`, `install`)                           |
-| `apps/server`              | `sepia-server`          | Bun API: REST + AG-UI SSE + CopilotKit runtime                        |
-| `apps/web`                 | `sepia-web`             | TanStack Start UI (CopilotKit chat)                                   |
-| `apps/website`             | `website`               | Unrelated Vite starter example                                        |
+| `apps/server`              | `sepia-server`          | Bun API: REST + AG-UI SSE + AG-UI agent endpoint                      |
+| `apps/web`                 | `sepia-web`             | TanStack Start UI (AI Elements chat)                                  |
 
 ## Commands
 
@@ -68,11 +67,10 @@ values. Highlights — the full reference lives in `DEPLOY.md`:
 - `SEPIA_DB` — Devin store path; opened **read-only** (`layerReadonly`).
 - `SEPIA_CLINE_DIR` (default `~/.cline/data`) — Cline session dirs merged into
   `GET /api/sessions` via `ClineRepository` (read-only overlay).
-- `SEPIA_ORIGINS`, `SEPIA_AGENT_URL`, `SEPIA_AGENT_<ID>_COMMAND`.
+- `SEPIA_ORIGINS`, `SEPIA_AGENT_<ID>_COMMAND`.
 - `SEPIA_IDLE_TTL_MS`/`SEPIA_SWEEP_MS` — idle live-session detach.
 - `SEPIA_LOCK_TTL_MS`, `SEPIA_HISTORY_LIMIT`, `SEPIA_SSE_KEEPALIVE_MS`.
 - `SEPIA_INHERIT_ENV`, `SEPIA_DEBUG` — child env allowlist bypass / stderr stream.
-- `COPILOTKIT_TELEMETRY_DISABLED=true` — CopilotKit telemetry opt-out.
 
 ## Dependency policy
 
@@ -94,9 +92,9 @@ never run concurrent installs).
   in the package's `vitest.config.ts`.
 - `devin acp` and `cline --acp` are the agent runtimes. `devin acp` advertises
   `loadSession` plus `session/list` (with live lock metadata).
-- The web UI selects a session by putting its id on the CopilotKit runtime URL:
-  `/api/copilotkit?sessionId=<id>`. The runtime's agent factory turns that into
-  `/api/agent?sessionId=<id>`, which is a standard AG-UI agent endpoint.
+- The web UI chats over `POST /api/sessions/:id/prompt` + `GET
+/api/sessions/:id/stream` (AG-UI SSE). `POST /api/agent` is a standalone
+  AG-UI agent endpoint kept for external AG-UI clients.
 - A session locked by a live process attaches read-only; `POST .../attach` with
   `{ "takeover": true }` overrides that.
 - The generated `apps/web/src/routeTree.gen.ts` is excluded from formatting via

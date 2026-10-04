@@ -5,13 +5,14 @@ Devin and Cline sessions, spawns an ACP agent per session, and lets you chat
 with them from a browser — plus a CLI for converting sessions between tools.
 
 ```
-apps/web (TanStack Start)
-  CopilotKit <CopilotChat/>  ──▶  /api/copilotkit   CopilotKit v2 runtime
-                                  └─ HttpAgent ──▶ /api/agent   (AG-UI RunAgentInput → SSE)
-                                                     └─▶ sepia-session-control
-                                                           ├─▶ sepia-core  (IR + Devin/Cline stores)
-                                                           ├─▶ sepia-acp   ──stdio JSON-RPC──▶ devin acp / cline --acp
-                                                           └─▶ sepia-agui  (ACP → AG-UI translation)
+apps/web (TanStack Start + AI Elements)
+  Conversation/PromptInput ──▶ /api/sessions/:id/{prompt,stream}   REST + AG-UI SSE
+                                  └─▶ sepia-session-control
+                                        ├─▶ sepia-core  (IR + Devin/Cline stores)
+                                        ├─▶ sepia-acp   ──stdio JSON-RPC──▶ devin acp / cline --acp
+                                        └─▶ sepia-agui  (ACP → AG-UI translation)
+
+  Also public for AG-UI clients: POST /api/agent (RunAgentInput → SSE)
 ```
 
 ## Packages
@@ -23,8 +24,8 @@ apps/web (TanStack Start)
 | `packages/agui`            | `sepia-agui`            | Translate ACP session updates into AG-UI events; SSE encoding         |
 | `packages/session-control` | `sepia-session-control` | Control plane: lists sessions, owns one live agent per session, locks |
 | `apps/sepia`               | `sepia-cli`             | CLI (`list`, `import`, `export`, `install`)                           |
-| `apps/server`              | `sepia-server`          | Bun API: REST + AG-UI SSE + CopilotKit runtime                        |
-| `apps/web`                 | `sepia-web`             | TanStack Start UI (CopilotKit chat)                                   |
+| `apps/server`              | `sepia-server`          | Bun API: REST + AG-UI SSE + AG-UI agent endpoint                      |
+| `apps/web`                 | `sepia-web`             | TanStack Start UI (AI Elements chat)                                  |
 
 ## Quickstart
 

@@ -252,21 +252,6 @@ body {
   padding-top: 10px;
 }
 
-.mock-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
-  padding: 6px 12px;
-  background: #4a3200;
-  color: #ffcf9e;
-  font-size: 12px;
-  font-weight: 600;
-  text-align: center;
-  letter-spacing: 0.06em;
-}
-
 .chat-panel__error {
   margin: 12px 16px;
   padding: 10px 14px;

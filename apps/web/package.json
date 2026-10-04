@@ -10,7 +10,6 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@ag-ui/client": "0.0.59",
     "@base-ui/react": "^1.8.0",
     "@fontsource-variable/geist": "^5.3.0",
     "@hugeicons/core-free-icons": "^4.3.5",
