@@ -206,7 +206,7 @@ export function SessionList() {
 
   return (
     <Sidebar collapsible="offcanvas" ref={asideRef}>
-      <div className="flex flex-row items-center gap-2.5 px-4 py-3">
+      <div className="flex flex-row items-center gap-2.5 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3">
         <h1 className="m-0 text-base font-medium tracking-wide">Sepia</h1>
         <div className="ml-auto flex items-center gap-1">
           <FilterBar

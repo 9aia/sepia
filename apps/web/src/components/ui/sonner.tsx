@@ -6,6 +6,10 @@ function Toaster(props: ToasterProps) {
     <SonnerToaster
       position="bottom-right"
       gap={8}
+      // Lift toasts above the composer on ≤600px viewports — bottom-right
+      // would otherwise stack over the input/send button. The composer is
+      // ~9.5rem tall; env() covers the home-indicator inset.
+      mobileOffset={{ bottom: "calc(10rem + env(safe-area-inset-bottom))" }}
       toastOptions={{
         classNames: {
           toast:

@@ -581,14 +581,19 @@ export function SessionChat({
 
       {promptError !== null && <ErrorBanner>{promptError}</ErrorBanner>}
 
-      <PromptInput onSubmit={onSubmit} className="shrink-0 px-4 pb-4 pt-3">
+      {/* env() resolves to 0 outside notched devices — the max() keeps the
+          1rem padding everywhere else, so desktop is unchanged. */}
+      <PromptInput
+        onSubmit={onSubmit}
+        className="shrink-0 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]"
+      >
         <PromptInputBody>
           {replyTo !== null && <ReplyPreview quote={replyTo} />}
           <PromptInputTextarea placeholder="Prompt the agent…" />
         </PromptInputBody>
         <PromptInputFooter>
           <PromptInputTools />
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex min-w-0 items-center gap-1">
             <ModelSelect sessionId={sessionId} agent={agent} />
             <PromptInputSubmit
               status={running ? "streaming" : submitting ? "submitted" : "ready"}
@@ -653,9 +658,11 @@ function ModelSelect({ sessionId, agent }: { readonly sessionId: string; readonl
       <SelectTrigger
         aria-label="Session model"
         title="Model for the next agent spawn"
-        className="h-7 w-auto gap-1 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:text-foreground"
+        // max-w keeps a long model id from pushing the send button out of
+        // the composer on narrow viewports.
+        className="h-7 w-auto max-w-40 gap-1 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:text-foreground"
       >
-        {session.model ?? "Default model"}
+        <span className="min-w-0 truncate">{session.model ?? "Default model"}</span>
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="__default__">Agent default</SelectItem>

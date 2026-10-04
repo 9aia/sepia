@@ -11,14 +11,33 @@ import { StreamdownCodeBlock } from "./code-block";
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
+/** Data tables can't wrap — give them their own horizontal scroll track
+ *  instead of widening the whole message column. */
+function StreamdownTable({
+  children,
+  node: _node,
+  ...props
+}: ComponentProps<"table"> & { readonly node?: unknown }) {
+  return (
+    <div className="overflow-x-auto">
+      <table {...props}>{children}</table>
+    </div>
+  );
+}
+
 const streamdownPlugins = { cjk, code, math, mermaid };
 
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
     <Streamdown
-      className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
+      className={cn(
+        // wrap-anywhere keeps unbreakable tokens (long paths, identifiers,
+        // inline code) inside the column instead of clipping off-viewport.
+        "size-full wrap-anywhere [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        className,
+      )}
       plugins={streamdownPlugins}
-      components={{ pre: StreamdownCodeBlock }}
+      components={{ pre: StreamdownCodeBlock, table: StreamdownTable }}
       {...props}
     />
   ),

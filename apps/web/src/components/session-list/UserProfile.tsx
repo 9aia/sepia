@@ -37,7 +37,7 @@ export function UserProfile() {
   const initial = user?.username.charAt(0).toUpperCase();
 
   return (
-    <div className="border-t border-border p-2">
+    <div className="border-t border-border p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <DropdownMenu>
         <DropdownMenuTrigger
           render={

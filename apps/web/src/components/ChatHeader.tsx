@@ -45,7 +45,7 @@ export function ChatHeader({ session, running }: ChatHeaderProps) {
   const deleteMutation = useDeleteSession();
   const [confirmOpen, setConfirmOpen] = useState(false);
   return (
-    <header className="flex items-center justify-between gap-3 px-4 py-3">
+    <header className="flex items-center justify-between gap-3 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3">
       <SidebarTrigger />
       <button
         type="button"
