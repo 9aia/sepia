@@ -17,10 +17,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./ui/alert-dialog";
-import type { HistoryMessage } from "../lib/types";
+
 import type { LiveMessage } from "../lib/liveMessages";
 import { cancel, sendPrompt } from "../lib/api";
 import { settingsStore } from "../lib/settings";
+import { buildRows, type ChatRow } from "../lib/historyRows";
 import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
@@ -49,12 +50,7 @@ import {
   type PromptInputMessage,
 } from "./ai-elements/prompt-input";
 
-type Row =
-  | { readonly kind: "history"; readonly message: HistoryMessage }
-  | { readonly kind: "system"; readonly context: SystemContext }
-  | { readonly kind: "live"; readonly message: LiveMessage };
-
-function RowContent({ row }: { readonly row: Row }) {
+function RowContent({ row }: { readonly row: ChatRow }) {
   if (row.kind === "system") return <SystemContextRow context={row.context} />;
   if (row.kind === "history") {
     const message = row.message;
@@ -116,7 +112,9 @@ function RowContent({ row }: { readonly row: Row }) {
     );
   }
   const role = message.role === "user" ? "user" : "assistant";
-  const error = parseErrorPayload(message.content);
+  // Agents put JSON error payloads in assistant content — a user pasting the
+  // same JSON should still render as text.
+  const error = role === "assistant" ? parseErrorPayload(message.content) : null;
   return (
     <Message from={role}>
       <div className={`flex flex-col gap-1.5 ${role === "user" ? "items-end" : "items-start"}`}>
@@ -206,7 +204,7 @@ function ChatRows({
   fetchingNext,
   onLoadEarlier,
 }: {
-  readonly rows: ReadonlyArray<Row>;
+  readonly rows: ReadonlyArray<ChatRow>;
   readonly hasNextPage: boolean;
   readonly fetchingNext: boolean;
   onLoadEarlier: () => void;
@@ -387,36 +385,9 @@ export function SessionChat({
   // Held by another process → the send asks to take over first.
   const [takeoverPrompt, setTakeoverPrompt] = useState<string | null>(null);
 
-  const rows = useMemo<Row[]>(() => {
-    // All system nodes roll up into one context card at the top — devin emits
-    // them per-turn, so positional runs would scatter the cards.
-    const system: HistoryMessage[] = [];
-    const conversation: HistoryMessage[] = [];
-    for (const message of history) {
-      if (message.role === "system") {
-        system.push(message);
-        continue;
-      }
-      // Devin rewrites the context block per internal turn — the same user
-      // prompt (and sometimes the reply) lands N times with only system nodes
-      // in between. Collapse back-to-back duplicates in conversation order.
-      const prev = conversation[conversation.length - 1];
-      if (prev !== undefined && prev.role === message.role && prev.content === message.content) {
-        continue;
-      }
-      conversation.push(message);
-    }
-    const context = parseSystemContext(system);
-    const empty =
-      context.workspaces.length === 0 &&
-      context.rules.length === 0 &&
-      context.promptText === "" &&
-      context.platform === null;
-    return [
-      ...(empty ? [] : [{ kind: "system", context } satisfies Row]),
-      ...conversation.map((message): Row => ({ kind: "history", message })),
-      ...liveMessages.map((message): Row => ({ kind: "live", message })),
-    ];
+  const rows = useMemo<ChatRow[]>(() => {
+    const context = parseSystemContext(history.filter((m) => m.role === "system"));
+    return buildRows(history, liveMessages, context);
   }, [history, liveMessages]);
 
   const send = (text: string): void => {
@@ -453,9 +424,16 @@ export function SessionChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readOnly]);
 
+  // Throttled — the sentinel refires while visible, so a dead server would
+  // otherwise get hammered by fetchNextPage retries.
+  const lastEarlier = useRef(0);
   const loadEarlier = useCallback(() => {
-    if (!historyQuery.isFetchingNextPage) void historyQuery.fetchNextPage();
-  }, [historyQuery]);
+    const now = Date.now();
+    if (historyQuery.isFetchingNextPage || now - lastEarlier.current < 1500) return;
+    lastEarlier.current = now;
+    void historyQuery.fetchNextPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyQuery.isFetchingNextPage, historyQuery.fetchNextPage]);
 
   return (
     <>

@@ -196,7 +196,7 @@ export const make = (
 
     const historyLimit = (historyOptions?: HistoryOptions): number =>
       historyOptions?.limit !== undefined && Number.isFinite(historyOptions.limit)
-        ? Math.max(0, Math.floor(historyOptions.limit))
+        ? Math.max(1, Math.floor(historyOptions.limit))
         : envNumber(process.env.SEPIA_HISTORY_LIMIT, DEFAULT_HISTORY_LIMIT);
 
     const getHistory = (

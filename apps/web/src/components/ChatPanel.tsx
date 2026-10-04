@@ -7,6 +7,7 @@ import type { PermissionRequest } from "../lib/types";
 import { subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
 import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
+import { liveCoveredByHistory } from "../lib/historyRows";
 import { sepiaStore } from "../lib/store";
 import { settingsStore } from "../lib/settings";
 import { modelArgsFor } from "../lib/models";
@@ -80,15 +81,19 @@ export function ChatPanel() {
   const [liveMessages, setLiveMessages] = useState<LiveMessage[]>([]);
   const { mutate: attach } = attachMutation;
   const settings = useStore(settingsStore);
+  // Only the model args should re-trigger attach — the settings object
+  // identity changes on any pref write (theme, keybinds) and would
+  // re-attach the session on every change.
+  const modelArgs = useMemo(
+    () => modelArgsFor(session?.agent ?? "", session?.model, settings),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [session?.agent, session?.model, settings.models],
+  );
   useEffect(() => {
     if (sessionId === null) return;
-    attach({
-      id: sessionId,
-      agent: session?.agent,
-      ...modelArgsFor(session?.agent ?? "", session?.model, settings),
-    });
+    attach({ id: sessionId, agent: session?.agent, ...modelArgs });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, attach, session?.model, settings]);
+  }, [sessionId, attach, modelArgs]);
 
   // Live rows are optimistic: once the run ends, the refetched IR backlog
   // duplicates them. Clear them only once every live user/assistant text is
@@ -96,16 +101,7 @@ export function ChatPanel() {
   const historyMessages = useMemo(() => flattenHistory(historyQuery.data), [historyQuery.data]);
   useEffect(() => {
     if (running || historyMessages.length === 0) return;
-    const historyTexts = new Set(historyMessages.map((m) => `${m.role}:${m.content}`));
-    setLiveMessages((live) => {
-      if (live.length === 0) return live;
-      const covered = live.every(
-        (m) =>
-          (m.role !== "user" && m.role !== "assistant") ||
-          historyTexts.has(`${m.role}:${m.content}`),
-      );
-      return covered ? [] : live;
-    });
+    setLiveMessages((live) => (liveCoveredByHistory(live, historyMessages) ? [] : live));
   }, [running, historyMessages]);
 
   useEffect(() => {
@@ -132,9 +128,16 @@ export function ChatPanel() {
         if (event.type === "RUN_STARTED") setRunning(true);
         if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
           setRunning(false);
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.history(sessionId, session?.agent),
-          });
+          const refetch = (): void => {
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.history(sessionId, session?.agent),
+            });
+          };
+          refetch();
+          // The agent flushes the IR asynchronously — a second pass picks up
+          // messages that weren't in the store on the first refetch, or the
+          // live rows would ghost until a manual refresh.
+          setTimeout(refetch, 2000);
         }
       },
       setStreamStatus,

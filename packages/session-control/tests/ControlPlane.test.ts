@@ -337,6 +337,35 @@ test("returns the last limit messages and the full node count", async () => {
   expect(page.messages.map((message) => message.content)).toEqual(["m8", "m9", "m10"]);
 });
 
+test("clamps limit=0 to a single newest message (no zero-width windows)", async () => {
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([session("s1", "/work", [node(1, "user", "a", 1), node(2, "assistant", "b", 2)])]),
+  );
+
+  const page = await Effect.runPromise(cp.getHistory("s1", { limit: 0 }));
+
+  // An unclamped 0 slices [total, total) = empty with start=total — a paged
+  // client would then walk identical empty windows forever.
+  expect(page.total).toBe(2);
+  expect(page.messages).toHaveLength(1);
+  expect(page.messages[0]?.content).toBe("b");
+  expect(page.start).toBe(1);
+});
+
+test("before outside the range clamps instead of producing a weird window", async () => {
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([session("s1", "/work", [node(1, "user", "a", 1), node(2, "assistant", "b", 2)])]),
+  );
+
+  const page = await Effect.runPromise(cp.getHistory("s1", { limit: 2, before: 99 }));
+
+  expect(page.total).toBe(2);
+  expect(page.messages.map((m) => m.content)).toEqual(["a", "b"]);
+  expect(page.start).toBe(0);
+});
+
 test("fails with ControlError when the session is unknown", async () => {
   const cp = await makeService(
     { agents: [fakeAgent(new FakeConnection()).runtime] },

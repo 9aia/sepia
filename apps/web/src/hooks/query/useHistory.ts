@@ -28,7 +28,7 @@ export const useHistory = (sessionId: string | null, agent?: string) =>
         before: pageParam === 0 ? undefined : pageParam,
         agent,
       }),
-    enabled: sessionId !== null,
+    enabled: sessionId !== null && sessionId !== "",
     initialPageParam: 0,
     getNextPageParam: (last) => (last.start > 0 ? last.start : undefined),
   });
