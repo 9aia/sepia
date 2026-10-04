@@ -196,33 +196,53 @@ one **global** KV store; neither is per-session-file like Claude Code.
 
 ### A. Agent CLI (`cursor agent`) — `~/.cursor/`
 
-- `chats/<workspace-hash>/<chat-uuid>/` per chat:
+- `chats/<workspace-hash>/<chat-uuid>/` per chat (the hash is opaque — not
+  a decodable slug):
   - `meta.json` — `{schemaVersion, createdAtMs, updatedAtMs, title,
-hasConversation}`.
+hasConversation, cwd?}` (optional file; `cwd` only on some chats).
   - `prompt_history.json` — plain JSON array of submitted prompt strings.
   - `store.db` (SQLite): `blobs(id TEXT PK, data BLOB)` +
     `meta(key,value)`.
     - `meta['0']` is **hex-encoded JSON**: `{agentId, latestRootBlobId,
 name, mode, isRunEverything, createdAt, lastUsedModel}`.
-    - `blobs` is a **content-addressed store** (id = SHA-256). Values are
-      either AI-SDK-style JSON messages or protobuf-ish binary blobs:
+    - `blobs` is a **content-addressed DAG** (id = SHA-256). The
+      `latestRootBlobId` names a protobuf-ish **checkpoint** blob; its
+      repeated field-1 entries are the 32-byte ids of the **ordered message
+      list** at that checkpoint, field 9 is the workspace `file://` URI,
+      field 22 the client tag (`"cli"`). Checkpoints chain incrementally —
+      each new one repeats the full message list, so the latest root is the
+      whole transcript. Prompt records (field 1 = prompt text, field 2 =
+      uuid, field 10 = parent checkpoint) and UI/tool projections (rendered
+      markdown, turn titles, tool-call displays, token counters) are the
+      other binary blobs; sepia decodes only the checkpoint message refs.
+    - Message blobs are AI-SDK-style JSON:
       - `{"role":"system","content":"…system prompt…"}`
+      - `{"role":"user","content":"<user_info>…env context…</user_info>"}` —
+        environment context, not a real prompt
       - `{"role":"user","content":[{"type":"text","text":"<user_query>…"}],
 "providerOptions":{"cursor":{"requestId":"…"}}}`
       - `{"role":"assistant","content":[{"type":"redacted-reasoning",
 "data":"<opaque>"},{"type":"text",…},{"type":"tool-call",
-"toolCallId":"tool_…","toolName":"Shell","input":{…}}]}`
+"toolCallId":"tool_…","toolName":"Shell","args":{…}}],"id":"1"}`
       - `{"role":"tool","content":[{"type":"tool-result","toolCallId":"…",
-"toolName":"Shell","result":"Exit code: 0\n\nCommand output:…"}]}`
+"toolName":"Shell","result":"Exit code: 0\n\nCommand output:…"}],
+"providerOptions":{"cursor":{"highLevelToolCallResult":{"output":
+{"success":{…,"executionTime":ms},"isError":false}}}}}`
     - **Thinking is `redacted-reasoning` — opaque/encrypted**, not
-      recoverable as text from this store.
-    - The binary blobs (length-prefixed, embedded string fields) appear to
-      be UI/tool-call projection data; not fully decoded.
+      recoverable as text from this store; sepia records a `[redacted]`
+      thinking marker.
+    - No per-message timestamps or usage — `meta.json`/`meta['0']` carry
+      session-level `createdAtMs`/`updatedAtMs` only.
 - `projects/<project-slug>/agent-transcripts/<chat-id>/<chat-id>.jsonl` —
-  a **lossy human-readable projection**: one line per message
-  (`{"role":"user|assistant","message":{"content":[{"type":"text",…}]}}`)
+  a **lossy projection** kept even after `store.db` is pruned (357 files /
+  ~11k lines here vs. 5 store.dbs): one JSON line per message
+  (`{"role":"user|assistant","message":{"content":[…]}}`) with `text` and
+  `tool_use{name,input}` blocks — `[REDACTED]` marks redacted reasoning —
   plus terminal events `{"type":"turn_ended","status":"error","error":…}`.
-  No tool calls, no usage — text only.
+  `subagents/<uuid>.jsonl` files are sub-agent transcripts (parent = dir
+  name). No tool results, no usage, no timestamps — the file mtime is the
+  only clock. Chat ids are shared with `chats/`; the store wins when both
+  exist (sepia falls back to the transcript when the store is pruned).
 - `plans/*.plan.md` — generated plan docs; `agent-cli-state.json`,
   `cli-config.json` — CLI state.
 
@@ -423,8 +443,9 @@ per-message `model`/`requestId` → `blocks`/attachments → `status`/
   content-addressed `blobs` SQLite store; IDE chats live in **one global**
   `state.vscdb` KV table keyed `composerData:<id>` /
   `bubbleId:<composer>:<bubble>` (~126k bubbles here). The
-  `agent-transcripts/*.jsonl` files are a lossy text projection, not the
-  canonical transcript.
+  `agent-transcripts/*.jsonl` files are a lossy projection (text +
+  `tool_use`, no results/usage), not the canonical transcript — but they
+  survive `store.db` pruning, so they're the only record of most chats.
 - **Cursor reasoning is unrecoverable**: `redacted-reasoning` blobs are
   opaque — only Devin/Cline/Claude carry readable thinking (and only
   Devin/Claude seal it with signatures).

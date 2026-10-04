@@ -1,9 +1,16 @@
 import { Effect, Option } from "effect";
 import type { Session, SessionRepositoryService } from "sepia-core";
 
-/** Maps a store backend to the agent that can resume it. */
+/**
+ * Maps a store backend to the agent that can resume it. `"cursor"` maps to
+ * itself even though no ACP runtime exists — keeping the id distinct lets
+ * the control plane refuse attach instead of grafting the session onto the
+ * default agent.
+ */
 export const agentForBackend = (backendType: string): string =>
-  backendType === "cline" || backendType === "claude" ? backendType : "devin";
+  backendType === "cline" || backendType === "claude" || backendType === "cursor"
+    ? backendType
+    : "devin";
 
 /**
  * Overlays one primary repository (Devin's store) with extra read sources

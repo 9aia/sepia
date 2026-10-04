@@ -272,9 +272,16 @@ export const make = (
         }),
       );
 
-    const agentForSession = (backendType: string): AgentRuntime | undefined =>
-      options.agents.find((agent) => agent.id === agentForBackend(backendType)) ??
-      pickAgent(options.agents, options.defaultAgentId);
+    // The default-agent fallback only applies to backends that resolve to
+    // the primary agent anyway — a backend mapped to a concrete agent id
+    // that has no registered runtime (e.g. "cursor", a read-only store)
+    // must fail unknown_agent rather than attach under the wrong agent.
+    const agentForSession = (backendType: string): AgentRuntime | undefined => {
+      const mapped = agentForBackend(backendType);
+      const found = options.agents.find((agent) => agent.id === mapped);
+      if (found !== undefined) return found;
+      return mapped === "devin" ? pickAgent(options.agents, options.defaultAgentId) : undefined;
+    };
 
     // Mutable cell refreshed inside method gens; sweepIdle uses whatever the
     // last request fiber saw (or the make-time ambient if none ran yet).
@@ -595,7 +602,9 @@ export const make = (
         }
         const agent =
           options.agents.find((candidate) => candidate.id === agentId) ??
-          pickAgent(options.agents, options.defaultAgentId);
+          (agentId === undefined || agentId === "devin"
+            ? pickAgent(options.agents, options.defaultAgentId)
+            : undefined);
         if (agent === undefined) {
           return yield* Effect.fail(
             controlError("unknown_agent", `No agent available for session: ${id}`, undefined),

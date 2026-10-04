@@ -162,6 +162,20 @@ describe("attach — error and lock paths", () => {
     await Effect.runPromise(plane.closeAll());
   });
 
+  it("a cursor session does not fall back to the default agent", async () => {
+    const devin = fakeAgent();
+    const plane = await makeService([devin.runtime], repository([session("s1", "cursor")]));
+    const result = await runEither(plane.attach("s1"));
+    expect(Either.isLeft(result)).toBe(true);
+    // performAttach crosses a nested runPromise boundary that wraps the
+    // ControlError — assert on the message like the neighboring tests.
+    if (Either.isLeft(result))
+      expect(result.left.message).toContain("No agent available for session: s1");
+    // read-only stores must not spawn an unrelated agent
+    expect(devin.spawns).toHaveLength(0);
+    await Effect.runPromise(plane.closeAll());
+  });
+
   it("a store read failure surfaces as internal", async () => {
     const plane = await makeService([fakeAgent().runtime], repository([], { getById: true }));
     const result = await runEither(plane.attach("s1"));

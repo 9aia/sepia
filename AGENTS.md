@@ -72,6 +72,9 @@ values. Highlights — the full reference lives in `DEPLOY.md`:
   (read-only overlay). Live attach/prompt needs `claude-agent-acp`
   (`@agentclientprotocol/claude-agent-acp`); without it Claude sessions are
   list/history only.
+- `SEPIA_CURSOR_DIR` (default `~/.cursor`) — Cursor `chats/` store.db +
+  `projects/` transcripts merged into `GET /api/sessions` via
+  `CursorRepository` (read-only overlay; no ACP runtime exists).
 - `SEPIA_ORIGINS`, `SEPIA_AGENT_<ID>_COMMAND`.
 - `SEPIA_IDLE_TTL_MS`/`SEPIA_SWEEP_MS` — idle live-session detach.
 - `SEPIA_LOCK_TTL_MS`, `SEPIA_HISTORY_LIMIT`, `SEPIA_SSE_KEEPALIVE_MS`.
