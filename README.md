@@ -4,6 +4,10 @@ A self-hosted web app and toolkit for coding-agent sessions. Sepia lists your
 Devin and Cline sessions, spawns an ACP agent per session, and lets you chat
 with them from a browser — plus a CLI for converting sessions between tools.
 
+The web app is an installable PWA: it serves a manifest + service worker, and
+can push browser notifications when a run finishes or an agent needs a
+permission decision.
+
 ```
 apps/web (TanStack Start + AI Elements)
   Conversation/PromptInput ──▶ /api/sessions/:id/{prompt,stream}   REST + AG-UI SSE
@@ -62,6 +66,19 @@ spawns an agent in a working directory you choose.
   stored backlog; `?limit=` caps it and `?before=<index>` pages backwards
   (the `start` field is the next cursor).
 - **Stream** — `GET /api/sessions/:id/stream` is a raw AG-UI SSE feed.
+- **Meta** — `PATCH /api/sessions/:id` writes title/pin/project membership to
+  the meta store; `DELETE` removes it (tolerant of a session the store never
+  flushed). `POST .../convert` rewrites the session into another agent's
+  format.
+- **Projects** — `GET/POST /api/projects` + `PATCH/DELETE /api/projects/:id`
+  group sessions into named projects.
+- **UI config** — `GET /api/config` + `PATCH /api/config/:key` persist app
+  state (section collapse, expanded dirs) server-side. Internal keys (VAPID,
+  push subscriptions) are filtered from both.
+- **Push** — `GET /api/push/vapid` + `POST/DELETE /api/push/subscribe` register
+  Web Push subscriptions; the server fans out session events (run finished,
+  permission requested) to subscribers per their per-event prefs, and prunes
+  dead endpoints.
 
 Session ids collide across agents (devin and cline mint their own), so every
 session-scoped route also accepts `?agent=<id>` to scope resolution —
@@ -69,6 +86,22 @@ session-scoped route also accepts `?agent=<id>` to scope resolution —
 `convert`, `delete`, and `POST /api/agent`. `POST /api/sessions` returns
 `{ id, agentId }`; a created-but-unflushed session is remembered in the meta
 store so it stays listable and deletable after a restart.
+
+## The web app
+
+- **Sidebar** — pinned / projects / sessions (MRU) / folders sections, all
+  collapsible; a virtualized folder tree grouped by cwd; hover quick-actions
+  (pin, ⋯ menu, +); filter/search/sort in the header.
+- **Chat** — live AG-UI stream rendered as messages, reasoning and tool rows;
+  a "Session context" card parses the agent's system prompt (`<system_info>`,
+  `<rules>`) instead of dumping it as bubbles; optimistic user messages; a
+  take-over confirm when the session is held by another process; earlier
+  history lazy-loads on scroll.
+- **Settings** — agent + model prefs, rebindable/disableable keyboard
+  shortcuts (recorded via TanStack Hotkeys), push-notification toggles per
+  event type, and a dark/light/system theme.
+- **State** — server-reachability indicator in the sidebar footer and an
+  offline screen with retry when the API is unreachable.
 
 ## Security
 
@@ -101,7 +134,8 @@ vp run -r build
 
 `apps/server` also has an end-to-end test (`bun apps/server/tests/e2e.ts`,
 chained into its `test` script) that drives a real `Bun.serve` + control plane
-against a fixture ACP agent.
+against a fixture ACP agent. `apps/web` has a vitest suite for the
+history/row/live-message logic (`src/tests/`).
 
 See `AGENTS.md` for the constraints that matter to contributors, and
 `DEPLOY.md` for self-hosting.
