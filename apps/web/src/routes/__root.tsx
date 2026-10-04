@@ -9,7 +9,7 @@ import { AlertCircleIcon, FileNotFoundIcon } from "@hugeicons/core-free-icons";
 import { EmptyScreen } from "../components/EmptyScreen";
 import { Button } from "../components/ui/button";
 import { queryClient } from "../hooks/query/queryClient";
-import "../style.css";
+import appCss from "../style.css?url";
 
 function RouteError({ error, reset }: { error: unknown; reset: () => void }) {
   useEffect(() => {
@@ -37,7 +37,10 @@ export const Route = createRootRoute({
       { title: "sepia" },
       { name: "theme-color", content: "#0a0a0a" },
     ],
-    links: [{ rel: "manifest", href: "/manifest.webmanifest" }],
+    links: [
+      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "stylesheet", href: appCss },
+    ],
   }),
   component: RootComponent,
   errorComponent: (props) => <RouteError {...props} />,
