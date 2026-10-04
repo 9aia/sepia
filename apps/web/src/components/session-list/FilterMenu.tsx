@@ -60,8 +60,8 @@ export function FilterMenu({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>Agents</DropdownMenuLabel>
         <DropdownMenuGroup>
+          <DropdownMenuLabel>Agents</DropdownMenuLabel>
           {agents.map((agent) => (
             <DropdownMenuCheckboxItem
               key={agent.id}
@@ -74,11 +74,11 @@ export function FilterMenu({
           ))}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Recency</DropdownMenuLabel>
         <DropdownMenuRadioGroup
           value={dateFilter}
           onValueChange={(v) => onDateFilterChange(v as DateFilter)}
         >
+          <DropdownMenuLabel>Recency</DropdownMenuLabel>
           <DropdownMenuRadioItem value="all" closeOnClick={false}>
             Any time
           </DropdownMenuRadioItem>
@@ -93,11 +93,11 @@ export function FilterMenu({
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Status</DropdownMenuLabel>
         <DropdownMenuRadioGroup
           value={statusFilter}
           onValueChange={(v) => onStatusFilterChange(v as StatusFilter)}
         >
+          <DropdownMenuLabel>Status</DropdownMenuLabel>
           <DropdownMenuRadioItem value="all" closeOnClick={false}>
             Any status
           </DropdownMenuRadioItem>
@@ -109,8 +109,8 @@ export function FilterMenu({
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Sort</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSortChange(v as SortKey)}>
+          <DropdownMenuLabel>Sort</DropdownMenuLabel>
           <DropdownMenuRadioItem value="newest" closeOnClick={false}>
             Newest
           </DropdownMenuRadioItem>
