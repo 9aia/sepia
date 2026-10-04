@@ -119,12 +119,18 @@ export async function getNode(target?: ApiTarget): Promise<NodeDescriptor> {
  * long-lived credential (docs/protocol.md). Unauthenticated by design: the
  * code authorizes the exchange, the returned token authenticates later calls.
  */
-export async function pairNode(code: string, target: ApiTarget): Promise<{ token: string }> {
+export async function pairNode(
+  code: string,
+  target: ApiTarget,
+  options?: { readonly forwardTargetAuth?: boolean },
+): Promise<{ token: string }> {
   const res = await sepiaFetch(
     "/api/pair",
     { method: "POST", body: JSON.stringify({ code }) },
-    // Pairing is pre-credential — never send a stored token along.
-    { ...target, token: null },
+    // Pairing is pre-credential — never send a stored token along, unless the
+    // call itself rides an authenticated hop (this node's /api/gateway route,
+    // where the local bearer authorizes the forward, not the peer).
+    options?.forwardTargetAuth === true ? target : { ...target, token: null },
   );
   if (res.status === 404) {
     throw new Error("That code didn't work — it may have expired or already been used");

@@ -3,13 +3,15 @@ import { useStore } from "@tanstack/react-store";
 import { getNode } from "../../lib/api";
 import { toastError, toastSuccess } from "../../lib/toast";
 import {
+  addGatewayPeer,
   addPeer,
   nodeName,
   nodesStore,
+  pairGatewayPeer,
   pairPeer,
   peerTarget,
   refreshSelf,
-  removePeer,
+  removePeerEntry,
   type PeerNode,
 } from "../../lib/nodes";
 import { queryKeys } from "./keys";
@@ -67,11 +69,15 @@ export const usePeerDescriptors = (peers: ReadonlyArray<PeerNode>) =>
     })),
   }).map((result) => result.data);
 
+/** How the browser reaches the peer — directly, or through this node's gateway. */
+export type PeerVia = "direct" | "gateway";
+
 /** Add + validate a peer, then refetch every merged list so it appears. */
 export const useAddNode = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ url, token }: { url: string; token: string }) => addPeer(url, token),
+    mutationFn: ({ url, token, via }: { url: string; token: string; via?: PeerVia }) =>
+      via === "gateway" ? addGatewayPeer(url, token) : addPeer(url, token),
     onSuccess: () => {
       void queryClient.invalidateQueries();
       toastSuccess("Node added");
@@ -88,7 +94,8 @@ export const useAddNode = () => {
 export const usePairNode = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ url, code }: { url: string; code: string }) => pairPeer(url, code),
+    mutationFn: ({ url, code, via }: { url: string; code: string; via?: PeerVia }) =>
+      via === "gateway" ? pairGatewayPeer(url, code) : pairPeer(url, code),
     onSuccess: () => {
       void queryClient.invalidateQueries();
       toastSuccess("Node paired");
@@ -97,11 +104,11 @@ export const usePairNode = () => {
   });
 };
 
-/** Drop a peer; its rows vanish on the next refetch. */
+/** Drop a peer (and a gateway peer's managed credential); its rows vanish on the next refetch. */
 export const useRemoveNode = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => Promise.resolve(removePeer(id)),
+    mutationFn: (id: string) => removePeerEntry(id),
     onSuccess: () => {
       void queryClient.invalidateQueries();
       toastSuccess("Node removed");

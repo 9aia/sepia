@@ -160,3 +160,66 @@ export const planPathRestore = (
   if (content === current) return { kind: "unchanged", path };
   return { kind: "write", path, content };
 };
+
+/* ------------------------------------------------------------------ */
+/* file-history checkpoints (Claude)                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `CheckpointRef.kind` a Claude `file-history-snapshot` entry maps to — the
+ * ref is the snapshot's `messageId`, and the path→backup map it covers rides
+ * on `session.metadata.fileHistory` (read by `fileHistorySnapshot`). Unlike
+ * a shadow-git ref the payload lives outside the repo, in the agent's own
+ * `file-history/<sessionId>/` dir.
+ */
+export const FILE_HISTORY_KIND = "file-history-snapshot";
+
+/**
+ * One tracked file's backup pointer: the blob name under
+ * `file-history/<sessionId>/`, or `null` for the deletion tombstone — the
+ * file did not exist at that checkpoint.
+ */
+export interface FileHistoryBackup {
+  readonly backup: string | null;
+  readonly version?: number;
+}
+
+/**
+ * Tolerant read of `session.metadata.fileHistory` for one checkpoint ref.
+ * `sessionId` names the owning session's backup dir (a subagent's entries
+ * name the parent session); `files` is the workspace-absolute path → backup
+ * map the checkpoint covers. `undefined` when the store recorded no map —
+ * the ref then has nothing a restore can materialize from.
+ */
+export const fileHistorySnapshot = (
+  session: Session,
+  ref: string,
+):
+  | { readonly sessionId: string; readonly files: Record<string, FileHistoryBackup> }
+  | undefined => {
+  const meta = session.metadata;
+  if (meta === null || typeof meta !== "object") return undefined;
+  const history = (meta as Record<string, unknown>).fileHistory;
+  if (history === null || typeof history !== "object") return undefined;
+  const sessionId = (history as Record<string, unknown>).sessionId;
+  const snapshots = (history as Record<string, unknown>).snapshots;
+  if (typeof sessionId !== "string" || snapshots === null || typeof snapshots !== "object") {
+    return undefined;
+  }
+  const entry = (snapshots as Record<string, unknown>)[ref];
+  if (entry === null || typeof entry !== "object") return undefined;
+  const rawFiles = (entry as Record<string, unknown>).files;
+  if (rawFiles === null || typeof rawFiles !== "object") return undefined;
+  const files: Record<string, FileHistoryBackup> = {};
+  for (const [path, value] of Object.entries(rawFiles)) {
+    if (value === null || typeof value !== "object") continue;
+    const backup = (value as Record<string, unknown>).backup;
+    if (backup !== null && typeof backup !== "string") continue;
+    const version = (value as Record<string, unknown>).version;
+    files[path] = {
+      backup,
+      ...(typeof version === "number" && Number.isFinite(version) ? { version } : {}),
+    };
+  }
+  return { sessionId, files };
+};

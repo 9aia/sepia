@@ -27,17 +27,17 @@ export default defineConfig({
         // below the line. Per-glob entries pin each file's measured floor
         // (`bun run coverage`); raise them as coverage improves, never lower
         // them silently.
-        lines: 85.9,
-        statements: 84.76,
-        functions: 75.55,
-        branches: 81.63,
+        lines: 87.74,
+        statements: 86.76,
+        functions: 77.52,
+        branches: 84.24,
         "src/{ClineIndex,Domain,Storage}.ts": {
           lines: 100,
           statements: 100,
           functions: 100,
           branches: 100,
         },
-        "src/ClaudeCode.ts": { lines: 100, statements: 100, functions: 100, branches: 97.45 },
+        "src/ClaudeCode.ts": { lines: 100, statements: 100, functions: 100, branches: 98.11 },
         "src/ClaudeCodeRepository.ts": {
           lines: 100,
           statements: 98.48,
@@ -50,7 +50,7 @@ export default defineConfig({
         // call `make`.
         "src/ClineStore.ts": { lines: 10.41, statements: 10.2, functions: 0, branches: 0 },
         "src/Conversion.ts": { lines: 23.96, statements: 23.38, functions: 14.89, branches: 32.95 },
-        "src/Cursor.ts": { lines: 98.41, statements: 93.2, functions: 100, branches: 80.42 },
+        "src/Cursor.ts": { lines: 98.78, statements: 94.82, functions: 100, branches: 84.94 },
         "src/CursorRepository.ts": {
           lines: 94.4,
           statements: 90.74,

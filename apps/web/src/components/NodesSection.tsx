@@ -11,6 +11,7 @@ import {
 } from "../hooks/query/useNodes";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Switch } from "./ui/switch";
 
 /** Reachability dot — undefined while the first probe is in flight. */
 function StatusDot({ ok }: { readonly ok: boolean | undefined }) {
@@ -40,6 +41,7 @@ export function NodesSection() {
   const [token, setToken] = useState("");
   const [code, setCode] = useState("");
   const [mode, setMode] = useState<"code" | "token">("code");
+  const [viaGateway, setViaGateway] = useState(false);
 
   const active = mode === "code" ? pairNode : addNode;
   const canSubmit =
@@ -48,15 +50,16 @@ export function NodesSection() {
   const submit = (event: FormEvent): void => {
     event.preventDefault();
     if (!canSubmit) return;
+    const via = viaGateway ? ("gateway" as const) : ("direct" as const);
     const reset = () => {
       setUrl("");
       setToken("");
       setCode("");
     };
     if (mode === "code") {
-      pairNode.mutate({ url, code }, { onSuccess: reset });
+      pairNode.mutate({ url, code, via }, { onSuccess: reset });
     } else {
-      addNode.mutate({ url, token }, { onSuccess: reset });
+      addNode.mutate({ url, token, via }, { onSuccess: reset });
     }
   };
 
@@ -84,7 +87,10 @@ export function NodesSection() {
             <StatusDot ok={statuses[index]} />
             <div className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{peer.name}</span>
-              <span className="block truncate text-xs text-muted-foreground">{peer.url}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {peer.url}
+                {peer.via === "gateway" && " — via gateway"}
+              </span>
             </div>
             <Button
               variant="ghost"
@@ -134,13 +140,23 @@ export function NodesSection() {
           ) : (
             <Input
               type="password"
-              placeholder="Bearer token (if required)"
+              placeholder={
+                viaGateway ? "Bearer token (stored on this node)" : "Bearer token (if required)"
+              }
               aria-label="Node token"
               value={token}
               onChange={(event) => setToken(event.target.value)}
             />
           )}
         </div>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Switch
+            checked={viaGateway}
+            onCheckedChange={setViaGateway}
+            aria-label="Route through this node"
+          />
+          Route through this node (gateway) — for peers the browser can't reach directly
+        </label>
         {active.isError && (
           <p className="text-xs text-destructive">
             {active.error instanceof Error ? active.error.message : "Couldn't reach that node"}

@@ -1,6 +1,7 @@
 import { Store } from "@tanstack/react-store";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "./api";
 import { LOCAL_NODE_ID, setLocalNodeAlias } from "./format";
+import { createServer, deleteServer, gatewayTarget, updateServer } from "./servers";
 import { localTarget, type ApiTarget } from "./targets";
 import type { AgentInfo, NodeDescriptor, Project, SessionSummary } from "./types";
 
@@ -17,7 +18,20 @@ export interface PeerNode {
   readonly name: string;
   /** Origin of the peer's API, e.g. `https://thinkpad:8787` — no trailing slash. */
   readonly url: string;
+  /**
+   * The peer's bearer token — held by the browser for direct peers, null for
+   * `via: "gateway"` peers (the credential lives server-side in the managed
+   * registry and never enters the browser… beyond the one add-time submit).
+   */
   readonly token: string | null;
+  /**
+   * "gateway" → this node's server forwards to the peer (docs/protocol.md
+   * phase 3): the browser can't reach `url` directly, so calls go through
+   * `/api/gateway/<serverId>` instead. Absent → direct browser→peer calls.
+   */
+  readonly via?: "gateway";
+  /** Managed-server registry id holding the peer's url + credential. */
+  readonly serverId?: string;
 }
 
 interface NodesState {
@@ -33,16 +47,21 @@ const PROBE_TIMEOUT_MS = 5_000;
 
 const PEERS_KEY = "sepia:nodes";
 
-const normalizePeer = (value: unknown): PeerNode | null => {
+/** Lenient stored-record read — a malformed entry is dropped, not fatal. */
+export const normalizePeer = (value: unknown): PeerNode | null => {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;
   if (typeof raw.id !== "string" || raw.id === "") return null;
   if (typeof raw.url !== "string" || raw.url === "") return null;
+  // A gateway peer needs its managed-registry id to resolve a target; a
+  // stored entry that lost it degrades to direct (calls will just fail).
+  const gateway = raw.via === "gateway" && typeof raw.serverId === "string" && raw.serverId !== "";
   return {
     id: raw.id,
     name: typeof raw.name === "string" && raw.name !== "" ? raw.name : raw.url,
     url: raw.url,
     token: typeof raw.token === "string" && raw.token !== "" ? raw.token : null,
+    ...(gateway ? { via: "gateway" as const, serverId: raw.serverId as string } : {}),
   };
 };
 
@@ -130,6 +149,19 @@ export const removePeer = (id: string): void => {
 };
 
 /**
+ * Remove a peer and, for `via: "gateway"` peers, the managed-server entry
+ * holding its credential. The managed delete is best-effort — an already-gone
+ * entry (removed via Settings → Servers) must not strand the peer row.
+ */
+export const removePeerEntry = async (id: string): Promise<void> => {
+  const peer = nodesStore.state.peers.find((p) => p.id === id);
+  if (peer?.via === "gateway" && peer.serverId !== undefined) {
+    await deleteServer(peer.serverId).catch(() => undefined);
+  }
+  removePeer(id);
+};
+
+/**
  * The pairing add-path (docs/protocol.md): redeem the one-time code `sepia
  * pair` printed on the node for a long-lived credential, then register the
  * peer exactly like the manual token flow.
@@ -144,6 +176,98 @@ export const pairPeer = async (url: string, code: string): Promise<PeerNode> => 
   return addPeer(baseUrl, token);
 };
 
+// --- Gateway-mode peers (docs/protocol.md phase 3) ---------------------------
+//
+// A `via: "gateway"` peer keeps no credential in the browser: the add flow
+// registers the peer in this node's managed-server registry (`/api/servers`,
+// encrypted at rest) and every call rides `ANY /api/gateway/<serverId>`,
+// where the server injects the stored credential. Probing goes *through* the
+// gateway — a peer the browser can't reach directly is exactly the case
+// gateway mode exists for, so direct probes would always fail.
+
+/** url → the `{host, port}` pair the managed registry stores. */
+const gatewayHostPort = (baseUrl: string): { host: string; port: number } => {
+  const url = new URL(baseUrl);
+  const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+  return { host: url.hostname, port };
+};
+
+/**
+ * Probe the peer through the fresh gateway entry and register it. Throws (and
+ * the caller drops the managed entry) when the peer doesn't answer, answers
+ * 401, or turns out to be this machine.
+ */
+const registerGatewayPeer = async (baseUrl: string, serverId: string): Promise<PeerNode> => {
+  const descriptor = await getNode({ ...gatewayTarget(serverId), timeoutMs: PROBE_TIMEOUT_MS });
+  const self = nodesStore.state.self;
+  if (self !== null && descriptor.id === self.id) {
+    throw new Error("That's this machine — it's already in the list");
+  }
+  const peer: PeerNode = {
+    id: descriptor.id,
+    name: descriptor.name,
+    url: baseUrl,
+    token: null,
+    via: "gateway",
+    serverId,
+  };
+  commitPeers(upsertPeer(nodesStore.state.peers, peer));
+  return peer;
+};
+
+/**
+ * Token add-path for a gateway peer: the submitted token goes to the managed
+ * registry (it never persists in the browser), then the peer is probed and
+ * registered through the gateway. On failure the managed entry is dropped so
+ * a rejected add leaves no orphaned credential behind.
+ */
+export const addGatewayPeer = async (url: string, token: string): Promise<PeerNode> => {
+  const baseUrl = normalizeNodeUrl(url);
+  const { host, port } = gatewayHostPort(baseUrl);
+  const secret = token.trim();
+  const entry = await createServer({
+    label: host,
+    host,
+    port,
+    auth: secret === "" ? null : { type: "token", secret },
+    ssh: null,
+  });
+  try {
+    return await registerGatewayPeer(baseUrl, entry.id);
+  } catch (error) {
+    await deleteServer(entry.id).catch(() => undefined);
+    throw error;
+  }
+};
+
+/**
+ * Pairing add-path through the gateway: the managed entry starts credential-
+ * less (POST /api/pair is unauthenticated on the peer), the code is redeemed
+ * through the fresh gateway hop — the local node's bearer authorizes that
+ * forward — and the issued token is written back into the registry.
+ */
+export const pairGatewayPeer = async (url: string, code: string): Promise<PeerNode> => {
+  const baseUrl = normalizeNodeUrl(url);
+  const { host, port } = gatewayHostPort(baseUrl);
+  const entry = await createServer({ label: host, host, port, auth: null, ssh: null });
+  try {
+    const { token } = await pairNode(code.trim(), gatewayTarget(entry.id), {
+      forwardTargetAuth: true,
+    });
+    await updateServer(entry.id, {
+      label: host,
+      host,
+      port,
+      auth: { type: "token", secret: token },
+      ssh: null,
+    });
+    return await registerGatewayPeer(baseUrl, entry.id);
+  } catch (error) {
+    await deleteServer(entry.id).catch(() => undefined);
+    throw error;
+  }
+};
+
 /** Populate `nodesStore.self` from the local node's own /api/node. */
 export const refreshSelf = async (): Promise<NodeDescriptor> => {
   const descriptor = await getNode(localTarget());
@@ -152,12 +276,18 @@ export const refreshSelf = async (): Promise<NodeDescriptor> => {
   return descriptor;
 };
 
-/** API target for a registered peer. */
-export const peerTarget = (peer: PeerNode): ApiTarget => ({
-  baseUrl: peer.url,
-  token: peer.token,
-  timeoutMs: PEER_TIMEOUT_MS,
-});
+/**
+ * API target for a registered peer. A `via: "gateway"` peer resolves to this
+ * node's `/api/gateway/<serverId>` forward — every call site (fan-out lists,
+ * session actions, SSE streams) routes through it unchanged; a direct peer
+ * resolves to its own origin + browser-held token.
+ */
+export const peerTarget = (peer: PeerNode): ApiTarget => {
+  if (peer.via === "gateway" && peer.serverId !== undefined) {
+    return gatewayTarget(peer.serverId);
+  }
+  return { baseUrl: peer.url, token: peer.token, timeoutMs: PEER_TIMEOUT_MS };
+};
 
 /**
  * Resolve a row's `node` field to the API target that owns it. Local rows

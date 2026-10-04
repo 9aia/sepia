@@ -459,6 +459,217 @@ test("parent links resolve through non-message entries and dangling ids chain li
   expect(Option.getOrUndefined(session.nodes[2].parentNodeId)).toBe(1);
 });
 
+test("edit-family tool calls carry locations and revertable diffs", () => {
+  const session = ClaudeCode.fromJsonl(
+    [
+      line(userEntry("u1", null, "change things")),
+      line(
+        assistantEntry("u2", "u1", [
+          {
+            type: "tool_use",
+            id: "toolu_e",
+            name: "Edit",
+            input: { file_path: "/work/proj/a.ts", old_string: "old", new_string: "new" },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_m",
+            name: "MultiEdit",
+            input: {
+              file_path: "/work/proj/b.ts",
+              edits: [
+                { old_string: "o1", new_string: "n1" },
+                { old_string: "o2" },
+                { not: "a-hunk" },
+              ],
+            },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_w",
+            name: "Write",
+            input: { file_path: "/work/proj/c.ts", content: "whole file" },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_r",
+            name: "Read",
+            input: { file_path: "/work/proj/a.ts" },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_n",
+            name: "NotebookEdit",
+            input: { notebook_path: "/work/proj/nb.ipynb", new_source: "cell" },
+          },
+          { type: "tool_use", id: "toolu_b", name: "Bash", input: { command: "ls" } },
+          { type: "tool_use", id: "toolu_g", name: "Glob", input: { path: "/work/proj" } },
+          // degenerate inputs stay honest: nothing recorded is better than
+          // guessing a diff.
+          { type: "tool_use", id: "toolu_raw", name: "Edit", input: "not-an-object" },
+          {
+            type: "tool_use",
+            id: "toolu_one",
+            name: "Edit",
+            input: { file_path: "/work/proj/d.ts", new_string: "only-new" },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_bad_edits",
+            name: "MultiEdit",
+            input: { file_path: "/work/proj/e.ts", edits: "not-a-list" },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_junk_edit",
+            name: "MultiEdit",
+            input: { file_path: "/work/proj/e.ts", edits: ["junk", { new_string: "x" }] },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_no_content",
+            name: "Write",
+            input: { file_path: "/work/proj/f.ts" },
+          },
+          { type: "redacted_thinking" },
+        ]),
+      ),
+    ].join("\n"),
+    { id: "s" },
+  );
+  const [
+    edit,
+    multi,
+    write,
+    read,
+    notebook,
+    bash,
+    glob,
+    raw,
+    oneSided,
+    badEdits,
+    junkEdits,
+    noContent,
+  ] = session.nodes[1].toolCalls;
+  expect(edit.locations).toEqual([{ path: "/work/proj/a.ts" }]);
+  expect(edit.diffs).toEqual([{ path: "/work/proj/a.ts", oldText: "old", newText: "new" }]);
+  expect(multi.diffs).toEqual([
+    { path: "/work/proj/b.ts", oldText: "o1", newText: "n1" },
+    { path: "/work/proj/b.ts", oldText: "o2" },
+  ]);
+  expect(write.diffs).toEqual([{ path: "/work/proj/c.ts", newText: "whole file" }]);
+  expect(read.locations).toEqual([{ path: "/work/proj/a.ts" }]);
+  expect(read.diffs).toEqual([]);
+  // cell-level new_source is not a file diff — location only
+  expect(notebook.locations).toEqual([{ path: "/work/proj/nb.ipynb" }]);
+  expect(notebook.diffs).toEqual([]);
+  expect(bash.locations).toEqual([]);
+  expect(bash.diffs).toEqual([]);
+  expect(glob.locations).toEqual([{ path: "/work/proj" }]);
+  expect(raw.locations).toEqual([]);
+  expect(raw.diffs).toEqual([]);
+  expect(oneSided.diffs).toEqual([{ path: "/work/proj/d.ts", newText: "only-new" }]);
+  expect(badEdits.diffs).toEqual([]);
+  expect(junkEdits.diffs).toEqual([{ path: "/work/proj/e.ts", newText: "x" }]);
+  expect(noContent.diffs).toEqual([]);
+  expect(noContent.locations).toEqual([{ path: "/work/proj/f.ts" }]);
+});
+
+test("file-history-snapshot entries become checkpoints with a path→backup map", () => {
+  const session = ClaudeCode.fromJsonl(
+    [
+      line(userEntry("u1", null, "go")),
+      line({
+        type: "file-history-snapshot",
+        messageId: "msg-1",
+        uuid: "snap-1",
+        parentUuid: "u1",
+        snapshot: {
+          messageId: "msg-1",
+          timestamp: "2026-01-01T00:00:00.500Z",
+          trackedFileBackups: {
+            "/work/proj/a.ts": {
+              backupFileName: "hash1@v1",
+              version: 1,
+              backupTime: "2026-01-01T00:00:00.000Z",
+            },
+            "/work/proj/deleted.ts": { backupFileName: null, version: 2 },
+            "/work/proj/junk.ts": "not-an-object",
+          },
+        },
+      }),
+      // an isSnapshotUpdate entry tops up the same ref — files merge
+      line({
+        type: "file-history-snapshot",
+        messageId: "msg-1",
+        isSnapshotUpdate: true,
+        uuid: "snap-2",
+        parentUuid: "snap-1",
+        snapshot: {
+          messageId: "msg-1",
+          trackedFileBackups: {
+            "/work/proj/b.ts": { backupFileName: "hash2@v1", version: 1 },
+          },
+        },
+      }),
+      line(userEntry("u2", "snap-2", "next")),
+    ].join("\n"),
+    { id: "s" },
+  );
+  expect(session.checkpoints).toEqual([
+    { ref: "msg-1", createdAt: 1767225600000, kind: "file-history-snapshot" },
+  ]);
+  const history = (session.metadata as any).fileHistory;
+  expect(history.sessionId).toBe("sess-1");
+  expect(history.snapshots["msg-1"].files).toEqual({
+    "/work/proj/a.ts": { backup: "hash1@v1", version: 1 },
+    "/work/proj/deleted.ts": { backup: null, version: 2 },
+    "/work/proj/b.ts": { backup: "hash2@v1", version: 1 },
+  });
+});
+
+test("file-history falls back to the file id and tolerates missing pieces", () => {
+  const session = ClaudeCode.fromJsonl(
+    [
+      // no sessionId/timestamp anywhere — uuid is the ref, epoch the time
+      line({
+        type: "file-history-snapshot",
+        uuid: "snap-x",
+        snapshot: {
+          trackedFileBackups: {
+            "/w/a.ts": { backupFileName: "h@v1" },
+          },
+        },
+      }),
+      // no ids at all — nothing to key the snapshot under
+      line({ type: "file-history-snapshot", parentUuid: "snap-x" }),
+      // ref inside the snapshot object; a non-map trackedFileBackups is empty
+      line({
+        type: "file-history-snapshot",
+        uuid: "snap-y",
+        snapshot: { messageId: "inner-y", trackedFileBackups: "junk" },
+      }),
+    ].join("\n"),
+    { id: "sid-fallback" },
+  );
+  expect(session.checkpoints).toEqual([
+    { ref: "snap-x", createdAt: 0, kind: "file-history-snapshot" },
+    { ref: "inner-y", createdAt: 0, kind: "file-history-snapshot" },
+  ]);
+  const history = (session.metadata as any).fileHistory;
+  expect(history.sessionId).toBe("sid-fallback");
+  expect(history.snapshots["snap-x"].files).toEqual({
+    "/w/a.ts": { backup: "h@v1" },
+  });
+  expect(history.snapshots["inner-y"].files).toEqual({});
+});
+
+test("sessions without file history expose no checkpoint metadata", () => {
+  const session = ClaudeCode.fromJsonl(line(userEntry("u1", null, "hi")), { id: "s" });
+  expect(session.checkpoints).toEqual([]);
+  expect((session.metadata as any).fileHistory).toBeUndefined();
+});
+
 test("entries without parentUuid chain linearly; self-parent loops are safe", () => {
   const session = ClaudeCode.fromJsonl(
     [

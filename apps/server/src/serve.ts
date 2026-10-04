@@ -81,6 +81,8 @@ export const startServer = async (env: ServerEnv): Promise<ReturnType<typeof Bun
     agents,
     defaultAgentId: "devin",
     probeCwd: process.cwd(),
+    // Claude file-history checkpoints restore from `<claudeDir>/file-history`.
+    fileHistoryDir: `${claudeDir}/file-history`,
   }).pipe(Layer.provide(repoLayer));
 
   const layer = env.otel.enabled

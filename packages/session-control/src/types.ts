@@ -110,10 +110,12 @@ export interface AttachResult {
  *   before the session first touched it; with it, exactly that call's change
  *   is reverted. Reverts are non-clobbering — a file that drifted from the
  *   recorded after-state skips rather than being overwritten.
- * - `checkpoint`: a `Session.checkpoints` ref (Cline shadow-git stash/commit
- *   sha in the workspace repository). Restores the files that checkpoint
- *   covers — `ref^..ref` — to their snapshotted content; `paths` narrows to
- *   a subset.
+ * - `checkpoint`: a `Session.checkpoints` ref — either a Cline shadow-git
+ *   stash/commit sha in the workspace repository (restores `ref^..ref`) or
+ *   a Claude `file-history-snapshot` ref (materializes the recorded
+ *   path→backup map from the agent's `file-history/` dir; `null` backups
+ *   are deletion tombstones). `paths` narrows to a subset. A ref whose kind
+ *   the store can't serve fails `conflict` rather than faking a restore.
  *
  * `confirm: true` is mandatory — every variant writes (or deletes) real
  * files under the session's working directory.
@@ -330,6 +332,13 @@ export interface ControlPlaneOptions {
    * session store, only files under the session's working directory.
    */
   readonly restoreExec?: RestoreExec;
+  /**
+   * Directory Claude's `file-history-snapshot` backups live under —
+   * `<dir>/<sessionId>/<backupName>` — read by checkpoint restores whose ref
+   * `kind` is `file-history-snapshot`. Defaults to
+   * `~/.claude/file-history`; the server passes `$SEPIA_CLAUDE_DIR/file-history`.
+   */
+  readonly fileHistoryDir?: string;
 }
 
 export class ControlPlane extends Context.Tag("ControlPlane")<

@@ -1,11 +1,11 @@
 import { Effect, Option } from "effect";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import * as Cursor from "../src/Cursor.js";
 import * as CursorRepository from "../src/CursorRepository.js";
-import { StorageError } from "../src/Domain.js";
+import { MessageNode, Session, StorageError, ToolCall } from "../src/Domain.js";
 
 /* ------------------------------------------------------------- */
 /* fixture helpers                                                */
@@ -418,6 +418,167 @@ test("transcript subagent source records the parent chat", () => {
   expect(summary.nodes).toEqual([]);
 });
 
+test("transcript file-edit tool calls carry locations and revertable diffs", () => {
+  const session = Cursor.fromTranscriptJsonl(
+    [
+      { role: "user", message: { content: [{ type: "text", text: "change it" }] } },
+      {
+        role: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "t1",
+              name: "StrReplace",
+              input: { path: "/w/a.ts", old_string: "o", new_string: "n" },
+            },
+            {
+              type: "tool_use",
+              id: "t2",
+              name: "Write",
+              input: { path: "/w/b.ts", contents: "made" },
+            },
+            { type: "tool_use", id: "t3", name: "Delete", input: { path: "/w/c.ts" } },
+            {
+              type: "tool_use",
+              id: "t4",
+              name: "Glob",
+              input: { target_directory: "/w", glob_pattern: "**/*" },
+            },
+            {
+              type: "tool_use",
+              id: "t5",
+              name: "ApplyPatch",
+              input:
+                "*** Begin Patch\n" +
+                "*** Update File: /w/d.ts\n" +
+                "@@\n" +
+                " ctx\n" +
+                "-old\n" +
+                "+new\n" +
+                "*** Add File: /w/e.ts\n" +
+                "+whole\n" +
+                "+file\n" +
+                "*** Delete File: /w/f.ts\n" +
+                "*** End Patch",
+            },
+          ],
+        },
+      },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n"),
+    { id: "c1", projectSlug: "w" },
+  );
+  const [strReplace, write, del, glob, patch] = session.nodes[1].toolCalls;
+  expect(strReplace.locations).toEqual([{ path: "/w/a.ts" }]);
+  expect(strReplace.diffs).toEqual([{ path: "/w/a.ts", oldText: "o", newText: "n" }]);
+  expect(write.diffs).toEqual([{ path: "/w/b.ts", newText: "made" }]);
+  // a delete records the path it removed — nothing to revert with
+  expect(del.locations).toEqual([{ path: "/w/c.ts" }]);
+  expect(del.diffs).toEqual([]);
+  expect(glob.locations).toEqual([{ path: "/w" }]);
+  expect(patch.diffs).toEqual([
+    { path: "/w/d.ts", oldText: "ctx\nold", newText: "ctx\nnew" },
+    { path: "/w/e.ts", newText: "whole\nfile" },
+    // a delete section with no `-` payload keeps the change on record
+    { path: "/w/f.ts" },
+  ]);
+});
+
+test("toolFileRefs covers renames, deletes, sentinel lines and edge args", () => {
+  const refs = Cursor.toolFileRefs(
+    "ApplyPatch",
+    "@@ stray before any section\n" +
+      "*** Begin Patch\n" +
+      "*** Update File: /w/old.ts\n" +
+      "*** Move to: /w/new.ts\n" +
+      "@@ class Foo\n" +
+      "-x\n" +
+      "+y\n" +
+      "\\ No newline at end of file\n" +
+      "*** Delete File: /w/gone.ts\n" +
+      "-gone body\n" +
+      "*** End Patch",
+  );
+  expect(refs.diffs).toEqual([
+    // hunks land on the rename target — the rename itself is no diff
+    { path: "/w/new.ts", oldText: "x", newText: "y" },
+    // a delete's `-` payload is the only content that can resurrect it
+    { path: "/w/gone.ts", oldText: "gone body" },
+  ]);
+  expect(refs.locations).toEqual([
+    { path: "/w/old.ts" },
+    { path: "/w/new.ts" },
+    { path: "/w/gone.ts" },
+  ]);
+
+  // args that carry no patch text
+  expect(Cursor.toolFileRefs("ApplyPatch", {})).toEqual({ locations: [], diffs: [] });
+  expect(Cursor.toolFileRefs("ApplyPatch", 42)).toEqual({ locations: [], diffs: [] });
+  // non-object args to a regular tool
+  expect(Cursor.toolFileRefs("Read", "raw")).toEqual({ locations: [], diffs: [] });
+  // hunk tools without a path record nothing
+  expect(Cursor.toolFileRefs("StrReplace", { old_string: "a" }).diffs).toEqual([]);
+  // one-sided and string-free calls stay honest about what was recorded
+  expect(Cursor.toolFileRefs("StrReplace", { path: "/w/a.ts", new_string: "n" }).diffs).toEqual([
+    { path: "/w/a.ts", newText: "n" },
+  ]);
+  expect(Cursor.toolFileRefs("StrReplace", { path: "/w/a.ts" }).diffs).toEqual([]);
+  // Write tolerates both `contents` and `content`, but needs one of them
+  expect(Cursor.toolFileRefs("Write", { path: "/w/b.ts", content: "x" }).diffs).toEqual([
+    { path: "/w/b.ts", newText: "x" },
+  ]);
+  expect(Cursor.toolFileRefs("Write", { path: "/w/b.ts" }).diffs).toEqual([]);
+  // path lists contribute locations; junk entries drop
+  expect(
+    Cursor.toolFileRefs("SemanticSearch", { target_directories: ["/w", "", 42] }).locations,
+  ).toEqual([{ path: "/w" }]);
+});
+
+test("store tool calls carry locations and diffs from args", () => {
+  const session = Cursor.sessionFromStore({
+    id: "chat-2",
+    blobs: new Map<string, Uint8Array>([
+      [blobId(0), checkpoint([blobId(1)])],
+      [
+        blobId(1),
+        json({
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "tool_edit",
+              toolName: "StrReplace",
+              args: { path: "/w/a.ts", old_string: "o", new_string: "n" },
+            },
+            {
+              type: "tool-call",
+              toolCallId: "tool_patch",
+              toolName: "ApplyPatch",
+              args: {
+                patch: "*** Begin Patch\n*** Update File: /w/b.ts\n@@\n-a\n+b\n*** End Patch",
+              },
+            },
+            {
+              type: "tool-call",
+              toolCallId: "tool_read",
+              toolName: "ReadLints",
+              args: { paths: ["/w/x.ts", "/w/y.ts"] },
+            },
+          ],
+        }),
+      ],
+    ]),
+  });
+  const calls = session.nodes[0].toolCalls;
+  expect(calls[0].diffs).toEqual([{ path: "/w/a.ts", oldText: "o", newText: "n" }]);
+  // object-shaped patch args decode through the same parser
+  expect(calls[1].diffs).toEqual([{ path: "/w/b.ts", oldText: "a", newText: "b" }]);
+  expect(calls[2].locations).toEqual([{ path: "/w/x.ts" }, { path: "/w/y.ts" }]);
+  expect(calls[2].diffs).toEqual([]);
+});
+
 test("empty and malformed transcripts yield a bare session", () => {
   const session = Cursor.fromTranscriptJsonl("\nnot json\n", {
     id: "t",
@@ -589,17 +750,24 @@ test("repository getById prefers the transcript when the store is pruned", async
   expect((session.metadata as Record<string, unknown>).store).toBe("transcript");
 });
 
-test("repository hasSession and read-only writes", async () => {
+test("repository hasSession and unsafe write ids", async () => {
   const { repo } = fixture();
   await expect(Effect.runPromise(repo.hasSession("chat-1"))).resolves.toBe(true);
   await expect(Effect.runPromise(repo.hasSession("sub-1"))).resolves.toBe(true);
   await expect(Effect.runPromise(repo.hasSession("nope"))).resolves.toBe(false);
-  await expect(Effect.runPromise(repo.save({} as never))).rejects.toThrow(
-    "Cursor repository is read-only",
-  );
-  await expect(Effect.runPromise(repo.delete("x"))).rejects.toThrow(
-    "Cursor repository is read-only",
-  );
+
+  const bad = Session.make({
+    id: "../escape",
+    title: "x",
+    workingDirectory: "/w",
+    model: "m",
+    createdAt: 1,
+    lastActivityAt: 1,
+    mainChainId: 0,
+    metadata: null,
+  });
+  await expect(Effect.runPromise(repo.save(bad))).rejects.toThrow(/safe file name/);
+  await expect(Effect.runPromise(repo.delete("../x"))).rejects.toThrow(/safe file name/);
 });
 
 test("repository treats a missing cursor dir as empty", async () => {
@@ -628,4 +796,324 @@ test("repository degrades a broken store.db to meta-only listing", async () => {
   const sessions = await Effect.runPromise(repo.list());
   expect(sessions).toHaveLength(1);
   expect(sessions[0].title).toBe("Still Listed");
+});
+
+/* ------------------------------------------------------------- */
+/* write path — agent-transcripts projection                      */
+/* ------------------------------------------------------------- */
+
+test("projectSlugFromCwd flattens separators like the real layout", () => {
+  expect(Cursor.projectSlugFromCwd("/home/luis/Desktop/cheloni-v4")).toBe(
+    "home-luis-Desktop-cheloni-v4",
+  );
+  expect(Cursor.projectSlugFromCwd("/tmp/0b0ce061-35f7")).toBe("tmp-0b0ce061-35f7");
+  // every non-alphanumeric flattens, including dots and spaces
+  expect(Cursor.projectSlugFromCwd("/w/my proj.v2")).toBe("w-my-proj-v2");
+  expect(Cursor.projectSlugFromCwd("/")).toBe("root");
+});
+
+test("toTranscriptJsonl encodes only what the projection carries", () => {
+  const session = Session.make({
+    id: "new-chat",
+    title: "title lives nowhere in the projection",
+    workingDirectory: "/w",
+    model: "composer-1",
+    createdAt: 1_700_000_000,
+    lastActivityAt: 1_700_000_300,
+    mainChainId: 3,
+    metadata: null,
+    nodes: [
+      MessageNode.make({
+        nodeId: 0,
+        role: "system",
+        content: "sys",
+        createdAt: 1_700_000_000,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 1,
+        role: "user",
+        content: "explore the repo",
+        createdAt: 1_700_000_001,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 2,
+        role: "assistant",
+        content: "I'll look around.",
+        thinking: Option.some(Cursor.REDACTED_THINKING),
+        toolCalls: [
+          ToolCall.make({ id: "call-1", name: "Glob", arguments: { glob_pattern: "src/**" } }),
+        ],
+        createdAt: 1_700_000_002,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 3,
+        role: "tool",
+        content: "result text",
+        createdAt: 1_700_000_003,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 4,
+        role: "user",
+        content: "",
+        createdAt: 1_700_000_004,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 5,
+        role: "assistant",
+        content: "",
+        createdAt: 1_700_000_005,
+        metadata: null,
+      }),
+    ],
+  });
+
+  const lines = Cursor.toTranscriptJsonl(session).trim().split("\n");
+  // system, tool-result and empty nodes have no slot in the projection
+  expect(lines).toHaveLength(2);
+  expect(JSON.parse(lines[0])).toEqual({
+    role: "user",
+    message: { content: [{ type: "text", text: "explore the repo" }] },
+  });
+  expect(JSON.parse(lines[1])).toEqual({
+    role: "assistant",
+    message: {
+      content: [
+        { type: "text", text: "I'll look around.\n\n[REDACTED]" },
+        { type: "tool_use", id: "call-1", name: "Glob", input: { glob_pattern: "src/**" } },
+      ],
+    },
+  });
+});
+
+test("toTranscriptJsonl marks thinking even without visible text", () => {
+  const session = Session.make({
+    id: "s",
+    title: "t",
+    workingDirectory: "/w",
+    model: "m",
+    createdAt: 1,
+    lastActivityAt: 1,
+    mainChainId: 0,
+    metadata: null,
+    nodes: [
+      MessageNode.make({
+        nodeId: 0,
+        role: "assistant",
+        content: "",
+        thinking: Option.some("hidden reasoning"),
+        createdAt: 1,
+        metadata: null,
+      }),
+    ],
+  });
+  expect(JSON.parse(Cursor.toTranscriptJsonl(session).trim())).toEqual({
+    role: "assistant",
+    message: { content: [{ type: "text", text: "[REDACTED]" }] },
+  });
+});
+
+const writableNodes = (): ReadonlyArray<MessageNode> => [
+  MessageNode.make({
+    nodeId: 0,
+    role: "user",
+    content: "explore the repo",
+    createdAt: 1_700_000_000,
+    metadata: null,
+  }),
+  MessageNode.make({
+    nodeId: 1,
+    parentNodeId: Option.some(0),
+    role: "assistant",
+    content: "I'll look around.",
+    thinking: Option.some(Cursor.REDACTED_THINKING),
+    toolCalls: [
+      ToolCall.make({ id: "call-1", name: "Glob", arguments: { glob_pattern: "src/**" } }),
+    ],
+    createdAt: 1_700_000_100,
+    metadata: null,
+  }),
+];
+
+const writableSession = (
+  id: string,
+  cwd: string,
+  overrides: {
+    readonly metadata?: unknown;
+    readonly parentSessionId?: Option.Option<string>;
+    readonly nodes?: ReadonlyArray<MessageNode>;
+  } = {},
+): Session =>
+  Session.make({
+    id,
+    title: "unused title",
+    workingDirectory: cwd,
+    model: "composer-1",
+    createdAt: 1_700_000_000,
+    lastActivityAt: 1_700_000_300,
+    mainChainId: 1,
+    metadata: overrides.metadata ?? { source: "import" },
+    parentSessionId: overrides.parentSessionId ?? Option.none(),
+    nodes: overrides.nodes ?? writableNodes(),
+    promptHistory: [],
+  });
+
+const writableRepo = (root: string) =>
+  CursorRepository.makeCursorSessionRepository({
+    cursorDir: root,
+    openStoreDb: fakeStoreDb(new Map()),
+  });
+
+test("save writes the transcript layout and getById round-trips it", async () => {
+  const root = makeTree({});
+  const repo = writableRepo(root);
+  const session = writableSession("new-chat", "/home/luis/Desktop/cheloni");
+
+  await Effect.runPromise(repo.save(session));
+
+  const filePath = join(
+    root,
+    "projects/home-luis-Desktop-cheloni/agent-transcripts/new-chat/new-chat.jsonl",
+  );
+  expect(existsSync(filePath)).toBe(true);
+  // the on-disk line shape matches a real Cursor transcript
+  const lines = readFileSync(filePath, "utf8").trim().split("\n");
+  expect(JSON.parse(lines[1]).message.content[1]).toEqual({
+    type: "tool_use",
+    id: "call-1",
+    name: "Glob",
+    input: { glob_pattern: "src/**" },
+  });
+
+  expect(await Effect.runPromise(repo.hasSession("new-chat"))).toBe(true);
+  const found = await Effect.runPromise(repo.getById("new-chat"));
+  const read = Option.getOrThrow(found);
+  expect(read.title).toBe("explore the repo");
+  expect(read.workingDirectory).toBe("/home/luis/Desktop/cheloni");
+  // the mtime stamp is the only timestamp the projection keeps
+  expect(read.lastActivityAt).toBe(1_700_000_300);
+  expect(read.promptHistory.map((p) => p.content)).toEqual(["explore the repo"]);
+
+  const [user, assistant] = read.nodes;
+  expect(read.nodes).toHaveLength(2);
+  expect(user.role).toBe("user");
+  expect(user.content).toBe("explore the repo");
+  expect(assistant.content).toBe("I'll look around.");
+  expect(Option.getOrUndefined(assistant.thinking)).toBe(Cursor.REDACTED_THINKING);
+  expect(assistant.toolCalls[0]).toMatchObject({
+    id: "call-1",
+    name: "Glob",
+    arguments: { glob_pattern: "src/**" },
+  });
+});
+
+test("save reuses the recorded project slug and overwrites cleanly", async () => {
+  const root = makeTree({});
+  const repo = writableRepo(root);
+  const session = writableSession("chat-x", "/unrelated/cwd", {
+    metadata: { source: "cursor", store: "transcript", project: "home-luis-Desktop" },
+  });
+  await Effect.runPromise(repo.save(session));
+  expect(
+    existsSync(join(root, "projects/home-luis-Desktop/agent-transcripts/chat-x/chat-x.jsonl")),
+  ).toBe(true);
+
+  // a recorded slug that isn't a safe file name falls back to the cwd slug
+  const unsafe = writableSession("chat-y", "/w/fallback", {
+    metadata: { store: "transcript", project: "../escape" },
+  });
+  await Effect.runPromise(repo.save(unsafe));
+  expect(existsSync(join(root, "projects/w-fallback/agent-transcripts/chat-y/chat-y.jsonl"))).toBe(
+    true,
+  );
+
+  // a second save replaces the file wholesale
+  const updated = writableSession("chat-x", "/unrelated/cwd", {
+    metadata: { store: "transcript", project: "home-luis-Desktop" },
+    nodes: [
+      MessageNode.make({
+        nodeId: 0,
+        role: "user",
+        content: "replacement",
+        createdAt: 1_700_000_000,
+        metadata: null,
+      }),
+    ],
+  });
+  await Effect.runPromise(repo.save(updated));
+  const read = Option.getOrThrow(await Effect.runPromise(repo.getById("chat-x")));
+  expect(read.nodes.map((n) => n.content)).toEqual(["replacement"]);
+});
+
+test("save writes subagents under the parent's transcript dir", async () => {
+  const root = makeTree({});
+  const repo = writableRepo(root);
+  // the parent lives in a different project than the child's cwd slug
+  await Effect.runPromise(repo.save(writableSession("parent-1", "/elsewhere/proj")));
+
+  const child = writableSession("sub-9", "/home/luis/Desktop", {
+    parentSessionId: Option.some("parent-1"),
+  });
+  await Effect.runPromise(repo.save(child));
+
+  const filePath = join(
+    root,
+    "projects/elsewhere-proj/agent-transcripts/parent-1/subagents/sub-9.jsonl",
+  );
+  expect(existsSync(filePath)).toBe(true);
+
+  const read = Option.getOrThrow(await Effect.runPromise(repo.getById("sub-9")));
+  expect(Option.getOrUndefined(read.parentSessionId)).toBe("parent-1");
+  expect(read.workingDirectory).toBe("/elsewhere/proj");
+});
+
+test("save a subagent without a parent on disk still lands under it", async () => {
+  const root = makeTree({});
+  const repo = writableRepo(root);
+  const child = writableSession("sub-1", "/w/proj", {
+    parentSessionId: Option.some("ghost-parent"),
+  });
+  await Effect.runPromise(repo.save(child));
+  expect(
+    existsSync(join(root, "projects/w-proj/agent-transcripts/ghost-parent/subagents/sub-1.jsonl")),
+  ).toBe(true);
+  const read = Option.getOrThrow(await Effect.runPromise(repo.getById("sub-1")));
+  expect(Option.getOrUndefined(read.parentSessionId)).toBe("ghost-parent");
+});
+
+test("save refuses to shadow a chats store.db", async () => {
+  const { repo } = fixture();
+  await expect(Effect.runPromise(repo.save(writableSession("chat-1", "/w")))).rejects.toThrow(
+    /backed by a chats store\.db/,
+  );
+  // transcript-only ids save fine even alongside populated chats dirs
+  await Effect.runPromise(repo.save(writableSession("brand-new", "/w")));
+});
+
+test("delete removes transcript dirs, subagent files and chat stores", async () => {
+  const { repo, root } = fixture();
+
+  await Effect.runPromise(repo.delete("sub-1"));
+  expect(
+    existsSync(
+      join(root, "projects/home-luis-Desktop/agent-transcripts/chat-2/subagents/sub-1.jsonl"),
+    ),
+  ).toBe(false);
+  expect(await Effect.runPromise(repo.hasSession("sub-1"))).toBe(false);
+  // the parent chat survives its subagent's removal
+  expect(await Effect.runPromise(repo.hasSession("chat-2"))).toBe(true);
+
+  // deleting a chat removes both its store and its transcript (with the
+  // remaining subagents, which live inside the chat's dir)
+  await Effect.runPromise(repo.delete("chat-1"));
+  expect(existsSync(join(root, "chats/wsHASH/chat-1"))).toBe(false);
+  expect(existsSync(join(root, "projects/home-luis-Desktop/agent-transcripts/chat-1"))).toBe(false);
+  expect(await Effect.runPromise(repo.hasSession("chat-1"))).toBe(false);
+
+  // deleting an unknown id is a no-op
+  await Effect.runPromise(repo.delete("ghost"));
 });

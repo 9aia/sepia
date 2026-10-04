@@ -1,5 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getNode } from "../../lib/api";
+import { nodesStore, removePeer } from "../../lib/nodes";
 import {
   createServer,
   deleteServer,
@@ -64,7 +65,12 @@ export const useDeleteServer = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => deleteServer(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
+      // A gateway peer's credential lived in this entry — drop the peer too,
+      // else its /api/gateway/<id> target would just 404 on every call.
+      for (const peer of nodesStore.state.peers) {
+        if (peer.via === "gateway" && peer.serverId === id) removePeer(peer.id);
+      }
       void queryClient.invalidateQueries({ queryKey: queryKeys.servers });
       toastSuccess("Server removed");
     },

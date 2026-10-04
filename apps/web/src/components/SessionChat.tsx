@@ -40,7 +40,7 @@ import type { HistoryBlock, MessageUsage, RunSpan } from "../lib/types";
 import { attachmentToPart, partToBlock, type PendingAttachment } from "../lib/attachments";
 import { attachmentViews } from "../lib/blocks";
 import { finishReasonLabel, formatUsage, usageLabel } from "../lib/format";
-import { spanNodeLabel } from "../lib/nodes";
+import { nodeTarget, spanNodeLabel } from "../lib/nodes";
 import { ApiError, cancel, sendPrompt, type StreamStatus } from "../lib/api";
 import { sepiaStore, setReplyTo } from "../lib/store";
 import { formatReplyPrompt, replyAuthorLabel, type ReplyQuote } from "../lib/reply";
@@ -494,7 +494,12 @@ export function SessionChat({
   onTakeover,
   onReattach,
 }: SessionChatProps) {
-  const historyQuery = useHistory(sessionId, agent);
+  // Run provenance + node routing ride on the session row — the meta
+  // overlay's spans land in the merged sessions list, and `node` scopes
+  // history/prompt/cancel to the owning machine (direct or via gateway).
+  const { data: sessions = [] } = useSessions();
+  const sessionRow = sessions.find((s) => s.id === sessionId && s.agent === agent);
+  const historyQuery = useHistory(sessionId, agent, sessionRow?.node);
   const history = useMemo(() => flattenHistory(historyQuery.data), [historyQuery.data]);
   const [submitting, setSubmitting] = useState(false);
   // The failed send's payload rides along so Retry can resend it verbatim.
@@ -524,10 +529,6 @@ export function SessionChat({
   const scrollToEnd = useRef<(() => void) | null>(null);
   const scrollOnSent = useRef(false);
 
-  // Run provenance rides on the session row — the meta overlay's spans land
-  // in the merged sessions list.
-  const { data: sessions = [] } = useSessions();
-  const sessionRow = sessions.find((s) => s.id === sessionId && s.agent === agent);
   const spans = sessionRow?.spans;
   const holderPid = sessionRow?.lockHolderPid ?? null;
 
@@ -557,7 +558,7 @@ export function SessionChat({
     // while scrolled up would leave the row appended below the fold (and
     // unmounted by the virtualizer). Flag a scroll for when it commits.
     scrollOnSent.current = true;
-    sendPrompt(sessionId, { text: prompt, attachments: parts }, agent)
+    sendPrompt(sessionId, { text: prompt, attachments: parts }, agent, nodeTarget(sessionRow?.node))
       .then((ok) => {
         if (!ok) {
           onRemoveLiveMessage(liveId);
@@ -795,7 +796,7 @@ export function SessionChat({
             <PromptInputSubmit
               status={running ? "streaming" : submitting ? "submitted" : "ready"}
               disabled={submitting}
-              onStop={() => void cancel(sessionId, agent)}
+              onStop={() => void cancel(sessionId, agent, nodeTarget(sessionRow?.node))}
             />
           </div>
         </PromptInputFooter>
@@ -932,6 +933,7 @@ function ModelSelect({ sessionId, agent }: { readonly sessionId: string; readonl
         patch.mutate({
           id: session.id,
           agent: session.agent,
+          node: session.node,
           patch: { model: v === "__default__" ? null : v },
         })
       }

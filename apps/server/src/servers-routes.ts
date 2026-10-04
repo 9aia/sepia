@@ -16,6 +16,9 @@ import type { TunnelManager } from "./ssh";
  *   ANY    /api/servers/:id/proxy/*  → authenticated passthrough to the managed
  *                                      node (through the tunnel when ssh is
  *                                      configured — lazily started)
+ *   ANY    /api/gateway/:id/*        → the same passthrough, mounted at the
+ *                                      phase-3 gateway path (docs/protocol.md)
+ *                                      — see handleGatewayRoute below
  *
  * The proxy is what keeps secrets server-side: the browser calls
  * `/api/servers/x/proxy/api/node` and this route injects the stored
@@ -50,6 +53,10 @@ const proxy = async (
 ): Promise<Response> => {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const url = new URL(request.url);
+  // EventSource can't set headers, so stream callers authenticate to this
+  // node via `?access_token`. Strip it before forwarding — the peer must only
+  // ever see its own stored credential, never the caller's.
+  url.searchParams.delete("access_token");
   let base: string;
   try {
     base = await upstreamBase(entry, deps);
@@ -172,4 +179,29 @@ export const handleServersRoute = async (
   }
 
   return undefined;
+};
+
+/**
+ * Handle `ANY /api/gateway/:peer/*` — gateway mode (docs/protocol.md phase
+ * 3). `:peer` is a managed-server registry id: the route resolves it to the
+ * entry's url + stored credential and forwards exactly like `/:id/proxy/*`,
+ * SSH tunnel included. The browser talks only to this node (its bearer is
+ * consumed by the node's own auth check); the peer sees just its stored
+ * credential. `segments` are the path parts after "gateway": [peerId,
+ * ...upstreamPath]. Returns undefined for shapes that don't match.
+ */
+export const handleGatewayRoute = async (
+  request: Request,
+  segments: ReadonlyArray<string>,
+  deps: ServersRouteDeps,
+): Promise<Response | undefined> => {
+  if (segments.length === 0) return undefined;
+  const id = decodeURIComponent(segments[0] ?? "");
+  const entry = deps.store.get(id);
+  if (entry === undefined) {
+    return json({ error: "Unknown gateway peer" }, 404, deps.cors);
+  }
+  const path = `/${segments.slice(1).map(decodeURIComponent).join("/")}`;
+  if (path === "/") return json({ error: "Missing upstream path" }, 400, deps.cors);
+  return proxy(request, entry, path, deps);
 };

@@ -25,6 +25,7 @@ const session = (
   nodes: ReadonlyArray<MessageNode> = [],
   checkpoints: Session["checkpoints"] = [],
   cwd = CWD,
+  metadata: unknown = null,
 ): Session =>
   new Session({
     id,
@@ -36,7 +37,7 @@ const session = (
     lastActivityAt: 1_700_000_000,
     mainChainId: 0,
     checkpoints,
-    metadata: null,
+    metadata,
     nodes,
   });
 
@@ -457,6 +458,137 @@ test("checkpoint restore rejects path escapes in the paths subset", async () => 
   );
   const result = await runEither(
     cp.restore("ck", { confirm: true, checkpoint: REF, paths: ["../evil.ts"] }),
+  );
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) expect(result.left.code).toBe("invalid");
+});
+
+/* ---- file-history checkpoints (Claude) -------------------------------- */
+
+const FH_REF = "snap-msg-1";
+
+const fileHistorySession = (
+  files: Record<string, { backup: string | null; version?: number }>,
+  sessionId = "claude-9",
+): Session =>
+  session("fh", [], [{ ref: FH_REF, createdAt: 1, kind: "file-history-snapshot" }], CWD, {
+    fileHistory: {
+      sessionId,
+      snapshots: { [FH_REF]: { at: 1, files } },
+    },
+  });
+
+test("file-history checkpoints materialize backups and delete tombstones", async () => {
+  const { exec, fs, text } = fakeExec({
+    [`${CWD}/a.ts`]: "newer",
+    [`${CWD}/same.ts`]: "same",
+    [`${CWD}/gone.ts`]: "added later",
+    "/history/claude-9/h1@v1": "old",
+    "/history/claude-9/h2@v1": "same",
+    "/history/claude-9/h4@v1": "outside",
+  });
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(new FakeConnection())],
+      restoreExec: exec,
+      fileHistoryDir: "/history",
+    },
+    repository([
+      fileHistorySession({
+        [`${CWD}/a.ts`]: { backup: "h1@v1", version: 1 },
+        [`${CWD}/same.ts`]: { backup: "h2@v1" },
+        [`${CWD}/gone.ts`]: { backup: null },
+        "/etc/outside.ts": { backup: "h4@v1" },
+      }),
+    ]),
+  );
+  const result = await Effect.runPromise(cp.restore("fh", { confirm: true, checkpoint: FH_REF }));
+  expect(result.restored).toEqual([
+    { path: `${CWD}/a.ts`, action: "written", bytes: 3 },
+    { path: `${CWD}/same.ts`, action: "unchanged" },
+    { path: `${CWD}/gone.ts`, action: "deleted" },
+  ]);
+  expect(result.skipped).toEqual([
+    { path: "/etc/outside.ts", reason: "outside the session working directory" },
+  ]);
+  expect(text(`${CWD}/a.ts`)).toBe("old");
+  expect(fs.has(`${CWD}/gone.ts`)).toBe(false);
+});
+
+test("file-history restore narrows to requested paths", async () => {
+  const { exec } = fakeExec({ "/history/claude-9/h1@v1": "old" });
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(new FakeConnection())],
+      restoreExec: exec,
+      fileHistoryDir: "/history",
+    },
+    repository([
+      fileHistorySession({
+        [`${CWD}/a.ts`]: { backup: "h1@v1" },
+        [`${CWD}/b.ts`]: { backup: "h2@v1" },
+      }),
+    ]),
+  );
+  const result = await Effect.runPromise(
+    cp.restore("fh", { confirm: true, checkpoint: FH_REF, paths: ["a.ts", "unrelated.ts"] }),
+  );
+  expect(result.restored).toEqual([{ path: `${CWD}/a.ts`, action: "written", bytes: 3 }]);
+  expect(result.skipped).toEqual([
+    { path: "unrelated.ts", reason: `not touched by checkpoint ${FH_REF}` },
+  ]);
+});
+
+test("file-history restore fails cleanly when the store recorded no map", async () => {
+  const { exec } = fakeExec();
+  const bare = session("fh", [], [{ ref: FH_REF, createdAt: 1, kind: "file-history-snapshot" }]);
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection())], restoreExec: exec },
+    repository([bare]),
+  );
+  const result = await runEither(cp.restore("fh", { confirm: true, checkpoint: FH_REF }));
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) {
+    expect(result.left.code).toBe("conflict");
+    expect(result.left.message).toContain("not supported");
+  }
+});
+
+test("file-history restore skips missing backups and unsafe names", async () => {
+  const { exec } = fakeExec();
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(new FakeConnection())],
+      restoreExec: exec,
+      fileHistoryDir: "/history",
+    },
+    repository([
+      fileHistorySession({
+        [`${CWD}/a.ts`]: { backup: "missing@v1" },
+        [`${CWD}/b.ts`]: { backup: "../evil" },
+      }),
+    ]),
+  );
+  const result = await Effect.runPromise(cp.restore("fh", { confirm: true, checkpoint: FH_REF }));
+  expect(result.restored).toEqual([]);
+  expect(result.skipped).toEqual([
+    { path: `${CWD}/a.ts`, reason: "backup missing from the file-history store: missing@v1" },
+    { path: `${CWD}/b.ts`, reason: "unsafe backup name recorded" },
+  ]);
+});
+
+test("file-history restore rejects path escapes in the paths subset", async () => {
+  const { exec } = fakeExec();
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(new FakeConnection())],
+      restoreExec: exec,
+      fileHistoryDir: "/history",
+    },
+    repository([fileHistorySession({ [`${CWD}/a.ts`]: { backup: "h1@v1" } })]),
+  );
+  const result = await runEither(
+    cp.restore("fh", { confirm: true, checkpoint: FH_REF, paths: ["../evil.ts"] }),
   );
   expect(Either.isLeft(result)).toBe(true);
   if (Either.isLeft(result)) expect(result.left.code).toBe("invalid");

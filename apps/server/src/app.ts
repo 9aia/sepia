@@ -28,7 +28,7 @@ import type { MetaStore } from "./meta";
 import { PROTOCOL_VERSION, type NodeIdentity } from "./node";
 import type { Pairing } from "./pair";
 import type { ServerStore } from "./servers";
-import { handleServersRoute } from "./servers-routes";
+import { handleGatewayRoute, handleServersRoute } from "./servers-routes";
 import type { TunnelManager } from "./ssh";
 import { keepAliveMsFromEnv, SseChannel } from "./sse-channel";
 import type { UiAssets } from "./ui";
@@ -701,6 +701,24 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       return handled ?? jsonResponse({ error: "Not found" }, 404, cors);
     }
 
+    // Gateway mode (docs/protocol.md phase 3): `ANY /api/gateway/:peer/*`
+    // proxies a managed-server registry entry with its stored credential
+    // injected — the federated UI's route to peers the browser can't reach
+    // directly. Behind the same bearer check as every other /api route.
+    if (segments[0] === "api" && segments[1] === "gateway") {
+      const store = options.servers;
+      const tunnels = options.tunnels;
+      if (store === undefined || tunnels === undefined) {
+        return jsonResponse({ error: "Gateway is not configured on this server" }, 501, cors);
+      }
+      const handled = await handleGatewayRoute(request, segments.slice(2), {
+        store,
+        tunnels,
+        cors,
+      });
+      return handled ?? jsonResponse({ error: "Not found" }, 404, cors);
+    }
+
     if (method === "GET" && segmentsEqual(segments, ["api", "agents"])) {
       return jsonResponse({ agents: plane.listAgents() }, 200, cors);
     }
@@ -1304,8 +1322,9 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
 
       if (method === "GET" && action === "checkpoints") {
         // The workspace-snapshot refs the store recorded (Cline shadow-git
-        // `metadata.checkpoint` history). Cheap sibling of /export for the
-        // restore UI — just the refs, never the payloads.
+        // `metadata.checkpoint` history, Claude `file-history-snapshot`
+        // entries). Cheap sibling of /export for the restore UI — just the
+        // refs, never the payloads.
         return respond(run, plane.getSession(id, { agentId: agentParam }), cors, {
           shape: (session) => ({ checkpoints: session.checkpoints }),
           span: "http.get /api/sessions/:id/checkpoints",
@@ -1397,7 +1416,8 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       if (method === "POST" && action === "restore") {
         // File restore — writes/deletes real files under the session's cwd.
         // `{path, toolCallId?}` reverts recorded diffs; `{checkpoint, paths?}`
-        // materializes a recorded shadow-git ref. `confirm: true` required.
+        // materializes a recorded shadow-git or file-history-snapshot ref.
+        // `confirm: true` required.
         let body: unknown;
         try {
           body = await readJsonBody(request);

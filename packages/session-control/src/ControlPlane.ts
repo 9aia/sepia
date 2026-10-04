@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { Effect, Either, Layer, Metric, Option, Runtime } from "effect";
 import type { AcpConnection, AcpSessionInfo, PromptPart } from "sepia-acp";
 import { createTranslator, type Event, type Translator } from "sepia-agui";
@@ -328,7 +329,7 @@ export const make = (
 
     // The default-agent fallback only applies to backends that resolve to
     // the primary agent anyway — a backend mapped to a concrete agent id
-    // that has no registered runtime (e.g. "cursor", a read-only store)
+    // that has no registered runtime (e.g. "cursor", a store with no live agent)
     // must fail unknown_agent rather than attach under the wrong agent.
     const agentForSession = (backendType: string): AgentRuntime | undefined => {
       const mapped = agentForBackend(backendType);
@@ -780,14 +781,22 @@ export const make = (
 
     /* ---- restore -------------------------------------------------------
      * File restore only — the IR has no deletion model, so a "rewind" of the
-     * conversation itself isn't representable. Two sources, both gated on
+     * conversation itself isn't representable. Three sources, all gated on
      * `confirm: true` and refused while the session is busy or held by a
      * live process:
      *  - path restore: reverse-apply the recorded `ToolCall.diffs`
      *    (`Restore.planPathRestore` — skips rather than clobbering drift);
-     *  - checkpoint restore: materialize the files a `Session.checkpoints`
-     *    shadow-git ref covers (`git show <ref>:<path>`).
+     *  - checkpoint restore, shadow-git: materialize the files a
+     *    `Session.checkpoints` ref covers (`git show <ref>:<path>`);
+     *  - checkpoint restore, file-history (`kind` =
+     *    `Restore.FILE_HISTORY_KIND`): copy the blobs the snapshot's
+     *    path→backup map names out of `<fileHistoryDir>/<sessionId>/`;
+     *    `null` backups are deletion tombstones.
      */
+
+    // Claude's `file-history/<sessionId>/` root; the server passes
+    // `$SEPIA_CLAUDE_DIR/file-history` so SEPIA_CLAUDE_DIR relocates it.
+    const fileHistoryDir = options.fileHistoryDir ?? `${homedir()}/.claude/file-history`;
 
     const exec: RestoreExec = options.restoreExec ?? defaultRestoreExec;
     const utf8 = new TextDecoder();
@@ -845,11 +854,115 @@ export const make = (
         }
       });
 
+    /** Store-recorded ids/names become path segments — keep them single safe file names. */
+    const isSafeFileName = (name: string): boolean =>
+      name !== "" && name !== "." && name !== ".." && !/[/\\\0]/.test(name);
+
     /**
-     * Materialize the files a checkpoint covers. The covered set is the
+     * Materialize a Claude `file-history-snapshot` checkpoint: copy each
+     * tracked file's backup blob out of `<fileHistoryDir>/<sessionId>/` into
+     * the workspace path it covers. `backup: null` is the deletion
+     * tombstone — the file did not exist at that checkpoint, so a present
+     * file is removed. A ref with no recorded map fails `conflict`: the
+     * store can't serve it and faking a restore would lie.
+     */
+    const restoreFileHistory = (
+      session: Session,
+      ref: string,
+      paths?: ReadonlyArray<string>,
+    ): Effect.Effect<RestoreResult, ControlError> =>
+      Effect.gen(function* () {
+        const snapshot = Restore.fileHistorySnapshot(session, ref);
+        if (snapshot === undefined || !isSafeFileName(snapshot.sessionId)) {
+          return yield* Effect.fail(
+            controlError(
+              "conflict",
+              `Checkpoint ${ref} carries no file map — restore is not supported for this store`,
+              undefined,
+            ),
+          );
+        }
+        const cwd = session.workingDirectory;
+        const backupDir = join(fileHistoryDir, snapshot.sessionId);
+        const skipped: SkippedFile[] = [];
+        const covered: Array<{ tracked: string; abs: string; backup: string | null }> = [];
+        for (const [tracked, info] of Object.entries(snapshot.files)) {
+          const abs = Restore.resolveWorkspacePath(cwd, tracked);
+          if (abs === null) {
+            skipped.push({ path: tracked, reason: "outside the session working directory" });
+            continue;
+          }
+          covered.push({ tracked, abs, backup: info.backup });
+        }
+
+        let targets = covered;
+        if (paths !== undefined) {
+          targets = [];
+          for (const p of paths) {
+            const abs = Restore.resolveWorkspacePath(cwd, p);
+            if (abs === null) {
+              return yield* Effect.fail(
+                controlError(
+                  "invalid",
+                  `paths entries must resolve inside the session working directory: ${p}`,
+                  undefined,
+                ),
+              );
+            }
+            const hit = covered.find((entry) => entry.abs === abs);
+            if (hit === undefined) {
+              skipped.push({ path: p, reason: `not touched by checkpoint ${ref}` });
+            } else {
+              targets.push(hit);
+            }
+          }
+        }
+
+        const restored: RestoredFile[] = [];
+        for (const target of targets) {
+          const existing = yield* tryExec(`Failed to read ${target.abs}`, () =>
+            exec.readFile(target.abs),
+          );
+          if (target.backup === null) {
+            if (existing === null) {
+              restored.push({ path: target.abs, action: "unchanged" });
+            } else {
+              yield* tryExec(`Failed to delete ${target.abs}`, () => exec.removeFile(target.abs));
+              restored.push({ path: target.abs, action: "deleted" });
+            }
+            continue;
+          }
+          if (!isSafeFileName(target.backup)) {
+            skipped.push({ path: target.tracked, reason: "unsafe backup name recorded" });
+            continue;
+          }
+          const backup = target.backup;
+          const data = yield* tryExec("Failed to read file-history backup", () =>
+            exec.readFile(join(backupDir, backup)),
+          );
+          if (data === null) {
+            skipped.push({
+              path: target.tracked,
+              reason: `backup missing from the file-history store: ${target.backup}`,
+            });
+            continue;
+          }
+          if (existing !== null && bytesEqual(existing, data)) {
+            restored.push({ path: target.abs, action: "unchanged" });
+            continue;
+          }
+          yield* tryExec(`Failed to write ${target.abs}`, () => exec.writeFile(target.abs, data));
+          restored.push({ path: target.abs, action: "written", bytes: data.length });
+        }
+        return { restored, skipped };
+      });
+
+    /**
+     * Materialize the files a checkpoint covers. Shadow-git refs use the
      * `ref^..ref` name list (a stash ref's base is its first parent; a root
-     * commit's is its whole tree). Files absent at the ref get deleted —
-     * the checkpoint recorded them as removed.
+     * commit's is its whole tree); `file-history-snapshot` refs materialize
+     * the recorded path→backup map instead. Files absent at the ref get
+     * deleted — the checkpoint recorded them as removed.
      */
     const restoreCheckpoint = (
       session: Session,
@@ -857,10 +970,14 @@ export const make = (
       paths?: ReadonlyArray<string>,
     ): Effect.Effect<RestoreResult, ControlError> =>
       Effect.gen(function* () {
-        if (session.checkpoints.every((entry) => entry.ref !== ref)) {
+        const entry = session.checkpoints.find((candidate) => candidate.ref === ref);
+        if (entry === undefined) {
           return yield* Effect.fail(
             controlError("not_found", `Unknown checkpoint ref: ${ref}`, undefined),
           );
+        }
+        if (entry.kind === Restore.FILE_HISTORY_KIND) {
+          return yield* restoreFileHistory(session, ref, paths);
         }
         const cwd = session.workingDirectory;
         const inside = yield* git(cwd, ["rev-parse", "--is-inside-work-tree"], "git probe failed");

@@ -5,6 +5,8 @@ import {
   REDACTED_THINKING,
   Session,
   ToolCall,
+  type ToolCallDiff,
+  type ToolCallLocation,
   type ToolResultInfo,
 } from "./Domain.js";
 import * as ClaudeCode from "./ClaudeCode.js";
@@ -27,8 +29,12 @@ import * as Devin from "./Devin.js";
  *
  * Reasoning is unrecoverable in both: `redacted-reasoning` blob payloads are
  * opaque and the transcript projects them as `[REDACTED]`; both map to the
- * `[redacted]` thinking marker. There is no writer and no ACP runtime —
- * the store is read-only.
+ * `[redacted]` thinking marker. There is no ACP runtime.
+ *
+ * Writes (`toTranscriptJsonl`) target only the transcript projection —
+ * `store.db`'s checkpoint blob format is binary and unsafe to synthesise, so
+ * a saved session is readable through the projection but not resumable by
+ * Cursor itself.
  */
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -355,6 +361,189 @@ interface ToolPairing {
   readonly argsById: Map<string, unknown>;
 }
 
+/* ------------------------------------------------------------------ */
+/* Tool inputs → locations/diffs (shared by store + transcript)         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One `*** <Verb> File:` section of an `ApplyPatch` payload. V4A patches are
+ * the only Cursor tool input that is a raw string rather than an object —
+ * hunks (`@@` … context/`-`/`+` lines) still map onto the same
+ * `{oldText, newText}` diff shape a restore reverse-applies.
+ */
+const applyPatchRefs = (
+  patch: string,
+): {
+  readonly locations: ReadonlyArray<ToolCallLocation>;
+  readonly diffs: ReadonlyArray<ToolCallDiff>;
+} => {
+  const locations: Array<ToolCallLocation> = [];
+  const diffs: Array<ToolCallDiff> = [];
+  // Path of the section currently accumulating hunks; `Move to` redirects
+  // it — the rename itself isn't a diff, but the edit lands on the new name.
+  let path: string | undefined;
+  let verb: "add" | "update" | "delete" | undefined;
+  let hunk: { oldLines: Array<string>; newLines: Array<string> } | undefined;
+
+  const flushHunk = (): void => {
+    // A hunk that recorded no payload lines still leaves a bare `{path}`
+    // entry — the change is on record even when nothing is revertable.
+    if (hunk !== undefined && path !== undefined) {
+      const oldText = hunk.oldLines.join("\n");
+      const newText = hunk.newLines.join("\n");
+      diffs.push({
+        path,
+        ...(oldText === "" ? {} : { oldText }),
+        ...(newText === "" ? {} : { newText }),
+      });
+    }
+    hunk = undefined;
+  };
+  const flushSection = (): void => {
+    flushHunk();
+    verb = undefined;
+  };
+  const startSection = (nextVerb: typeof verb, nextPath: string): void => {
+    flushSection();
+    verb = nextVerb;
+    path = nextPath;
+    locations.push({ path });
+    if (nextVerb === "add" || nextVerb === "delete") hunk = { oldLines: [], newLines: [] };
+  };
+
+  for (const raw of patch.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    // `Add/Update/Delete File`/`Move to` take `: <path>`; `Begin/End Patch`
+    // are bare sentinels with no operand.
+    const op =
+      /^\*\*\*\s*(Add File|Update File|Delete File|Move to|End Patch|Begin Patch)\s*(?::\s*(.*))?$/.exec(
+        line,
+      );
+    if (op !== null) {
+      const [, directive, operand = ""] = op;
+      switch (directive) {
+        case "Add File":
+          startSection("add", operand);
+          break;
+        case "Update File":
+          startSection("update", operand);
+          break;
+        case "Delete File":
+          startSection("delete", operand);
+          break;
+        case "Move to":
+          // The file was renamed then edited — hunks land on the new name;
+          // the old name keeps only its location entry.
+          if (operand !== "") {
+            path = operand;
+            locations.push({ path });
+          }
+          break;
+        case "End Patch":
+          flushSection();
+          break;
+      }
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      // New hunk inside an update section (the marker's trailing context is
+      // a locate hint, not part of the recorded change).
+      flushHunk();
+      if (verb === "update") hunk = { oldLines: [], newLines: [] };
+      continue;
+    }
+    if (hunk === undefined) continue;
+    if (line === "\\ No newline at end of file") continue;
+    const marker = line[0];
+    const body = line.slice(1);
+    if (marker === " " || marker === "") {
+      // Context lines belong to both sides; a bare line is context too.
+      hunk.oldLines.push(line === "" ? "" : body);
+      hunk.newLines.push(line === "" ? "" : body);
+      continue;
+    }
+    if (marker === "-") hunk.oldLines.push(body);
+    else if (marker === "+") hunk.newLines.push(body);
+  }
+  flushSection();
+  return { locations, diffs };
+};
+
+/**
+ * File paths a Cursor tool call's args name — `StrReplace`/`Write` inputs
+ * carry the before/after payloads a restore reverse-applies (the same
+ * `{old,new}_string` contract Cline's `editor` uses), `Delete` records only
+ * the path it removed, and `ApplyPatch`'s raw patch string decodes through
+ * `applyPatchRefs`. Read-style tools contribute locations.
+ */
+export const toolFileRefs = (
+  name: string,
+  args: unknown,
+): {
+  readonly locations: ReadonlyArray<ToolCallLocation>;
+  readonly diffs: ReadonlyArray<ToolCallDiff>;
+} => {
+  if (name === "ApplyPatch") {
+    // The args are the patch itself — a bare string, or an object holding it
+    // under a patch-ish key.
+    const text =
+      typeof args === "string"
+        ? args
+        : isObject(args)
+          ? (strField(args, "patch") ??
+            strField(args, "input") ??
+            strField(args, "content") ??
+            strField(args, "diff"))
+          : undefined;
+    return text === undefined ? { locations: [], diffs: [] } : applyPatchRefs(text);
+  }
+  if (!isObject(args)) return { locations: [], diffs: [] };
+  const path = strField(args, "path") ?? strField(args, "target_notebook");
+  const locations: Array<ToolCallLocation> = path === undefined ? [] : [{ path }];
+  for (const key of ["paths", "target_directories"] as const) {
+    const list = args[key];
+    if (Array.isArray(list)) {
+      for (const item of list) {
+        if (typeof item === "string" && item !== "") locations.push({ path: item });
+      }
+    }
+  }
+  const dir = strField(args, "target_directory");
+  if (dir !== undefined) locations.push({ path: dir });
+
+  switch (name) {
+    case "StrReplace":
+    case "Edit":
+    case "EditNotebook": {
+      if (path === undefined) return { locations, diffs: [] };
+      const oldText = strField(args, "old_string");
+      const newText = strField(args, "new_string");
+      return {
+        locations,
+        diffs:
+          oldText === undefined && newText === undefined
+            ? []
+            : [
+                {
+                  path,
+                  ...(oldText === undefined ? {} : { oldText }),
+                  ...(newText === undefined ? {} : { newText }),
+                },
+              ],
+      };
+    }
+    case "Write": {
+      const content = strField(args, "contents") ?? strField(args, "content");
+      return {
+        locations,
+        diffs: path === undefined || content === undefined ? [] : [{ path, newText: content }],
+      };
+    }
+    default:
+      return { locations, diffs: [] };
+  }
+};
+
 /** One decoded message blob → the IR node(s) it emits. */
 const messageNodes = (
   msg: BlobMessage,
@@ -434,7 +623,17 @@ const messageNodes = (
         const id = strField(item, "toolCallId") ?? `cursor-tool-${nodeId}-${toolCalls.length}`;
         const name = strField(item, "toolName") ?? "unknown";
         const args = item.args ?? item.input ?? {};
-        toolCalls.push(ToolCall.make({ id, name, arguments: args, index: toolCalls.length }));
+        const refs = toolFileRefs(name, args);
+        toolCalls.push(
+          ToolCall.make({
+            id,
+            name,
+            arguments: args,
+            index: toolCalls.length,
+            locations: refs.locations,
+            diffs: refs.diffs,
+          }),
+        );
         pairing.nameById.set(id, name);
         pairing.argsById.set(id, args);
       }
@@ -773,12 +972,16 @@ const transcriptNodes = (
         }
         if (item.type === "tool_use") {
           const name = strField(item, "name") ?? "unknown";
+          const args = item.input === undefined ? {} : item.input;
+          const refs = toolFileRefs(name, args);
           toolCalls.push(
             ToolCall.make({
               id: strField(item, "id") ?? `cursor-tool-${nodes.length}-${toolCalls.length}`,
               name,
-              arguments: item.input === undefined ? {} : item.input,
+              arguments: args,
               index: toolCalls.length,
+              locations: refs.locations,
+              diffs: refs.diffs,
             }),
           );
         }
@@ -847,3 +1050,67 @@ export const fromTranscriptJsonl = (raw: string, source: CursorTranscriptSource)
 /** The list-time shape: transcript meta without building nodes. */
 export const summarizeTranscriptJsonl = (raw: string, source: CursorTranscriptSource): Session =>
   transcriptSession(parseLines(raw), source, []);
+
+/* ------------------------------------------------------------------ */
+/* IR → agent-transcripts projection (write side)                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The project dir name Cursor derives from a working directory — the
+ * inverse of `ClaudeCode.decodeProjectDir`: non-alphanumerics flatten to
+ * `-` and the leading separator drops (`/home/me/proj` → `home-me-proj`).
+ * Lossy the same way the decode is (`my proj` and `my-proj` collide).
+ */
+export const projectSlugFromCwd = (cwd: string): string => {
+  const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-").replace(/^-+|-+$/g, "");
+  return slug === "" ? "root" : slug;
+};
+
+/**
+ * One IR node → the transcript line it projects to; `undefined` when the
+ * format has no slot for the role (`system`, `tool` results — Cursor's own
+ * writer drops them too).
+ */
+const transcriptLine = (node: MessageNode): Record<string, unknown> | undefined => {
+  if (node.role === "user") {
+    if (node.content === "") return undefined;
+    return {
+      role: "user",
+      message: { content: [{ type: "text", text: node.content }] },
+    };
+  }
+  if (node.role === "assistant") {
+    // Sealed/recorded thinking projects the way Cursor's own writer renders
+    // it: a `[REDACTED]` suffix inside the text block.
+    const text = Option.isSome(node.thinking)
+      ? node.content === ""
+        ? "[REDACTED]"
+        : `${node.content}\n\n[REDACTED]`
+      : node.content;
+    const content: Array<Record<string, unknown>> = [];
+    if (text !== "") content.push({ type: "text", text });
+    for (const call of node.toolCalls) {
+      content.push({ type: "tool_use", id: call.id, name: call.name, input: call.arguments });
+    }
+    if (content.length === 0) return undefined;
+    return { role: "assistant", message: { content } };
+  }
+  return undefined;
+};
+
+/**
+ * Encode a session into the transcript projection's JSONL. Real
+ * transcripts carry `{role, message:{content}}` lines only, so user text,
+ * assistant text and `tool_use` blocks survive while tool results, system
+ * prompts, per-message timestamps, usage and the title are dropped — the
+ * same loss Cursor's own projection accepts. `id` rides on `tool_use`
+ * even though Cursor omits it: the reader honours it and a converted
+ * session keeps its call ids.
+ */
+export const toTranscriptJsonl = (session: Session): string =>
+  session.nodes
+    .flatMap((node) => {
+      const line = transcriptLine(node);
+      return line === undefined ? [] : [JSON.stringify(line)];
+    })
+    .join("\n") + "\n";

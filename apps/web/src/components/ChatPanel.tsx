@@ -6,6 +6,7 @@ import { EmptyScreen } from "./EmptyScreen";
 import type { HistoryBlock, PermissionRequest } from "../lib/types";
 import { subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
+import { nodeTarget } from "../lib/nodes";
 import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
 import { liveCoveredByHistory } from "../lib/historyRows";
 import { sepiaStore } from "../lib/store";
@@ -61,7 +62,7 @@ export function ChatPanel() {
   const queryClient = useQueryClient();
   const attachMutation = useAttachSession();
   const respondMutation = useRespondToPermission();
-  const historyQuery = useHistory(sessionId, session?.agent);
+  const historyQuery = useHistory(sessionId, session?.agent, session?.node);
 
   // Mutation state is for the last mutate() call; only trust it when it
   // refers to the session currently on screen.
@@ -107,7 +108,7 @@ export function ChatPanel() {
   );
   useEffect(() => {
     if (sessionId === null) return;
-    attach({ id: sessionId, agent: session?.agent, ...modelArgs });
+    attach({ id: sessionId, agent: session?.agent, node: session?.node, ...modelArgs });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, attach, modelArgs]);
 
@@ -154,7 +155,7 @@ export function ChatPanel() {
           setRunning(false);
           const refetch = (): void => {
             void queryClient.invalidateQueries({
-              queryKey: queryKeys.history(sessionId, session?.agent),
+              queryKey: queryKeys.history(sessionId, session?.agent, session?.node),
             });
           };
           refetch();
@@ -166,8 +167,11 @@ export function ChatPanel() {
       },
       setStreamStatus,
       session?.agent,
+      // Routed like every other session op — a peer's stream reaches it
+      // through its target (direct, or /api/gateway for via: "gateway").
+      nodeTarget(session?.node),
     );
-  }, [sessionId, attachReady, queryClient, session?.agent]);
+  }, [sessionId, attachReady, queryClient, session?.agent, session?.node]);
 
   const resolvePermissions = useCallback(
     (answers: Readonly<Record<string, string>>) => {
@@ -178,12 +182,13 @@ export function ChatPanel() {
         respondMutation.mutate({
           sessionId,
           agent: session?.agent,
+          node: session?.node,
           requestId: request.requestId,
           optionId: answers[request.requestId] ?? null,
         });
       }
     },
-    [sessionId, session?.agent, permissions, respondMutation],
+    [sessionId, session?.agent, session?.node, permissions, respondMutation],
   );
 
   const cancelPermissions = useCallback(() => {
@@ -244,9 +249,14 @@ export function ChatPanel() {
               variant="secondary"
               onClick={() => {
                 attachMutation.reset();
-                attach({ id: sessionId!, agent: session?.agent, ...modelArgs });
+                attach({
+                  id: sessionId!,
+                  agent: session?.agent,
+                  node: session?.node,
+                  ...modelArgs,
+                });
                 void queryClient.invalidateQueries({
-                  queryKey: queryKeys.history(sessionId!, session?.agent),
+                  queryKey: queryKeys.history(sessionId!, session?.agent, session?.node),
                 });
               }}
             >
@@ -271,6 +281,7 @@ export function ChatPanel() {
                 attach({
                   id: session.id,
                   agent: session.agent,
+                  node: session.node,
                   takeover: true,
                   ...modelArgsFor(session.agent, session.model, settings),
                 })
@@ -280,6 +291,7 @@ export function ChatPanel() {
                   .mutateAsync({
                     id: session.id,
                     agent: session.agent,
+                    node: session.node,
                     ...modelArgsFor(session.agent, session.model, settings),
                   })
                   .then((result) => result.attached)

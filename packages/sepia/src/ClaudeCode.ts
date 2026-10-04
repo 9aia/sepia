@@ -9,9 +9,13 @@ import {
   Session,
   ToolCall,
   type Block,
+  type CheckpointRef,
   type TokenUsage,
+  type ToolCallDiff,
+  type ToolCallLocation,
   type ToolResultInfo,
 } from "./Domain.js";
+import { FILE_HISTORY_KIND } from "./Restore.js";
 import * as Devin from "./Devin.js";
 
 /**
@@ -167,6 +171,80 @@ const userEntryText = (entry: Record<string, unknown>): string | undefined => {
   return undefined;
 };
 
+/**
+ * File paths a `tool_use` input names — the `locations`/`diffs` projection
+ * that makes a recorded edit revertable. `Edit`/`MultiEdit` inputs carry the
+ * before/after hunks verbatim (Cline's `editor` inputs map the same way) and
+ * `Write` records the written content — a create-revert delete. Read-style
+ * tools (`Read`, `Glob`, `Grep`, `LS`, `NotebookEdit`) contribute locations
+ * only; `NotebookEdit`'s `new_source` is cell-level, not a file diff.
+ */
+export const toolFileRefs = (
+  name: string,
+  input: unknown,
+): {
+  readonly locations: ReadonlyArray<ToolCallLocation>;
+  readonly diffs: ReadonlyArray<ToolCallDiff>;
+} => {
+  const obj = isObject(input) ? input : {};
+  const path =
+    strField(obj, "file_path") ?? strField(obj, "path") ?? strField(obj, "notebook_path");
+  const locations: ReadonlyArray<ToolCallLocation> =
+    path === undefined || path === "" ? [] : [{ path }];
+  const hunk = (record: Record<string, unknown>): ReadonlyArray<ToolCallDiff> => {
+    if (path === undefined) return [];
+    const oldText = strField(record, "old_string");
+    const newText = strField(record, "new_string");
+    if (oldText === undefined && newText === undefined) return [];
+    return [
+      {
+        path,
+        ...(oldText === undefined ? {} : { oldText }),
+        ...(newText === undefined ? {} : { newText }),
+      },
+    ];
+  };
+  switch (name) {
+    case "Edit":
+      return { locations, diffs: hunk(obj) };
+    case "MultiEdit": {
+      const edits = Array.isArray(obj.edits) ? obj.edits : [];
+      return {
+        locations,
+        diffs: edits.flatMap((edit) => (isObject(edit) ? hunk(edit) : [])),
+      };
+    }
+    case "Write": {
+      const content = strField(obj, "content");
+      return {
+        locations,
+        diffs: path === undefined || content === undefined ? [] : [{ path, newText: content }],
+      };
+    }
+    default:
+      return { locations, diffs: [] };
+  }
+};
+
+/**
+ * One file's backup pointer inside a `file-history-snapshot` — `backup`
+ * names the blob under `~/.claude/file-history/<sessionId>/`; `null` is the
+ * deletion tombstone (the file did not exist at that checkpoint).
+ */
+export interface FileHistoryBackup {
+  readonly backup: string | null;
+  readonly version?: number;
+}
+
+/**
+ * The payload a `file-history-snapshot` entry pins to a `Session.checkpoints`
+ * ref — the workspace-absolute path → backup map the checkpoint covers.
+ */
+export interface FileHistorySnapshotData {
+  readonly at: number;
+  readonly files: Record<string, FileHistoryBackup>;
+}
+
 /** What a file's lines prove about the session, without building nodes. */
 interface SessionMeta {
   readonly title: string | undefined;
@@ -185,6 +263,9 @@ interface SessionMeta {
   readonly sawSidechain: boolean;
   readonly firstUserText: string | undefined;
   readonly promptHistory: ReadonlyArray<PromptHistoryEntry>;
+  readonly checkpoints: ReadonlyArray<CheckpointRef>;
+  /** `ref` → path→backup map, keyed the same as `checkpoints`. */
+  readonly fileHistory: Record<string, FileHistorySnapshotData>;
 }
 
 const collectMeta = (entries: ReadonlyArray<Record<string, unknown>>): SessionMeta => {
@@ -202,6 +283,8 @@ const collectMeta = (entries: ReadonlyArray<Record<string, unknown>>): SessionMe
   let sawSidechain = false;
   let firstUserText: string | undefined;
   const promptHistory: Array<PromptHistoryEntry> = [];
+  const checkpoints: Array<CheckpointRef> = [];
+  const fileHistory: Record<string, FileHistorySnapshotData> = {};
 
   for (const entry of entries) {
     const ts = toSeconds(entry.timestamp);
@@ -218,6 +301,32 @@ const collectMeta = (entries: ReadonlyArray<Record<string, unknown>>): SessionMe
     const branch = strField(entry, "gitBranch");
     if (branch !== undefined) gitBranch = branch;
     if (entry.isSidechain === true) sawSidechain = true;
+
+    if (entry.type === "file-history-snapshot") {
+      // The workspace-state checkpoint the JSONL records per turn — the
+      // `ref` (messageId) pins a path→backup map; the blobs themselves live
+      // under `~/.claude/file-history/<sessionId>/`, resolved at restore
+      // time. `isSnapshotUpdate` entries top up an earlier ref — merge their
+      // files rather than appending a second ref for the same snapshot.
+      const snapshot = isObject(entry.snapshot) ? entry.snapshot : {};
+      const ref =
+        strField(entry, "messageId") ?? strField(snapshot, "messageId") ?? strField(entry, "uuid");
+      if (ref === undefined) continue;
+      const at = (toSeconds(snapshot.timestamp) ?? ts ?? createdAt ?? 0) * 1000;
+      const files: Record<string, FileHistoryBackup> = { ...fileHistory[ref]?.files };
+      const tracked = isObject(snapshot.trackedFileBackups) ? snapshot.trackedFileBackups : {};
+      for (const [filePath, backup] of Object.entries(tracked)) {
+        if (!isObject(backup)) continue;
+        const version = finiteNumber(backup.version);
+        files[filePath] = {
+          backup: strField(backup, "backupFileName") ?? null,
+          ...(version === undefined ? {} : { version }),
+        };
+      }
+      if (!(ref in fileHistory)) checkpoints.push({ ref, createdAt: at, kind: FILE_HISTORY_KIND });
+      fileHistory[ref] = { at, files };
+      continue;
+    }
 
     if (entry.type === "summary") {
       title ??= strField(entry, "summary");
@@ -261,6 +370,8 @@ const collectMeta = (entries: ReadonlyArray<Record<string, unknown>>): SessionMe
     sawSidechain,
     firstUserText,
     promptHistory,
+    checkpoints,
+    fileHistory,
   };
 };
 
@@ -429,6 +540,7 @@ const buildNodes = (
           const id = strField(item, "id") ?? `claude-tool-${nodes.length}-${toolCalls.length}`;
           const name = strField(item, "name") ?? "unknown";
           const args = item.input === undefined ? {} : item.input;
+          const refs = toolFileRefs(name, args);
           toolCalls.push(
             ToolCall.make({
               id,
@@ -436,6 +548,8 @@ const buildNodes = (
               arguments: args,
               index: toolCalls.length,
               kind: "function",
+              locations: refs.locations,
+              diffs: refs.diffs,
             }),
           );
           toolNameById.set(id, name);
@@ -532,11 +646,23 @@ const sessionFrom = (
     mainChainId: nodes.length > 0 ? nodes[nodes.length - 1].nodeId : 0,
     parentSessionId: Option.fromNullable(sidechainParent ?? source.parentSessionId),
     agentId: Option.fromNullable(agentId),
+    checkpoints: meta.checkpoints,
     metadata: {
       source: "claude-code",
       gitBranch: meta.gitBranch ?? null,
       claudeVersion: meta.claudeVersion ?? null,
       slug: meta.slug ?? null,
+      // The `file-history/<sessionId>/` dir a checkpoint restore resolves
+      // backup names against — `sessionId` on the entries names the owning
+      // session even inside a subagent file.
+      ...(Object.keys(meta.fileHistory).length === 0
+        ? {}
+        : {
+            fileHistory: {
+              sessionId: meta.sessionId ?? source.id,
+              snapshots: meta.fileHistory,
+            },
+          }),
     },
     nodes,
     promptHistory: meta.promptHistory,

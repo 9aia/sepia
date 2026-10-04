@@ -89,6 +89,14 @@ PATCH  /api/projects/:id              rename
 DELETE /api/projects/:id
 GET    /api/config/:key  PATCH /api/config/:key   server-side UI state
 GET    /api/push/vapid  POST/DELETE /api/push/subscribe   web-push
+ANY    /api/gateway/:server/*           gateway mode — forward to a managed
+                                        server registry entry (the same store
+                                        as /api/servers) with its stored
+                                        credential injected; the caller's own
+                                        token (incl. ?access_token) is
+                                        consumed by the node and never
+                                        forwarded. SSE-safe: the client
+                                        disconnect cancels upstream.
 ```
 
 `?agent=` disambiguates a bare `:id` across agent stores on one node.
@@ -168,5 +176,15 @@ contract is part of the protocol.
    badges + per-node action routing. Frontend + one endpoint; works on LAN.
 2. **Phase 2** — `/api/events` (no polling), `sepia pair` code exchange,
    `bun --compile` binary serving the built UI + API.
-3. **Phase 3** (optional) — gateway mode: one node proxies unreachable peers.
-   Adds a server-side key-translation layer; defer until needed.
+3. **Phase 3** — gateway mode: one node proxies unreachable peers (a peer
+   behind NAT, a phone's browser on another network, CORS- or
+   auth-complicated upstreams). A peer in the UI registry marked
+   `via: "gateway"` resolves to `ApiTarget{baseUrl: "/api/gateway/<id>"}`
+   instead of its own origin, so every call — merged lists, session actions,
+   `/stream` + `/events` SSE — rides the node's forward unchanged. The
+   gateway id is a managed-server registry entry (`/api/servers`), which is
+   where the peer's url + credential live: the UI registers gateway peers
+   server-side, and a credential submitted at add-time never persists in the
+   browser. The peer sees only its own stored token — the key-translation
+   layer this phase adds — including for EventSource's `?access_token` query
+   auth, which the proxy strips before forwarding.

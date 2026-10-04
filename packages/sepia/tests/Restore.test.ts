@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import { join } from "node:path";
-import { diffsForPath, planPathRestore, resolveWorkspacePath } from "../src/Restore.js";
+import {
+  diffsForPath,
+  fileHistorySnapshot,
+  planPathRestore,
+  resolveWorkspacePath,
+} from "../src/Restore.js";
 import { MessageNode, Session, ToolCall } from "../src/Domain.js";
 
 const CWD = "/repo/workspace";
@@ -311,5 +316,63 @@ describe("planPathRestore", () => {
       path: "a.ts",
       content: "0",
     });
+  });
+});
+
+describe("fileHistorySnapshot", () => {
+  const withMetadata = (metadata: unknown): Session =>
+    Session.make({
+      id: "s1",
+      title: "s1",
+      workingDirectory: CWD,
+      model: "m",
+      createdAt: 0,
+      lastActivityAt: 0,
+      mainChainId: 0,
+      metadata,
+      nodes: [],
+    });
+
+  it("reads the path→backup map for a recorded ref", () => {
+    const session = withMetadata({
+      fileHistory: {
+        sessionId: "claude-1",
+        snapshots: {
+          "msg-1": {
+            at: 1,
+            files: {
+              [`${CWD}/a.ts`]: { backup: "hash@v1", version: 1 },
+              [`${CWD}/gone.ts`]: { backup: null },
+              [`${CWD}/junk.ts`]: "not-an-object",
+              [`${CWD}/bad.ts`]: { backup: 42 },
+            },
+          },
+        },
+      },
+    });
+    expect(fileHistorySnapshot(session, "msg-1")).toEqual({
+      sessionId: "claude-1",
+      files: {
+        [`${CWD}/a.ts`]: { backup: "hash@v1", version: 1 },
+        [`${CWD}/gone.ts`]: { backup: null },
+      },
+    });
+  });
+
+  it("is undefined when the store recorded no map", () => {
+    expect(fileHistorySnapshot(withMetadata(null), "msg-1")).toBeUndefined();
+    expect(fileHistorySnapshot(withMetadata({ fileHistory: null }), "msg-1")).toBeUndefined();
+    expect(
+      fileHistorySnapshot(
+        withMetadata({ fileHistory: { sessionId: "s", snapshots: {} } }),
+        "msg-1",
+      ),
+    ).toBeUndefined();
+    expect(
+      fileHistorySnapshot(
+        withMetadata({ fileHistory: { sessionId: 42, snapshots: { "msg-1": { files: {} } } } }),
+        "msg-1",
+      ),
+    ).toBeUndefined();
   });
 });

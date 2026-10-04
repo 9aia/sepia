@@ -3,6 +3,7 @@ import { AuthError } from "../lib/api";
 import {
   createServer,
   deleteServer,
+  gatewayTarget,
   listServers,
   serverTarget,
   updateServer,
@@ -132,5 +133,20 @@ describe("serverTarget", () => {
       token: "tok",
       timeoutMs: 12_000,
     });
+  });
+});
+
+describe("gatewayTarget", () => {
+  it("routes through the node's gateway mount with the node's own token", () => {
+    store.set("sepia:token", "tok");
+    expect(gatewayTarget("srv_1")).toEqual({
+      baseUrl: "/api/gateway/srv_1",
+      token: "tok",
+      timeoutMs: 12_000,
+    });
+  });
+
+  it("encodes the registry id", () => {
+    expect(gatewayTarget("srv a/b").baseUrl).toBe("/api/gateway/srv%20a%2Fb");
   });
 });

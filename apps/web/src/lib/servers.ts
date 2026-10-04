@@ -123,3 +123,17 @@ export const serverTarget = (server: ManagedServer): ApiTarget => ({
   // Generous: an SSH tunnel cold-start is folded into the first proxied call.
   timeoutMs: 12_000,
 });
+
+/**
+ * Gateway mode (docs/protocol.md phase 3): an ApiTarget that reaches a
+ * managed-server registry entry through `ANY /api/gateway/:id/*` — the same
+ * credential-injecting forward as `:id/proxy`, mounted for `via: "gateway"`
+ * peers in the node registry (lib/nodes.ts). The browser authenticates with
+ * the local node's token; the peer only ever sees its stored credential.
+ */
+export const gatewayTarget = (serverId: string): ApiTarget => ({
+  baseUrl: `/api/gateway/${encodeURIComponent(serverId)}`,
+  token: getToken(),
+  // Generous: an SSH tunnel cold-start is folded into the first proxied call.
+  timeoutMs: 12_000,
+});

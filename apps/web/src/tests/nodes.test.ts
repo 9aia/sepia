@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  addGatewayPeer,
   addPeer,
   getPeers,
   isMultiNode,
@@ -10,15 +11,19 @@ import {
   nodesStore,
   nodeTarget,
   normalizeNodeUrl,
+  normalizePeer,
+  pairGatewayPeer,
   pairPeer,
   peerTarget,
   refreshSelf,
   removePeer,
   removePeerById,
+  removePeerEntry,
   upsertPeer,
   type PeerNode,
 } from "../lib/nodes";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "../lib/api";
+import { createServer, deleteServer, updateServer } from "../lib/servers";
 import { getToken } from "../lib/token";
 import type { Project, SessionSummary } from "../lib/types";
 
@@ -30,11 +35,26 @@ vi.mock("../lib/api", () => ({
   pairNode: vi.fn(),
 }));
 
+// Keep the real gatewayTarget (target-shape assertions use it); stub the
+// managed-registry calls that would otherwise hit fetch.
+vi.mock("../lib/servers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/servers")>();
+  return {
+    ...actual,
+    createServer: vi.fn(),
+    updateServer: vi.fn(),
+    deleteServer: vi.fn(),
+  };
+});
+
 const mockedGetNode = vi.mocked(getNode);
 const mockedListSessions = vi.mocked(listSessions);
 const mockedListProjects = vi.mocked(listProjects);
 const mockedListAgents = vi.mocked(listAgents);
 const mockedPairNode = vi.mocked(pairNode);
+const mockedCreateServer = vi.mocked(createServer);
+const mockedUpdateServer = vi.mocked(updateServer);
+const mockedDeleteServer = vi.mocked(deleteServer);
 
 const store = new Map<string, string>();
 
@@ -338,5 +358,170 @@ describe("fan-out fetches", () => {
       { id: "devin", label: "Devin local" },
       { id: "cline", label: "Cline" },
     ]);
+  });
+});
+
+describe("gateway peers (via: gateway)", () => {
+  const descriptor = {
+    id: "node_remote",
+    name: "remote-box",
+    version: "1",
+    protocol: 1,
+    agents: [],
+    capabilities: [],
+  };
+  const managed = {
+    id: "srv_1",
+    label: "remote.example",
+    host: "remote.example",
+    port: 8787,
+    auth: null,
+    ssh: null,
+  };
+  const gatewayPeer = (): PeerNode => ({
+    id: "node_remote",
+    name: "remote-box",
+    url: "http://remote.example:8787",
+    token: null,
+    via: "gateway",
+    serverId: "srv_1",
+  });
+
+  it("peerTarget resolves to this node's /api/gateway/<serverId> forward", () => {
+    expect(peerTarget(gatewayPeer())).toEqual({
+      baseUrl: "/api/gateway/srv_1",
+      token: getToken(),
+      timeoutMs: 12_000,
+    });
+    // The peer's browser-held token is never used — calls authenticate with
+    // the local node's token and the server injects the stored one upstream.
+  });
+
+  it("nodeTarget flips gateway peers, keeps direct peers direct", () => {
+    nodesStore.setState(() => ({ self: null, peers: [gatewayPeer(), peer("node_direct")] }));
+    expect(nodeTarget("node_remote").baseUrl).toBe("/api/gateway/srv_1");
+    expect(nodeTarget("node_direct")).toEqual({
+      baseUrl: "https://node_direct.example",
+      token: "tok-node_direct",
+      timeoutMs: 3_000,
+    });
+  });
+
+  it("normalizePeer keeps via+serverId, degrades a gateway entry without one", () => {
+    const stored = normalizePeer({
+      id: "n",
+      url: "http://h:8787",
+      via: "gateway",
+      serverId: "srv_9",
+    });
+    expect(stored?.via).toBe("gateway");
+    expect(stored?.serverId).toBe("srv_9");
+
+    const degraded = normalizePeer({ id: "n", url: "http://h:8787", via: "gateway" });
+    expect(degraded?.via).toBeUndefined();
+    expect(degraded?.serverId).toBeUndefined();
+
+    // Legacy entries without the fields stay direct.
+    expect(normalizePeer({ id: "n", url: "http://h", token: "t" })?.via).toBeUndefined();
+  });
+
+  it("addGatewayPeer registers the credential server-side, then probes through the gateway", async () => {
+    mockedCreateServer.mockResolvedValue(managed);
+    mockedGetNode.mockResolvedValue(descriptor);
+
+    const added = await addGatewayPeer("http://remote.example:8787", "peer-secret");
+    expect(mockedCreateServer).toHaveBeenCalledWith({
+      label: "remote.example",
+      host: "remote.example",
+      port: 8787,
+      auth: { type: "token", secret: "peer-secret" },
+      ssh: null,
+    });
+    // The probe travels through the fresh gateway hop, not the peer URL.
+    expect(mockedGetNode).toHaveBeenCalledWith({
+      baseUrl: "/api/gateway/srv_1",
+      token: getToken(),
+      timeoutMs: 5_000,
+    });
+    expect(added).toEqual({
+      id: "node_remote",
+      name: "remote-box",
+      url: "http://remote.example:8787",
+      token: null,
+      via: "gateway",
+      serverId: "srv_1",
+    });
+    const persisted = JSON.parse(store.get("sepia:nodes") ?? "[]") as PeerNode[];
+    expect(persisted[0]?.via).toBe("gateway");
+    expect(persisted[0]?.serverId).toBe("srv_1");
+  });
+
+  it("addGatewayPeer drops the managed entry when the probe fails", async () => {
+    mockedCreateServer.mockResolvedValue(managed);
+    mockedDeleteServer.mockResolvedValue(undefined);
+    mockedGetNode.mockRejectedValue(new Error("401 from peer"));
+
+    await expect(addGatewayPeer("http://remote.example:8787", "bad")).rejects.toThrow(
+      "401 from peer",
+    );
+    expect(mockedDeleteServer).toHaveBeenCalledWith("srv_1");
+    expect(getPeers()).toEqual([]);
+  });
+
+  it("pairGatewayPeer redeems the code through the gateway, then stores the issued token", async () => {
+    mockedCreateServer.mockResolvedValue(managed);
+    mockedPairNode.mockResolvedValue({ token: "sepia_issued" });
+    mockedUpdateServer.mockResolvedValue({
+      ...managed,
+      auth: { type: "token", secret: "••••••••" },
+    });
+    mockedGetNode.mockResolvedValue(descriptor);
+
+    const added = await pairGatewayPeer("http://remote.example:8787", "7K2M-9PQX");
+    // The entry starts credential-less so the unauthenticated /api/pair forwards.
+    expect(mockedCreateServer).toHaveBeenCalledWith({
+      label: "remote.example",
+      host: "remote.example",
+      port: 8787,
+      auth: null,
+      ssh: null,
+    });
+    expect(mockedPairNode).toHaveBeenCalledWith(
+      "7K2M-9PQX",
+      { baseUrl: "/api/gateway/srv_1", token: getToken(), timeoutMs: 12_000 },
+      { forwardTargetAuth: true },
+    );
+    expect(mockedUpdateServer).toHaveBeenCalledWith("srv_1", {
+      label: "remote.example",
+      host: "remote.example",
+      port: 8787,
+      auth: { type: "token", secret: "sepia_issued" },
+      ssh: null,
+    });
+    expect(added.via).toBe("gateway");
+    expect(added.serverId).toBe("srv_1");
+    expect(getPeers()).toHaveLength(1);
+  });
+
+  it("removePeerEntry deletes the managed credential for gateway peers only", async () => {
+    nodesStore.setState(() => ({ self: null, peers: [gatewayPeer(), peer("node_direct")] }));
+    mockedDeleteServer.mockResolvedValue(undefined);
+
+    await removePeerEntry("node_remote");
+    expect(mockedDeleteServer).toHaveBeenCalledWith("srv_1");
+    expect(getPeers().map((p) => p.id)).toEqual(["node_direct"]);
+
+    mockedDeleteServer.mockClear();
+    await removePeerEntry("node_direct");
+    expect(mockedDeleteServer).not.toHaveBeenCalled();
+    expect(getPeers()).toEqual([]);
+  });
+
+  it("removePeerEntry still removes the peer when the managed entry is already gone", async () => {
+    nodesStore.setState(() => ({ self: null, peers: [gatewayPeer()] }));
+    mockedDeleteServer.mockRejectedValue(new Error("Unknown server"));
+
+    await removePeerEntry("node_remote");
+    expect(getPeers()).toEqual([]);
   });
 });

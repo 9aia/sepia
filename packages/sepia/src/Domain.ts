@@ -57,7 +57,9 @@ export type ToolCallDiff = Schema.Schema.Type<typeof ToolCallDiff>;
  * never a payload. Cline keeps them in the session manifest's
  * `metadata.checkpoint` (`{ref, createdAt, runCount, kind}`: shadow-git
  * stash/commit shas in the workspace repo); Claude's `file-history-snapshot`
- * and Cursor's `originalFileStates` could map onto the same shape.
+ * entries map onto `kind: "file-history-snapshot"` refs (`ref` = snapshot
+ * `messageId`; the path→backup map rides on `Session.metadata.fileHistory`
+ * and the blobs live in the agent's `file-history/` dir, not the repo).
  * `createdAt` is epoch **milliseconds** (the store-native unit).
  */
 export const CheckpointRef = Schema.Struct({
@@ -87,7 +89,9 @@ export class ToolCall extends Schema.Class<ToolCall>("ToolCall")({
   locations: Schema.Array(ToolCallLocation).pipe(Schema.optionalWith({ default: () => [] })),
   /**
    * File changes the call made, when the store recorded before/after
-   * payloads (Devin's ACP `diff` content, Cline `editor` inputs).
+   * payloads (Devin's ACP `diff` content, Cline `editor` inputs, Claude's
+   * `Edit`/`MultiEdit`/`Write` inputs, Cursor's `StrReplace`/`Write`/
+   * `ApplyPatch` args).
    */
   diffs: Schema.Array(ToolCallDiff).pipe(Schema.optionalWith({ default: () => [] })),
 }) {}
@@ -240,8 +244,9 @@ export class Session extends Schema.Class<Session>("Session")({
   ),
   /**
    * Workspace snapshot refs the store recorded for this session (Cline's
-   * shadow-git `metadata.checkpoint` history). References only — the
-   * snapshots live in the agent's own store, resolvable via `ref`.
+   * shadow-git `metadata.checkpoint` history, Claude's
+   * `file-history-snapshot` entries). References only — the snapshots live
+   * in the agent's own store, resolvable via `ref`/`kind`.
    */
   checkpoints: Schema.Array(CheckpointRef).pipe(Schema.optionalWith({ default: () => [] })),
   metadata: Schema.Unknown,

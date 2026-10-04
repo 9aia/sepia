@@ -33,6 +33,16 @@ const storageError = (prefix: string) => (cause: unknown) =>
     message: `${prefix}: ${cause instanceof Error ? cause.message : String(cause)}`,
   });
 
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * Ids and slugs become path segments (`<chat-id>/<chat-id>.jsonl`), so they
+ * must be a single safe file name — no separators, NUL, or dot-dirs.
+ */
+const isSafeFileName = (name: string): boolean =>
+  name !== "" && name !== "." && name !== ".." && !/[/\\\0]/.test(name);
+
 /** The slice of `bun:sqlite`'s Database a store.db read needs. */
 interface BunSqliteModule {
   readonly Database: new (
@@ -94,7 +104,7 @@ type StoreEntry = ChatEntry | TranscriptEntry;
 const JSONL = ".jsonl";
 
 /**
- * Read-only SessionRepository over Cursor's two on-disk stores:
+ * SessionRepository over Cursor's two on-disk stores:
  *
  * - `chats/<workspace-hash>/<chat-id>/` — the agent CLI's content-addressed
  *   `store.db` plus `meta.json`/`prompt_history.json` sidecars. Canonical
@@ -106,6 +116,14 @@ const JSONL = ".jsonl";
  *
  * Both trees degrade to empty when the dir is missing, matching the other
  * overlay repositories.
+ *
+ * `save` writes only the transcript projection — the `store.db` checkpoint
+ * blob format is binary and unsafe to synthesise, so a saved session is
+ * readable through the projection (sepia `list`/`getById`, Cursor's
+ * transcript view) but not resumable by Cursor itself. `save` refuses to
+ * shadow an id already backed by a `chats/` store, since the projection
+ * would diverge from the canonical record. `delete` removes both the chat
+ * store dir and the transcript dir for the id.
  */
 export const makeCursorSessionRepository = (
   options: CursorRepositoryOptions,
@@ -114,11 +132,17 @@ export const makeCursorSessionRepository = (
   const chatsDir = () => `${options.cursorDir}/chats`;
   const projectsDir = () => `${options.cursorDir}/projects`;
 
+  /** `fs.exists` that degrades errors to false — a stat failure reads as absent. */
+  const existsOrFalse = (filePath: string) =>
+    Effect.gen(function* () {
+      const fs = yield* Fs.FileSystem;
+      return yield* fs.exists(filePath).pipe(Effect.orElseSucceed(() => false));
+    });
+
   const listDir = (dir: string) =>
     Effect.gen(function* () {
       const fs = yield* Fs.FileSystem;
-      const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
-      if (!exists) return [] as ReadonlyArray<string>;
+      if (!(yield* existsOrFalse(dir))) return [] as ReadonlyArray<string>;
       return yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
     });
 
@@ -160,7 +184,7 @@ export const makeCursorSessionRepository = (
           const chatInfo = yield* fs.stat(chatDir).pipe(Effect.option);
           if (Option.isNone(chatInfo) || chatInfo.value.type !== "Directory") continue;
           const main = path.join(chatDir, `${chatId}${JSONL}`);
-          if (yield* fs.exists(main).pipe(Effect.orElseSucceed(() => false))) {
+          if (yield* existsOrFalse(main)) {
             entries.push({
               kind: "transcript",
               filePath: main,
@@ -395,7 +419,124 @@ export const makeCursorSessionRepository = (
         Effect.mapError(storageError("Failed to check cursor session")),
       ),
 
-    save: () => Effect.fail(new StorageError({ message: "Cursor repository is read-only" })),
-    delete: () => Effect.fail(new StorageError({ message: "Cursor repository is read-only" })),
+    save: (session) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* Fs.FileSystem;
+        const parentId = Option.getOrUndefined(session.parentSessionId);
+        for (const unsafe of [session.id, parentId]) {
+          if (unsafe !== undefined && !isSafeFileName(unsafe)) {
+            return yield* Effect.fail(
+              new StorageError({
+                message: `Cursor session id is not a safe file name: ${JSON.stringify(unsafe)}`,
+              }),
+            );
+          }
+        }
+
+        // A chats/ store.db is the canonical record for its id — a
+        // divergent transcript projection must never shadow it.
+        for (const wsHash of yield* listDir(chatsDir())) {
+          const chatDir = path.join(chatsDir(), wsHash, session.id);
+          if (yield* existsOrFalse(chatDir)) {
+            return yield* Effect.fail(
+              new StorageError({
+                message:
+                  `Cursor session ${session.id} is backed by a chats store.db ` +
+                  `at ${chatDir}; refusing to shadow it with a transcript`,
+              }),
+            );
+          }
+        }
+
+        // Reuse the project slug a transcript read recorded; otherwise
+        // derive it from the working directory.
+        const meta = session.metadata;
+        const recorded =
+          isObject(meta) && meta.store === "transcript" && typeof meta.project === "string"
+            ? meta.project
+            : undefined;
+        const slug =
+          recorded !== undefined && isSafeFileName(recorded)
+            ? recorded
+            : Cursor.projectSlugFromCwd(session.workingDirectory);
+
+        let filePath: string;
+        if (parentId === undefined) {
+          const dir = path.join(projectsDir(), slug, "agent-transcripts", session.id);
+          yield* fs.makeDirectory(dir, { recursive: true });
+          filePath = path.join(dir, `${session.id}${JSONL}`);
+        } else {
+          // A subagent transcript lives under its parent chat's dir — find
+          // the project that already holds the parent, else fall back to
+          // this session's own project.
+          let parentSlug = slug;
+          for (const candidate of yield* listDir(projectsDir())) {
+            const parentDir = path.join(projectsDir(), candidate, "agent-transcripts", parentId);
+            if (yield* existsOrFalse(parentDir)) {
+              parentSlug = candidate;
+              break;
+            }
+          }
+          const dir = path.join(
+            projectsDir(),
+            parentSlug,
+            "agent-transcripts",
+            parentId,
+            "subagents",
+          );
+          yield* fs.makeDirectory(dir, { recursive: true });
+          filePath = path.join(dir, `${session.id}${JSONL}`);
+        }
+
+        yield* fs.writeFileString(filePath, Cursor.toTranscriptJsonl(session));
+        // The projection has no timestamps; the reader falls back to the
+        // file mtime, so stamp it with the session's last activity. A
+        // failed stamp degrades timestamps to "now", never the write.
+        yield* fs
+          .utimes(filePath, new Date(), new Date(session.lastActivityAt * 1000))
+          .pipe(Effect.ignore);
+      }).pipe(
+        Effect.provide(fsLayer),
+        Effect.mapError(storageError("Failed to save cursor session")),
+      ),
+
+    delete: (id) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* Fs.FileSystem;
+        if (!isSafeFileName(id)) {
+          return yield* Effect.fail(
+            new StorageError({
+              message: `Cursor session id is not a safe file name: ${JSON.stringify(id)}`,
+            }),
+          );
+        }
+        const removeIfExists = (target: string, recursive: boolean) =>
+          Effect.gen(function* () {
+            if (yield* existsOrFalse(target)) {
+              yield* fs.remove(target, { recursive });
+            }
+          });
+
+        for (const wsHash of yield* listDir(chatsDir())) {
+          yield* removeIfExists(path.join(chatsDir(), wsHash, id), true);
+        }
+        for (const slug of yield* listDir(projectsDir())) {
+          const transcriptsDir = path.join(projectsDir(), slug, "agent-transcripts");
+          // The chat's own transcript dir (main file + its subagents)…
+          yield* removeIfExists(path.join(transcriptsDir, id), true);
+          // …and a subagent file of the same id under another chat.
+          for (const chatId of yield* listDir(transcriptsDir)) {
+            yield* removeIfExists(
+              path.join(transcriptsDir, chatId, "subagents", `${id}${JSONL}`),
+              false,
+            );
+          }
+        }
+      }).pipe(
+        Effect.provide(fsLayer),
+        Effect.mapError(storageError("Failed to delete cursor session")),
+      ),
   };
 };
