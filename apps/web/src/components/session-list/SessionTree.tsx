@@ -263,7 +263,14 @@ function SessionItemRow({
             <TreeItemLabel className="w-full items-start rounded-md bg-transparent hover:bg-accent/60 in-data-[selected=true]:ring-1 in-data-[selected=true]:ring-inset in-data-[selected=true]:ring-primary">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-semibold">{session.title}</span>
+                  <span className="truncate font-semibold" title={session.title}>
+                    {session.parentSessionId !== undefined && session.parentSessionId !== "" && (
+                      <span className="font-normal text-muted-foreground" title="Sub-agent session">
+                        ↳{" "}
+                      </span>
+                    )}
+                    {session.title}
+                  </span>
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <span>{formatUpdated(session.updatedAt)}</span>

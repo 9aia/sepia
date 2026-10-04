@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowReloadHorizontalIcon,
   Cancel01Icon,
@@ -14,7 +14,7 @@ import {
 import { ChevronDownIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
-import { nodeKey, projectKey, resolveSession, sessionKey } from "../../lib/format";
+import { nodeKey, projectKey, resolveSession, sessionKey, subAgentsOf } from "../../lib/format";
 import { nodeName, spanNodeLabel } from "../../lib/nodes";
 import { useNodes } from "../../hooks/query/useNodes";
 import { useSessions } from "../../hooks/query/useSessions";
@@ -207,6 +207,8 @@ export function SessionDetailsDrawer({
   // The sub-agent's parent — clickable when the row is in the merged list.
   const parent =
     session === undefined ? undefined : resolveSession(sessions, session.parentSessionId);
+  // Sessions this one spawned — same merged list, resolved by parentSessionId.
+  const children = useMemo(() => subAgentsOf(sessions, session), [sessions, session]);
 
   useEffect(() => {
     if (session !== undefined && focusRename) setRenameOpen(true);
@@ -306,6 +308,30 @@ export function SessionDetailsDrawer({
                         <span className="font-mono text-xs">{session.parentSessionId}</span>
                       )}
                     </Detail>
+                  )}
+                  {children.length > 0 && (
+                    <div className="flex flex-col gap-0.5 py-2 text-sm">
+                      <span className="text-xs text-muted-foreground">Sub-agents</span>
+                      <div className="flex flex-col gap-1">
+                        {children.map((child) => (
+                          <button
+                            key={sessionKey(child)}
+                            type="button"
+                            className="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-1 text-left text-xs transition-colors hover:bg-accent/60"
+                            title={`Open ${child.title}`}
+                            onClick={() => {
+                              onOpen(sessionKey(child));
+                              onClose();
+                            }}
+                          >
+                            <Badge variant="secondary" className="shrink-0 font-normal">
+                              {child.agent} @ {nodeName(child.node)}
+                            </Badge>
+                            <span className="min-w-0 truncate">{child.title}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   )}
                   <Detail label="Source">{session.source}</Detail>
                   {session.spans.length > 0 && (

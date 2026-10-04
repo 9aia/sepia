@@ -204,6 +204,54 @@ export const resolveSession = <
   );
 };
 
+type SessionIdentity = {
+  readonly agent: string;
+  readonly id: string;
+  readonly node?: string;
+};
+
+type SubAgentRow = SessionIdentity & { readonly parentSessionId?: string };
+
+/**
+ * Whether `child` was spawned by `parent`. Adapters record the parent's
+ * bare session id (cline embeds it in the child's own id, devin reads
+ * `subagent_heads.session_id`) and both rows live in the same agent store
+ * on one node — so a bare ref only counts on the full id + agent + node
+ * triple; a same-id row in another store isn't the parent. Keyed refs
+ * (`node:agent:id`, `agent:id`) resolve and compare semantically, which
+ * keeps the local-node alias and both segment forms working.
+ */
+export const isSubAgentOf = <T extends SubAgentRow>(
+  sessions: ReadonlyArray<T>,
+  child: SubAgentRow,
+  parent: SessionIdentity,
+): boolean => {
+  const ref = child.parentSessionId;
+  if (ref === undefined || ref === "") return false;
+  if (!ref.includes(":")) {
+    return (
+      ref === parent.id &&
+      child.agent === parent.agent &&
+      nodeKey(child.node) === nodeKey(parent.node)
+    );
+  }
+  const resolved = resolveSession(sessions, ref);
+  return resolved !== undefined && sameSessionKey(sessionKey(resolved), sessionKey(parent));
+};
+
+/** Sessions spawned by `parent` — its sub-agent children, list order kept. */
+export const subAgentsOf = <T extends SubAgentRow>(
+  sessions: ReadonlyArray<T>,
+  parent: SessionIdentity | undefined,
+): T[] => {
+  if (parent === undefined) return [];
+  const key = sessionKey(parent);
+  // The self-key guard drops a pathological row that names itself parent.
+  return sessions.filter(
+    (s) => !sameSessionKey(sessionKey(s), key) && isSubAgentOf(sessions, s, parent),
+  );
+};
+
 /**
  * Finds a session row the way mutations need it — by the row's own fields,
  * not a key string. `node`/`agent` are the owning node and agent store.

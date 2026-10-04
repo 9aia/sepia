@@ -8,6 +8,7 @@ import {
   formatUpdated,
   formatUsage,
   isLocalNode,
+  isSubAgentOf,
   LOCAL_NODE_ID,
   nodeKey,
   projectKey,
@@ -17,6 +18,7 @@ import {
   sessionKey,
   setLocalNodeAlias,
   shouldSyncUrlSelection,
+  subAgentsOf,
   usageLabel,
 } from "../lib/format";
 
@@ -263,6 +265,91 @@ describe("finishReasonLabel", () => {
     expect(finishReasonLabel("length")).toBe("length");
     expect(finishReasonLabel("error")).toBe("error");
     expect(finishReasonLabel("content_filter")).toBe("content_filter");
+  });
+});
+
+describe("isSubAgentOf / subAgentsOf", () => {
+  // Adapters write the parent's bare session id — cline slices it out of
+  // the child's own id (`<parent>__agent_<name>`), devin reads
+  // subagent_heads.session_id. Both rows share one agent store + node.
+  const sessions = [
+    { agent: "cline", id: "parent-1", title: "local parent" },
+    {
+      agent: "cline",
+      id: "parent-1__agent_scout",
+      parentSessionId: "parent-1",
+      title: "local child",
+    },
+    { agent: "devin", id: "parent-1", title: "same id, other store" },
+    { agent: "cline", id: "remote-parent", node: "node_remote", title: "remote parent" },
+    {
+      agent: "cline",
+      id: "remote-child",
+      node: "node_remote",
+      parentSessionId: "remote-parent",
+      title: "remote child",
+    },
+    {
+      agent: "cline",
+      id: "keyed-child",
+      parentSessionId: "node_remote:cline:remote-parent",
+      title: "keyed ref",
+    },
+    { agent: "cline", id: "stray", parentSessionId: "ghost", title: "missing parent" },
+    { agent: "cline", id: "self", parentSessionId: "self", title: "self-parented" },
+    { agent: "cline", id: "root", title: "no parent" },
+  ];
+
+  it("matches a bare parent id within the same agent store and node", () => {
+    expect(isSubAgentOf(sessions, sessions[1], sessions[0])).toBe(true);
+    expect(isSubAgentOf(sessions, sessions[4], sessions[3])).toBe(true);
+  });
+
+  it("rejects a same-id parent in another agent's store", () => {
+    // The cline child's bare "parent-1" is not the devin row's parentage.
+    expect(isSubAgentOf(sessions, sessions[1], sessions[2])).toBe(false);
+  });
+
+  it("rejects a same-id parent on another node", () => {
+    const localParent = { agent: "cline", id: "remote-parent" };
+    expect(isSubAgentOf(sessions, sessions[4], localParent)).toBe(false);
+  });
+
+  it("resolves keyed node:agent:id and agent:id refs", () => {
+    expect(isSubAgentOf(sessions, sessions[5], sessions[3])).toBe(true);
+    const legacyRef = { agent: "cline", id: "legacy", parentSessionId: "cline:parent-1" };
+    expect(isSubAgentOf(sessions, legacyRef, sessions[0])).toBe(true);
+  });
+
+  it("maps the server-issued local node id through the alias", () => {
+    setLocalNodeAlias("node_mine");
+    const aliased = {
+      agent: "cline",
+      id: "aliased-child",
+      parentSessionId: "node_mine:cline:parent-1",
+    };
+    expect(isSubAgentOf(sessions, aliased, sessions[0])).toBe(true);
+  });
+
+  it("returns no match for absent, empty, or dangling refs", () => {
+    expect(isSubAgentOf(sessions, sessions[8], sessions[0])).toBe(false);
+    expect(isSubAgentOf(sessions, sessions[6], sessions[0])).toBe(false);
+    const empty = { agent: "cline", id: "e", parentSessionId: "" };
+    expect(isSubAgentOf(sessions, empty, sessions[0])).toBe(false);
+  });
+
+  it("subAgentsOf lists the children and skips unrelated rows", () => {
+    const kids = subAgentsOf(sessions, sessions[0]);
+    expect(kids.map((s) => s.id)).toEqual(["parent-1__agent_scout"]);
+    expect(subAgentsOf(sessions, sessions[3]).map((s) => s.id)).toEqual([
+      "remote-child",
+      "keyed-child",
+    ]);
+  });
+
+  it("never lists a session as its own child and handles no parent", () => {
+    expect(subAgentsOf(sessions, sessions[7])).toEqual([]);
+    expect(subAgentsOf(sessions, undefined)).toEqual([]);
   });
 });
 

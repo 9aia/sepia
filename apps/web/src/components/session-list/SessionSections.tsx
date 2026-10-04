@@ -104,6 +104,11 @@ function SectionSessionRow({
             onClick={() => onSelect(sessionKey(session))}
           >
             <span className="min-w-0 flex-1 truncate font-medium" title={session.title}>
+              {session.parentSessionId !== undefined && session.parentSessionId !== "" && (
+                <span className="text-muted-foreground" title="Sub-agent session">
+                  ↳{" "}
+                </span>
+              )}
               {session.title}
             </span>
             <NodeBadge node={session.node} />
