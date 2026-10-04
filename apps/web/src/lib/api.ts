@@ -137,6 +137,7 @@ export async function listAgents(): Promise<AgentInfo[]> {
 export interface SessionMetaPatch {
   title?: string;
   pinned?: boolean;
+  archived?: boolean;
   projectIds?: string[];
   model?: string | null;
 }

@@ -387,6 +387,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
               ...session,
               title: meta?.title ?? session.title,
               pinned: meta?.pinned ?? false,
+              archived: meta?.archived ?? false,
               projectIds: meta?.projectIds ?? [],
               model: meta?.model ?? null,
             };
@@ -410,6 +411,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
                     source: "sepia",
                     busy: false,
                     pinned: meta.pinned ?? false,
+                    archived: meta.archived ?? false,
                     projectIds: meta.projectIds ?? [],
                     model: meta.model ?? null,
                   },
@@ -517,6 +519,12 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           return jsonResponse({ error: "pinned must be a boolean" }, 400, cors);
         }
         patch.pinned = patchBody.pinned;
+      }
+      if ("archived" in patchBody) {
+        if (typeof patchBody.archived !== "boolean") {
+          return jsonResponse({ error: "archived must be a boolean" }, 400, cors);
+        }
+        patch.archived = patchBody.archived;
       }
       if ("projectIds" in patchBody) {
         const projectIds = patchBody.projectIds;

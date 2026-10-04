@@ -33,7 +33,7 @@ const SESSION: SessionSummary = {
 };
 
 // GET /api/sessions always attaches the meta-overlay fields, meta store or not.
-const SESSION_JSON = { ...SESSION, pinned: false, projectIds: [], model: null };
+const SESSION_JSON = { ...SESSION, pinned: false, archived: false, projectIds: [], model: null };
 
 const HISTORY: ReadonlyArray<HistoryMessage> = [
   { role: "user", content: "hello", createdAt: 1 },
@@ -483,6 +483,23 @@ describe("createApp", () => {
       }),
     );
     expect(unconfigured.status).toBe(501);
+  });
+
+  it("PATCH /api/sessions/:id archives and unarchives via meta", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
+    const meta = createMetaStore(join(dir, "meta.json"));
+    const app = createApp(plane, { meta });
+    const res = await app(patch("/api/sessions/sess-1", { archived: true }));
+    expect(res.status).toBe(200);
+    expect(meta?.of("sess-1")?.archived).toBe(true);
+    const listed = await app(get("/api/sessions"));
+    const body = (await listed.json()) as {
+      sessions: Array<{ id: string; archived: boolean }>;
+    };
+    expect(body.sessions.find((s) => s.id === "sess-1")?.archived).toBe(true);
+    await app(patch("/api/sessions/sess-1", { archived: false }));
+    expect(meta?.of("sess-1")?.archived).toBe(false);
   });
 
   it("POST /api/sessions/:id/permission forwards the decision", async () => {

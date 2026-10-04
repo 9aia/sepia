@@ -45,7 +45,12 @@ import { settingsStore } from "../lib/settings";
 import { SessionTree } from "./session-list/SessionTree";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
 import { SessionDetailsDrawer } from "./session-list/SessionDetailsDrawer";
-import { ProjectNameDialog, SectionHeader, SessionSections } from "./session-list/SessionSections";
+import {
+  FlatSection,
+  ProjectNameDialog,
+  SectionHeader,
+  SessionSections,
+} from "./session-list/SessionSections";
 import { getRecents } from "../lib/recents";
 import { UserProfile } from "./session-list/UserProfile";
 
@@ -151,12 +156,17 @@ export function SessionList() {
       .sort(sorters[sort]);
   }, [sessions, debouncedFilter, agentFilter, dateFilter, statusFilter, sort]);
 
+  // Archived sessions leave every normal view — they only surface in the
+  // Archived section (still searchable, so unarchiving is findable).
+  const activeSessions = useMemo(() => filtered.filter((s) => s.archived !== true), [filtered]);
+  const archivedSessions = useMemo(() => filtered.filter((s) => s.archived === true), [filtered]);
+
   const recentSessions = useMemo(() => {
     // Recents may hold the same session twice — bare-id entries from before
     // the agent-scoped keys, plus the scoped one. Resolve then dedup by key.
     const seen = new Set<string>();
     return getRecents()
-      .map((key) => resolveSession(filtered, key))
+      .map((key) => resolveSession(activeSessions, key))
       .filter((s): s is NonNullable<typeof s> => {
         if (s === undefined) return false;
         const key = sessionKey(s);
@@ -166,7 +176,7 @@ export function SessionList() {
       });
     // selectedId change refreshes the MRU
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, selectedId]);
+  }, [activeSessions, selectedId]);
 
   // Bare N — inFormField guards against typing; Mod+N is browser-reserved
   // (Ctrl+N = new window can't be preventDefault'd in Chrome/Firefox).
@@ -242,7 +252,7 @@ export function SessionList() {
 
       <ScrollArea className="flex min-h-0 flex-1 flex-col" viewportRef={bodyScrollRef}>
         <SessionSections
-          sessions={filtered}
+          sessions={activeSessions}
           recentSessions={recentSessions}
           selectedId={selectedId}
           resolvedCwd={resolvedCwd}
@@ -286,7 +296,7 @@ export function SessionList() {
             />
             {foldersOpen && (
               <SessionTree
-                sessions={filtered}
+                sessions={activeSessions}
                 selectedId={selectedId}
                 scrollRef={bodyScrollRef}
                 hotkeyTarget={asideRef}
@@ -297,6 +307,19 @@ export function SessionList() {
               />
             )}
           </section>
+        )}
+
+        {!loading && error === null && archivedSessions.length > 0 && (
+          <FlatSection
+            label="Archived"
+            sectionKey="archived"
+            limit={20}
+            sessions={archivedSessions}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onDetails={(id, rename) => setDetailsFor({ id, rename })}
+            onDelete={onDeleteSession}
+          />
         )}
       </ScrollArea>
 

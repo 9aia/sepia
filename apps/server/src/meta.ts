@@ -11,6 +11,7 @@ import { dirname } from "node:path";
 export interface SessionMeta {
   readonly title?: string;
   readonly pinned?: boolean;
+  readonly archived?: boolean;
   readonly projectIds?: ReadonlyArray<string>;
   /** Preferred spawn model for this session — applied on next attach. */
   readonly model?: string | null;
@@ -67,6 +68,7 @@ export const createMetaStore = (path: string): MetaStore => {
     return {
       title: typeof raw.title === "string" ? raw.title : undefined,
       pinned: raw.pinned === true,
+      archived: raw.archived === true,
       projectIds: Array.isArray(raw.projectIds)
         ? raw.projectIds.filter((p): p is string => typeof p === "string")
         : typeof raw.projectId === "string"

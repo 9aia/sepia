@@ -223,7 +223,7 @@ export function SectionHeader({
   );
 }
 
-function FlatSection({
+export function FlatSection({
   label,
   sectionKey,
   limit,

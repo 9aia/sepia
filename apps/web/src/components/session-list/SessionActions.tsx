@@ -1,5 +1,6 @@
 import {
   Add01Icon,
+  ArchiveIcon,
   ArrowReloadHorizontalIcon,
   Copy01Icon,
   Delete02Icon,
@@ -84,6 +85,18 @@ export function SessionActions({
       >
         <HugeiconsIcon icon={PinIcon} strokeWidth={2} />
         {session.pinned === true ? "Unpin" : "Pin"}
+      </Item>
+      <Item
+        onClick={() =>
+          patch.mutate({
+            id: session.id,
+            agent: session.agent,
+            patch: { archived: !session.archived },
+          })
+        }
+      >
+        <HugeiconsIcon icon={ArchiveIcon} strokeWidth={2} />
+        {session.archived === true ? "Unarchive" : "Archive"}
       </Item>
       <Item onClick={() => onDetails(sessionKey(session), true)}>
         <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
