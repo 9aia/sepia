@@ -1,4 +1,9 @@
 import { Store } from "@tanstack/react-store";
+import {
+  defaultSidebarSections,
+  normalizeSidebarSections,
+  type SidebarSectionConfig,
+} from "./sidebar";
 
 /**
  * Client-side preferences, persisted to localStorage. Server-side
@@ -28,22 +33,26 @@ export interface SepiaSettings {
   notifications: { enabled: boolean; done: boolean; permission: boolean };
   /** UI theme — dark default; "system" follows prefers-color-scheme. */
   theme: "dark" | "light" | "system";
+  /** Sidebar sections — array order is the render order. */
+  sidebar: { sections: SidebarSectionConfig[] };
 }
 
 const KEY = "sepia:settings";
 
+const defaultSettings = (): SepiaSettings => ({
+  defaultAgent: null,
+  defaultCwd: null,
+  models: {},
+  keybinds: {},
+  notifications: { enabled: false, done: true, permission: true },
+  theme: "dark",
+  sidebar: { sections: defaultSidebarSections() },
+});
+
 const load = (): SepiaSettings => {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw === null)
-      return {
-        defaultAgent: null,
-        defaultCwd: null,
-        models: {},
-        keybinds: {},
-        notifications: { enabled: false, done: true, permission: true },
-        theme: "dark",
-      };
+    if (raw === null) return defaultSettings();
     const parsed = JSON.parse(raw) as Partial<SepiaSettings>;
     return {
       defaultAgent: typeof parsed.defaultAgent === "string" ? parsed.defaultAgent : null,
@@ -65,16 +74,16 @@ const load = (): SepiaSettings => {
             }
           : { enabled: false, done: true, permission: true },
       theme: parsed.theme === "light" || parsed.theme === "system" ? parsed.theme : "dark",
+      sidebar: {
+        sections: normalizeSidebarSections(
+          typeof parsed.sidebar === "object" && parsed.sidebar !== null
+            ? (parsed.sidebar as { sections?: unknown }).sections
+            : undefined,
+        ),
+      },
     };
   } catch {
-    return {
-      defaultAgent: null,
-      defaultCwd: null,
-      models: {},
-      keybinds: {},
-      notifications: { enabled: false, done: true, permission: true },
-      theme: "dark",
-    };
+    return defaultSettings();
   }
 };
 

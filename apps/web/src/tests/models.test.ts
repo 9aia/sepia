@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { modelArgsFor } from "../lib/models";
 import type { SepiaSettings } from "../lib/settings";
+import { defaultSidebarSections } from "../lib/sidebar";
 
 const settings = (models: SepiaSettings["models"]): SepiaSettings => ({
   defaultAgent: null,
@@ -9,6 +10,7 @@ const settings = (models: SepiaSettings["models"]): SepiaSettings => ({
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
+  sidebar: { sections: defaultSidebarSections() },
 });
 
 describe("modelArgsFor", () => {

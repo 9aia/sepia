@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { cn } from "cn";
+import { useMemo, useState, type RefObject } from "react";
 import { useLiveQuery } from "@tanstack/react-db";
 import { eq } from "@tanstack/db";
 import {
@@ -21,6 +22,7 @@ import { useNodeLabel, useNodes } from "../../hooks/query/useNodes";
 import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
 import { settingsStore } from "../../lib/settings";
+import { sidebarSectionLabel, sidebarSectionLimit } from "../../lib/sidebar";
 import { modelArgsFor } from "../../lib/models";
 import { useStore } from "@tanstack/react-store";
 import { sessionsCollection } from "../../lib/db";
@@ -75,6 +77,7 @@ import {
 import { Input } from "../ui/input";
 import { NodeBadge } from "./NodeBadge";
 import { SessionActions } from "./SessionActions";
+import { SessionTree } from "./SessionTree";
 
 interface RowHandlers {
   onSelect: (id: string) => void;
@@ -389,6 +392,7 @@ function ProjectActions({
 }
 
 function ProjectsSection({
+  label,
   projects,
   projectsLoading,
   sessions,
@@ -396,6 +400,7 @@ function ProjectsSection({
   resolvedCwd,
   ...handlers
 }: {
+  readonly label: string;
   readonly projects: ReadonlyArray<Project>;
   readonly projectsLoading: boolean;
   readonly sessions: ReadonlyArray<SessionSummary>;
@@ -464,7 +469,7 @@ function ProjectsSection({
   return (
     <section className="group/section">
       <SectionHeader
-        label="Projects"
+        label={label}
         open={open}
         onToggle={() => setOpen((v) => !v)}
         action={
@@ -638,22 +643,74 @@ function ProjectsSection({
   );
 }
 
+/** "Folders" — the cwd tree, kept as its own component for the ui state hook. */
+function FoldersSection({
+  label,
+  sessions,
+  selectedId,
+  scrollRef,
+  hotkeyTarget,
+  onNewSession,
+  ...handlers
+}: {
+  readonly label: string;
+  readonly sessions: ReadonlyArray<SessionSummary>;
+  readonly selectedId: string | null;
+  readonly scrollRef: RefObject<HTMLDivElement | null>;
+  readonly hotkeyTarget: RefObject<HTMLElement | null>;
+  onNewSession: (cwd: string) => void;
+} & RowHandlers) {
+  const [open, setOpen] = useUiState("ui.section.folders", true);
+  return (
+    <section className="group/section">
+      <SectionHeader label={label} open={open} onToggle={() => setOpen((v) => !v)} />
+      {open && (
+        <SessionTree
+          sessions={sessions}
+          selectedId={selectedId}
+          scrollRef={scrollRef}
+          hotkeyTarget={hotkeyTarget}
+          onNewSession={onNewSession}
+          {...handlers}
+        />
+      )}
+    </section>
+  );
+}
+
 interface SessionSectionsProps {
   readonly sessions: ReadonlyArray<SessionSummary>;
   readonly recentSessions: ReadonlyArray<SessionSummary>;
+  readonly archivedSessions: ReadonlyArray<SessionSummary>;
   readonly selectedId: string | null;
   /** Fallback spawn dir for "New session here" on empty projects. */
   readonly resolvedCwd: string;
+  /** false while sessions load or the query failed — gates the tree. */
+  readonly showContent: boolean;
+  /** Shared sidebar scroller the folders tree virtualizes against. */
+  readonly scrollRef: RefObject<HTMLDivElement | null>;
+  readonly hotkeyTarget: RefObject<HTMLElement | null>;
+  onNewSession: (cwd: string) => void;
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
   onDelete: (session: SessionSummary) => void;
 }
 
+/**
+ * The sidebar's session sections, rendered in the order/visibility/labels/
+ * limits from `settings.sidebar.sections`. Disabled sections skip render;
+ * their data still computes so re-enabling is instant.
+ */
 export function SessionSections({
   sessions,
   recentSessions,
+  archivedSessions,
   selectedId,
   resolvedCwd,
+  showContent,
+  scrollRef,
+  hotkeyTarget,
+  onNewSession,
   ...handlers
 }: SessionSectionsProps) {
   const { data: projects, isLoading: projectsLoading } = useProjects();
@@ -673,51 +730,119 @@ export function SessionSections({
     const keys = new Set(pinnedRows.map(sessionKey));
     return sessions.filter((session) => keys.has(sessionKey(session)));
   }, [sessions, pinnedRows]);
-  if (pinned.length === 0 && recentSessions.length === 0 && projects.length === 0) return null;
+
+  // Sections that would render nothing (disabled, or an empty flat list)
+  // drop out so the block collapses entirely — as before. The Projects
+  // header only shows when it or a sibling flat section has content.
+  const hasTopContent = pinned.length > 0 || recentSessions.length > 0 || projects.length > 0;
+  const visible = settings.sidebar.sections.filter((section) => {
+    if (!section.enabled) return false;
+    switch (section.id) {
+      case "pinned":
+        return pinned.length > 0;
+      case "projects":
+        return hasTopContent;
+      case "sessions":
+        return recentSessions.length > 0;
+      case "folders":
+        return showContent;
+      case "archived":
+        return archivedSessions.length > 0;
+    }
+  });
+  if (visible.length === 0) return null;
+  // The separator line originally only topped the pinned/projects/recents
+  // block — folders/archived sat below it, line-free.
+  const hasTopSection = visible.some(
+    (section) => section.id === "pinned" || section.id === "projects" || section.id === "sessions",
+  );
   return (
-    <div className="shrink-0 border-t border-border pb-2">
-      <FlatSection
-        label="Pinned"
-        sectionKey="pinned"
-        limit={5}
-        sessions={pinned}
-        selectedId={selectedId}
-        {...handlers}
-      />
-      <ProjectsSection
-        projects={projects}
-        projectsLoading={projectsLoading}
-        sessions={sessions}
-        selectedId={selectedId}
-        resolvedCwd={resolvedCwd}
-        {...handlers}
-      />
-      <FlatSection
-        label="Sessions"
-        sectionKey="recents"
-        limit={8}
-        sessions={recentSessions}
-        selectedId={selectedId}
-        action={
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="New session"
-            title="New session"
-            onClick={() => {
-              const agent = settings.defaultAgent ?? agents[0]?.id;
-              createSession.mutate({
-                cwd: resolvedCwd,
-                agent,
-                ...modelArgsFor(agent ?? "", null, settings),
-              });
-            }}
-          >
-            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-          </Button>
+    <div className={cn("shrink-0 pb-2", hasTopSection && "border-t border-border")}>
+      {visible.map((section) => {
+        const label = sidebarSectionLabel(section);
+        switch (section.id) {
+          case "pinned":
+            return (
+              <FlatSection
+                key={section.id}
+                label={label}
+                sectionKey="pinned"
+                limit={sidebarSectionLimit(section) ?? 5}
+                sessions={pinned}
+                selectedId={selectedId}
+                {...handlers}
+              />
+            );
+          case "projects":
+            return (
+              <ProjectsSection
+                key={section.id}
+                label={label}
+                projects={projects}
+                projectsLoading={projectsLoading}
+                sessions={sessions}
+                selectedId={selectedId}
+                resolvedCwd={resolvedCwd}
+                {...handlers}
+              />
+            );
+          case "sessions":
+            return (
+              <FlatSection
+                key={section.id}
+                label={label}
+                sectionKey="recents"
+                limit={sidebarSectionLimit(section) ?? 8}
+                sessions={recentSessions}
+                selectedId={selectedId}
+                action={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="New session"
+                    title="New session"
+                    onClick={() => {
+                      const agent = settings.defaultAgent ?? agents[0]?.id;
+                      createSession.mutate({
+                        cwd: resolvedCwd,
+                        agent,
+                        ...modelArgsFor(agent ?? "", null, settings),
+                      });
+                    }}
+                  >
+                    <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                  </Button>
+                }
+                {...handlers}
+              />
+            );
+          case "folders":
+            return (
+              <FoldersSection
+                key={section.id}
+                label={label}
+                sessions={sessions}
+                selectedId={selectedId}
+                scrollRef={scrollRef}
+                hotkeyTarget={hotkeyTarget}
+                onNewSession={onNewSession}
+                {...handlers}
+              />
+            );
+          case "archived":
+            return (
+              <FlatSection
+                key={section.id}
+                label={label}
+                sectionKey="archived"
+                limit={sidebarSectionLimit(section) ?? 20}
+                sessions={archivedSessions}
+                selectedId={selectedId}
+                {...handlers}
+              />
+            );
         }
-        {...handlers}
-      />
+      })}
     </div>
   );
 }

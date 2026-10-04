@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { SepiaSettings } from "../lib/settings";
+import { defaultSidebarSections } from "../lib/sidebar";
 
 const store = new Map<string, string>();
 
@@ -20,6 +21,7 @@ const DEFAULTS: SepiaSettings = {
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
+  sidebar: { sections: defaultSidebarSections() },
 };
 
 /** Re-import the module fresh so its store re-runs load() against `store`. */
@@ -74,6 +76,35 @@ describe("settings load", () => {
     expect((await loadSettings()).theme).toBe("light");
     store.set("sepia:settings", JSON.stringify({ theme: "system" }));
     expect((await loadSettings()).theme).toBe("system");
+  });
+
+  it("normalizes stored sidebar sections against the defaults", async () => {
+    store.set(
+      "sepia:settings",
+      JSON.stringify({
+        sidebar: {
+          sections: [
+            { id: "folders", enabled: false },
+            { id: "pinned", enabled: true, label: "Starred", limit: 3 },
+            { id: "bogus", enabled: true },
+            { id: "sessions", enabled: true, limit: -2 },
+          ],
+        },
+      }),
+    );
+    const loaded = await loadSettings();
+    // Stored order wins; unknown ids drop; missing ids append with defaults.
+    expect(loaded.sidebar.sections.map((s) => s.id)).toEqual([
+      "folders",
+      "pinned",
+      "sessions",
+      "projects",
+      "archived",
+    ]);
+    expect(loaded.sidebar.sections[0]).toMatchObject({ id: "folders", enabled: false });
+    expect(loaded.sidebar.sections[1]).toMatchObject({ label: "Starred", limit: 3 });
+    // Bad limit falls back to the section default.
+    expect(loaded.sidebar.sections[2]).toMatchObject({ id: "sessions", limit: 8 });
   });
 
   it("notifications default per-field: only explicit false flips done/permission", async () => {

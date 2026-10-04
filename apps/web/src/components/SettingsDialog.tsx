@@ -23,6 +23,7 @@ import {
 import { useAgents } from "../hooks/query/useAgents";
 import { NodesSection } from "./NodesSection";
 import { ServersSection } from "./settings/ServersSection";
+import { SidebarSection } from "./settings/SidebarSection";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
@@ -230,6 +231,7 @@ function NotificationsSection() {
 
 const SECTIONS = [
   { id: "general", label: "General" },
+  { id: "sidebar", label: "Sidebar" },
   { id: "models", label: "Models" },
   { id: "nodes", label: "Nodes" },
   { id: "servers", label: "Servers" },
@@ -389,6 +391,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   </p>
                 </div>
               </section>
+              <SidebarSection />
               <section data-spy="models" className="flex scroll-mt-2 flex-col gap-2">
                 <h3 className="text-sm font-medium">Models</h3>
                 <p className="text-xs text-muted-foreground">

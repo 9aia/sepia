@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { formatKey, KEYBINDS, keybindDef, resolveKey } from "../lib/keybinds";
 import type { SepiaSettings } from "../lib/settings";
+import { defaultSidebarSections } from "../lib/sidebar";
 
 const settings = (keybinds: Record<string, string | null>): SepiaSettings => ({
   defaultAgent: null,
@@ -9,6 +10,7 @@ const settings = (keybinds: Record<string, string | null>): SepiaSettings => ({
   keybinds,
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
+  sidebar: { sections: defaultSidebarSections() },
 });
 
 describe("keybindDef", () => {

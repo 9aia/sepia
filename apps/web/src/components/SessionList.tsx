@@ -22,7 +22,6 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
 import { useCreateSession } from "../hooks/query/useCreateSession";
-import { useUiState } from "../hooks/query/useConfig";
 import { Skeleton } from "./ui/skeleton";
 import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { useCreateProject } from "../hooks/query/useProjects";
@@ -45,14 +44,8 @@ import {
   type StatusFilter,
 } from "./session-list/FilterBar";
 import { settingsStore } from "../lib/settings";
-import { SessionTree } from "./session-list/SessionTree";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
-import {
-  FlatSection,
-  ProjectNameDialog,
-  SectionHeader,
-  SessionSections,
-} from "./session-list/SessionSections";
+import { ProjectNameDialog, SessionSections } from "./session-list/SessionSections";
 import { getRecents } from "../lib/recents";
 import { UserProfile } from "./session-list/UserProfile";
 
@@ -98,7 +91,6 @@ export function SessionList() {
   const sort = (search.sort as SortKey | undefined) ?? "newest";
   const createMutation = useCreateSession();
   const [modKey, setModKey] = useState("Ctrl");
-  const [foldersOpen, setFoldersOpen] = useUiState("ui.section.folders", true);
   const newProjectFor = useStore(sepiaStore, (state) => state.newProjectFor);
   const createProject = useCreateProject();
   const patch = usePatchSessionMeta();
@@ -289,8 +281,13 @@ export function SessionList() {
         <SessionSections
           sessions={activeSessions}
           recentSessions={recentSessions}
+          archivedSessions={archivedSessions}
           selectedId={selectedId}
           resolvedCwd={resolvedCwd}
+          showContent={!loading && error === null}
+          scrollRef={bodyScrollRef}
+          hotkeyTarget={asideRef}
+          onNewSession={setCreateCwd}
           onSelect={selectAndClose}
           onDetails={detailsAndClose}
           onDelete={onDeleteSession}
@@ -319,41 +316,6 @@ export function SessionList() {
             icon={SearchAreaIcon}
             title="No matches"
             description="No sessions match the current filters."
-          />
-        )}
-
-        {!loading && error === null && (
-          <section className="group/section">
-            <SectionHeader
-              label="Folders"
-              open={foldersOpen}
-              onToggle={() => setFoldersOpen((v) => !v)}
-            />
-            {foldersOpen && (
-              <SessionTree
-                sessions={activeSessions}
-                selectedId={selectedId}
-                scrollRef={bodyScrollRef}
-                hotkeyTarget={asideRef}
-                onSelect={selectAndClose}
-                onDetails={detailsAndClose}
-                onDelete={onDeleteSession}
-                onNewSession={setCreateCwd}
-              />
-            )}
-          </section>
-        )}
-
-        {!loading && error === null && archivedSessions.length > 0 && (
-          <FlatSection
-            label="Archived"
-            sectionKey="archived"
-            limit={20}
-            sessions={archivedSessions}
-            selectedId={selectedId}
-            onSelect={selectAndClose}
-            onDetails={detailsAndClose}
-            onDelete={onDeleteSession}
           />
         )}
       </ScrollArea>
