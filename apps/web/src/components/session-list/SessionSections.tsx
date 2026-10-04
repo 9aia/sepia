@@ -262,7 +262,7 @@ interface ProjectDialogState {
   readonly name: string;
 }
 
-function ProjectNameDialog({
+export function ProjectNameDialog({
   state,
   onClose,
   onSubmit,

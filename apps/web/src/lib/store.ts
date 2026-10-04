@@ -14,6 +14,8 @@ export interface SepiaState {
   createCwd: string | null;
   /** Working directory new sessions are created in; null = fall back to defaults. */
   cwd: string | null;
+  /** Session a "New project" dialog should create-for and assign; null = closed. */
+  newProjectFor: string | null;
 }
 
 export const sepiaStore = new Store<SepiaState>({
@@ -22,6 +24,7 @@ export const sepiaStore = new Store<SepiaState>({
   detailsFor: null,
   createCwd: null,
   cwd: null,
+  newProjectFor: null,
 });
 
 export const setSelectedId = (id: string | null): void => {
@@ -39,6 +42,10 @@ export const setDetailsFor = (details: SepiaState["detailsFor"]): void => {
 
 export const setCwd = (cwd: string | null): void => {
   sepiaStore.setState((prev) => ({ ...prev, cwd }));
+};
+
+export const setNewProjectFor = (sessionId: string | null): void => {
+  sepiaStore.setState((prev) => ({ ...prev, newProjectFor: sessionId }));
 };
 
 export const setCreateCwd = (cwd: string | null): void => {

@@ -9,11 +9,19 @@ import {
   SearchAreaIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { sepiaStore, setCreateCwd, setCwd, setDetailsFor, setSelectedId } from "../lib/store";
+import {
+  sepiaStore,
+  setCreateCwd,
+  setCwd,
+  setDetailsFor,
+  setNewProjectFor,
+  setSelectedId,
+} from "../lib/store";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
 import { useCreateSession } from "../hooks/query/useCreateSession";
+import { useCreateProject, usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { modelArgsFor } from "../lib/models";
@@ -34,7 +42,7 @@ import { settingsStore } from "../lib/settings";
 import { SessionTree } from "./session-list/SessionTree";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
 import { SessionDetailsDrawer } from "./session-list/SessionDetailsDrawer";
-import { SectionHeader, SessionSections } from "./session-list/SessionSections";
+import { ProjectNameDialog, SectionHeader, SessionSections } from "./session-list/SessionSections";
 import { getRecents } from "../lib/recents";
 import { UserProfile } from "./session-list/UserProfile";
 
@@ -82,6 +90,10 @@ export function SessionList() {
   const details = useStore(sepiaStore, (state) => state.detailsFor);
   const [modKey, setModKey] = useState("Ctrl");
   const [foldersOpen, setFoldersOpen] = useState(true);
+  const newProjectFor = useStore(sepiaStore, (state) => state.newProjectFor);
+  const createProject = useCreateProject();
+  const patch = usePatchSessionMeta();
+  const newProjectSession = resolveSession(sessions, newProjectFor);
   const createCwd = useStore(sepiaStore, (state) => state.createCwd);
   const cwd = useStore(sepiaStore, (state) => state.cwd);
   const { data: user } = useUserInfo();
@@ -258,6 +270,26 @@ export function SessionList() {
         )}
       </ScrollArea>
 
+      {newProjectFor !== null && (
+        <ProjectNameDialog
+          state={{ name: "" }}
+          onClose={() => setNewProjectFor(null)}
+          onSubmit={(_state, name) => {
+            setNewProjectFor(null);
+            createProject.mutate(name, {
+              onSuccess: ({ project }) => {
+                const ids = newProjectSession?.projectIds ?? [];
+                if (newProjectFor !== null && !ids.includes(project.id)) {
+                  patch.mutate({
+                    id: newProjectFor,
+                    patch: { projectIds: [...ids, project.id] },
+                  });
+                }
+              },
+            });
+          }}
+        />
+      )}
       <SessionDetailsDrawer
         session={resolveSession(sessions, details?.id)}
         focusRename={details?.rename ?? false}

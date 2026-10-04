@@ -1,4 +1,5 @@
 import {
+  Add01Icon,
   ArrowReloadHorizontalIcon,
   Copy01Icon,
   Delete02Icon,
@@ -11,6 +12,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
 import { sessionKey } from "../../lib/format";
+import { setNewProjectFor } from "../../lib/store";
 import {
   useConvertSession,
   usePatchSessionMeta,
@@ -92,6 +94,11 @@ export function SessionActions({
           Projects…
         </SubTrigger>
         <SubContent className="w-52">
+          <Item onClick={() => setNewProjectFor(session.id)}>
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+            New project…
+          </Item>
+          {projects.length > 0 && <Separator />}
           {projects.length === 0 && (
             <Item disabled>
               <span className="text-muted-foreground">No projects yet</span>
