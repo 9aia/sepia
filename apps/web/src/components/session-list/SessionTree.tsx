@@ -222,13 +222,17 @@ export function SessionTree({
   });
 
   // Auto-expand groups that appear (new sessions, filter hits) without
-  // disturbing groups the user collapsed manually.
+  // disturbing groups the user collapsed manually. rebuildTree is required
+  // because headless-tree only materializes items on an explicit rebuild —
+  // the dataLoader alone doesn't trigger one.
   const groupsKey = rootChildren.join(",");
   useEffect(() => {
     tree.applySubStateUpdate("expandedItems", (prev) => [
       ...new Set([...(prev ?? []), ...groupsKey.split(",").filter(Boolean)]),
     ]);
-  }, [groupsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    tree.rebuildTree();
+    // sessions covers adds/updates inside an existing group that groupsKey misses.
+  }, [sessions, groupsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const items = tree.getItems();
 

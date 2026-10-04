@@ -18,7 +18,15 @@ export const mergeRepositories = (
         repo.list().pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<Session>))),
       ),
     ]).pipe(
-      Effect.map((groups) => groups.flat().sort((a, b) => b.lastActivityAt - a.lastActivityAt)),
+      // Primary wins on id collisions so a session present in two stores
+      // keeps the primary backend's metadata.
+      Effect.map((groups) => {
+        const seen = new Set<string>();
+        return groups
+          .flat()
+          .filter((session) => (seen.has(session.id) ? false : (seen.add(session.id), true)))
+          .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+      }),
     ),
 
   getById: (id) =>
