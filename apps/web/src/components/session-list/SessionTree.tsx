@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useTree } from "@headless-tree/react";
@@ -33,6 +33,16 @@ import {
 } from "@hugeicons/core-free-icons";
 import { ScrollBar } from "../ui/scroll-area";
 import { Tree, TreeItem, TreeItemLabel } from "../reui/tree";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 
 type TreeData =
   | { readonly kind: "dir"; readonly label: string; readonly cwd: string; readonly count: number }
@@ -83,18 +93,15 @@ function SessionActions({
   session,
   onSelect,
   onDetails,
-  onDelete,
+  onRequestDelete,
 }: {
   readonly Item: typeof ContextMenuItem;
   readonly Separator: typeof ContextMenuSeparator;
   readonly session: SessionSummary;
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
-  onDelete: (id: string) => void;
+  onRequestDelete: (id: string) => void;
 }) {
-  const confirmDelete = () => {
-    if (window.confirm(`Delete session "${session.title}"?`)) onDelete(session.id);
-  };
   const copy = (value: string) =>
     void navigator.clipboard.writeText(value).then(
       () => {},
@@ -124,7 +131,7 @@ function SessionActions({
         Copy path
       </Item>
       <Separator />
-      <Item variant="destructive" onClick={confirmDelete}>
+      <Item variant="destructive" onClick={() => onRequestDelete(session.id)}>
         <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
         Delete
       </Item>
@@ -147,71 +154,96 @@ function SessionItemRow({
   onDetails: (id: string, rename: boolean) => void;
   onDelete: (id: string) => void;
 }) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
   return (
-    <ContextMenu>
-      <ContextMenuTrigger className="relative block">
-        <TreeItem
-          item={item}
-          data-selected={selected || undefined}
-          className="w-full cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-inherit"
-        >
-          <TreeItemLabel className="w-full items-start rounded-none bg-transparent hover:bg-accent/60 in-data-[selected=true]:ring-1 in-data-[selected=true]:ring-inset in-data-[selected=true]:ring-primary">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate font-semibold">{session.title}</span>
-              </div>
-              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{formatUpdated(session.updatedAt)}</span>
-                {session.locked && (
-                  <Badge
-                    variant="destructive"
-                    title={`Locked by pid ${session.lockHolderPid ?? "unknown"}`}
-                  >
-                    locked
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </TreeItemLabel>
-        </TreeItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="absolute top-2 right-2 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
-                aria-label={`Actions for session ${session.title}`}
-                title="More actions"
-              />
-            }
-            onClick={(event) => event.stopPropagation()}
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger className="relative block">
+          <TreeItem
+            item={item}
+            data-selected={selected || undefined}
+            className="w-full cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-inherit"
           >
-            <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <SessionActions
-              Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
-              Separator={DropdownMenuSeparator}
-              session={session}
-              onSelect={onSelect}
-              onDetails={onDetails}
-              onDelete={onDelete}
-            />
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </ContextMenuTrigger>
-      <ContextMenuContent>
-        <SessionActions
-          Item={ContextMenuItem}
-          Separator={ContextMenuSeparator}
-          session={session}
-          onSelect={onSelect}
-          onDetails={onDetails}
-          onDelete={onDelete}
-        />
-      </ContextMenuContent>
-    </ContextMenu>
+            <TreeItemLabel className="w-full items-start rounded-none bg-transparent hover:bg-accent/60 in-data-[selected=true]:ring-1 in-data-[selected=true]:ring-inset in-data-[selected=true]:ring-primary">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-semibold">{session.title}</span>
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>{formatUpdated(session.updatedAt)}</span>
+                  {session.locked && (
+                    <Badge
+                      variant="destructive"
+                      title={`Locked by pid ${session.lockHolderPid ?? "unknown"}`}
+                    >
+                      locked
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </TreeItemLabel>
+          </TreeItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="absolute top-2 right-2 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                  aria-label={`Actions for session ${session.title}`}
+                  title="More actions"
+                />
+              }
+              onClick={(event) => event.stopPropagation()}
+            >
+              <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <SessionActions
+                Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
+                Separator={DropdownMenuSeparator}
+                session={session}
+                onSelect={onSelect}
+                onDetails={onDetails}
+                onRequestDelete={() => setConfirmOpen(true)}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <SessionActions
+            Item={ContextMenuItem}
+            Separator={ContextMenuSeparator}
+            session={session}
+            onSelect={onSelect}
+            onDetails={onDetails}
+            onRequestDelete={() => setConfirmOpen(true)}
+          />
+        </ContextMenuContent>
+      </ContextMenu>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete session?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`"${session.title}" will be permanently removed from the agent's session store. This can't be undone.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                onDelete(session.id);
+                setConfirmOpen(false);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
