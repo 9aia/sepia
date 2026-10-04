@@ -39,9 +39,17 @@ export function UserProfile() {
             />
           }
         >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground">
-            {initial !== undefined ? initial : <HugeiconsIcon icon={ProfileIcon} strokeWidth={2} />}
-          </span>
+          {isLoading ? (
+            <Skeleton className="size-8 shrink-0 rounded-full" />
+          ) : (
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground">
+              {initial !== undefined ? (
+                initial
+              ) : (
+                <HugeiconsIcon icon={ProfileIcon} strokeWidth={2} />
+              )}
+            </span>
+          )}
           <span className="min-w-0 flex-1 text-left">
             {isLoading ? (
               <span className="block space-y-1.5">

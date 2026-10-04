@@ -22,6 +22,7 @@ import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
 import { useCreateSession } from "../hooks/query/useCreateSession";
 import { useUiState } from "../hooks/query/useConfig";
+import { Skeleton } from "./ui/skeleton";
 import { useCreateProject, usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
@@ -202,20 +203,29 @@ export function SessionList() {
         </div>
       </div>
 
-      <div className="flex shrink-0 flex-col gap-1.5 border-b border-border px-4 py-3">
-        <Button
-          variant="secondary"
-          onClick={() => create(resolvedCwd)}
-          disabled={createMutation.isPending}
-        >
-          <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} />
-          {createMutation.isPending ? "Creating…" : "New session"}
-        </Button>
-        <CwdPicker
-          value={resolvedCwd}
-          dirs={[...new Set(sessions.map((s) => s.cwd))]}
-          onChange={setCwd}
-        />
+      <div className="flex shrink-0 flex-col gap-1.5 px-4 py-3">
+        {loading ? (
+          <>
+            <Skeleton className="h-9 w-full rounded-md" />
+            <Skeleton className="h-8 w-full rounded-md" />
+          </>
+        ) : (
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => create(resolvedCwd)}
+              disabled={createMutation.isPending}
+            >
+              <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} />
+              {createMutation.isPending ? "Creating…" : "New session"}
+            </Button>
+            <CwdPicker
+              value={resolvedCwd}
+              dirs={[...new Set(sessions.map((s) => s.cwd))]}
+              onChange={setCwd}
+            />
+          </>
+        )}
       </div>
 
       <ScrollArea className="flex min-h-0 flex-1 flex-col" viewportRef={bodyScrollRef}>
