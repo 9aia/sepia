@@ -85,11 +85,6 @@ body {
   overflow: hidden;
 }
 
-
-
-
-
-
 .session-list {
   background: var(--panel);
   border-right: 1px solid var(--app-border);
@@ -125,11 +120,6 @@ body {
   border-bottom: 1px solid var(--app-border);
 }
 
-
-
-
-
-
 .session-list__status {
   padding: 16px;
   color: var(--app-muted);
@@ -149,8 +139,6 @@ body {
 .session-row {
   padding-bottom: 4px;
 }
-
-
 
 .session-item {
   width: 100%;
@@ -240,7 +228,7 @@ body {
 
 .chat-panel__body {
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   padding: 16px;
@@ -251,9 +239,18 @@ body {
   color: var(--app-muted);
 }
 
+/* The history Conversation is its own scroll region alongside CopilotChat. */
 .history {
+  flex: 1;
+  min-height: 0;
   border-bottom: 1px dashed var(--app-border);
-  padding-bottom: 16px;
+  padding-bottom: 8px;
+}
+
+.history__truncated {
+  color: var(--app-muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 .history__rows {
@@ -264,58 +261,10 @@ body {
   padding-bottom: 10px;
 }
 
-.history__message {
-  background: var(--panel);
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  padding: 8px 12px;
-}
-
-.history__message--user {
-  border-color: #2c4a75;
-}
-
-.history__message--tool {
-  border-style: dashed;
-}
-
-.history__meta {
-  margin-bottom: 2px;
-}
-
-.history__role {
-  color: var(--app-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.history__content {
-  word-break: break-word;
-  --tw-prose-invert-links: var(--accent);
-  --tw-prose-invert-bullets: var(--muted);
-  --tw-prose-invert-counters: var(--muted);
-}
-
-/* The typography plugin wraps inline code in backtick quotes — drop them. */
-.history__content :not(pre) > code::before,
-.history__content :not(pre) > code::after {
-  content: none;
-}
-
 .copilot-chat {
   flex: 1;
-  min-height: 360px;
+  min-height: 0;
 }
-
-
-
-
-
-
-
-
-
 
 .mock-banner {
   position: fixed;
@@ -332,8 +281,6 @@ body {
   letter-spacing: 0.06em;
 }
 
-
-
 .chat-panel__error {
   margin: 12px 16px;
   padding: 10px 14px;
@@ -343,8 +290,6 @@ body {
   color: var(--danger);
   font-size: 13px;
 }
-
-
 
 .error-boundary {
   margin: 15vh auto;
