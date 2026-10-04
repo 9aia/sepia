@@ -14,8 +14,8 @@ import { useHistory } from "../hooks/query/useHistory";
 import { useRespondToPermission } from "../hooks/query/useRespondToPermission";
 import { useSessions } from "../hooks/query/useSessions";
 import { ApprovalDialog } from "./ApprovalDialog";
-import { Badge } from "./ui/badge";
-import { SidebarTrigger } from "./ui/sidebar";
+import { ChatHeader } from "./ChatHeader";
+import { ErrorBanner } from "./ErrorBanner";
 import { SessionChat } from "./SessionChat";
 
 const PERMISSION_EVENT = "acp:permission_request";
@@ -147,7 +147,7 @@ export function ChatPanel() {
 
   if (!session) {
     return (
-      <section className="chat-panel">
+      <section className="flex h-svh flex-col overflow-hidden">
         <EmptyScreen
           icon={BubbleChatIcon}
           title="No session selected"
@@ -158,35 +158,17 @@ export function ChatPanel() {
   }
 
   return (
-    <section className="chat-panel">
-      <header className="chat-panel__header">
-        <SidebarTrigger />
-        <div>
-          <h2 className="chat-panel__title">{session.title}</h2>
-          <span className="chat-panel__cwd" title={session.cwd}>
-            {session.cwd}
-          </span>
-        </div>
-        {readOnly && <Badge variant="secondary">read-only</Badge>}
-        {(session.busy || running) && <Badge variant="destructive">busy</Badge>}
-        {streamStatus === "reconnecting" && (
-          <Badge variant="outline" role="status">
-            reconnecting…
-          </Badge>
-        )}
-      </header>
+    <section className="flex h-svh flex-col overflow-hidden">
+      <ChatHeader
+        session={session}
+        readOnly={readOnly}
+        running={running}
+        streamStatus={streamStatus}
+      />
 
-      <div className="chat-panel__body">
-        {attachError !== null && (
-          <div className="chat-panel__error" role="alert">
-            {attachError}
-          </div>
-        )}
-        {historyError !== null && (
-          <div className="chat-panel__error" role="alert">
-            {historyError}
-          </div>
-        )}
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
+        {attachError !== null && <ErrorBanner>{attachError}</ErrorBanner>}
+        {historyError !== null && <ErrorBanner>{historyError}</ErrorBanner>}
         {attachError === null && (
           <SessionChat
             sessionId={session.id}

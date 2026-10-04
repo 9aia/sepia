@@ -5,6 +5,7 @@ import type { LiveMessage } from "../lib/liveMessages";
 import { cancel, sendPrompt } from "../lib/api";
 import { useHistory } from "../hooks/query/useHistory";
 import { Button } from "./ui/button";
+import { ErrorBanner } from "./ErrorBanner";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -110,14 +111,11 @@ function ChatRows({
     <MessageScrollerViewport ref={viewportRef}>
       <MessageScrollerContent>
         {truncated.shown < truncated.total && (
-          <div className="history__truncated">
+          <div className="text-center text-xs text-muted-foreground">
             showing last {truncated.shown} of {truncated.total}
           </div>
         )}
-        <div
-          className="history__rows"
-          style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}
-        >
+        <div className="relative mt-2.5" style={{ height: `${virtualizer.getTotalSize()}px` }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index];
             if (row === undefined) return null;
@@ -133,7 +131,7 @@ function ChatRows({
                 scrollAnchor={isTurnStart}
                 data-index={virtualRow.index}
                 ref={virtualizer.measureElement}
-                className="history__row"
+                className="pb-2.5"
                 style={{
                   position: "absolute",
                   top: 0,
@@ -205,7 +203,7 @@ export function SessionChat({
   return (
     <>
       <MessageScrollerProvider autoScroll defaultScrollPosition="end">
-        <MessageScroller className="chat-conversation">
+        <MessageScroller className="relative flex min-h-0 flex-1 flex-col">
           {rows.length > 0 ? (
             <ChatRows
               rows={rows}
@@ -213,7 +211,7 @@ export function SessionChat({
             />
           ) : (
             <MessageScrollerViewport>
-              <p className="chat-panel__loading">
+              <p className="text-muted-foreground">
                 {historyQuery.isLoading ? "Loading history…" : "No messages yet."}
               </p>
             </MessageScrollerViewport>
@@ -222,21 +220,17 @@ export function SessionChat({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      {promptError !== null && (
-        <div className="chat-panel__error" role="alert">
-          {promptError}
-        </div>
-      )}
+      {promptError !== null && <ErrorBanner>{promptError}</ErrorBanner>}
 
       {readOnly ? (
-        <div className="chat-panel__readonly">
+        <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm text-muted-foreground">
           This session is held by another process.
           <Button size="sm" onClick={onTakeover}>
             Take over
           </Button>
         </div>
       ) : (
-        <PromptInput onSubmit={onSubmit} className="chat-composer">
+        <PromptInput onSubmit={onSubmit} className="shrink-0 border-t border-border pt-2.5">
           <PromptInputBody>
             <PromptInputTextarea placeholder="Prompt the agent…" />
           </PromptInputBody>

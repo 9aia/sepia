@@ -17,8 +17,9 @@ export const Route = createRootRoute({
   }),
   component: RootComponent,
   errorComponent: ({ error, reset }) => (
-    <main className="error-screen">
+    <main className="flex min-h-svh">
       <EmptyScreen
+        className="m-auto max-w-xl"
         icon={AlertCircleIcon}
         title="Something went wrong"
         description={error instanceof Error ? error.message : String(error)}
@@ -28,8 +29,9 @@ export const Route = createRootRoute({
     </main>
   ),
   notFoundComponent: () => (
-    <main className="error-screen">
+    <main className="flex min-h-svh">
       <EmptyScreen
+        className="m-auto max-w-xl"
         icon={FileNotFoundIcon}
         title="404 — page not found"
         description="The page you were looking for doesn't exist."
