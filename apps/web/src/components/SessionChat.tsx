@@ -384,12 +384,14 @@ export function SessionChat({
           </PromptInputBody>
           <PromptInputFooter>
             <PromptInputTools />
-            <ModelSelect sessionId={sessionId} />
-            <PromptInputSubmit
-              status={running ? "streaming" : submitting ? "submitted" : "ready"}
-              disabled={submitting}
-              onStop={() => void cancel(sessionId)}
-            />
+            <div className="ml-auto flex items-center gap-1">
+              <ModelSelect sessionId={sessionId} />
+              <PromptInputSubmit
+                status={running ? "streaming" : submitting ? "submitted" : "ready"}
+                disabled={submitting}
+                onStop={() => void cancel(sessionId)}
+              />
+            </div>
           </PromptInputFooter>
         </PromptInput>
       )}
