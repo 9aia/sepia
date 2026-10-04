@@ -51,10 +51,11 @@ export function SessionList() {
   const deleteMutation = useDeleteSession();
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
   const [filter, setFilter] = useState("");
-  const [agentFilter, setAgentFilter] = useState<string>("all");
+  const [agentFilter, setAgentFilter] = useState<string[]>([]);
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<SortKey>("newest");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [modKey, setModKey] = useState("Ctrl");
   useEffect(() => {
     if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
@@ -70,7 +71,7 @@ export function SessionList() {
     const now = Date.now();
     return sessions
       .filter((session) => {
-        if (agentFilter !== "all" && session.agent !== agentFilter) return false;
+        if (agentFilter.length > 0 && !agentFilter.includes(session.agent)) return false;
         if (statusFilter === "locked" && !session.locked) return false;
         if (statusFilter === "free" && session.locked) return false;
         if (cutoff !== null && now - new Date(session.updatedAt).getTime() > cutoff) return false;
@@ -87,7 +88,8 @@ export function SessionList() {
   useHotkey("Mod+K", () => filterRef.current?.focus(), { preventDefault: true });
   useHotkey("N", () => {
     if (inFormField()) return;
-    cwdRef.current?.focus();
+    setAdvancedOpen(true);
+    requestAnimationFrame(() => cwdRef.current?.focus());
   });
   useHotkey(
     "Escape",
@@ -106,7 +108,13 @@ export function SessionList() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <CreateForm cwdRef={cwdRef} agents={agents} />
+        <CreateForm
+          cwdRef={cwdRef}
+          agents={agents}
+          defaultCwd={sessions[0]?.cwd}
+          open={advancedOpen}
+          onOpenChange={setAdvancedOpen}
+        />
         <FilterBar
           agents={agents}
           filter={filter}
@@ -117,7 +125,11 @@ export function SessionList() {
           statusFilter={statusFilter}
           sort={sort}
           onFilterChange={setFilter}
-          onAgentFilterChange={setAgentFilter}
+          onToggleAgent={(id, checked) =>
+            setAgentFilter((prev) =>
+              checked ? [...prev, id] : prev.filter((agent) => agent !== id),
+            )
+          }
           onDateFilterChange={setDateFilter}
           onStatusFilterChange={setStatusFilter}
           onSortChange={setSort}
