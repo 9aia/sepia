@@ -28,7 +28,7 @@ import { useCreateProject } from "../hooks/query/useProjects";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { modelArgsFor } from "../lib/models";
-import { resolveSession } from "../lib/format";
+import { resolveSession, sessionKey } from "../lib/format";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
@@ -152,9 +152,18 @@ export function SessionList() {
   }, [sessions, debouncedFilter, agentFilter, dateFilter, statusFilter, sort]);
 
   const recentSessions = useMemo(() => {
+    // Recents may hold the same session twice — bare-id entries from before
+    // the agent-scoped keys, plus the scoped one. Resolve then dedup by key.
+    const seen = new Set<string>();
     return getRecents()
       .map((key) => resolveSession(filtered, key))
-      .filter((s): s is NonNullable<typeof s> => s !== undefined);
+      .filter((s): s is NonNullable<typeof s> => {
+        if (s === undefined) return false;
+        const key = sessionKey(s);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     // selectedId change refreshes the MRU
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, selectedId]);
