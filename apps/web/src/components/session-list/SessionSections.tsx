@@ -363,7 +363,7 @@ function ProjectsSection({
               <div className="ml-4 flex flex-col gap-0.5 border-l border-border/50 pl-1.5">
                 {members.length === 0 && (
                   <p className="px-3 py-1 text-xs text-muted-foreground">
-                    No sessions — use &quot;Manage in projects&quot; on a session.
+                    No sessions — use &quot;Projects…&quot; on a session.
                   </p>
                 )}
                 {members.map((session) => (

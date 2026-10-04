@@ -88,7 +88,7 @@ export function SessionActions({
       <Sub>
         <SubTrigger>
           <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} />
-          Manage in projects
+          Projects…
         </SubTrigger>
         <SubContent className="w-52">
           {projects.length === 0 && (

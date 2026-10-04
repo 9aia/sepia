@@ -276,7 +276,7 @@ export function SessionDetailsDrawer({
                   render={
                     <Button variant="outline" className="w-full justify-start">
                       <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} />
-                      Manage in projects
+                      Projects…
                     </Button>
                   }
                 />
