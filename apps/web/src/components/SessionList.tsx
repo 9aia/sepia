@@ -9,7 +9,6 @@ import { useAgents } from "../hooks/query/useAgents";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useSessions } from "../hooks/query/useSessions";
 import { Sidebar } from "./ui/sidebar";
-import { Spinner } from "./ui/spinner";
 import { EmptyScreen } from "./EmptyScreen";
 import { CreateForm } from "./session-list/CreateForm";
 import {
@@ -20,6 +19,7 @@ import {
 } from "./session-list/FilterBar";
 import { settingsStore } from "../lib/settings";
 import { SessionTree } from "./session-list/SessionTree";
+import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
 import { SessionDetailsDrawer } from "./session-list/SessionDetailsDrawer";
 import { UserProfile } from "./session-list/UserProfile";
 
@@ -140,11 +140,7 @@ export function SessionList() {
           onSortChange={setSort}
         />
 
-        {loading && (
-          <div className="flex items-center gap-2 p-4 text-muted-foreground">
-            <Spinner /> Loading sessions…
-          </div>
-        )}
+        {loading && <SessionTreeSkeleton />}
         {error !== null && (
           <EmptyScreen
             className="p-6"

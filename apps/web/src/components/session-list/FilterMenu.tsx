@@ -49,11 +49,7 @@ export function FilterMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button
-            variant="outline"
-            className="h-9 shrink-0 gap-1.5 px-2"
-            aria-label="Filters"
-          />
+          <Button variant="outline" className="h-9 shrink-0 gap-1.5 px-2" aria-label="Filters" />
         }
       >
         <HugeiconsIcon icon={FilterHorizontalIcon} strokeWidth={2} />
