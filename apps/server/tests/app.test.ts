@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type {
@@ -11,6 +14,7 @@ import type {
 import type { Event } from "sepia-agui";
 import { EventType } from "sepia-agui";
 import { createApp } from "../src/app";
+import { createMetaStore } from "../src/meta";
 
 const SESSION: SessionSummary = {
   id: "sess-1",
@@ -359,6 +363,44 @@ describe("createApp", () => {
     expect(ok.status).toBe(200);
     await expect(ok.json()).resolves.toEqual({ ok: true });
     expect(missing.status).toBe(404);
+  });
+
+  it("PATCH /api/sessions/:id renames via the meta overlay and overlays on list", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
+    const meta = createMetaStore(join(dir, "meta.json"));
+    const app = createApp(plane, { meta });
+
+    const renamed = await app(
+      new Request("http://localhost/api/sessions/sess-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "Renamed session" }),
+      }),
+    );
+    expect(renamed.status).toBe(200);
+
+    const list = await app(get("/api/sessions"));
+    const { sessions } = (await list.json()) as { sessions: SessionSummary[] };
+    expect(sessions[0]?.title).toBe("Renamed session");
+
+    const invalid = await app(
+      new Request("http://localhost/api/sessions/sess-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: " " }),
+      }),
+    );
+    expect(invalid.status).toBe(400);
+
+    const unconfigured = await createApp(plane)(
+      new Request("http://localhost/api/sessions/sess-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "x" }),
+      }),
+    );
+    expect(unconfigured.status).toBe(501);
   });
 
   it("POST /api/sessions/:id/permission forwards the decision", async () => {

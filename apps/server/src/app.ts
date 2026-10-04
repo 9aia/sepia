@@ -9,6 +9,7 @@ import type {
   Unsubscribe,
 } from "sepia-session-control";
 import { createAguiAgentHandler } from "./agui-agent";
+import type { MetaStore } from "./meta";
 import { keepAliveMsFromEnv, SseChannel } from "./sse-channel";
 
 export interface AppOptions {
@@ -22,6 +23,8 @@ export interface AppOptions {
   readonly allowedOrigins?: ReadonlyArray<string>;
   /** Overrides `SEPIA_SSE_KEEPALIVE_MS`; tests use a tiny value. */
   readonly keepAliveMs?: number;
+  /** Session-title overlay; absent → `PATCH /api/sessions/:id` returns 501. */
+  readonly meta?: MetaStore;
 }
 
 const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([
@@ -259,7 +262,12 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     if (method === "GET" && segmentsEqual(segments, ["api", "sessions"])) {
       const withLocks = url.searchParams.get("withLocks") === "1";
       return respond(run, plane.listSessions({ withLocks }), cors, {
-        shape: (sessions) => ({ sessions }),
+        shape: (sessions) => ({
+          sessions: sessions.map((session) => ({
+            ...session,
+            title: options.meta?.titleOf(session.id) ?? session.title,
+          })),
+        }),
         span: "http.get /api/sessions",
       });
     }
@@ -293,16 +301,49 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     }
 
     if (
+      method === "PATCH" &&
+      segments[0] === "api" &&
+      segments[1] === "sessions" &&
+      segments.length === 3
+    ) {
+      const meta = options.meta;
+      if (meta === undefined) {
+        return jsonResponse({ error: "Rename is not configured on this server" }, 501, cors);
+      }
+      const id = decodeURIComponent(segments[2] ?? "");
+      let patchBody: unknown;
+      try {
+        patchBody = await readJsonBody(request);
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+      }
+      if (!isRecord(patchBody)) {
+        return jsonResponse({ error: "Expected a JSON object body" }, 400, cors);
+      }
+      const title = patchBody.title;
+      if (typeof title !== "string" || title.trim() === "" || title.length > 200) {
+        return jsonResponse({ error: "title must be a non-empty string (max 200)" }, 400, cors);
+      }
+      meta.rename(id, title.trim());
+      return jsonResponse({ ok: true }, 200, cors);
+    }
+
+    if (
       method === "DELETE" &&
       segments[0] === "api" &&
       segments[1] === "sessions" &&
       segments.length === 3
     ) {
       const id = decodeURIComponent(segments[2] ?? "");
-      return respond(run, plane.deleteSession(id), cors, {
-        shape: () => ({ ok: true }),
-        span: "http.delete /api/sessions/:id",
-      });
+      return respond(
+        run,
+        plane.deleteSession(id).pipe(Effect.tap(() => Effect.sync(() => options.meta?.remove(id)))),
+        cors,
+        {
+          shape: () => ({ ok: true }),
+          span: "http.delete /api/sessions/:id",
+        },
+      );
     }
 
     if (segments[0] === "api" && segments[1] === "sessions" && segments.length === 4) {

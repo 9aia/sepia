@@ -8,6 +8,13 @@ import type { ItemInstance } from "@headless-tree/core";
 import type { SessionSummary } from "../../lib/types";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "../ui/context-menu";
 import { ScrollBar } from "../ui/scroll-area";
 import { Tree, TreeItem, TreeItemLabel } from "../reui/tree";
 
@@ -57,58 +64,82 @@ function SessionItemRow({
   item,
   session,
   selected,
+  onSelect,
+  onDetails,
   onDelete,
 }: {
   readonly item: ItemInstance<TreeData>;
   readonly session: SessionSummary;
   readonly selected: boolean;
+  onSelect: (id: string) => void;
+  onDetails: (id: string, rename: boolean) => void;
   onDelete: (id: string) => void;
 }) {
+  const confirmDelete = () => {
+    if (window.confirm(`Delete session "${session.title}"?`)) onDelete(session.id);
+  };
+  const copy = (value: string) =>
+    void navigator.clipboard.writeText(value).then(
+      () => {},
+      () => undefined,
+    );
   return (
-    <>
-      <TreeItem
-        item={item}
-        data-selected={selected || undefined}
-        className="w-full cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-inherit"
-      >
-        <TreeItemLabel className="w-full items-start in-data-[selected=true]:ring-1 in-data-[selected=true]:ring-inset in-data-[selected=true]:ring-primary">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-semibold">{session.title}</span>
-              <Badge variant={session.agent === "cline" ? "outline" : "secondary"}>
-                {session.agent}
-              </Badge>
-            </div>
-            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{formatUpdated(session.updatedAt)}</span>
-              {session.locked && (
-                <Badge
-                  variant="destructive"
-                  title={`Locked by pid ${session.lockHolderPid ?? "unknown"}`}
-                >
-                  locked
+    <ContextMenu>
+      <ContextMenuTrigger className="relative block">
+        <TreeItem
+          item={item}
+          data-selected={selected || undefined}
+          className="w-full cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-inherit"
+        >
+          <TreeItemLabel className="w-full items-start in-data-[selected=true]:ring-1 in-data-[selected=true]:ring-inset in-data-[selected=true]:ring-primary">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate font-semibold">{session.title}</span>
+                <Badge variant={session.agent === "cline" ? "outline" : "secondary"}>
+                  {session.agent}
                 </Badge>
-              )}
+              </div>
+              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{formatUpdated(session.updatedAt)}</span>
+                {session.locked && (
+                  <Badge
+                    variant="destructive"
+                    title={`Locked by pid ${session.lockHolderPid ?? "unknown"}`}
+                  >
+                    locked
+                  </Badge>
+                )}
+              </div>
             </div>
-          </div>
-        </TreeItemLabel>
-      </TreeItem>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        className="absolute top-2 right-2 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-secondary hover:text-destructive focus-visible:opacity-100"
-        aria-label={`Delete session ${session.title}`}
-        title="Delete session"
-        onClick={(event) => {
-          event.stopPropagation();
-          if (window.confirm(`Delete session "${session.title}"?`)) {
-            onDelete(session.id);
-          }
-        }}
-      >
-        ×
-      </Button>
-    </>
+          </TreeItemLabel>
+        </TreeItem>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="absolute top-2 right-2 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-secondary hover:text-destructive focus-visible:opacity-100"
+          aria-label={`Delete session ${session.title}`}
+          title="Delete session"
+          onClick={(event) => {
+            event.stopPropagation();
+            confirmDelete();
+          }}
+        >
+          ×
+        </Button>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => onSelect(session.id)}>Open</ContextMenuItem>
+        <ContextMenuItem onClick={() => onDetails(session.id, true)}>Rename…</ContextMenuItem>
+        <ContextMenuItem onClick={() => onDetails(session.id, false)}>Details</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onClick={() => copy(session.id)}>Copy session ID</ContextMenuItem>
+        <ContextMenuItem onClick={() => copy(session.cwd)}>Copy path</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" onClick={confirmDelete}>
+          Delete
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -117,6 +148,7 @@ interface SessionTreeProps {
   readonly selectedId: string | null;
   readonly hotkeyTarget: RefObject<HTMLElement | null>;
   onSelect: (id: string) => void;
+  onDetails: (id: string, rename: boolean) => void;
   onDelete: (id: string) => void;
 }
 
@@ -125,6 +157,7 @@ export function SessionTree({
   selectedId,
   hotkeyTarget,
   onSelect,
+  onDetails,
   onDelete,
 }: SessionTreeProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -299,6 +332,8 @@ export function SessionTree({
                       item={item}
                       session={data.session}
                       selected={data.session.id === selectedId}
+                      onSelect={onSelect}
+                      onDetails={onDetails}
                       onDelete={onDelete}
                     />
                   ) : null}

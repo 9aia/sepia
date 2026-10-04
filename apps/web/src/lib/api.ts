@@ -102,6 +102,15 @@ export async function listAgents(): Promise<AgentInfo[]> {
   return data.agents;
 }
 
+export async function renameSession(id: string, title: string): Promise<boolean> {
+  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) throw new Error(friendlyHttpError(res.status));
+  return true;
+}
+
 export async function deleteSession(id: string): Promise<boolean> {
   const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok) throw new Error(friendlyHttpError(res.status));

@@ -19,6 +19,7 @@ import {
   type StatusFilter,
 } from "./session-list/FilterBar";
 import { SessionTree } from "./session-list/SessionTree";
+import { SessionDetailsDrawer } from "./session-list/SessionDetailsDrawer";
 import { ShortcutsFooter } from "./session-list/ShortcutsFooter";
 
 const DATE_CUTOFFS: Record<Exclude<DateFilter, "all">, number> = {
@@ -56,6 +57,7 @@ export function SessionList() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<SortKey>("newest");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [details, setDetails] = useState<{ id: string; rename: boolean } | null>(null);
   const [modKey, setModKey] = useState("Ctrl");
   useEffect(() => {
     if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
@@ -170,9 +172,16 @@ export function SessionList() {
           selectedId={selectedId}
           hotkeyTarget={asideRef}
           onSelect={setSelectedId}
+          onDetails={(id, rename) => setDetails({ id, rename })}
           onDelete={(id) => deleteMutation.mutate(id)}
         />
       </div>
+
+      <SessionDetailsDrawer
+        session={sessions.find((s) => s.id === details?.id)}
+        focusRename={details?.rename ?? false}
+        onClose={() => setDetails(null)}
+      />
 
       <ShortcutsFooter modKey={modKey} />
     </Sidebar>

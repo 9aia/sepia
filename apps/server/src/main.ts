@@ -5,6 +5,7 @@ import { builtinAgents, spawnAgent } from "sepia-acp";
 import { ControlPlane, layer as controlPlaneLayer, mergeRepositories } from "sepia-session-control";
 import { createApp } from "./app";
 import { parseEnv } from "./env";
+import { createMetaStore } from "./meta";
 import { otelLayer } from "./telemetry";
 
 const isLoopback = (value: string): boolean =>
@@ -81,6 +82,7 @@ const server = Bun.serve({
     token: env.token,
     allowedOrigins: env.origins,
     run: (effect) => runtime.runPromise(effect),
+    meta: createMetaStore(env.metaPath),
   }),
 });
 console.log(`sepia-server listening on ${server.url.href}`);

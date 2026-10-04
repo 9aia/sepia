@@ -5,6 +5,7 @@ export interface ServerEnv {
   readonly port: number;
   readonly host: string;
   readonly token: string | undefined;
+  readonly metaPath: string;
   readonly origins: ReadonlyArray<string>;
   readonly otel: {
     readonly enabled: boolean;
@@ -44,6 +45,7 @@ export const parseEnv = (env: NodeJS.ProcessEnv = process.env): ServerEnv => {
     port,
     host: env.SEPIA_HOST ?? "127.0.0.1",
     token: env.SEPIA_TOKEN,
+    metaPath: env.SEPIA_META ?? `${homedir()}/.local/share/sepia/meta.json`,
     origins: configuredOrigins.length > 0 ? configuredOrigins : DEFAULT_ORIGINS,
     otel: {
       enabled: env.SEPIA_OTEL !== "0",
