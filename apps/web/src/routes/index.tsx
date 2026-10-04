@@ -6,7 +6,7 @@ import { ChatPanel } from "../components/ChatPanel";
 import { SessionDetailsDrawer } from "../components/session-list/SessionDetailsDrawer";
 import { useSessions } from "../hooks/query/useSessions";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
-import { resolveSession } from "../lib/format";
+import { resolveSession, shouldSyncUrlSelection } from "../lib/format";
 import { setDetailsFor } from "../lib/store";
 import type { SessionSummary } from "../lib/types";
 import { SessionList } from "../components/SessionList";
@@ -52,7 +52,15 @@ function Home() {
   // setState lands.
   const [urlSynced, setUrlSynced] = useState(false);
   useEffect(() => {
-    if ((search.session ?? null) !== selectedId) setSelectedId(search.session ?? null);
+    // Only a present ?session= pulls the store — never its absence. A
+    // transition that briefly drops the param (stale commit, dropped
+    // non-string value) used to null selectedId, and the auto-select
+    // below then teleported the selection to the first row. Equivalent
+    // key forms (agent:id ↔ node:agent:id ↔ local alias) don't count as
+    // a change — string equality would ping-pong between them.
+    if (shouldSyncUrlSelection(search.session, selectedId)) {
+      setSelectedId(search.session ?? null);
+    }
     setUrlSynced(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.session]);
@@ -68,6 +76,19 @@ function Home() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, urlSynced]);
+
+  // Canonicalize a resolvable selection to the row's own sessionKey once
+  // the list lands — a deep link or a peer-minted key may carry a
+  // different-but-equivalent form (agent:id, the server-issued local node
+  // id); the canonical key keeps row highlighting and ?session= aligned.
+  useEffect(() => {
+    if (sessions === undefined || selectedId === null) return;
+    const row = resolveSession(sessions, selectedId);
+    if (row !== undefined) {
+      const canonical = sessionKey(row);
+      if (canonical !== selectedId) setSelectedId(canonical);
+    }
+  }, [sessions, selectedId]);
 
   // Auto-select the first session once the list lands, only when the user
   // hasn't picked one.

@@ -66,6 +66,51 @@ export const bareProjectId = (ref: string): string => {
 };
 
 /**
+ * Semantic equality for session keys. Several literal forms address one
+ * row — `node:agent:id`, the local-implicit `agent:id`, and the
+ * server-issued local node id once the alias lands — so consumers that
+ * compare keys (e.g. the URL↔store sync) must compare by segments, not
+ * string identity, or equivalent forms ping-pong. Bare ids stay
+ * agent-ambiguous: they only match another bare id with the same string.
+ */
+export const sameSessionKey = (
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean => {
+  if (a === b) return true;
+  if (a === null || a === undefined || b === null || b === undefined) return false;
+  if (a === "" || b === "") return false;
+  const parse = (key: string): { node: string; agent: string | null; id: string } => {
+    const parts = key.split(":");
+    if (parts.length >= 3) {
+      // join the tail — a session id itself could carry a colon.
+      return { node: nodeKey(parts[0]), agent: parts[1], id: parts.slice(2).join(":") };
+    }
+    if (parts.length === 2) {
+      // Legacy agent:id — the node segment is implicit local.
+      return { node: LOCAL_NODE_ID, agent: parts[0], id: parts[1] };
+    }
+    return { node: LOCAL_NODE_ID, agent: null, id: key };
+  };
+  const ka = parse(a);
+  const kb = parse(b);
+  return ka.node === kb.node && ka.agent === kb.agent && ka.id === kb.id;
+};
+
+/**
+ * The URL→store selection rule: a present, non-empty `?session=` pulls the
+ * store unless it names the same row the user already picked. Its absence
+ * never clears a selection — a URL transition that briefly drops the param
+ * used to null `selectedId`, and the auto-select effect then teleported
+ * the highlight to the first row.
+ */
+export const shouldSyncUrlSelection = (
+  searchSession: string | undefined,
+  selectedId: string | null,
+): boolean =>
+  searchSession !== undefined && searchSession !== "" && !sameSessionKey(searchSession, selectedId);
+
+/**
  * Finds a session by its scoped key:
  * - `node:agent:id` — exact node + agent + id (local aliases resolve to the
  *   local row),

@@ -9,8 +9,10 @@ import {
   projectKey,
   projectName,
   resolveSession,
+  sameSessionKey,
   sessionKey,
   setLocalNodeAlias,
+  shouldSyncUrlSelection,
 } from "../lib/format";
 
 afterEach(() => {
@@ -122,6 +124,61 @@ describe("resolveSession", () => {
     const remoteOnly = [{ agent: "devin", id: "a", node: "node_remote" }];
     expect(resolveSession(remoteOnly, "a")?.node).toBe("node_remote");
     expect(resolveSession(sessions, "ghost")).toBeUndefined();
+  });
+});
+
+describe("sameSessionKey", () => {
+  it("is reflexive over identical strings and absent values", () => {
+    expect(sameSessionKey("local:devin:a", "local:devin:a")).toBe(true);
+    expect(sameSessionKey(null, null)).toBe(true);
+    expect(sameSessionKey(undefined, undefined)).toBe(true);
+    expect(sameSessionKey(null, "local:devin:a")).toBe(false);
+    expect(sameSessionKey("", "local:devin:a")).toBe(false);
+    expect(sameSessionKey("local:devin:a", "")).toBe(false);
+  });
+
+  it("treats the legacy agent:id form as the local node", () => {
+    // The key-shape mismatch behind the selection teleport: a clicked row
+    // stores node:agent:id while an old ?session= may carry agent:id.
+    expect(sameSessionKey("devin:a", "local:devin:a")).toBe(true);
+    expect(sameSessionKey("local:devin:a", "devin:a")).toBe(true);
+  });
+
+  it("normalizes the server-issued local node id through the alias", () => {
+    // setLocalNodeAlias("node_mine") ran in the suite above.
+    expect(sameSessionKey("node_mine:devin:a", "local:devin:a")).toBe(true);
+  });
+
+  it("distinguishes different sessions and different nodes", () => {
+    expect(sameSessionKey("local:devin:a", "local:devin:b")).toBe(false);
+    expect(sameSessionKey("local:devin:a", "local:cline:a")).toBe(false);
+    expect(sameSessionKey("local:devin:a", "node_remote:devin:a")).toBe(false);
+  });
+
+  it("keeps bare ids agent-ambiguous", () => {
+    expect(sameSessionKey("a", "local:devin:a")).toBe(false);
+    expect(sameSessionKey("a", "devin:a")).toBe(false);
+    expect(sameSessionKey("a", "a")).toBe(true);
+  });
+});
+
+describe("shouldSyncUrlSelection", () => {
+  it("pulls a present session param into the store", () => {
+    expect(shouldSyncUrlSelection("local:devin:b", "local:devin:a")).toBe(true);
+    expect(shouldSyncUrlSelection("local:devin:a", null)).toBe(true);
+  });
+
+  it("never clears a selection when the param is absent or empty", () => {
+    // Regression: a URL read of no ?session= must not null the store —
+    // the auto-select effect then snapped the selection to the first row.
+    expect(shouldSyncUrlSelection(undefined, "local:devin:a")).toBe(false);
+    expect(shouldSyncUrlSelection("", "local:devin:a")).toBe(false);
+  });
+
+  it("skips equivalent key forms so they can't ping-pong", () => {
+    expect(shouldSyncUrlSelection("devin:a", "local:devin:a")).toBe(false);
+    expect(shouldSyncUrlSelection("local:devin:a", "devin:a")).toBe(false);
+    expect(shouldSyncUrlSelection("local:devin:a", "local:devin:a")).toBe(false);
   });
 });
 
