@@ -3,7 +3,7 @@ import { settingsStore, setSettings } from "../lib/settings";
 import { useAgents } from "../hooks/query/useAgents";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 
 interface SettingsDialogProps {
   readonly open: boolean;
@@ -33,7 +33,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               }
             >
               <SelectTrigger id="settings-agent" aria-label="Default agent">
-                <SelectValue />
+                {settings.defaultAgent === null
+                  ? "Server default"
+                  : (agents.find((a) => a.id === settings.defaultAgent)?.label ??
+                    settings.defaultAgent)}
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__server__">Server default</SelectItem>
