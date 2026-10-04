@@ -145,7 +145,6 @@ function GroupRow({
               <span className="flex-1 truncate font-semibold" title={data.cwd}>
                 {data.label}
               </span>
-              <span className="text-xs text-muted-foreground">{data.count}</span>
             </TreeItemLabel>
           </TreeItem>
           <DropdownMenu>
