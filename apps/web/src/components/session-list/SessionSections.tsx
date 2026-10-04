@@ -7,6 +7,8 @@ import {
   FolderLibraryIcon,
   InformationCircleIcon,
   MoreVerticalIcon,
+  PinIcon,
+  PinOffIcon,
   UserAdd01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -78,6 +80,7 @@ function SectionSessionRow({
   onDelete,
 }: { readonly session: SessionSummary; readonly selected: boolean } & RowHandlers) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const patch = usePatchSessionMeta();
   return (
     <>
       <ContextMenu>
@@ -96,6 +99,19 @@ function SectionSessionRow({
               {formatUpdated(session.updatedAt)}
             </span>
           </button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="absolute top-1/2 right-8 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+            aria-label={session.pinned === true ? "Unpin session" : "Pin session"}
+            title={session.pinned === true ? "Unpin" : "Pin"}
+            onClick={(event) => {
+              event.stopPropagation();
+              patch.mutate({ id: session.id, patch: { pinned: session.pinned !== true } });
+            }}
+          >
+            <HugeiconsIcon icon={session.pinned === true ? PinOffIcon : PinIcon} strokeWidth={2} />
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
