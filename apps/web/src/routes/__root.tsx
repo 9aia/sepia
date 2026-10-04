@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { TooltipProvider } from "../components/ui/tooltip";
 import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
 import { AlertCircleIcon, FileNotFoundIcon } from "@hugeicons/core-free-icons";
 import { EmptyScreen } from "../components/EmptyScreen";
@@ -53,7 +54,9 @@ function RootComponent() {
   return (
     <RootDocument>
       <QueryClientProvider client={queryClient}>
-        <Outlet />
+        <TooltipProvider delay={300}>
+          <Outlet />
+        </TooltipProvider>
       </QueryClientProvider>
     </RootDocument>
   );
