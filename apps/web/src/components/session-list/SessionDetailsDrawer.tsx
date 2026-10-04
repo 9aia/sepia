@@ -209,9 +209,7 @@ export function SessionDetailsDrawer({
             <DrawerHeader className="flex-row items-start justify-between">
               <div>
                 <DrawerTitle>Session details</DrawerTitle>
-                <DrawerDescription>
-                  The underlying agent store is read-only.
-                </DrawerDescription>
+                <DrawerDescription>The underlying agent store is read-only.</DrawerDescription>
               </div>
               <DrawerClose
                 render={<Button variant="ghost" size="icon-xs" aria-label="Close details" />}
