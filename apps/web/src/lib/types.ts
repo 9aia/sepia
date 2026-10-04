@@ -57,9 +57,44 @@ export interface NodeDescriptor {
   capabilities: string[];
 }
 
+/**
+ * ACP `agentCapabilities.promptCapabilities` — which prompt content blocks
+ * beyond the baseline (text + resource links) the agent accepts. Flags not
+ * advertised by the agent come back false.
+ */
+export interface PromptCapabilities {
+  image: boolean;
+  audio: boolean;
+  embeddedContext: boolean;
+}
+
+/** ACP `agentCapabilities.sessionCapabilities` flattened to booleans. */
+export interface AgentSessionCapabilities {
+  list: boolean;
+  delete: boolean;
+  fork: boolean;
+  resume: boolean;
+  close: boolean;
+  additionalDirectories: boolean;
+}
+
+/**
+ * The ACP `initialize` capability advertisement a node probed from an
+ * agent. Present on attach/create results and on `/api/agents` entries
+ * once that agent has been spawned at least once.
+ */
+export interface AgentCapabilities {
+  loadSession: boolean;
+  sessionList: boolean;
+  promptCapabilities: PromptCapabilities;
+  sessionCapabilities: AgentSessionCapabilities;
+}
+
 export interface AgentInfo {
   id: string;
   label: string;
+  /** Probed capabilities — absent until the node's first spawn of this agent. */
+  capabilities?: AgentCapabilities;
 }
 
 export interface CreateSessionInput {
@@ -201,6 +236,8 @@ export interface AttachResult {
   readOnly: boolean;
   /** The agent the session attached under (server ≥ provenance spans). */
   agentId?: string;
+  /** The attached agent's capability advertisement (absent on older peers). */
+  capabilities?: AgentCapabilities;
 }
 
 export interface PermissionRequest {

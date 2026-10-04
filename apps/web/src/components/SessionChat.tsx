@@ -36,7 +36,13 @@ import {
 } from "./ui/alert-dialog";
 
 import type { LiveMessage } from "../lib/liveMessages";
-import type { HistoryBlock, HistoryMessage, MessageUsage, RunSpan } from "../lib/types";
+import type {
+  HistoryBlock,
+  HistoryMessage,
+  MessageUsage,
+  PromptCapabilities,
+  RunSpan,
+} from "../lib/types";
 import { attachmentToPart, partToBlock, type PendingAttachment } from "../lib/attachments";
 import { attachmentViews } from "../lib/blocks";
 import { finishReasonLabel, formatUsage, usageLabel } from "../lib/format";
@@ -68,6 +74,7 @@ import { toastError, toastSuccess } from "../lib/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { ErrorBanner } from "./ErrorBanner";
 import { Button } from "./ui/button";
+import { InputGroupButton } from "./ui/input-group";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -481,6 +488,11 @@ interface SessionChatProps {
   readonly sessionId: string;
   readonly agent: string;
   readonly readOnly: boolean;
+  /**
+   * The attached agent's advertised prompt capabilities (from the attach
+   * probe). `undefined` = unprobed/older peer — everything stays enabled.
+   */
+  readonly promptCapabilities?: PromptCapabilities;
   readonly running: boolean;
   readonly streamStatus: StreamStatus;
   readonly liveMessages: ReadonlyArray<LiveMessage>;
@@ -488,8 +500,10 @@ interface SessionChatProps {
   readonly onRemoveLiveMessage: (id: string) => void;
   /** Last takeover attempt's failure — shown inside the dialog, which stays open. */
   readonly takeoverError: string | null;
-  /** A takeover attach is in flight — the dialog/banner show progress, not a dead button. */
+  /** A takeover attach is in flight — the dialog shows progress, not a dead button. */
   readonly takeoverPending: boolean;
+  /** Pid of the process holding the session, when the agent reported one. */
+  readonly holderPid: number | null;
   readonly onTakeover: () => void;
   /** Plain re-attach (no takeover) — used to retry a send that 400'd "not attached". */
   readonly onReattach: () => Promise<boolean>;
@@ -503,6 +517,7 @@ export function SessionChat({
   sessionId,
   agent,
   readOnly,
+  promptCapabilities,
   running,
   streamStatus,
   liveMessages,
@@ -510,6 +525,7 @@ export function SessionChat({
   onRemoveLiveMessage,
   takeoverError,
   takeoverPending,
+  holderPid,
   onTakeover,
   onReattach,
 }: SessionChatProps) {
@@ -534,7 +550,7 @@ export function SessionChat({
     text: string;
     attachments: PendingAttachment[];
   } | null>(null);
-  // The held banner's "Take over" opens the same confirm dialog — without a
+  // The composer's "Take over" opens the same confirm dialog — without a
   // queued message.
   const [takeoverConfirm, setTakeoverConfirm] = useState(false);
   // A per-file restore requested from a tool-call diff row — the dialog
@@ -553,7 +569,6 @@ export function SessionChat({
   const scrollOnSent = useRef(false);
 
   const spans = sessionRow?.spans;
-  const holderPid = sessionRow?.lockHolderPid ?? null;
 
   const rows = useMemo<ChatRow[]>(() => {
     const context = parseSystemContext(history.filter((m) => m.role === "system"));
@@ -745,39 +760,6 @@ export function SessionChat({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      {readOnly && (
-        <div
-          role="status"
-          className="mx-4 my-3 flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-sm"
-        >
-          <HugeiconsIcon icon={AlertCircleIcon} className="size-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <p className="m-0 text-muted-foreground">
-              {holderPid !== null
-                ? `Held by another process (PID ${holderPid}) — read-only.`
-                : "Held by another process — read-only."}
-            </p>
-            {takeoverError !== null && (
-              <p role="alert" className="m-0 text-xs text-destructive">
-                {takeoverError}
-              </p>
-            )}
-          </div>
-          <Button
-            size="xs"
-            variant="secondary"
-            disabled={takeoverPending}
-            onClick={() => setTakeoverConfirm(true)}
-          >
-            {takeoverPending
-              ? "Taking over…"
-              : takeoverError !== null
-                ? "Retry takeover"
-                : "Take over"}
-          </Button>
-        </div>
-      )}
-
       {promptError !== null && (
         <ErrorBanner
           action={
@@ -809,19 +791,38 @@ export function SessionChat({
         <PromptInputBody>
           {replyTo !== null && <ReplyPreview quote={replyTo} />}
           <PromptInputAttachments />
-          <PromptInputTextarea placeholder="Prompt the agent…" />
+          {/* Held by another process: the composer is the banner — the
+              textarea names the state and the send slot carries the one
+              action that unblocks it. */}
+          <PromptInputTextarea
+            placeholder={readOnly ? "Held by another process" : "Prompt the agent…"}
+            disabled={readOnly}
+          />
         </PromptInputBody>
         <PromptInputFooter>
           <PromptInputTools>
-            <PromptInputAttachButton />
+            {/* Hidden while held (send slot is the takeover action) and when
+                the agent advertised it can't take images — the button would
+                just produce a send-time rejection either way. */}
+            {!readOnly && promptCapabilities?.image !== false && <PromptInputAttachButton />}
           </PromptInputTools>
           <div className="ml-auto flex min-w-0 items-center gap-1">
             <ModelSelect sessionId={sessionId} agent={agent} />
-            <PromptInputSubmit
-              status={running ? "streaming" : submitting ? "submitted" : "ready"}
-              disabled={submitting}
-              onStop={() => void cancel(sessionId, agent, nodeTarget(sessionRow?.node))}
-            />
+            {readOnly ? (
+              <InputGroupButton
+                variant="secondary"
+                disabled={takeoverPending}
+                onClick={() => setTakeoverConfirm(true)}
+              >
+                {takeoverPending ? "Taking over…" : "Take over"}
+              </InputGroupButton>
+            ) : (
+              <PromptInputSubmit
+                status={running ? "streaming" : submitting ? "submitted" : "ready"}
+                disabled={submitting}
+                onStop={() => void cancel(sessionId, agent, nodeTarget(sessionRow?.node))}
+              />
+            )}
           </div>
         </PromptInputFooter>
       </PromptInput>
@@ -838,8 +839,10 @@ export function SessionChat({
           <AlertDialogHeader>
             <AlertDialogTitle>Take over this session?</AlertDialogTitle>
             <AlertDialogDescription>
-              This session is held by another process. Taking over detaches it and stops in-progress
-              work{takeoverPrompt !== null ? " — your message will be sent after." : "."}
+              {holderPid !== null
+                ? `This will stop the run on the other process (PID ${holderPid}) and hand control to you`
+                : "This will stop the run on the other process and hand control to you"}
+              {takeoverPrompt !== null ? " — your message will be sent after." : "."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {takeoverError !== null && (

@@ -113,7 +113,21 @@ export const createAcpConnection = (
     })
     .connect(stream);
 
-  let capabilities: AcpCapabilities = { loadSession: false, sessionList: false };
+  // Before `initialize` resolves nothing is advertised — ACP's own default
+  // for absent capability fields is "not supported".
+  let capabilities: AcpCapabilities = {
+    loadSession: false,
+    sessionList: false,
+    promptCapabilities: { image: false, audio: false, embeddedContext: false },
+    sessionCapabilities: {
+      list: false,
+      delete: false,
+      fork: false,
+      resume: false,
+      close: false,
+      additionalDirectories: false,
+    },
+  };
 
   return {
     get capabilities() {
@@ -126,9 +140,27 @@ export const createAcpConnection = (
           clientCapabilities: {},
         }),
       );
+      const agentCapabilities = result.agentCapabilities;
+      const prompt = agentCapabilities?.promptCapabilities;
+      // Each session method is advertised by a (possibly empty) entry object —
+      // presence is the capability.
+      const session = agentCapabilities?.sessionCapabilities;
       capabilities = {
-        loadSession: result.agentCapabilities?.loadSession === true,
-        sessionList: Boolean(result.agentCapabilities?.sessionCapabilities?.list),
+        loadSession: agentCapabilities?.loadSession === true,
+        sessionList: session?.list != null,
+        promptCapabilities: {
+          image: prompt?.image === true,
+          audio: prompt?.audio === true,
+          embeddedContext: prompt?.embeddedContext === true,
+        },
+        sessionCapabilities: {
+          list: session?.list != null,
+          delete: session?.delete != null,
+          fork: session?.fork != null,
+          resume: session?.resume != null,
+          close: session?.close != null,
+          additionalDirectories: session?.additionalDirectories != null,
+        },
       };
     },
     listSessions: async () =>

@@ -3,19 +3,35 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
+import type { AcpCapabilities } from "sepia-acp";
 import type { ControlPlaneService } from "sepia-session-control";
 import { ControlError } from "sepia-session-control";
 import { createApp } from "../src/app";
 import { busyFromEvents, createEventFeed, instrumentMeta } from "../src/events";
 import { createMetaStore } from "../src/meta";
 
+const CAPS: AcpCapabilities = {
+  loadSession: true,
+  sessionList: true,
+  promptCapabilities: { image: true, audio: true, embeddedContext: true },
+  sessionCapabilities: {
+    list: true,
+    delete: true,
+    fork: false,
+    resume: false,
+    close: false,
+    additionalDirectories: false,
+  },
+};
+
 const plane: ControlPlaneService = {
   listSessions: () => Effect.succeed([]),
   getHistory: () => Effect.succeed({ messages: [], total: 0, start: 0 }),
   getSession: () =>
     Effect.fail(new ControlError({ code: "not_found", message: "missing", cause: undefined })),
-  createSession: () => Effect.succeed({ id: "sess-new", agentId: "devin" }),
-  attach: () => Effect.succeed({ attached: true, readOnly: false, agentId: "devin" }),
+  createSession: () => Effect.succeed({ id: "sess-new", agentId: "devin", capabilities: CAPS }),
+  attach: () =>
+    Effect.succeed({ attached: true, readOnly: false, agentId: "devin", capabilities: CAPS }),
   detach: () => Effect.void,
   prompt: () => Effect.void,
   cancel: () => Effect.void,

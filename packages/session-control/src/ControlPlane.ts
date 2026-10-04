@@ -1,7 +1,13 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { Effect, Either, Layer, Metric, Option, Runtime } from "effect";
-import type { AcpConnection, AcpSessionInfo, PromptPart } from "sepia-acp";
+import type {
+  AcpCapabilities,
+  AcpConnection,
+  AcpPromptCapabilities,
+  AcpSessionInfo,
+  PromptPart,
+} from "sepia-acp";
 import { createTranslator, type Event, type Translator } from "sepia-agui";
 import { Restore, Rewind, SessionRepository } from "sepia-core";
 import type { Session, ToolCall } from "sepia-core";
@@ -68,6 +74,40 @@ const controlError = (code: ControlErrorCode, message: string, cause: unknown): 
 const tryAcp = <A>(message: string, thunk: () => Promise<A>): Effect.Effect<A, ControlError> =>
   Effect.tryPromise({ try: thunk, catch: (cause) => controlError("internal", message, cause) });
 
+/**
+ * The `promptCapabilities` flag a non-baseline content block needs —
+ * `text` and `resource_link` are baseline (ACP requires every agent to
+ * take them), so they have no entry. `resource` blocks are embedded
+ * context. Unadvertised flags normalize to false on the connection, so a
+ * miss here fails the prompt before the agent errors opaquely mid-turn.
+ */
+const PROMPT_PART_CAPABILITY: Readonly<
+  Partial<
+    Record<
+      PromptPart["type"],
+      { readonly flag: keyof AcpPromptCapabilities; readonly label: string }
+    >
+  >
+> = {
+  image: { flag: "image", label: "image" },
+  audio: { flag: "audio", label: "audio" },
+  resource: { flag: "embeddedContext", label: "embedded context (resource)" },
+};
+
+/** The first part the agent can't take, or null when every part is allowed. */
+const disallowedPart = (
+  conn: AcpConnection,
+  parts: ReadonlyArray<PromptPart>,
+): { readonly type: PromptPart["type"]; readonly label: string } | null => {
+  for (const part of parts) {
+    const gate = PROMPT_PART_CAPABILITY[part.type];
+    if (gate !== undefined && conn.capabilities.promptCapabilities[gate.flag] !== true) {
+      return { type: part.type, label: gate.label };
+    }
+  }
+  return null;
+};
+
 const emit = (live: LiveSession, events: ReadonlyArray<Event>): void => {
   for (const listener of live.listeners) {
     try {
@@ -127,6 +167,25 @@ export const make = (
       readonly locks: ReadonlyMap<string, AcpSessionInfo>;
     } | null = null;
 
+    // The last `initialize` advertisement seen per agent, refreshed on every
+    // spawn — `listAgents` reports it so callers (and UIs) can see what a
+    // peer's agent takes before attaching.
+    const probedCapabilities = new Map<string, AcpCapabilities>();
+
+    /** `agent.spawn` plus the capability probe record. */
+    const spawn = (
+      agent: AgentRuntime,
+      message: string,
+      spawnOptions: Parameters<AgentRuntime["spawn"]>[0],
+    ): Effect.Effect<AcpConnection, ControlError> =>
+      tryAcp(message, () => agent.spawn(spawnOptions)).pipe(
+        Effect.tap((conn) =>
+          Effect.sync(() => {
+            probedCapabilities.set(agent.id, conn.capabilities);
+          }),
+        ),
+      );
+
     const storageFail = (message: string) => (cause: unknown) =>
       controlError("internal", message, cause);
 
@@ -151,9 +210,7 @@ export const make = (
       const agent = pickAgent(options.agents, options.defaultAgentId);
       if (agent === undefined) return Effect.succeed([]);
       return Effect.gen(function* () {
-        const conn = yield* tryAcp("Failed to spawn agent for lock check", () =>
-          agent.spawn({ cwd }),
-        );
+        const conn = yield* spawn(agent, "Failed to spawn agent for lock check", { cwd });
         return yield* tryAcp("Failed to list agent sessions", () => conn.listSessions()).pipe(
           Effect.ensuring(
             tryAcp("Failed to close agent connection", () => conn.close()).pipe(Effect.ignore),
@@ -422,13 +479,11 @@ export const make = (
             );
           }
 
-          const conn = yield* tryAcp("Failed to spawn agent", () =>
-            agent.spawn({
-              cwd: session.workingDirectory,
-              model: attachOptions?.model,
-              fallbacks: attachOptions?.fallbacks,
-            }),
-          );
+          const conn = yield* spawn(agent, "Failed to spawn agent", {
+            cwd: session.workingDirectory,
+            model: attachOptions?.model,
+            fallbacks: attachOptions?.fallbacks,
+          });
           const translator = createTranslator({ threadId: id });
           const live: LiveSession = {
             conn,
@@ -460,7 +515,12 @@ export const make = (
             if (!takeover) {
               yield* teardown;
               yield* close;
-              return { attached: false, readOnly: true, agentId: agent.id };
+              return {
+                attached: false,
+                readOnly: true,
+                agentId: agent.id,
+                capabilities: conn.capabilities,
+              };
             }
             // ACP session/load has no steal flag, so the only way to take a
             // held session is for the holder to let go — signal the pid the
@@ -501,14 +561,24 @@ export const make = (
                   ),
                 );
               }
-              return { attached: false, readOnly: true, agentId: agent.id };
+              return {
+                attached: false,
+                readOnly: true,
+                agentId: agent.id,
+                capabilities: conn.capabilities,
+              };
             }
             return yield* Effect.fail(loaded.left);
           }
           emit(live, translator.endTurn());
           touchIdle(live);
           liveSessions.set(id, live);
-          return { attached: true, readOnly: false, agentId: agent.id };
+          return {
+            attached: true,
+            readOnly: false,
+            agentId: agent.id,
+            capabilities: conn.capabilities,
+          };
         }).pipe(
           Effect.withSpan("sepia.control.attach_work", {
             attributes: { "sepia.session.id": id },
@@ -530,7 +600,12 @@ export const make = (
         const existing = liveSessions.get(id);
         if (existing !== undefined) {
           if (attachOptions?.agentId === undefined || existing.agentId === attachOptions.agentId) {
-            return { attached: true, readOnly: false, agentId: existing.agentId };
+            return {
+              attached: true,
+              readOnly: false,
+              agentId: existing.agentId,
+              capabilities: existing.conn.capabilities,
+            };
           }
           // The id is held by another agent's live session; liveSessions is
           // keyed by bare id and cannot host both copies at once.
@@ -581,7 +656,14 @@ export const make = (
       readonly title?: string;
       readonly model?: string;
       readonly fallbacks?: ReadonlyArray<string>;
-    }): Effect.Effect<{ readonly id: string; readonly agentId: string }, ControlError> =>
+    }): Effect.Effect<
+      {
+        readonly id: string;
+        readonly agentId: string;
+        readonly capabilities: AcpCapabilities;
+      },
+      ControlError
+    > =>
       Effect.gen(function* () {
         const cwd = createOptions.cwd;
         if (cwd.trim() === "" || !isAbsolute(cwd)) {
@@ -604,13 +686,11 @@ export const make = (
           );
         }
 
-        const conn = yield* tryAcp("Failed to spawn agent", () =>
-          agent.spawn({
-            cwd,
-            model: createOptions.model,
-            fallbacks: createOptions.fallbacks,
-          }),
-        );
+        const conn = yield* spawn(agent, "Failed to spawn agent", {
+          cwd,
+          model: createOptions.model,
+          fallbacks: createOptions.fallbacks,
+        });
         const close = tryAcp("Failed to close agent connection", () => conn.close()).pipe(
           Effect.ignore,
         );
@@ -635,7 +715,7 @@ export const make = (
         );
         touchIdle(live);
         liveSessions.set(id, live);
-        return { id, agentId: agent.id };
+        return { id, agentId: agent.id, capabilities: conn.capabilities };
       }).pipe(
         Effect.tap(() => Metric.increment(metricCreates)),
         Effect.withSpan("sepia.control.create_session", {
@@ -680,6 +760,18 @@ export const make = (
     ): Effect.Effect<void, ControlError> =>
       Effect.gen(function* () {
         const live = yield* requireLive(id, agentId);
+        // Fail fast on content the agent advertised it can't take — letting
+        // it through surfaces as an opaque turn error mid-run instead.
+        const disallowed = disallowedPart(live.conn, parts);
+        if (disallowed !== null) {
+          return yield* Effect.fail(
+            controlError(
+              "invalid",
+              `Agent ${live.agentId} does not accept ${disallowed.label} prompt content: ${id}`,
+              undefined,
+            ),
+          );
+        }
         if (live.busy) {
           return yield* Effect.fail(controlError("busy", `Session is busy: ${id}`, undefined));
         }
@@ -745,7 +837,7 @@ export const make = (
           );
         }
 
-        const conn = yield* tryAcp("Failed to spawn agent", () => agent.spawn({ cwd }));
+        const conn = yield* spawn(agent, "Failed to spawn agent", { cwd });
         yield* tryAcp("Failed to delete session", () => conn.deleteSession(id)).pipe(
           Effect.ensuring(
             tryAcp("Failed to close agent connection", () => conn.close()).pipe(Effect.ignore),
@@ -1278,7 +1370,13 @@ export const make = (
       });
 
     const listAgents = (): ReadonlyArray<AgentInfo> =>
-      options.agents.map(({ id, label }) => ({ id, label }));
+      options.agents.map(({ id, label }) => ({
+        id,
+        label,
+        // `undefined` until the first spawn probes — JSON.stringify drops it,
+        // so older wire consumers see the same shape as before.
+        capabilities: probedCapabilities.get(id),
+      }));
 
     // A live session nobody is listening to still owns an agent subprocess; reclaim
     // it once it has been idle (no listeners, no in-flight turn) for the TTL.

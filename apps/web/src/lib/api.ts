@@ -1,4 +1,5 @@
 import type {
+  AgentCapabilities,
   AgentInfo,
   AttachResult,
   CreateSessionInput,
@@ -142,16 +143,24 @@ export async function pairNode(
   return (await res.json()) as { token: string };
 }
 
-export async function listSessions(target?: ApiTarget): Promise<SessionSummary[]> {
-  const data = await request<{ sessions: SessionSummary[] }>("/api/sessions", undefined, target);
+export async function listSessions(
+  target?: ApiTarget,
+  options?: { readonly withLocks?: boolean },
+): Promise<SessionSummary[]> {
+  const query = options?.withLocks === true ? "?withLocks=1" : "";
+  const data = await request<{ sessions: SessionSummary[] }>(
+    `/api/sessions${query}`,
+    undefined,
+    target,
+  );
   return data.sessions;
 }
 
 export async function createSession(
   input: CreateSessionInput,
   target?: ApiTarget,
-): Promise<{ id: string; agentId?: string }> {
-  return request<{ id: string; agentId?: string }>(
+): Promise<{ id: string; agentId?: string; capabilities?: AgentCapabilities }> {
+  return request<{ id: string; agentId?: string; capabilities?: AgentCapabilities }>(
     "/api/sessions",
     {
       method: "POST",

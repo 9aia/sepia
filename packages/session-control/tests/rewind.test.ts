@@ -1,6 +1,7 @@
 import { expect, test } from "vite-plus/test";
 import { Effect, Either, Layer, Option } from "effect";
 import type {
+  AcpCapabilities,
   AcpConnection,
   AcpSessionInfo,
   AcpSessionUpdate,
@@ -86,8 +87,22 @@ const repository = (sessions: ReadonlyArray<Session>): SessionRepositoryService 
   });
 };
 
+const CAPABILITIES: AcpCapabilities = {
+  loadSession: true,
+  sessionList: true,
+  promptCapabilities: { image: true, audio: true, embeddedContext: true },
+  sessionCapabilities: {
+    list: true,
+    delete: true,
+    fork: false,
+    resume: false,
+    close: false,
+    additionalDirectories: false,
+  },
+};
+
 class FakeConnection implements AcpConnection {
-  readonly capabilities = { loadSession: true, sessionList: true };
+  readonly capabilities = CAPABILITIES;
   infos: ReadonlyArray<AcpSessionInfo> = [];
   closed = false;
   private promptGate: Promise<void> | null = null;

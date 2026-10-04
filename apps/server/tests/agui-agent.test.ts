@@ -4,8 +4,22 @@ import type { ControlPlaneService, HistoryMessage } from "sepia-session-control"
 import { ControlError } from "sepia-session-control";
 import type { Event } from "sepia-agui";
 import { EventType } from "sepia-agui";
-import type { PromptPart } from "sepia-acp";
+import type { AcpCapabilities, PromptPart } from "sepia-acp";
 import { createAguiAgentHandler } from "../src/agui-agent";
+
+const CAPS: AcpCapabilities = {
+  loadSession: true,
+  sessionList: true,
+  promptCapabilities: { image: true, audio: true, embeddedContext: true },
+  sessionCapabilities: {
+    list: true,
+    delete: true,
+    fork: false,
+    resume: false,
+    close: false,
+    additionalDirectories: false,
+  },
+};
 
 const HISTORY: ReadonlyArray<HistoryMessage> = [
   { role: "user", nodeId: 0, content: "first", createdAt: 1 },
@@ -41,10 +55,15 @@ const makePlane = (over: Partial<ControlPlaneService> = {}): FakePlane => {
     },
     getSession: () =>
       Effect.fail(new ControlError({ code: "not_found", message: "missing", cause: undefined })),
-    createSession: () => Effect.succeed({ id: "new", agentId: "devin" }),
+    createSession: () => Effect.succeed({ id: "new", agentId: "devin", capabilities: CAPS }),
     attach: (id, options) => {
       calls.attach.push({ id, agentId: options?.agentId });
-      return Effect.succeed({ attached: true, readOnly: false, agentId: "devin" });
+      return Effect.succeed({
+        attached: true,
+        readOnly: false,
+        agentId: "devin",
+        capabilities: CAPS,
+      });
     },
     detach: () => Effect.void,
     prompt: (id, parts, agentId) => {
@@ -183,7 +202,13 @@ describe("createAguiAgentHandler — plane failures", () => {
 
   it("returns 409 when the session is locked by another process", async () => {
     const { plane } = makePlane({
-      attach: () => Effect.succeed({ attached: false, readOnly: true, agentId: "devin" }),
+      attach: () =>
+        Effect.succeed({
+          attached: false,
+          readOnly: true,
+          agentId: "devin",
+          capabilities: CAPS,
+        }),
     });
     const res = await handler(plane)(runInput(BODY));
     expect(res.status).toBe(409);

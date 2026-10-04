@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { Effect, Either, Layer, Option } from "effect";
-import type { AcpConnection, AcpSessionInfo, AcpSessionUpdate, PermissionRequest } from "sepia-acp";
+import type {
+  AcpCapabilities,
+  AcpConnection,
+  AcpSessionInfo,
+  AcpSessionUpdate,
+  PermissionRequest,
+} from "sepia-acp";
 import { Session, SessionRepository } from "sepia-core";
 import type { SessionRepositoryService } from "sepia-core";
 import { layer } from "../src/ControlPlane.js";
@@ -44,8 +50,22 @@ const repository = (
   });
 };
 
+const FULL_CAPABILITIES: AcpCapabilities = {
+  loadSession: true,
+  sessionList: true,
+  promptCapabilities: { image: true, audio: true, embeddedContext: true },
+  sessionCapabilities: {
+    list: true,
+    delete: true,
+    fork: false,
+    resume: false,
+    close: false,
+    additionalDirectories: false,
+  },
+};
+
 class FakeConnection implements AcpConnection {
-  readonly capabilities = { loadSession: true, sessionList: true };
+  readonly capabilities: AcpCapabilities = FULL_CAPABILITIES;
   infos: ReadonlyArray<AcpSessionInfo> = [];
   newSessionId = "new-1";
   spawnError: unknown = undefined;
@@ -192,13 +212,21 @@ describe("attach — error and lock paths", () => {
     const plane = await makeService([agent.runtime], repository([session("s1")]));
 
     const result = await runEither(plane.attach("s1"));
-    expect(result).toEqual(Either.right({ attached: false, readOnly: true, agentId: "devin" }));
+    expect(result).toEqual(
+      Either.right({
+        attached: false,
+        readOnly: true,
+        agentId: "devin",
+        capabilities: agent.conn.capabilities,
+      }),
+    );
     expect(agent.conn.closed).toBe(true);
     await Effect.runPromise(plane.closeAll());
   });
 
   it("attaching a live id under a different agent conflicts", async () => {
-    const plane = await makeService([fakeAgent().runtime], repository([]));
+    const agent = fakeAgent();
+    const plane = await makeService([agent.runtime], repository([]));
     const created = await Effect.runPromise(
       plane.createSession({ cwd: "/work", agentId: "devin" }),
     );
@@ -207,7 +235,14 @@ describe("attach — error and lock paths", () => {
     if (Either.isLeft(result)) expect(result.left.code).toBe("conflict");
     // Same-agent reattach is a cheap no-op.
     const same = await runEither(plane.attach(created.id, { agentId: "devin" }));
-    expect(same).toEqual(Either.right({ attached: true, readOnly: false, agentId: "devin" }));
+    expect(same).toEqual(
+      Either.right({
+        attached: true,
+        readOnly: false,
+        agentId: "devin",
+        capabilities: agent.conn.capabilities,
+      }),
+    );
     await Effect.runPromise(plane.closeAll());
   });
 });

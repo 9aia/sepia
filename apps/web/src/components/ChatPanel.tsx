@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import { AlertCircleIcon, BubbleChatIcon } from "@hugeicons/core-free-icons";
 import { EmptyScreen } from "./EmptyScreen";
 import type { HistoryBlock, PermissionRequest } from "../lib/types";
-import { subscribeSessionStream } from "../lib/api";
+import { listSessions, subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
+import { historyKeyMatches } from "../lib/events";
 import { nodeTarget } from "../lib/nodes";
 import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
 import { liveCoveredByHistory } from "../lib/historyRows";
@@ -74,6 +75,13 @@ export function ChatPanel() {
   // just 400s on a still-detached session.
   const readOnly =
     forCurrent && attachMutation.isSuccess ? attachMutation.data.readOnly : takeoverAttempted;
+  // The agent's advertised prompt capabilities — probed at attach. Absent
+  // for older peers and failed attaches; the composer only hides what an
+  // explicit `false` rules out.
+  const promptCapabilities =
+    forCurrent && attachMutation.isSuccess
+      ? attachMutation.data.capabilities?.promptCapabilities
+      : undefined;
   // A takeover failure stays in the chat (the session is still held) and is
   // reported inside the takeover dialog — it must not collapse the panel
   // into the full-screen attach error.
@@ -112,6 +120,56 @@ export function ChatPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, attach, modelArgs]);
 
+  // A held session has no live stream — the other process's updates never
+  // reach this node — so the panel polls the node's lock view instead. Each
+  // tick re-syncs the transcript (rows the holder flushes keep appearing)
+  // and refreshes the holder pid shown in the takeover dialog; when the
+  // lock clears the session attaches on its own, which flips `readOnly`
+  // off and opens the real stream. `refetchInterval` pauses in background
+  // tabs, so the probe only runs while the session is actually on screen.
+  const heldPoll = useQuery({
+    queryKey: ["held-session", session?.node ?? "", session?.agent ?? "", sessionId ?? ""],
+    enabled: readOnly && sessionId !== null,
+    staleTime: 0,
+    gcTime: 0,
+    refetchInterval: 6_000,
+    queryFn: async () => {
+      const rows = await listSessions(nodeTarget(session?.node), { withLocks: true });
+      return rows.find((row) => row.id === sessionId) ?? null;
+    },
+  });
+
+  // Attach when the lock is seen released. `heldWasLocked` guards the
+  // locked→free edge so a poll whose probe can't see this backend's locks
+  // (e.g. a devin probe listing a cline store) doesn't fire an attach on
+  // every tick — it still gets one shot, which also covers a holder that
+  // let go between the failed attach and the first poll.
+  const heldWasLocked = useRef<boolean | null>(null);
+  useEffect(() => {
+    const row = heldPoll.data;
+    if (!readOnly || sessionId === null || row === undefined || row === null) return;
+    if (row.locked) {
+      heldWasLocked.current = true;
+      return;
+    }
+    const released = heldWasLocked.current !== false;
+    heldWasLocked.current = false;
+    if (!released || attachMutation.isPending) return;
+    attach({ id: sessionId, agent: session?.agent, node: session?.node, ...modelArgs });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heldPoll.data, readOnly, sessionId, attachMutation.isPending]);
+
+  // Every successful poll invalidates this session's history — the held
+  // session reads as a live transcript while the holder writes to the
+  // store.
+  useEffect(() => {
+    if (!readOnly || sessionId === null || heldPoll.dataUpdatedAt === 0) return;
+    void queryClient.invalidateQueries({
+      queryKey: ["history"],
+      predicate: (query) => historyKeyMatches(query.queryKey[1], sessionId),
+    });
+  }, [heldPoll.dataUpdatedAt, readOnly, sessionId, queryClient]);
+
   // Live rows are optimistic: once the run ends, the refetched IR backlog
   // duplicates them. Clear them only once every live user/assistant text is
   // actually present in fresh history — clearing earlier causes flicker.
@@ -129,6 +187,7 @@ export function ChatPanel() {
   useEffect(() => {
     if (clearedFor.current !== sessionId) {
       clearedFor.current = sessionId;
+      heldWasLocked.current = null;
       setPermissions([]);
       setRunning(false);
       setLiveMessages([]);
@@ -270,6 +329,7 @@ export function ChatPanel() {
               sessionId={session.id}
               agent={session.agent}
               readOnly={readOnly}
+              promptCapabilities={promptCapabilities}
               running={running || session.busy}
               liveMessages={liveMessages}
               streamStatus={streamStatus}
@@ -277,6 +337,7 @@ export function ChatPanel() {
               onRemoveLiveMessage={removeLiveMessage}
               takeoverError={takeoverError}
               takeoverPending={takeoverAttempted && attachMutation.isPending}
+              holderPid={heldPoll.data?.lockHolderPid ?? null}
               onTakeover={() =>
                 attach({
                   id: session.id,

@@ -63,7 +63,7 @@ export function SidebarSection() {
                   tabIndex={0}
                   aria-label={`Reorder ${label}`}
                   title="Drag to reorder"
-                  className="shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  className="shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <HugeiconsIcon icon={GripVerticalIcon} strokeWidth={2} className="size-4" />
                 </SortableItemHandle>

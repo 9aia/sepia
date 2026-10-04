@@ -5,7 +5,7 @@
  */
 
 import { Context, Schema, type Effect } from "effect";
-import type { AcpConnection, PromptPart } from "sepia-acp";
+import type { AcpCapabilities, AcpConnection, PromptPart } from "sepia-acp";
 import type { Event } from "sepia-agui";
 import type {
   Block,
@@ -105,6 +105,12 @@ export interface AttachResult {
   readonly readOnly: boolean;
   /** The agent runtime the session is (or would be) attached under. */
   readonly agentId: string;
+  /**
+   * The agent's ACP `initialize` capability advertisement — every attach
+   * path spawns (or reuses) an initialized connection, so the probe rides
+   * the result even when the session stayed read-only.
+   */
+  readonly capabilities: AcpCapabilities;
 }
 
 /**
@@ -236,6 +242,11 @@ export interface HistoryOptions {
 export interface AgentInfo {
   readonly id: string;
   readonly label: string;
+  /**
+   * The last ACP `initialize` capability probe for this agent — present
+   * once a spawn has happened this process lifetime, absent before.
+   */
+  readonly capabilities?: AcpCapabilities;
 }
 
 /** One runnable ACP agent binary, injected so tests can fake it. */
@@ -296,7 +307,15 @@ export interface ControlPlaneService {
     readonly title?: string;
     readonly model?: string;
     readonly fallbacks?: ReadonlyArray<string>;
-  }) => Effect.Effect<{ readonly id: string; readonly agentId: string }, ControlError>;
+  }) => Effect.Effect<
+    {
+      readonly id: string;
+      readonly agentId: string;
+      /** The agent's capability advertisement from the spawn's `initialize`. */
+      readonly capabilities: AcpCapabilities;
+    },
+    ControlError
+  >;
 
   /**
    * Spawns the session's agent and loads the session. Locked sessions attach

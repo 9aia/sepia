@@ -64,9 +64,12 @@ function CommandInput({
     <div data-slot="command-input-wrapper" className="p-1 pb-0">
       <InputGroup className="h-9 bg-input/50">
         <CommandPrimitive.Input
-          data-slot="command-input"
+          // input-group-control opts the cmdk input into the group's
+          // has-[...:focus-visible] ring; suppress its own ring so the
+          // group ring is the single indicator.
+          data-slot="input-group-control"
           className={cn(
-            "w-full text-sm disabled:cursor-not-allowed disabled:opacity-50",
+            "w-full text-sm focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
             className,
           )}
           {...props}

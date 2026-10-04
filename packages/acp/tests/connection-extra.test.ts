@@ -62,10 +62,24 @@ afterEach(() => {
 });
 
 describe("initialize", () => {
+  const NO_CAPABILITIES = {
+    loadSession: false,
+    sessionList: false,
+    promptCapabilities: { image: false, audio: false, embeddedContext: false },
+    sessionCapabilities: {
+      list: false,
+      delete: false,
+      fork: false,
+      resume: false,
+      close: false,
+      additionalDirectories: false,
+    },
+  };
+
   it("maps agent capabilities from the initialize response", async () => {
     const { stream, written, respondLast } = wire();
     const conn = createAcpConnection(stream, asChild(new FakeChild()));
-    expect(conn.capabilities).toEqual({ loadSession: false, sessionList: false });
+    expect(conn.capabilities).toEqual(NO_CAPABILITIES);
 
     const init = conn.initialize();
     await tick();
@@ -76,7 +90,42 @@ describe("initialize", () => {
       agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } },
     });
     await init;
-    expect(conn.capabilities).toEqual({ loadSession: true, sessionList: true });
+    expect(conn.capabilities).toEqual({
+      ...NO_CAPABILITIES,
+      loadSession: true,
+      sessionList: true,
+      sessionCapabilities: { ...NO_CAPABILITIES.sessionCapabilities, list: true },
+    });
+  });
+
+  it("maps the full capability shape a real `devin acp` init returns", async () => {
+    const { stream, respondLast } = wire();
+    const conn = createAcpConnection(stream, asChild(new FakeChild()));
+
+    const init = conn.initialize();
+    await tick();
+    respondLast({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      agentCapabilities: {
+        loadSession: true,
+        promptCapabilities: { image: true, audio: false, embeddedContext: true },
+        sessionCapabilities: { list: {}, delete: {} },
+      },
+    });
+    await init;
+    expect(conn.capabilities).toEqual({
+      loadSession: true,
+      sessionList: true,
+      promptCapabilities: { image: true, audio: false, embeddedContext: true },
+      sessionCapabilities: {
+        list: true,
+        delete: true,
+        fork: false,
+        resume: false,
+        close: false,
+        additionalDirectories: false,
+      },
+    });
   });
 
   it("defaults missing capabilities to false", async () => {
@@ -86,7 +135,7 @@ describe("initialize", () => {
     await tick();
     respondLast({ protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: {} });
     await init;
-    expect(conn.capabilities).toEqual({ loadSession: false, sessionList: false });
+    expect(conn.capabilities).toEqual(NO_CAPABILITIES);
   });
 });
 

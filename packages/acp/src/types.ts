@@ -11,9 +11,40 @@ export interface AgentSpec {
   readonly env?: Readonly<Record<string, string>>;
 }
 
+/**
+ * `agentCapabilities.promptCapabilities` from the initialize response —
+ * which `session/prompt` content blocks beyond the baseline (`text` +
+ * `resource_link`, which every agent must take) the agent accepts. ACP
+ * defaults every flag to false when unadvertised, so these normalize to
+ * required booleans.
+ */
+export interface AcpPromptCapabilities {
+  readonly image: boolean;
+  readonly audio: boolean;
+  /** Whether `resource` content blocks (embedded context) are accepted. */
+  readonly embeddedContext: boolean;
+}
+
+/**
+ * `agentCapabilities.sessionCapabilities` flattened to booleans — each ACP
+ * entry is an object (possibly empty) whose presence advertises the method.
+ */
+export interface AcpSessionCapabilities {
+  readonly list: boolean;
+  readonly delete: boolean;
+  readonly fork: boolean;
+  readonly resume: boolean;
+  readonly close: boolean;
+  readonly additionalDirectories: boolean;
+}
+
+/** The agent's capability advertisement, captured at `initialize`. */
 export interface AcpCapabilities {
   readonly loadSession: boolean;
+  /** `sessionCapabilities.list` flattened — kept for existing callers. */
   readonly sessionList: boolean;
+  readonly promptCapabilities: AcpPromptCapabilities;
+  readonly sessionCapabilities: AcpSessionCapabilities;
 }
 
 export interface AcpSessionInfo {

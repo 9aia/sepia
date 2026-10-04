@@ -3,6 +3,7 @@ import { Effect, Either, Layer, Option } from "effect";
 import { EventType } from "sepia-agui";
 import type { Event } from "sepia-agui";
 import type {
+  AcpCapabilities,
   AcpConnection,
   AcpSessionInfo,
   AcpSessionUpdate,
@@ -67,8 +68,23 @@ const repository = (sessions: ReadonlyArray<Session>): SessionRepositoryService 
   });
 };
 
+/** A permissive advertisement — tests that exercise a gate flip one flag. */
+const FULL_CAPABILITIES: AcpCapabilities = {
+  loadSession: true,
+  sessionList: true,
+  promptCapabilities: { image: true, audio: true, embeddedContext: true },
+  sessionCapabilities: {
+    list: true,
+    delete: true,
+    fork: false,
+    resume: false,
+    close: false,
+    additionalDirectories: false,
+  },
+};
+
 class FakeConnection implements AcpConnection {
-  readonly capabilities = { loadSession: true, sessionList: true };
+  capabilities: AcpCapabilities = FULL_CAPABILITIES;
   infos: ReadonlyArray<AcpSessionInfo> = [];
   listError: unknown = undefined;
   newSessionError: unknown = undefined;
@@ -562,6 +578,7 @@ test("attaches by spawning the agent and loading the session", async () => {
     attached: true,
     readOnly: false,
     agentId: "devin",
+    capabilities: conn.capabilities,
   });
   expect(spawns).toEqual([{ cwd: "/work" }]);
   expect(conn.loaded).toEqual(["s1"]);
@@ -585,6 +602,7 @@ test("returns read-only and skips loading when the session is locked", async () 
     attached: false,
     readOnly: true,
     agentId: "devin",
+    capabilities: conn.capabilities,
   });
   // Without takeover the reported holder is never signaled.
   expect(killed).toEqual([]);
@@ -616,6 +634,7 @@ test("takeover signals the reported holder, then loads once the lock clears", as
     attached: true,
     readOnly: false,
     agentId: "devin",
+    capabilities: conn.capabilities,
   });
   expect(killed).toEqual([42]);
   expect(conn.loaded).toEqual(["s1"]);
@@ -639,6 +658,7 @@ test("takeover proceeds to the load when no holder pid is reported", async () =>
     attached: true,
     readOnly: false,
     agentId: "devin",
+    capabilities: conn.capabilities,
   });
   // No pid to signal — but the load must still be attempted.
   expect(killed).toEqual([]);
@@ -662,6 +682,7 @@ test("takeover proceeds when the reported holder is already gone", async () => {
     attached: true,
     readOnly: false,
     agentId: "devin",
+    capabilities: conn.capabilities,
   });
   expect(conn.loaded).toEqual(["s1"]);
 });
@@ -721,6 +742,7 @@ test("re-attaching a live session does not spawn again", async () => {
     attached: true,
     readOnly: false,
     agentId: "devin",
+    capabilities: conn.capabilities,
   });
   expect(spawns).toHaveLength(1);
   expect(conn.loaded).toEqual(["s1"]);
@@ -760,6 +782,7 @@ test("treats a loadSession failure as authoritative and re-probes", async () => 
     attached: false,
     readOnly: true,
     agentId: "devin",
+    capabilities: first.capabilities,
   });
   expect(first.closed).toBe(true);
   expect(spawned).toBe(2);
@@ -786,7 +809,7 @@ test("createSession spawns the agent, returns the id, and registers a live sessi
 
   const result = await Effect.runPromise(cp.createSession({ cwd: "/work", title: "Fresh" }));
 
-  expect(result).toEqual({ id: "new", agentId: "devin" });
+  expect(result).toEqual({ id: "new", agentId: "devin", capabilities: conn.capabilities });
   expect(spawns).toEqual([{ cwd: "/work" }]);
 
   await Effect.runPromise(cp.prompt("new", [{ type: "text", text: "hi" }]));
@@ -804,6 +827,7 @@ test("attach tolerates a live session that is not in the store", async () => {
     attached: true,
     readOnly: false,
     agentId: "devin",
+    capabilities: conn.capabilities,
   });
   expect(spawns).toHaveLength(1);
 });
@@ -945,6 +969,109 @@ test("prompt before attach fails with ControlError", async () => {
   if (Either.isLeft(result)) expect(result.left._tag).toBe("ControlError");
 });
 
+test("prompt fails fast on parts the agent advertised it cannot take", async () => {
+  const conn = new FakeConnection();
+  conn.capabilities = {
+    ...FULL_CAPABILITIES,
+    promptCapabilities: { image: false, audio: false, embeddedContext: false },
+  };
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+  );
+  await Effect.runPromise(cp.attach("s1"));
+
+  const image = await runEither(
+    cp.prompt("s1", [
+      { type: "text", text: "look" },
+      { type: "image", data: "aGk=", mimeType: "image/png" },
+    ]),
+  );
+  expect(Either.isLeft(image)).toBe(true);
+  if (Either.isLeft(image)) {
+    expect(image.left.code).toBe("invalid");
+    expect(image.left.message).toContain("image");
+  }
+
+  const audio = await runEither(
+    cp.prompt("s1", [{ type: "audio", data: "AAA=", mimeType: "audio/mpeg" }]),
+  );
+  expect(Either.isLeft(audio)).toBe(true);
+  if (Either.isLeft(audio)) {
+    expect(audio.left.code).toBe("invalid");
+    expect(audio.left.message).toContain("audio");
+  }
+
+  // `resource` blocks are embedded context — gated on that flag.
+  const resource = await runEither(
+    cp.prompt("s1", [
+      {
+        type: "resource",
+        resource: { uri: "attachment://notes.md", mimeType: "text/markdown", text: "# hi" },
+      },
+    ]),
+  );
+  expect(Either.isLeft(resource)).toBe(true);
+  if (Either.isLeft(resource)) {
+    expect(resource.left.code).toBe("invalid");
+    expect(resource.left.message).toContain("embedded context");
+  }
+
+  // Nothing disallowed ever reached the agent.
+  expect(conn.prompted).toEqual([]);
+});
+
+test("prompt passes baseline text and resource_link parts regardless of flags", async () => {
+  const conn = new FakeConnection();
+  conn.capabilities = {
+    ...FULL_CAPABILITIES,
+    promptCapabilities: { image: false, audio: false, embeddedContext: false },
+  };
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+  );
+  await Effect.runPromise(cp.attach("s1"));
+
+  await Effect.runPromise(
+    cp.prompt("s1", [
+      { type: "text", text: "hi" },
+      { type: "resource_link", uri: "file:///tmp/a.txt", name: "a.txt" },
+    ]),
+  );
+
+  expect(conn.prompted).toEqual([
+    {
+      id: "s1",
+      parts: [
+        { type: "text", text: "hi" },
+        { type: "resource_link", uri: "file:///tmp/a.txt", name: "a.txt" },
+      ],
+    },
+  ]);
+});
+
+test("prompt forwards gated parts the agent advertised support for", async () => {
+  const conn = new FakeConnection();
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+  );
+  await Effect.runPromise(cp.attach("s1"));
+
+  await Effect.runPromise(
+    cp.prompt("s1", [
+      { type: "image", data: "aGk=", mimeType: "image/png" },
+      {
+        type: "resource",
+        resource: { uri: "attachment://notes.md", text: "# hi" },
+      },
+    ]),
+  );
+
+  expect(conn.prompted[0]?.parts.map((part) => part.type)).toEqual(["image", "resource"]);
+});
+
 test("rejects a concurrent prompt with busy and clears the flag after the turn", async () => {
   const conn = new FakeConnection();
   const cp = await makeService(
@@ -994,6 +1121,20 @@ test("lists configured agents", async () => {
   expect(cp.listAgents()).toEqual([{ id: "devin", label: "Devin" }]);
 });
 
+test("listAgents reports the capabilities probed by the last spawn", async () => {
+  const conn = new FakeConnection();
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+  );
+
+  // Nothing spawned yet — no probe to report.
+  expect(cp.listAgents()[0]?.capabilities).toBeUndefined();
+
+  await Effect.runPromise(cp.attach("s1"));
+  expect(cp.listAgents()[0]?.capabilities).toEqual(conn.capabilities);
+});
+
 test("closeAll detaches every live session", async () => {
   const conn = new FakeConnection();
   const cp = await makeService(
@@ -1030,8 +1171,18 @@ test("concurrent attaches spawn the agent exactly once", async () => {
     Effect.runPromise(cp.attach("s1")),
   ]);
 
-  expect(first).toEqual({ attached: true, readOnly: false, agentId: "devin" });
-  expect(second).toEqual({ attached: true, readOnly: false, agentId: "devin" });
+  expect(first).toEqual({
+    attached: true,
+    readOnly: false,
+    agentId: "devin",
+    capabilities: conn.capabilities,
+  });
+  expect(second).toEqual({
+    attached: true,
+    readOnly: false,
+    agentId: "devin",
+    capabilities: conn.capabilities,
+  });
   expect(spawns).toHaveLength(1);
   expect(conn.loaded).toEqual(["s1"]);
 });

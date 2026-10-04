@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import type { AcpConnection, PromptPart } from "sepia-acp";
+import type { AcpCapabilities, AcpConnection, PromptPart } from "sepia-acp";
 import {
   Conversion,
   MessageNode,
@@ -27,6 +27,21 @@ import { EventType } from "sepia-agui";
 import { createApp } from "../src/app";
 import { createMetaStore } from "../src/meta";
 import { createPairing } from "../src/pair";
+
+/** A permissive agent advertisement — what the fake planes/connections report. */
+const CAPS: AcpCapabilities = {
+  loadSession: true,
+  sessionList: true,
+  promptCapabilities: { image: true, audio: true, embeddedContext: true },
+  sessionCapabilities: {
+    list: true,
+    delete: true,
+    fork: false,
+    resume: false,
+    close: false,
+    additionalDirectories: false,
+  },
+};
 
 const SESSION: SessionSummary = {
   id: "sess-1",
@@ -185,13 +200,14 @@ const makeFakePlane = (): FakePlane => {
         ? failure("Unknown agent: bad", "unknown_agent")
         : Effect.sync(() => {
             created.push(options);
-            return { id: "sess-new", agentId: options.agentId ?? "devin" };
+            return { id: "sess-new", agentId: options.agentId ?? "devin", capabilities: CAPS };
           }),
     attach: (_id, options) =>
       Effect.succeed({
         attached: true,
         readOnly: options?.takeover !== true,
         agentId: options?.agentId ?? "devin",
+        capabilities: CAPS,
       }),
     detach: () => Effect.void,
     prompt: (id, parts) =>
@@ -286,7 +302,7 @@ const del = (path: string): Request =>
 // Minimal ACP connection backing a real ControlPlane: enough for a live
 // session that never flushes to the session store.
 class StubConnection implements AcpConnection {
-  readonly capabilities = { loadSession: true, sessionList: true };
+  readonly capabilities = CAPS;
   closed = false;
   async listSessions() {
     return [];
@@ -400,7 +416,11 @@ describe("createApp", () => {
     );
 
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toEqual({ id: "sess-new", agentId: "devin" });
+    await expect(response.json()).resolves.toEqual({
+      id: "sess-new",
+      agentId: "devin",
+      capabilities: CAPS,
+    });
     expect(created).toEqual([{ cwd: "/tmp/sepia", title: "New" }]);
   });
 
@@ -744,6 +764,7 @@ describe("createApp", () => {
       attached: true,
       readOnly: true,
       agentId: "devin",
+      capabilities: CAPS,
     });
 
     const taken = await app(post("/api/sessions/sess-1/attach", { takeover: true }));
@@ -751,6 +772,7 @@ describe("createApp", () => {
       attached: true,
       readOnly: false,
       agentId: "devin",
+      capabilities: CAPS,
     });
   });
 
@@ -790,7 +812,13 @@ describe("createApp", () => {
     const { plane } = makeFakePlane();
     const locked: ControlPlaneService = {
       ...plane,
-      attach: () => Effect.succeed({ attached: false, readOnly: true, agentId: "devin" }),
+      attach: () =>
+        Effect.succeed({
+          attached: false,
+          readOnly: true,
+          agentId: "devin",
+          capabilities: CAPS,
+        }),
     };
     const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
     const meta = createMetaStore(join(dir, "meta.json"));
