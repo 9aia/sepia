@@ -221,7 +221,7 @@ export function SessionDetailsDrawer({
               </DrawerClose>
             </DrawerHeader>
 
-            <div className="flex flex-col gap-1 overflow-y-auto px-4 py-3">
+            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-4 py-3">
               <div className="mt-2 divide-y divide-border/50">
                 <Detail label="ID" copyValue={session.id}>
                   <span className="font-mono text-xs">{session.id}</span>
