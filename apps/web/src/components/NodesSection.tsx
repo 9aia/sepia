@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useStore } from "@tanstack/react-store";
 import { Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -9,6 +10,8 @@ import {
   useRemoveNode,
   useSelfNode,
 } from "../hooks/query/useNodes";
+import { setPeerAlias } from "../lib/nodes";
+import { setSettings, settingsStore } from "../lib/settings";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
@@ -30,8 +33,13 @@ function StatusDot({ ok }: { readonly ok: boolean | undefined }) {
  * node validates it through `GET /api/node` (a wrong URL or token fails
  * here, before it can poison the merged lists).
  */
+const blurOnEnter = (event: KeyboardEvent<HTMLInputElement>): void => {
+  if (event.key === "Enter") event.currentTarget.blur();
+};
+
 export function NodesSection() {
   const { self, peers } = useNodes();
+  const localName = useStore(settingsStore, (s) => s.localNodeName);
   const selfQuery = useSelfNode();
   const statuses = useNodeStatuses(peers);
   const addNode = useAddNode();
@@ -74,9 +82,18 @@ export function NodesSection() {
         <div className="flex items-center gap-3 px-3 py-2.5">
           <StatusDot ok={selfQuery.isSuccess || self !== null} />
           <div className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium">
-              {self?.name ?? "This machine"}
-            </span>
+            <Input
+              key={localName ?? self?.name ?? ""}
+              className="h-7 w-44 text-sm font-medium"
+              defaultValue={localName ?? ""}
+              placeholder={self?.name ?? "This machine"}
+              aria-label="Nickname for this machine"
+              title="Nickname for this machine"
+              onBlur={(e) =>
+                setSettings({ localNodeName: e.currentTarget.value.trim() || null })
+              }
+              onKeyDown={blurOnEnter}
+            />
             <span className="block truncate text-xs text-muted-foreground">
               {location.origin} — this machine
             </span>
@@ -86,8 +103,18 @@ export function NodesSection() {
           <div key={peer.id} className="flex items-center gap-3 px-3 py-2.5">
             <StatusDot ok={statuses[index]} />
             <div className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{peer.name}</span>
+              <Input
+                key={`${peer.id}:${peer.alias ?? ""}`}
+                className="h-7 w-44 text-sm font-medium"
+                defaultValue={peer.alias ?? ""}
+                placeholder={peer.name}
+                aria-label={`Nickname for ${peer.name}`}
+                title="Nickname — shown instead of the node's name"
+                onBlur={(e) => setPeerAlias(peer.id, e.currentTarget.value)}
+                onKeyDown={blurOnEnter}
+              />
               <span className="block truncate text-xs text-muted-foreground">
+                {peer.alias !== undefined ? `${peer.name} — ` : ""}
                 {peer.url}
                 {peer.via === "gateway" && " — via gateway"}
               </span>

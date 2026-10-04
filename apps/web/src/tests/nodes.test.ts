@@ -19,6 +19,7 @@ import {
   removePeer,
   removePeerById,
   removePeerEntry,
+  setPeerAlias,
   upsertPeer,
   type PeerNode,
 } from "../lib/nodes";
@@ -290,6 +291,22 @@ describe("nodeTarget / nodeName", () => {
     expect(nodeName("local")).toBe("laptop");
     expect(nodeName("node_p")).toBe("Thinkpad");
     expect(nodeName("node_ghost")).toBe("node_ghost");
+  });
+
+  it("peer alias overrides the self-reported name", () => {
+    nodesStore.setState(() => ({ self: null, peers: [peer("node_p", "Thinkpad")] }));
+    setPeerAlias("node_p", "work laptop");
+    expect(nodeName("node_p")).toBe("work laptop");
+    // Clearing the alias reverts to the name.
+    setPeerAlias("node_p", "   ");
+    expect(nodeName("node_p")).toBe("Thinkpad");
+    expect(nodesStore.state.peers[0]?.alias).toBeUndefined();
+  });
+
+  it("normalizePeer round-trips and validates alias", () => {
+    expect(normalizePeer({ ...peer("a"), alias: "desk" })?.alias).toBe("desk");
+    expect(normalizePeer({ ...peer("a"), alias: "" })?.alias).toBeUndefined();
+    expect(normalizePeer({ ...peer("a"), alias: 5 })?.alias).toBeUndefined();
   });
 });
 

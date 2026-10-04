@@ -2,6 +2,7 @@ import { Store } from "@tanstack/react-store";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "./api";
 import { LOCAL_NODE_ID, setLocalNodeAlias } from "./format";
 import { createServer, deleteServer, gatewayTarget, updateServer } from "./servers";
+import { settingsStore } from "./settings";
 import { localTarget, type ApiTarget } from "./targets";
 import type { AgentInfo, NodeDescriptor, Project, SessionSummary } from "./types";
 
@@ -16,6 +17,8 @@ export interface PeerNode {
   /** The peer's self-reported id from GET /api/node. */
   readonly id: string;
   readonly name: string;
+  /** User-assigned nickname — overrides `name` everywhere the node displays. */
+  readonly alias?: string;
   /** Origin of the peer's API, e.g. `https://thinkpad:8787` — no trailing slash. */
   readonly url: string;
   /**
@@ -61,6 +64,7 @@ export const normalizePeer = (value: unknown): PeerNode | null => {
     name: typeof raw.name === "string" && raw.name !== "" ? raw.name : raw.url,
     url: raw.url,
     token: typeof raw.token === "string" && raw.token !== "" ? raw.token : null,
+    ...(typeof raw.alias === "string" && raw.alias !== "" ? { alias: raw.alias } : {}),
     ...(gateway ? { via: "gateway" as const, serverId: raw.serverId as string } : {}),
   };
 };
@@ -116,6 +120,20 @@ export const upsertPeer = (peers: ReadonlyArray<PeerNode>, peer: PeerNode): Peer
 
 export const removePeerById = (peers: ReadonlyArray<PeerNode>, id: string): PeerNode[] =>
   peers.filter((p) => p.id !== id);
+
+/** Set/clear a peer nickname — an empty/whitespace alias reverts to `name`. */
+export const setPeerAlias = (id: string, alias: string): void => {
+  const trimmed = alias.trim();
+  commitPeers(
+    nodesStore.state.peers.map((peer) =>
+      peer.id !== id
+        ? peer
+        : trimmed === ""
+          ? { ...peer, alias: undefined }
+          : { ...peer, alias: trimmed },
+    ),
+  );
+};
 
 const commitPeers = (peers: ReadonlyArray<PeerNode>): void => {
   persistPeers(peers);
@@ -307,12 +325,15 @@ export const nodeTarget = (node: string | undefined): ApiTarget => {
   return { baseUrl: `http://${node}.invalid`, token: null, timeoutMs: PEER_TIMEOUT_MS };
 };
 
-/** Display name for a node id — local resolves to the machine's hostname. */
+/** Display name for a node id — nicknames win, then self-reported names. */
 export const nodeName = (node: string | undefined): string => {
   if (node === undefined || node === LOCAL_NODE_ID) {
-    return nodesStore.state.self?.name ?? "this machine";
+    return (
+      settingsStore.state.localNodeName ?? nodesStore.state.self?.name ?? "this machine"
+    );
   }
-  return nodesStore.state.peers.find((p) => p.id === node)?.name ?? node;
+  const peer = nodesStore.state.peers.find((p) => p.id === node);
+  return peer === undefined ? node : (peer.alias ?? peer.name);
 };
 
 /**
@@ -324,10 +345,10 @@ export const nodeName = (node: string | undefined): string => {
 export const spanNodeLabel = (node: string): string => {
   const self = nodesStore.state.self;
   if (node === LOCAL_NODE_ID || (self !== null && node === self.id)) {
-    return self?.name ?? "local";
+    return settingsStore.state.localNodeName ?? self?.name ?? "local";
   }
   const peer = nodesStore.state.peers.find((p) => p.id === node);
-  if (peer !== undefined) return peer.name;
+  if (peer !== undefined) return peer.alias ?? peer.name;
   if (node === "") return "local";
   return node.length > 14 ? `${node.slice(0, 14)}…` : node;
 };

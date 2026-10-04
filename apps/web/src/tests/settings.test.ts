@@ -21,6 +21,7 @@ const DEFAULTS: SepiaSettings = {
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
+  localNodeName: null,
   sidebar: { sections: defaultSidebarSections() },
 };
 

@@ -33,6 +33,8 @@ export interface SepiaSettings {
   notifications: { enabled: boolean; done: boolean; permission: boolean };
   /** UI theme — dark default; "system" follows prefers-color-scheme. */
   theme: "dark" | "light" | "system";
+  /** Nickname for this machine — overrides the self-reported node name. */
+  localNodeName: string | null;
   /** Sidebar sections — array order is the render order. */
   sidebar: { sections: SidebarSectionConfig[] };
 }
@@ -59,6 +61,7 @@ const defaultSettings = (): SepiaSettings => ({
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
+  localNodeName: null,
   sidebar: { sections: defaultSidebarSections() },
 });
 
@@ -84,6 +87,10 @@ const load = (): SepiaSettings => {
             }
           : { enabled: false, done: true, permission: true },
       theme: parsed.theme === "light" || parsed.theme === "system" ? parsed.theme : "dark",
+      localNodeName:
+        typeof parsed.localNodeName === "string" && parsed.localNodeName.trim() !== ""
+          ? parsed.localNodeName.trim()
+          : null,
       sidebar: {
         sections: normalizeSidebarSections(
           typeof parsed.sidebar === "object" && parsed.sidebar !== null
