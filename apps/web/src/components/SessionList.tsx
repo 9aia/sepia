@@ -158,10 +158,15 @@ export function SessionList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, selectedId]);
 
-  useAppHotkey("session.new", () => {
-    if (inFormField()) return;
-    create(resolvedCwd);
-  });
+  // preventDefault — Mod+N is the browser's new-window shortcut.
+  useAppHotkey(
+    "session.new",
+    () => {
+      if (inFormField()) return;
+      create(resolvedCwd);
+    },
+    { preventDefault: true },
+  );
   useAppHotkey(
     "filter.clear",
     () => {

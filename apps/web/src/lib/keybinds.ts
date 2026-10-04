@@ -12,7 +12,7 @@ export interface KeybindDef {
 
 /** Every bindable action — settings overrides/disables live in settingsStore. */
 export const KEYBINDS: ReadonlyArray<KeybindDef> = [
-  { id: "session.new", group: "Sessions", label: "New session", def: "N" },
+  { id: "session.new", group: "Sessions", label: "New session", def: "Mod+N" },
   { id: "nav.down", group: "Sessions", label: "Next session", def: "ArrowDown" },
   { id: "nav.up", group: "Sessions", label: "Previous session", def: "ArrowUp" },
   { id: "nav.collapse", group: "Sessions", label: "Collapse group", def: "ArrowLeft" },
