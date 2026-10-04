@@ -69,20 +69,22 @@ export function CwdPicker({ value, dirs, onChange }: CwdPickerProps) {
         if (items.includes(next)) commit(next);
       }}
     >
-      <AutocompleteInput
-        aria-label="Working directory"
-        title={`New sessions spawn in ${value}`}
-        placeholder="/home/you/projects/app"
-        className="h-8 w-full rounded-3xl pl-9 text-xs"
-        onKeyDown={(event) => {
-          if (event.key === "Enter") commit(input);
-        }}
-      />
-      <HugeiconsIcon
-        icon={FolderOpenIcon}
-        strokeWidth={2}
-        className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
-      />
+      <div className="relative">
+        <AutocompleteInput
+          aria-label="Working directory"
+          title={`New sessions spawn in ${value}`}
+          placeholder="/home/you/projects/app"
+          className="h-8 w-full rounded-3xl pl-9 text-xs"
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commit(input);
+          }}
+        />
+        <HugeiconsIcon
+          icon={FolderOpenIcon}
+          strokeWidth={2}
+          className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
+        />
+      </div>
       <AutocompletePortal>
         <AutocompletePositioner>
           <AutocompletePopup>
