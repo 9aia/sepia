@@ -1,12 +1,28 @@
 import { useEffect, type FormEvent, type RefObject } from "react";
 import { useForm } from "@tanstack/react-form";
-import { ArrowDown01Icon, ArrowUp01Icon } from "@hugeicons/core-free-icons";
+import { useStore } from "@tanstack/react-store";
+import {
+  ArrowDown01Icon,
+  ArrowUp01Icon,
+  BotIcon,
+  FolderOpenIcon,
+  TextIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { AgentInfo } from "../../lib/types";
 import { useCreateSession } from "../../hooks/query/useCreateSession";
+import { useDirs } from "../../hooks/query/useDirs";
+import { useUserInfo } from "../../hooks/query/useUserInfo";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+
+/** Parent dir of the value being typed; null when it can't be absolute. */
+const parentOf = (value: string): string | null => {
+  const idx = value.replace(/\/+$/, "").lastIndexOf("/");
+  if (idx === -1) return null;
+  return idx === 0 ? "/" : value.slice(0, idx);
+};
 
 interface CreateFormProps {
   readonly cwdRef: RefObject<HTMLInputElement | null>;
@@ -64,6 +80,15 @@ export function CreateForm({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, defaultAgent]);
+
+  // Directory suggestions: subdirs of the parent being typed, seeded with the
+  // prefilled dir and the server's home.
+  const cwdValue = useStore(form.store, (s) => s.values.cwd);
+  const { data: dirs = [] } = useDirs(parentOf(cwdValue));
+  const { data: user } = useUserInfo();
+  const dirSuggestions = [
+    ...new Set([defaultCwd, user?.homedir, ...dirs].filter((d): d is string => d !== undefined)),
+  ];
 
   // One-click create with the prefilled defaults; opens the advanced section
   // instead when there's nothing to prefill.
@@ -125,16 +150,27 @@ export function CreateForm({
           >
             {(field) => (
               <>
-                <Input
-                  type="text"
-                  placeholder="Working directory (absolute)"
-                  aria-label="Working directory"
-                  aria-invalid={field.state.meta.errors.length > 0}
-                  ref={cwdRef}
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                />
+                <InputGroup>
+                  <InputGroupAddon aria-hidden="true">
+                    <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    type="text"
+                    list="sepia-cwd-dirs"
+                    placeholder="Working directory (absolute)"
+                    aria-label="Working directory"
+                    aria-invalid={field.state.meta.errors.length > 0}
+                    ref={cwdRef}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                  />
+                </InputGroup>
+                <datalist id="sepia-cwd-dirs">
+                  {dirSuggestions.map((dir) => (
+                    <option key={dir} value={dir} />
+                  ))}
+                </datalist>
                 {field.state.meta.isTouched && field.state.meta.errors[0] !== undefined && (
                   <p className="text-xs text-destructive">{field.state.meta.errors[0]}</p>
                 )}
@@ -143,14 +179,19 @@ export function CreateForm({
           </form.Field>
           <form.Field name="title">
             {(field) => (
-              <Input
-                type="text"
-                placeholder="Title (optional)"
-                aria-label="Session title"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
-              />
+              <InputGroup>
+                <InputGroupAddon aria-hidden="true">
+                  <HugeiconsIcon icon={TextIcon} strokeWidth={2} />
+                </InputGroupAddon>
+                <InputGroupInput
+                  type="text"
+                  placeholder="Title (optional)"
+                  aria-label="Session title"
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                />
+              </InputGroup>
             )}
           </form.Field>
           {agents.length > 1 && (
@@ -162,7 +203,8 @@ export function CreateForm({
                     if (value !== null) field.handleChange(value);
                   }}
                 >
-                  <SelectTrigger aria-label="Agent">
+                  <SelectTrigger aria-label="Agent" className="w-full">
+                    <HugeiconsIcon icon={BotIcon} strokeWidth={2} />
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

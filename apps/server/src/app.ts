@@ -1,5 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
+import { join } from "node:path";
 import { Effect, Either } from "effect";
 import { encodeSse, sseHeaders, type Event } from "sepia-agui";
 import type {
@@ -254,6 +256,23 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         status: response.status,
         headers: { ...Object.fromEntries(response.headers), ...cors },
       });
+    }
+
+    if (method === "GET" && segmentsEqual(segments, ["api", "fs"])) {
+      const path = url.searchParams.get("path") ?? "";
+      if (!path.startsWith("/")) {
+        return jsonResponse({ error: "path must be absolute" }, 400, cors);
+      }
+      try {
+        const dirs = readdirSync(path, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => join(path, entry.name))
+          .sort()
+          .slice(0, 200);
+        return jsonResponse({ dirs }, 200, cors);
+      } catch {
+        return jsonResponse({ error: "Cannot read that directory" }, 400, cors);
+      }
     }
 
     if (method === "GET" && segmentsEqual(segments, ["api", "user"])) {

@@ -98,6 +98,11 @@ export async function attach(id: string, options?: { takeover?: boolean }): Prom
   });
 }
 
+export async function listDirs(path: string): Promise<string[]> {
+  const data = await request<{ dirs: string[] }>(`/api/fs?path=${encodeURIComponent(path)}`);
+  return data.dirs;
+}
+
 export async function getUserInfo(): Promise<UserInfo> {
   const data = await request<{ user: UserInfo }>("/api/user");
   return data.user;
