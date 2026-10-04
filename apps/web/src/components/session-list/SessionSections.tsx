@@ -6,8 +6,10 @@ import {
   Delete02Icon,
   Edit02Icon,
   FolderLibraryIcon,
+  InformationCircleIcon,
   MoreVerticalIcon,
   PinIcon,
+  UserAdd01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { Project, SessionSummary } from "../../lib/types";
@@ -15,6 +17,7 @@ import { formatUpdated } from "../../lib/format";
 import {
   useCreateProject,
   useDeleteProject,
+  usePatchSessionMeta,
   useProjects,
   useRenameProject,
 } from "../../hooks/query/useSessionMeta";
@@ -39,6 +42,7 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "../ui/context-menu";
+import { ScrollArea } from "../ui/scroll-area";
 import {
   Dialog,
   DialogClose,
@@ -263,6 +267,8 @@ function ProjectsSection({
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [dialog, setDialog] = useState<ProjectDialogState | null>(null);
   const [deleteFor, setDeleteFor] = useState<Project | null>(null);
+  const [detailsFor, setDetailsFor] = useState<Project | null>(null);
+  const [addFor, setAddFor] = useState<Project | null>(null);
   const createProject = useCreateProject();
   const renameProject = useRenameProject();
   const deleteProject = useDeleteProject();
@@ -328,6 +334,14 @@ function ProjectsSection({
                 <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onClick={() => setDetailsFor(project)}>
+                  <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
+                  Project details
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setAddFor(project)}>
+                  <HugeiconsIcon icon={UserAdd01Icon} strokeWidth={2} />
+                  Add session…
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setDialog({ id: project.id, name: project.name })}>
                   <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
                   Rename project
@@ -360,6 +374,20 @@ function ProjectsSection({
       })}
       {dialog !== null && (
         <ProjectNameDialog state={dialog} onClose={() => setDialog(null)} onSubmit={submitName} />
+      )}
+      {detailsFor !== null && (
+        <ProjectDetailsDialog
+          project={detailsFor}
+          members={sessions.filter((s) => s.projectIds.includes(detailsFor.id))}
+          onClose={() => setDetailsFor(null)}
+          onSelectSession={(id) => {
+            handlers.onSelect(id);
+            setDetailsFor(null);
+          }}
+        />
+      )}
+      {addFor !== null && (
+        <AddSessionDialog project={addFor} sessions={sessions} onClose={() => setAddFor(null)} />
       )}
       <AlertDialog open={deleteFor !== null} onOpenChange={(open) => !open && setDeleteFor(null)}>
         <AlertDialogContent>
@@ -427,5 +455,111 @@ export function SessionSections({
         {...handlers}
       />
     </div>
+  );
+}
+
+/** Project info — name + member list. */
+function ProjectDetailsDialog({
+  project,
+  members,
+  onClose,
+  onSelectSession,
+}: {
+  readonly project: Project;
+  readonly members: ReadonlyArray<SessionSummary>;
+  onClose: () => void;
+  onSelectSession: (id: string) => void;
+}) {
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{project.name}</DialogTitle>
+          <DialogDescription>
+            {members.length} session{members.length === 1 ? "" : "s"}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-1">
+          {members.length === 0 && (
+            <p className="text-sm text-muted-foreground">No sessions in this project.</p>
+          )}
+          {members.map((session) => (
+            <button
+              key={session.id}
+              type="button"
+              className="rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+              onClick={() => onSelectSession(session.id)}
+            >
+              <span className="block truncate font-medium">{session.title}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {session.agent} · {formatUpdated(session.updatedAt)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Assign an existing session to the project — searchable picker. */
+function AddSessionDialog({
+  project,
+  sessions,
+  onClose,
+}: {
+  readonly project: Project;
+  readonly sessions: ReadonlyArray<SessionSummary>;
+  onClose: () => void;
+}) {
+  const patch = usePatchSessionMeta();
+  const [filter, setFilter] = useState("");
+  const candidates = sessions.filter(
+    (s) =>
+      !s.projectIds.includes(project.id) &&
+      s.title.toLowerCase().includes(filter.trim().toLowerCase()),
+  );
+  const add = (session: SessionSummary): void =>
+    patch.mutate(
+      { id: session.id, patch: { projectIds: [...session.projectIds, project.id] } },
+      { onSuccess: onClose },
+    );
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add session to {project.name}</DialogTitle>
+          <DialogDescription>Pick a session to include in this project.</DialogDescription>
+        </DialogHeader>
+        <Input
+          placeholder="Filter sessions…"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          autoFocus
+        />
+        <ScrollArea className="max-h-64">
+          <div className="flex flex-col gap-0.5">
+            {candidates.length === 0 && (
+              <p className="px-1 py-2 text-sm text-muted-foreground">
+                {filter.trim() === "" ? "All sessions are already in this project." : "No matches."}
+              </p>
+            )}
+            {candidates.map((session) => (
+              <button
+                key={session.id}
+                type="button"
+                className="rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+                onClick={() => add(session)}
+              >
+                <span className="block truncate font-medium">{session.title}</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {session.agent} · {session.cwd}
+                </span>
+              </button>
+            ))}
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
   );
 }
