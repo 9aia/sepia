@@ -76,8 +76,8 @@ function RowContent({ row }: { readonly row: Row }) {
     const error = parseErrorPayload(message.content);
     return (
       <Message from={role}>
-        <div className="flex items-end gap-2.5">
-          {role !== "user" && <RowAvatar role={role} />}
+        <div className={`flex flex-col gap-1.5 ${role === "user" ? "items-end" : "items-start"}`}>
+          <RowAvatar role={role} />
           <MessageContent>
             {error !== null ? (
               <ErrorMessage error={error} />
@@ -85,7 +85,6 @@ function RowContent({ row }: { readonly row: Row }) {
               <MessageResponse>{message.content}</MessageResponse>
             )}
           </MessageContent>
-          {role === "user" && <RowAvatar role={role} />}
         </div>
       </Message>
     );
@@ -119,8 +118,8 @@ function RowContent({ row }: { readonly row: Row }) {
   const error = parseErrorPayload(message.content);
   return (
     <Message from={role}>
-      <div className="flex items-end gap-2.5">
-        {role !== "user" && <RowAvatar role={role} />}
+      <div className={`flex flex-col gap-1.5 ${role === "user" ? "items-end" : "items-start"}`}>
+        <RowAvatar role={role} />
         <MessageContent>
           {error !== null ? (
             <ErrorMessage error={error} />
@@ -128,7 +127,6 @@ function RowContent({ row }: { readonly row: Row }) {
             <MessageResponse>{message.content}</MessageResponse>
           )}
         </MessageContent>
-        {role === "user" && <RowAvatar role={role} />}
       </div>
     </Message>
   );
