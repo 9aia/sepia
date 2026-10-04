@@ -93,7 +93,7 @@ function SectionSessionRow({
         <ContextMenuTrigger className="group/row relative block">
           <button
             type="button"
-            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent/60 focus-visible:ring-1 focus-visible:ring-primary/50 ${
+            className={`mx-1.5 flex w-auto items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent/60 focus-visible:ring-1 focus-visible:ring-primary/50 ${
               selected ? "bg-accent/80" : ""
             }`}
             onClick={() => onSelect(sessionKey(session))}
@@ -199,7 +199,7 @@ export function SectionHeader({
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-1 rounded-md py-0.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+        className="flex items-center gap-1 rounded-md py-0.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
         aria-expanded={open}
       >
         {label}
@@ -382,7 +382,7 @@ function ProjectsSection({
               <div className="relative">
                 <button
                   type="button"
-                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+                  className="mx-1.5 flex w-auto items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
                   onClick={() =>
                     setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
                   }

@@ -168,7 +168,7 @@ function GroupRow({
       <ContextMenu>
         <ContextMenuTrigger className="relative block">
           <TreeItem item={item} className="w-full">
-            <TreeItemLabel className="rounded-none bg-transparent hover:bg-accent/60">
+            <TreeItemLabel className="rounded-md bg-transparent hover:bg-accent/60">
               <span className="flex-1 truncate font-semibold" title={data.cwd}>
                 {data.label}
               </span>
@@ -240,7 +240,7 @@ function SessionItemRow({
             data-selected={selected || undefined}
             className="w-full cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-inherit"
           >
-            <TreeItemLabel className="w-full items-start rounded-none bg-transparent hover:bg-accent/60 in-data-[selected=true]:ring-1 in-data-[selected=true]:ring-inset in-data-[selected=true]:ring-primary">
+            <TreeItemLabel className="w-full items-start rounded-md bg-transparent hover:bg-accent/60 in-data-[selected=true]:ring-1 in-data-[selected=true]:ring-inset in-data-[selected=true]:ring-primary">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-semibold">{session.title}</span>
