@@ -130,7 +130,7 @@ function DirDetailsDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Folder details</DialogTitle>
           <DialogDescription>Sessions are grouped under this directory.</DialogDescription>

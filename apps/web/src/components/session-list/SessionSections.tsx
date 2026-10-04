@@ -295,7 +295,7 @@ export function ProjectNameDialog({
   const isRename = state.id !== undefined;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>{isRename ? "Rename project" : "New project"}</DialogTitle>
           <DialogDescription>

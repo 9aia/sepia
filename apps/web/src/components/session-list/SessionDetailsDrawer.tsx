@@ -135,7 +135,7 @@ function RenameDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Rename session</DialogTitle>
           <DialogDescription>
