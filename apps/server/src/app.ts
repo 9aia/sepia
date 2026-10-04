@@ -1302,6 +1302,16 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         });
       }
 
+      if (method === "GET" && action === "checkpoints") {
+        // The workspace-snapshot refs the store recorded (Cline shadow-git
+        // `metadata.checkpoint` history). Cheap sibling of /export for the
+        // restore UI — just the refs, never the payloads.
+        return respond(run, plane.getSession(id, { agentId: agentParam }), cors, {
+          shape: (session) => ({ checkpoints: session.checkpoints }),
+          span: "http.get /api/sessions/:id/checkpoints",
+        });
+      }
+
       if (method === "GET" && action === "export") {
         // The unprojected sibling of /history: the complete session IR —
         // nodes with toolCalls ids/args, thinking, usage and parent links —
@@ -1382,6 +1392,55 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           shape: () => ({ ok: true }),
           span: "http.post /api/sessions/:id/prompt",
         });
+      }
+
+      if (method === "POST" && action === "restore") {
+        // File restore — writes/deletes real files under the session's cwd.
+        // `{path, toolCallId?}` reverts recorded diffs; `{checkpoint, paths?}`
+        // materializes a recorded shadow-git ref. `confirm: true` required.
+        let body: unknown;
+        try {
+          body = await readJsonBody(request);
+        } catch {
+          return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+        }
+        if (!isRecord(body)) {
+          return jsonResponse({ error: "Expected a JSON object body" }, 400, cors);
+        }
+        if (body.confirm !== true) {
+          return jsonResponse({ error: "Restore requires confirm: true" }, 400, cors);
+        }
+        if (body.path !== undefined && typeof body.path !== "string") {
+          return jsonResponse({ error: "path must be a string" }, 400, cors);
+        }
+        if (body.toolCallId !== undefined && typeof body.toolCallId !== "string") {
+          return jsonResponse({ error: "toolCallId must be a string" }, 400, cors);
+        }
+        if (body.checkpoint !== undefined && typeof body.checkpoint !== "string") {
+          return jsonResponse({ error: "checkpoint must be a string" }, 400, cors);
+        }
+        if (
+          body.paths !== undefined &&
+          !(Array.isArray(body.paths) && body.paths.every((p) => typeof p === "string"))
+        ) {
+          return jsonResponse({ error: "paths must be an array of strings" }, 400, cors);
+        }
+        return respond(
+          run,
+          plane.restore(
+            id,
+            {
+              confirm: true,
+              path: body.path as string | undefined,
+              toolCallId: body.toolCallId as string | undefined,
+              checkpoint: body.checkpoint as string | undefined,
+              paths: body.paths as string[] | undefined,
+            },
+            agentParam,
+          ),
+          cors,
+          { span: "http.post /api/sessions/:id/restore" },
+        );
       }
 
       if (method === "POST" && action === "cancel") {

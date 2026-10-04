@@ -87,6 +87,11 @@ export interface HistoryMessage {
    */
   readonly locations?: ReadonlyArray<ToolCallLocation>;
   readonly diffs?: ReadonlyArray<ToolCallDiff>;
+  /**
+   * Tool-result messages only: the call this message answers — the key a
+   * per-call file restore (`restore` with `toolCallId`) reverts against.
+   */
+  readonly toolCallId?: string;
 }
 
 export interface AttachResult {
@@ -94,6 +99,63 @@ export interface AttachResult {
   readonly readOnly: boolean;
   /** The agent runtime the session is (or would be) attached under. */
   readonly agentId: string;
+}
+
+/**
+ * A file-level restore against a session's recorded state — two sources,
+ * picked by which of `path`/`checkpoint` is set:
+ *
+ * - `path` (+ optional `toolCallId`): revert the file through the recorded
+ *   `ToolCall.diffs`. Without `toolCallId` the file goes back to its state
+ *   before the session first touched it; with it, exactly that call's change
+ *   is reverted. Reverts are non-clobbering — a file that drifted from the
+ *   recorded after-state skips rather than being overwritten.
+ * - `checkpoint`: a `Session.checkpoints` ref (Cline shadow-git stash/commit
+ *   sha in the workspace repository). Restores the files that checkpoint
+ *   covers — `ref^..ref` — to their snapshotted content; `paths` narrows to
+ *   a subset.
+ *
+ * `confirm: true` is mandatory — every variant writes (or deletes) real
+ * files under the session's working directory.
+ */
+export interface RestoreRequest {
+  readonly confirm: boolean;
+  readonly path?: string;
+  readonly toolCallId?: string;
+  readonly checkpoint?: string;
+  readonly paths?: ReadonlyArray<string>;
+}
+
+export interface RestoredFile {
+  /** Absolute path the restore touched. */
+  readonly path: string;
+  readonly action: "written" | "deleted" | "unchanged";
+  readonly bytes?: number;
+}
+
+export interface SkippedFile {
+  readonly path: string;
+  readonly reason: string;
+}
+
+export interface RestoreResult {
+  readonly restored: ReadonlyArray<RestoredFile>;
+  readonly skipped: ReadonlyArray<SkippedFile>;
+}
+
+/**
+ * The filesystem/git seam `restore` works through — injectable so tests (and
+ * embedders) can fake the disk. `readFile` returns `null` for absent files;
+ * `writeFile` creates parent directories.
+ */
+export interface RestoreExec {
+  readonly readFile: (path: string) => Promise<Uint8Array | null>;
+  readonly writeFile: (path: string, content: Uint8Array) => Promise<void>;
+  readonly removeFile: (path: string) => Promise<void>;
+  readonly git: (
+    cwd: string,
+    args: ReadonlyArray<string>,
+  ) => Promise<{ readonly code: number; readonly stdout: Uint8Array; readonly stderr: string }>;
 }
 
 export interface HistoryPage {
@@ -223,6 +285,19 @@ export interface ControlPlaneService {
     agentId?: string,
   ) => Effect.Effect<void, ControlError>;
 
+  /**
+   * Restores files under the session's working directory — either
+   * reverse-applying recorded `ToolCall.diffs` for a `path` or materializing
+   * a `Session.checkpoints` shadow-git ref. Refused while the session is
+   * busy or locked by a live process; requires `confirm: true`. `agentId`
+   * scopes the store lookup — ids collide across agents.
+   */
+  readonly restore: (
+    id: string,
+    request: RestoreRequest,
+    agentId?: string,
+  ) => Effect.Effect<RestoreResult, ControlError>;
+
   readonly subscribe: (
     id: string,
     listener: SessionEventListener,
@@ -249,6 +324,12 @@ export interface ControlPlaneOptions {
    * only ever invoked with the pid the agent itself reported.
    */
   readonly terminateLockHolder?: (pid: number) => void;
+  /**
+   * The disk/git seam for `restore` — defaults to real `node:fs` + `git`
+   * subprocess calls. Inject in tests; a restore never touches the agent's
+   * session store, only files under the session's working directory.
+   */
+  readonly restoreExec?: RestoreExec;
 }
 
 export class ControlPlane extends Context.Tag("ControlPlane")<

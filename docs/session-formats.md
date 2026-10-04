@@ -218,6 +218,13 @@ the history tail. `checkpoint-scratch/<hash>/` holds real git
 stages from. The IR keeps these as `Session.checkpoints[]` (refs only, never
 payloads) and `sessionManifest` writes `{latest, history}` back verbatim.
 
+**Restore**: the refs resolve in the workspace's own git object store — stash
+kind is a synthetic 3-parent commit (base, index, untracked) with message
+`cline checkpoint session=<id> run=<n>`; commit kind points at a real commit.
+`POST /api/sessions/:id/restore {checkpoint}` materializes the covered file
+set (`git diff --name-only <ref>^ <ref>`) via `git show <ref>:<path>`; the
+scratch dirs are staging leftovers and aren't needed for restore.
+
 **Resumable via**: `cline --id <session-id>`; requires the index row +
 manifest + messages trio sepia's `installCline` writes.
 

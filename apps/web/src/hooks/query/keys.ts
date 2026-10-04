@@ -21,4 +21,14 @@ export const queryKeys = {
           : `${agent}:${sessionId}`
         : `${node}:${agent ?? ""}:${sessionId}`,
     ] as const,
+  /** Checkpoint refs a session recorded — same node-scoped keying as history. */
+  checkpoints: (sessionId: string, agent?: string, node?: string) =>
+    [
+      "checkpoints",
+      node === undefined || node === ""
+        ? agent === undefined || agent === ""
+          ? sessionId
+          : `${agent}:${sessionId}`
+        : `${node}:${agent ?? ""}:${sessionId}`,
+    ] as const,
 };

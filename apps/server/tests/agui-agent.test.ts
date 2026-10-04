@@ -57,6 +57,7 @@ const makePlane = (over: Partial<ControlPlaneService> = {}): FakePlane => {
     },
     deleteSession: () => Effect.void,
     respondToPermission: () => Effect.void,
+    restore: () => Effect.succeed({ restored: [], skipped: [] }),
     subscribe: (id, listener, agentId) => {
       calls.subscribe.push({ id, agentId });
       listeners.set(id, listener);

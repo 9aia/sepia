@@ -1,10 +1,11 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { Effect, Either, Layer, Metric, Option, Runtime } from "effect";
 import type { AcpConnection, AcpSessionInfo, PromptPart } from "sepia-acp";
 import { createTranslator, type Event, type Translator } from "sepia-agui";
-import { SessionRepository } from "sepia-core";
+import { Restore, SessionRepository } from "sepia-core";
 import type { Session, ToolCall } from "sepia-core";
 import { agentForBackend } from "./MergedRepository.js";
+import { defaultRestoreExec } from "./restore-exec.js";
 import {
   ControlError,
   ControlPlane,
@@ -17,8 +18,13 @@ import {
   type HistoryMessage,
   type HistoryOptions,
   type HistoryPage,
+  type RestoreExec,
+  type RestoreRequest,
+  type RestoreResult,
+  type RestoredFile,
   type SessionEventListener,
   type SessionSummary,
+  type SkippedFile,
   type Unsubscribe,
 } from "./types.js";
 
@@ -288,6 +294,7 @@ export const make = (
               locations:
                 call === undefined || call.locations.length === 0 ? undefined : call.locations,
               diffs: call === undefined || call.diffs.length === 0 ? undefined : call.diffs,
+              toolCallId: node.role === "tool" ? Option.getOrUndefined(node.toolCallId) : undefined,
             };
           }),
           total,
@@ -771,6 +778,275 @@ export const make = (
         }),
       );
 
+    /* ---- restore -------------------------------------------------------
+     * File restore only — the IR has no deletion model, so a "rewind" of the
+     * conversation itself isn't representable. Two sources, both gated on
+     * `confirm: true` and refused while the session is busy or held by a
+     * live process:
+     *  - path restore: reverse-apply the recorded `ToolCall.diffs`
+     *    (`Restore.planPathRestore` — skips rather than clobbering drift);
+     *  - checkpoint restore: materialize the files a `Session.checkpoints`
+     *    shadow-git ref covers (`git show <ref>:<path>`).
+     */
+
+    const exec: RestoreExec = options.restoreExec ?? defaultRestoreExec;
+    const utf8 = new TextDecoder();
+    const utf8Encode = new TextEncoder();
+
+    const tryExec = <A>(message: string, thunk: () => Promise<A>) =>
+      Effect.tryPromise({ try: thunk, catch: (cause) => controlError("internal", message, cause) });
+
+    const git = (cwd: string, args: ReadonlyArray<string>, message: string) =>
+      tryExec(message, () => exec.git(cwd, args));
+
+    const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean =>
+      a.length === b.length && a.every((byte, index) => byte === b[index]);
+
+    /** Revert `path` through the session's recorded diffs. */
+    const restorePath = (
+      session: Session,
+      path: string,
+      toolCallId?: string,
+    ): Effect.Effect<RestoreResult, ControlError> =>
+      Effect.gen(function* () {
+        const abs = Restore.resolveWorkspacePath(session.workingDirectory, path);
+        if (abs === null) {
+          return yield* Effect.fail(
+            controlError(
+              "invalid",
+              `path must resolve inside the session working directory: ${path}`,
+              undefined,
+            ),
+          );
+        }
+        const raw = yield* tryExec(`Failed to read ${abs}`, () => exec.readFile(abs));
+        const plan = Restore.planPathRestore(
+          session,
+          path,
+          raw === null ? null : utf8.decode(raw),
+          toolCallId,
+        );
+        switch (plan.kind) {
+          case "skip":
+            return { restored: [], skipped: [{ path, reason: plan.reason }] };
+          case "unchanged":
+            return { restored: [{ path: abs, action: "unchanged" }], skipped: [] };
+          case "delete":
+            yield* tryExec(`Failed to delete ${abs}`, () => exec.removeFile(abs));
+            return { restored: [{ path: abs, action: "deleted" }], skipped: [] };
+          case "write": {
+            const bytes = utf8Encode.encode(plan.content);
+            yield* tryExec(`Failed to write ${abs}`, () => exec.writeFile(abs, bytes));
+            return {
+              restored: [{ path: abs, action: "written", bytes: bytes.length }],
+              skipped: [],
+            };
+          }
+        }
+      });
+
+    /**
+     * Materialize the files a checkpoint covers. The covered set is the
+     * `ref^..ref` name list (a stash ref's base is its first parent; a root
+     * commit's is its whole tree). Files absent at the ref get deleted —
+     * the checkpoint recorded them as removed.
+     */
+    const restoreCheckpoint = (
+      session: Session,
+      ref: string,
+      paths?: ReadonlyArray<string>,
+    ): Effect.Effect<RestoreResult, ControlError> =>
+      Effect.gen(function* () {
+        if (session.checkpoints.every((entry) => entry.ref !== ref)) {
+          return yield* Effect.fail(
+            controlError("not_found", `Unknown checkpoint ref: ${ref}`, undefined),
+          );
+        }
+        const cwd = session.workingDirectory;
+        const inside = yield* git(cwd, ["rev-parse", "--is-inside-work-tree"], "git probe failed");
+        if (inside.code !== 0 || utf8.decode(inside.stdout).trim() !== "true") {
+          return yield* Effect.fail(
+            controlError(
+              "conflict",
+              `Session working directory is not a git work tree: ${cwd}`,
+              undefined,
+            ),
+          );
+        }
+        const object = yield* git(cwd, ["cat-file", "-e", `${ref}^{commit}`], "git probe failed");
+        if (object.code !== 0) {
+          return yield* Effect.fail(
+            controlError(
+              "conflict",
+              `Checkpoint ${ref} is not present in the workspace repository`,
+              undefined,
+            ),
+          );
+        }
+        const rootResult = yield* git(cwd, ["rev-parse", "--show-toplevel"], "git probe failed");
+        if (rootResult.code !== 0) {
+          return yield* Effect.fail(
+            controlError(
+              "internal",
+              `git rev-parse failed: ${rootResult.stderr.trim()}`,
+              undefined,
+            ),
+          );
+        }
+        const root = utf8.decode(rootResult.stdout).trim();
+        const parents = yield* git(
+          cwd,
+          ["rev-list", "--parents", "-n", "1", ref],
+          "git probe failed",
+        );
+        const base = utf8.decode(parents.stdout).trim().split(/\s+/)[1];
+        const coveredResult = yield* git(
+          cwd,
+          base === undefined
+            ? ["ls-tree", "-r", "--name-only", "-z", ref]
+            : ["diff", "--name-only", "-z", base, ref],
+          `Failed to list files covered by checkpoint ${ref}`,
+        );
+        if (coveredResult.code !== 0) {
+          return yield* Effect.fail(
+            controlError(
+              "internal",
+              `git diff failed for checkpoint ${ref}: ${coveredResult.stderr.trim()}`,
+              undefined,
+            ),
+          );
+        }
+        const covered = utf8
+          .decode(coveredResult.stdout)
+          .split("\0")
+          .filter((entry) => entry !== "");
+
+        // Git paths are repo-root relative; a restore only writes inside the
+        // session's working directory.
+        const toAbs = (rel: string): string => resolve(root, rel);
+        const inCwd = (abs: string): boolean => Restore.resolveWorkspacePath(cwd, abs) !== null;
+
+        const restored: RestoredFile[] = [];
+        const skipped: SkippedFile[] = [];
+        let targets: ReadonlyArray<string>;
+        if (paths === undefined) {
+          targets = covered;
+        } else {
+          const coveredSet = new Set(covered);
+          const requested: string[] = [];
+          for (const p of paths) {
+            const abs = Restore.resolveWorkspacePath(cwd, p);
+            if (abs === null) {
+              return yield* Effect.fail(
+                controlError(
+                  "invalid",
+                  `paths entries must resolve inside the session working directory: ${p}`,
+                  undefined,
+                ),
+              );
+            }
+            const rel = relative(root, abs);
+            if (!coveredSet.has(rel)) {
+              skipped.push({ path: p, reason: `not touched by checkpoint ${ref}` });
+            } else {
+              requested.push(rel);
+            }
+          }
+          targets = requested;
+        }
+
+        for (const rel of targets) {
+          const abs = toAbs(rel);
+          if (!inCwd(abs)) {
+            skipped.push({ path: rel, reason: "outside the session working directory" });
+            continue;
+          }
+          const present = yield* git(cwd, ["cat-file", "-e", `${ref}:${rel}`], "git probe failed");
+          const existing = yield* tryExec(`Failed to read ${abs}`, () => exec.readFile(abs));
+          if (present.code === 0) {
+            const blob = yield* git(cwd, ["show", `${ref}:${rel}`], `Failed to read ${rel}`);
+            if (blob.code !== 0) {
+              skipped.push({
+                path: rel,
+                reason: `git show failed: ${blob.stderr.trim()}`,
+              });
+              continue;
+            }
+            if (existing !== null && bytesEqual(existing, blob.stdout)) {
+              restored.push({ path: abs, action: "unchanged" });
+              continue;
+            }
+            yield* tryExec(`Failed to write ${abs}`, () => exec.writeFile(abs, blob.stdout));
+            restored.push({ path: abs, action: "written", bytes: blob.stdout.length });
+          } else if (existing === null) {
+            restored.push({ path: abs, action: "unchanged" });
+          } else {
+            yield* tryExec(`Failed to delete ${abs}`, () => exec.removeFile(abs));
+            restored.push({ path: abs, action: "deleted" });
+          }
+        }
+        return { restored, skipped };
+      });
+
+    const restore = (
+      id: string,
+      request: RestoreRequest,
+      agentId?: string,
+    ): Effect.Effect<RestoreResult, ControlError> =>
+      Effect.gen(function* () {
+        if (request.confirm !== true) {
+          return yield* Effect.fail(
+            controlError("invalid", "Restore writes files — pass confirm: true", undefined),
+          );
+        }
+        const hasPath = request.path !== undefined;
+        const hasCheckpoint = request.checkpoint !== undefined;
+        if (hasPath === hasCheckpoint) {
+          return yield* Effect.fail(
+            controlError("invalid", "restore needs exactly one of path or checkpoint", undefined),
+          );
+        }
+        const maybe = yield* repo
+          .getById(id, agentId)
+          .pipe(Effect.mapError(storageFail("Failed to read session")));
+        if (Option.isNone(maybe)) {
+          return yield* Effect.fail(controlError("not_found", `Unknown session: ${id}`, undefined));
+        }
+        const session = maybe.value;
+        const live = liveFor(id, agentId);
+        if (live !== undefined && live.busy) {
+          return yield* Effect.fail(
+            controlError("busy", `Session is busy — wait for the run to finish: ${id}`, undefined),
+          );
+        }
+        // An unattached session can still be held by another process — the
+        // same lock rule attach enforces. Our own live attach is the holder
+        // we're checking through, so only probe when nothing is live here.
+        if (live === undefined) {
+          const locks = yield* lockState(session.workingDirectory);
+          const lock = locks.get(id);
+          if (lock?.locked === true) {
+            const pid = lock.lockHolderPid;
+            return yield* Effect.fail(
+              controlError(
+                "locked",
+                pid !== null
+                  ? `Session is held by PID ${pid}: ${id}`
+                  : `Session is held by another process: ${id}`,
+                undefined,
+              ),
+            );
+          }
+        }
+        return yield* hasCheckpoint
+          ? restoreCheckpoint(session, request.checkpoint ?? "", request.paths)
+          : restorePath(session, request.path ?? "", request.toolCallId);
+      }).pipe(
+        Effect.withSpan("sepia.control.restore", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
+
     const subscribe = (
       id: string,
       listener: SessionEventListener,
@@ -825,6 +1101,7 @@ export const make = (
       cancel,
       deleteSession,
       respondToPermission,
+      restore,
       subscribe,
       listAgents,
       closeAll,

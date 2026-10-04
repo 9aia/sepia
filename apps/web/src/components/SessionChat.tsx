@@ -55,6 +55,8 @@ import { Message, MessageContent, MessageCopy, MessageFooter, MessageReply } fro
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { parseSystemContext, type SystemContext } from "../lib/systemContext";
 import { parseErrorPayload, prettifyCode, type ParsedError } from "../lib/errorPayload";
+import { restoreSummary, useRestoreSession } from "../hooks/query/useRestore";
+import { toastError, toastSuccess } from "../lib/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { ErrorBanner } from "./ErrorBanner";
 import { Button } from "./ui/button";
@@ -85,7 +87,13 @@ import {
 /** Provenance separator — "devin @ thinkpad" — between run segments. */
 const spanLabel = (span: RunSpan): string => `${span.agent} @ ${spanNodeLabel(span.node)}`;
 
-function RowContent({ row }: { readonly row: ChatRow }) {
+function RowContent({
+  row,
+  onRestoreDiff,
+}: {
+  readonly row: ChatRow;
+  readonly onRestoreDiff?: (path: string, toolCallId?: string) => void;
+}) {
   if (row.kind === "system") return <SystemContextRow context={row.context} />;
   if (row.kind === "span") {
     return (
@@ -108,6 +116,8 @@ function RowContent({ row }: { readonly row: ChatRow }) {
           durationMs={message.durationMs}
           diffs={message.diffs}
           locations={message.locations}
+          toolCallId={message.toolCallId}
+          onRestoreDiff={onRestoreDiff}
         />
       );
     }
@@ -136,6 +146,7 @@ function RowContent({ row }: { readonly row: ChatRow }) {
         durationMs={message.durationMs}
         diffs={message.diffs}
         locations={message.locations}
+        onRestoreDiff={onRestoreDiff}
       />
     );
   }
@@ -199,11 +210,13 @@ function ChatRows({
   hasNextPage,
   fetchingNext,
   onLoadEarlier,
+  onRestoreDiff,
 }: {
   readonly rows: ReadonlyArray<ChatRow>;
   readonly hasNextPage: boolean;
   readonly fetchingNext: boolean;
   onLoadEarlier: () => void;
+  readonly onRestoreDiff?: (path: string, toolCallId?: string) => void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -285,7 +298,7 @@ function ChatRows({
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                <RowContent row={row} />
+                <RowContent row={row} onRestoreDiff={onRestoreDiff} />
               </MessageScrollerItem>
             );
           })}
@@ -500,6 +513,13 @@ export function SessionChat({
   // The held banner's "Take over" opens the same confirm dialog — without a
   // queued message.
   const [takeoverConfirm, setTakeoverConfirm] = useState(false);
+  // A per-file restore requested from a tool-call diff row — the dialog
+  // confirms before the server writes the file back.
+  const [restoreTarget, setRestoreTarget] = useState<{
+    path: string;
+    toolCallId?: string;
+  } | null>(null);
+  const restore = useRestoreSession();
   // Populated by ScrollerApiBridge — lets `send` reveal the row it appended.
   const scrollToEnd = useRef<(() => void) | null>(null);
   const scrollOnSent = useRef(false);
@@ -667,6 +687,7 @@ export function SessionChat({
                 hasNextPage={historyQuery.hasNextPage}
                 fetchingNext={historyQuery.isFetchingNextPage}
                 onLoadEarlier={loadEarlier}
+                onRestoreDiff={(path, toolCallId) => setRestoreTarget({ path, toolCallId })}
               />
               {running && !liveMessages.some((m) => !m.done) && (
                 <div className="mx-auto flex w-full max-w-3xl items-center gap-2 px-4 py-3 text-sm">
@@ -818,6 +839,66 @@ export function SessionChat({
                 : takeoverError !== null
                   ? "Try again"
                   : "Take over"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Per-file restore: the server reverse-applies the recorded diff —
+          skips land in the toast rather than clobbering drifted files. */}
+      <AlertDialog
+        open={restoreTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !restore.isPending) setRestoreTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore this file?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Write <code className="break-all">{restoreTarget?.path}</code> back to its state
+              before this change. Current edits to the file are overwritten.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {restore.isError && (
+            <p role="alert" className="m-0 text-sm text-destructive">
+              {restore.error instanceof Error ? restore.error.message : "Restore failed"}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restore.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={restore.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                const target = restoreTarget;
+                if (target === null) return;
+                restore.mutate(
+                  {
+                    sessionId,
+                    agent,
+                    node: sessionRow?.node,
+                    selector: {
+                      path: target.path,
+                      ...(target.toolCallId === undefined ? {} : { toolCallId: target.toolCallId }),
+                    },
+                  },
+                  {
+                    onSuccess: (result) => {
+                      setRestoreTarget(null);
+                      toastSuccess(restoreSummary(result), undefined);
+                      if (result.skipped.length > 0) {
+                        toastError(
+                          "Some files were skipped",
+                          new Error(result.skipped.map((s) => `${s.path}: ${s.reason}`).join("\n")),
+                        );
+                      }
+                    },
+                  },
+                );
+              }}
+            >
+              {restore.isPending ? "Restoring…" : "Restore"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

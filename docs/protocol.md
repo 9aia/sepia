@@ -58,6 +58,18 @@ POST   /api/sessions/:id/prompt       send { text?, attachments? } — attachmen
                                         audio, resource, resource_link)
 POST   /api/sessions/:id/cancel       stop the run
 POST   /api/sessions/:id/permission   reply to a pending permission
+GET    /api/sessions/:id/checkpoints  { checkpoints } — workspace snapshot
+                                      refs the store recorded (Cline shadow-git)
+POST   /api/sessions/:id/restore      file restore — writes under the session's
+                                      cwd; requires { confirm: true }:
+                                      { path, toolCallId? } reverts the file via
+                                        the recorded diffs (pre-session state,
+                                        or just that call's change)
+                                      { checkpoint, paths? } materializes the
+                                        files a checkpoint ref covers
+                                      refused while the session is busy or
+                                      locked by a live process; per-file
+                                      { restored, skipped } report
 PATCH  /api/sessions/:id              meta overlay { title?, pinned?, archived?, projectIds?, model? }
 DELETE /api/sessions/:id
 POST   /api/sessions/:id/convert      { agent } → new session in another agent's store

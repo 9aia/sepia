@@ -7,6 +7,7 @@ import {
   GlobeIcon,
   Search01Icon,
   Task01Icon,
+  Undo02Icon,
   ViewIcon,
   WrenchIcon,
 } from "@hugeicons/core-free-icons";
@@ -102,6 +103,8 @@ export function ToolCall({
   durationMs,
   diffs,
   locations,
+  toolCallId,
+  onRestoreDiff,
 }: {
   readonly toolName: string;
   readonly done: boolean;
@@ -121,6 +124,16 @@ export function ToolCall({
   readonly diffs?: ReadonlyArray<ToolFileDiff>;
   /** Files the call touched when no diff was recorded (refs only). */
   readonly locations?: ReadonlyArray<ToolLocation>;
+  /**
+   * The call's id in the store — a per-file restore reverts exactly this
+   * call's recorded change. Absent on live rows that haven't flushed.
+   */
+  readonly toolCallId?: string;
+  /**
+   * Present when the session can restore files (the owning node serves
+   * `POST /api/sessions/:id/restore`); the handler owns confirm + feedback.
+   */
+  readonly onRestoreDiff?: (path: string, toolCallId?: string) => void;
 }) {
   const display = toolSummary(toolName, args, content, { exitCode });
   const fileViews = useMemo(() => (diffs ?? []).map(fileDiffView), [diffs]);
@@ -216,6 +229,21 @@ export function ToolCall({
                       <span className="text-emerald-600 dark:text-emerald-400">+{file.added}</span>{" "}
                       <span className="text-red-600 dark:text-red-400">−{file.removed}</span>
                     </span>
+                    {onRestoreDiff !== undefined && (
+                      <button
+                        type="button"
+                        className="inline-flex shrink-0 items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        title={`Restore ${file.path} to its state before this change`}
+                        aria-label={`Restore ${file.path}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRestoreDiff(file.path, toolCallId);
+                        }}
+                      >
+                        <HugeiconsIcon icon={Undo02Icon} strokeWidth={2} className="size-3" />
+                        Restore
+                      </button>
+                    )}
                   </div>
                   {file.text !== "" && <DiffBlock text={file.text} />}
                 </div>

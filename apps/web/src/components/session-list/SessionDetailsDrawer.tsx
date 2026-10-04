@@ -8,12 +8,15 @@ import {
   FolderLibraryIcon,
   FolderOpenIcon,
   Globe02Icon,
+  HistoryIcon,
   PinIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { ChevronDownIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { SessionSummary } from "../../lib/types";
+import type { SessionCheckpoint, SessionSummary } from "../../lib/types";
+import { toastError, toastSuccess } from "../../lib/toast";
+import { restoreSummary, useCheckpoints, useRestoreSession } from "../../hooks/query/useRestore";
 import { nodeKey, projectKey, resolveSession, sessionKey, subAgentsOf } from "../../lib/format";
 import { nodeName, spanNodeLabel } from "../../lib/nodes";
 import { useNodes } from "../../hooks/query/useNodes";
@@ -204,6 +207,16 @@ export function SessionDetailsDrawer({
   const { peers } = useNodes();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  // Checkpoint picker → confirm → restore; the fetch only runs while open.
+  const [checkpointsOpen, setCheckpointsOpen] = useState(false);
+  const [confirmCheckpoint, setConfirmCheckpoint] = useState<SessionCheckpoint | null>(null);
+  const restore = useRestoreSession();
+  const checkpoints = useCheckpoints(
+    session?.id ?? null,
+    session?.agent,
+    session?.node,
+    checkpointsOpen,
+  );
   const peer = session === undefined ? undefined : peers.find((p) => p.id === session.node);
   // The sub-agent's parent — clickable when the row is in the merged list.
   const parent =
@@ -511,6 +524,14 @@ export function SessionDetailsDrawer({
               <Button
                 variant="outline"
                 className="w-full justify-start"
+                onClick={() => setCheckpointsOpen(true)}
+              >
+                <HugeiconsIcon icon={HistoryIcon} strokeWidth={2} />
+                Restore checkpoint…
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-start"
                 onClick={() => setRenameOpen(true)}
               >
                 <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
@@ -549,6 +570,135 @@ export function SessionDetailsDrawer({
               </AlertDialogContent>
             </AlertDialog>
             <RenameDialog session={session} open={renameOpen} onOpenChange={setRenameOpen} />
+
+            {/* Checkpoint picker — the refs the agent's store recorded
+                (Cline shadow-git). Restoring materializes the covered files
+                back to the snapshot. Newest ref last in history; list
+                newest-first. */}
+            <Dialog open={checkpointsOpen} onOpenChange={setCheckpointsOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Restore to checkpoint</DialogTitle>
+                  <DialogDescription>
+                    Files the checkpoint covers are written back to the snapshot. Changes made after
+                    it are overwritten.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+                  {checkpoints.isLoading && (
+                    <p className="py-2 text-xs text-muted-foreground">Loading checkpoints…</p>
+                  )}
+                  {checkpoints.isError && (
+                    <p className="py-2 text-xs text-destructive">
+                      {checkpoints.error instanceof Error
+                        ? checkpoints.error.message
+                        : "Failed to load checkpoints"}
+                    </p>
+                  )}
+                  {checkpoints.data !== undefined && checkpoints.data.length === 0 && (
+                    <p className="py-2 text-xs text-muted-foreground">
+                      This session recorded no checkpoints.
+                    </p>
+                  )}
+                  {[...(checkpoints.data ?? [])].reverse().map((checkpoint) => (
+                    <div
+                      key={checkpoint.ref}
+                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent/60"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <code className="font-mono">{checkpoint.ref.slice(0, 8)}</code>
+                          {checkpoint.kind !== undefined && (
+                            <Badge variant="secondary" className="font-normal">
+                              {checkpoint.kind}
+                            </Badge>
+                          )}
+                          {checkpoint.runCount !== undefined && (
+                            <span className="text-muted-foreground">
+                              before run {checkpoint.runCount}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {new Date(checkpoint.createdAt).toLocaleString()}
+                        </div>
+                      </div>
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        onClick={() => setConfirmCheckpoint(checkpoint)}
+                      >
+                        Restore
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <AlertDialog
+              open={confirmCheckpoint !== null}
+              onOpenChange={(open) => {
+                if (!open && !restore.isPending) setConfirmCheckpoint(null);
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Restore this checkpoint?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {`Snapshot ${confirmCheckpoint?.ref.slice(0, 8) ?? ""} (${
+                      confirmCheckpoint === null
+                        ? ""
+                        : new Date(confirmCheckpoint.createdAt).toLocaleString()
+                    }) will overwrite the files it covers in ${session.cwd}.`}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                {restore.isError && (
+                  <p role="alert" className="m-0 text-sm text-destructive">
+                    {restore.error instanceof Error ? restore.error.message : "Restore failed"}
+                  </p>
+                )}
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={restore.isPending}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={restore.isPending}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      const checkpoint = confirmCheckpoint;
+                      if (checkpoint === null) return;
+                      restore.mutate(
+                        {
+                          sessionId: session.id,
+                          agent: session.agent,
+                          node: session.node,
+                          selector: { checkpoint: checkpoint.ref },
+                        },
+                        {
+                          onSuccess: (result) => {
+                            setConfirmCheckpoint(null);
+                            setCheckpointsOpen(false);
+                            toastSuccess(restoreSummary(result));
+                            if (result.skipped.length > 0) {
+                              toastError(
+                                "Some files were skipped",
+                                new Error(
+                                  result.skipped.map((s) => `${s.path}: ${s.reason}`).join("\n"),
+                                ),
+                              );
+                            }
+                          },
+                        },
+                      );
+                    }}
+                  >
+                    {restore.isPending ? "Restoring…" : "Restore"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </>
         )}
       </DrawerContent>

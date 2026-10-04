@@ -21,6 +21,7 @@ const plane: ControlPlaneService = {
   cancel: () => Effect.void,
   deleteSession: () => Effect.void,
   respondToPermission: () => Effect.void,
+  restore: () => Effect.succeed({ restored: [], skipped: [] }),
   subscribe: () => Effect.succeed(() => {}),
   listAgents: () => [{ id: "devin", label: "Devin" }],
   closeAll: () => Effect.void,

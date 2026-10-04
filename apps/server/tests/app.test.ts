@@ -71,6 +71,7 @@ const IR_SESSION = Session.make({
   mainChainId: 2,
   parentSessionId: Option.some("parent-1"),
   agentId: Option.some("agent-7"),
+  checkpoints: [{ ref: "abc123", createdAt: 1_700_000_000_000, runCount: 2, kind: "stash" }],
   metadata: { source: "test" },
   nodes: [
     MessageNode.make({
@@ -147,6 +148,11 @@ interface FakePlane {
     readonly agentId?: string;
     readonly title?: string;
   }>;
+  readonly restores: Array<{
+    readonly id: string;
+    readonly request: unknown;
+    readonly agentId?: string;
+  }>;
 }
 
 const makeFakePlane = (): FakePlane => {
@@ -155,6 +161,7 @@ const makeFakePlane = (): FakePlane => {
   const cancels: string[] = [];
   const permissions: Array<{ id: string; requestId: string; optionId: string | null }> = [];
   const created: Array<{ cwd: string; agentId?: string; title?: string }> = [];
+  const restores: FakePlane["restores"] = [];
 
   const plane: ControlPlaneService = {
     listSessions: (options) =>
@@ -201,6 +208,16 @@ const makeFakePlane = (): FakePlane => {
         : Effect.sync(() => {
             permissions.push({ id, requestId, optionId });
           }),
+    restore: (id, request, agentId) =>
+      id === "missing"
+        ? failure("session not found: missing", "not_found")
+        : Effect.sync(() => {
+            restores.push({ id, request, agentId });
+            return {
+              restored: [{ path: "/work/ir/a.ts", action: "written" as const, bytes: 3 }],
+              skipped: [],
+            };
+          }),
     subscribe: (id, listener) =>
       Effect.sync(() => {
         listeners.set(id, listener);
@@ -221,6 +238,7 @@ const makeFakePlane = (): FakePlane => {
     cancels,
     permissions,
     created,
+    restores,
     push: (id, events) => listeners.get(id)?.(events),
   };
 };
@@ -493,6 +511,103 @@ describe("createApp", () => {
     const { plane } = makeFakePlane();
     const response = await createApp(plane)(get("/api/sessions/missing/export"));
 
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "session not found: missing",
+      code: "not_found",
+    });
+  });
+
+  it("GET /api/sessions/:id/checkpoints serves the recorded refs", async () => {
+    const { plane } = makeFakePlane();
+    const response = await createApp(plane)(get("/api/sessions/sess-ir/checkpoints"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      checkpoints: [{ ref: "abc123", createdAt: 1_700_000_000_000, runCount: 2, kind: "stash" }],
+    });
+  });
+
+  it("GET /api/sessions/:id/checkpoints maps a missing session to 404", async () => {
+    const { plane } = makeFakePlane();
+    const response = await createApp(plane)(get("/api/sessions/missing/checkpoints"));
+    expect(response.status).toBe(404);
+  });
+
+  it("POST /api/sessions/:id/restore forwards a path revert", async () => {
+    const { plane, restores } = makeFakePlane();
+    const response = await createApp(plane)(
+      post("/api/sessions/sess-1/restore?agent=cline", {
+        confirm: true,
+        path: "src/a.ts",
+        toolCallId: "call-9",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      restored: [{ path: "/work/ir/a.ts", action: "written", bytes: 3 }],
+      skipped: [],
+    });
+    expect(restores).toEqual([
+      {
+        id: "sess-1",
+        agentId: "cline",
+        request: { confirm: true, path: "src/a.ts", toolCallId: "call-9" },
+      },
+    ]);
+  });
+
+  it("POST /api/sessions/:id/restore forwards a checkpoint restore", async () => {
+    const { plane, restores } = makeFakePlane();
+    const response = await createApp(plane)(
+      post("/api/sessions/sess-1/restore", {
+        confirm: true,
+        checkpoint: "abc123",
+        paths: ["a.ts"],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(restores[0]?.request).toEqual({
+      confirm: true,
+      checkpoint: "abc123",
+      paths: ["a.ts"],
+    });
+  });
+
+  it("POST /api/sessions/:id/restore refuses without confirm", async () => {
+    const { plane, restores } = makeFakePlane();
+    const app = createApp(plane);
+
+    for (const body of [undefined, { path: "a.ts" }, { confirm: false, path: "a.ts" }]) {
+      const response = await app(post("/api/sessions/sess-1/restore", body));
+      expect(response.status).toBe(400);
+    }
+    expect(restores).toEqual([]);
+  });
+
+  it("POST /api/sessions/:id/restore validates field types", async () => {
+    const { plane } = makeFakePlane();
+    const app = createApp(plane);
+
+    for (const body of [
+      { confirm: true, path: 1 },
+      { confirm: true, path: "a.ts", toolCallId: 2 },
+      { confirm: true, checkpoint: 3 },
+      { confirm: true, checkpoint: "abc", paths: "a.ts" },
+      { confirm: true, checkpoint: "abc", paths: [1] },
+    ]) {
+      const response = await app(post("/api/sessions/sess-1/restore", body));
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it("POST /api/sessions/:id/restore maps ControlError codes", async () => {
+    const { plane } = makeFakePlane();
+    const response = await createApp(plane)(
+      post("/api/sessions/missing/restore", { confirm: true, path: "a.ts" }),
+    );
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({
       error: "session not found: missing",

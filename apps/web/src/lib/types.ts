@@ -147,12 +147,35 @@ export interface HistoryMessage {
   /** Tool-result messages only: files the call touched / changed. */
   locations?: ToolLocation[];
   diffs?: ToolFileDiff[];
+  /** Tool-result messages only: the call this row answers — a restore reverts against it. */
+  toolCallId?: string;
 }
 
 export interface HistoryPage {
   messages: HistoryMessage[];
   total: number;
   start: number;
+}
+
+/**
+ * A workspace-snapshot ref the session recorded (`Session.checkpoints` —
+ * Cline shadow-git `metadata.checkpoint` history). `createdAt` is epoch ms.
+ */
+export interface SessionCheckpoint {
+  ref: string;
+  createdAt: number;
+  runCount?: number;
+  kind?: string;
+}
+
+/** POST /api/sessions/:id/restore — per-file outcome report. */
+export interface RestoreResult {
+  restored: Array<{
+    path: string;
+    action: "written" | "deleted" | "unchanged";
+    bytes?: number;
+  }>;
+  skipped: Array<{ path: string; reason: string }>;
 }
 
 export interface AttachResult {

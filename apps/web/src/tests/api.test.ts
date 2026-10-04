@@ -9,6 +9,7 @@ import {
   createSession,
   deleteProject,
   deleteSession,
+  getCheckpoints,
   getConfig,
   getHistory,
   getNode,
@@ -22,6 +23,7 @@ import {
   renameProject,
   renameSession,
   respondToPermission,
+  restoreSession,
   resumeSession,
   sendPrompt,
   setConfigKey,
@@ -129,6 +131,14 @@ describe("GET wrappers", () => {
     await getHistory("s1");
     expect(calls[0]?.url).toBe("/api/sessions/s1/history");
   });
+
+  it("getCheckpoints unwraps the refs and scopes by agent", async () => {
+    stubFetch(jsonOk({ checkpoints: [{ ref: "abc", createdAt: 1, kind: "stash" }] }));
+    await expect(getCheckpoints("s1", "cline")).resolves.toEqual([
+      { ref: "abc", createdAt: 1, kind: "stash" },
+    ]);
+    expect(calls[0]?.url).toBe("/api/sessions/s1/checkpoints?agent=cline");
+  });
 });
 
 describe("POST/PATCH/DELETE wrappers", () => {
@@ -168,6 +178,33 @@ describe("POST/PATCH/DELETE wrappers", () => {
     stubFetch(jsonOk({ attached: true, readOnly: true }));
     await attach("s1", { agent: "" });
     expect(calls[0]?.url).toBe("/api/sessions/s1/attach");
+  });
+
+  it("restoreSession posts the selector with confirm: true", async () => {
+    stubFetch(jsonOk({ restored: [{ path: "/w/a.ts", action: "written" }], skipped: [] }));
+    const result = await restoreSession(
+      "s 1",
+      { path: "a.ts", toolCallId: "c9" },
+      "cline",
+    );
+    expect(result.restored).toHaveLength(1);
+    expect(calls[0]?.url).toBe("/api/sessions/s%201/restore?agent=cline");
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(calls[0]?.init?.body as string)).toEqual({
+      confirm: true,
+      path: "a.ts",
+      toolCallId: "c9",
+    });
+  });
+
+  it("restoreSession sends the checkpoint selector with paths", async () => {
+    stubFetch(jsonOk({ restored: [], skipped: [] }));
+    await restoreSession("s1", { checkpoint: "abc123", paths: ["a.ts"] });
+    expect(JSON.parse(calls[0]?.init?.body as string)).toEqual({
+      confirm: true,
+      checkpoint: "abc123",
+      paths: ["a.ts"],
+    });
   });
 
   it("patchSessionMeta returns res.ok without throwing on failure", async () => {

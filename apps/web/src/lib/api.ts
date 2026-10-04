@@ -5,6 +5,8 @@ import type {
   HistoryMessage,
   HistoryPage,
   NodeDescriptor,
+  RestoreResult,
+  SessionCheckpoint,
   SessionSummary,
   UserInfo,
 } from "./types";
@@ -190,6 +192,53 @@ export async function attach(
     {
       method: "POST",
       body: Object.keys(body).length === 0 ? undefined : JSON.stringify(body),
+    },
+    target,
+  );
+}
+
+/**
+ * GET /api/sessions/:id/checkpoints — the workspace snapshot refs the store
+ * recorded (Cline shadow-git refs). Cheap companion of /export — refs only.
+ */
+export async function getCheckpoints(
+  id: string,
+  agent?: string,
+  target?: ApiTarget,
+): Promise<SessionCheckpoint[]> {
+  const data = await request<{ checkpoints: SessionCheckpoint[] }>(
+    `/api/sessions/${encodeURIComponent(id)}/checkpoints${agentQuery(agent)}`,
+    undefined,
+    target,
+  );
+  return data.checkpoints;
+}
+
+/**
+ * A restore call's selector: `{path, toolCallId?}` reverts the file through
+ * the session's recorded diffs; `{checkpoint, paths?}` materializes the
+ * files a recorded shadow-git ref covers. `confirm` is mandatory.
+ */
+export type RestoreSelector =
+  | { readonly path: string; readonly toolCallId?: string }
+  | { readonly checkpoint: string; readonly paths?: ReadonlyArray<string> };
+
+/**
+ * POST /api/sessions/:id/restore — writes/deletes real files under the
+ * session's working directory on the owning node. The server refuses while
+ * the session is busy or locked by a live process.
+ */
+export async function restoreSession(
+  id: string,
+  selector: RestoreSelector,
+  agent?: string,
+  target?: ApiTarget,
+): Promise<RestoreResult> {
+  return request<RestoreResult>(
+    `/api/sessions/${encodeURIComponent(id)}/restore${agentQuery(agent)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ confirm: true, ...selector }),
     },
     target,
   );
