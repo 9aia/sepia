@@ -64,6 +64,7 @@ import {
   DrawerTitle,
 } from "../ui/drawer";
 import { Input } from "../ui/input";
+import { SessionContextTabs } from "./SessionContextTabs";
 
 function Detail({
   label,
@@ -356,6 +357,8 @@ export function SessionDetailsDrawer({
                   )}
                 </CollapsibleContent>
               </Collapsible>
+              {/* Remount per session so the active tab doesn't leak across rows. */}
+              <SessionContextTabs key={sessionKey(session)} session={session} />
             </div>
 
             <DrawerFooter className="flex-col gap-2">
