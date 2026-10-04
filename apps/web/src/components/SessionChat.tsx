@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { BotIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { useUserInfo } from "../hooks/query/useUserInfo";
+import { Avatar, AvatarFallback } from "./ui/avatar";
 import type { HistoryMessage } from "../lib/types";
 import type { LiveMessage } from "../lib/liveMessages";
 import { cancel, sendPrompt } from "../lib/api";
@@ -49,11 +53,16 @@ function RowContent({ row }: { readonly row: Row }) {
         </Tool>
       );
     }
+    const role = message.role === "user" ? "user" : "assistant";
     return (
-      <Message from={message.role === "user" ? "user" : "assistant"}>
-        <MessageContent>
-          <MessageResponse>{message.content}</MessageResponse>
-        </MessageContent>
+      <Message from={role}>
+        <div className="flex items-end gap-2.5">
+          {role !== "user" && <RowAvatar role={role} />}
+          <MessageContent>
+            <MessageResponse>{message.content}</MessageResponse>
+          </MessageContent>
+          {role === "user" && <RowAvatar role={role} />}
+        </div>
       </Message>
     );
   }
@@ -82,12 +91,32 @@ function RowContent({ row }: { readonly row: Row }) {
       </Reasoning>
     );
   }
+  const role = message.role === "user" ? "user" : "assistant";
   return (
-    <Message from={message.role === "user" ? "user" : "assistant"}>
-      <MessageContent>
-        <MessageResponse>{message.content}</MessageResponse>
-      </MessageContent>
+    <Message from={role}>
+      <div className="flex items-end gap-2.5">
+        {role !== "user" && <RowAvatar role={role} />}
+        <MessageContent>
+          <MessageResponse>{message.content}</MessageResponse>
+        </MessageContent>
+        {role === "user" && <RowAvatar role={role} />}
+      </div>
     </Message>
+  );
+}
+
+function RowAvatar({ role }: { readonly role: string }) {
+  const { data: user } = useUserInfo();
+  return (
+    <Avatar className="size-6 shrink-0 self-end">
+      <AvatarFallback className="text-[10px]">
+        {role === "user" ? (
+          (user?.username.charAt(0).toUpperCase() ?? "?")
+        ) : (
+          <HugeiconsIcon icon={BotIcon} className="size-3.5" />
+        )}
+      </AvatarFallback>
+    </Avatar>
   );
 }
 

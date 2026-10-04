@@ -3,7 +3,7 @@ import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
 import { AlertCircleIcon, FolderOpenIcon, SearchAreaIcon } from "@hugeicons/core-free-icons";
-import { sepiaStore, setSelectedId } from "../lib/store";
+import { sepiaStore, setDetailsFor, setSelectedId } from "../lib/store";
 import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
@@ -59,7 +59,7 @@ export function SessionList() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<SortKey>("newest");
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [details, setDetails] = useState<{ id: string; rename: boolean } | null>(null);
+  const details = useStore(sepiaStore, (state) => state.detailsFor);
   const [modKey, setModKey] = useState("Ctrl");
   useEffect(() => {
     if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
@@ -171,7 +171,7 @@ export function SessionList() {
           selectedId={selectedId}
           hotkeyTarget={asideRef}
           onSelect={setSelectedId}
-          onDetails={(id, rename) => setDetails({ id, rename })}
+          onDetails={(id, rename) => setDetailsFor({ id, rename })}
           onDelete={(id) => deleteMutation.mutate(id)}
         />
       </div>
@@ -179,7 +179,7 @@ export function SessionList() {
       <SessionDetailsDrawer
         session={sessions.find((s) => s.id === details?.id)}
         focusRename={details?.rename ?? false}
-        onClose={() => setDetails(null)}
+        onClose={() => setDetailsFor(null)}
       />
 
       <UserProfile />
