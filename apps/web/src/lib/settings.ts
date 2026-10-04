@@ -26,6 +26,8 @@ export interface SepiaSettings {
   keybinds: Record<string, string | null>;
   /** Browser push toggles — enabled = subscribed on this device. */
   notifications: { enabled: boolean; done: boolean; permission: boolean };
+  /** UI theme — dark default; "system" follows prefers-color-scheme. */
+  theme: "dark" | "light" | "system";
 }
 
 const KEY = "sepia:settings";
@@ -40,6 +42,7 @@ const load = (): SepiaSettings => {
         models: {},
         keybinds: {},
         notifications: { enabled: false, done: true, permission: true },
+        theme: "dark",
       };
     const parsed = JSON.parse(raw) as Partial<SepiaSettings>;
     return {
@@ -61,6 +64,7 @@ const load = (): SepiaSettings => {
               permission: parsed.notifications.permission !== false,
             }
           : { enabled: false, done: true, permission: true },
+      theme: parsed.theme === "light" || parsed.theme === "system" ? parsed.theme : "dark",
     };
   } catch {
     return {
@@ -69,6 +73,7 @@ const load = (): SepiaSettings => {
       models: {},
       keybinds: {},
       notifications: { enabled: false, done: true, permission: true },
+      theme: "dark",
     };
   }
 };

@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useHotkeyRecorder } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
-import { settingsStore, setSettings, type AgentModelPref } from "../lib/settings";
+import {
+  settingsStore,
+  setSettings,
+  type AgentModelPref,
+  type SepiaSettings,
+} from "../lib/settings";
 import { sepiaStore } from "../lib/store";
 import { KEYBINDS, formatKey, resolveKey } from "../lib/keybinds";
 import { Kbd } from "./ui/kbd";
@@ -280,6 +285,26 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <ScrollArea className="min-h-0 flex-1">
             <div ref={contentRef} className="flex flex-col gap-8 pr-3">
               <section data-spy="general" className="flex scroll-mt-2 flex-col gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium" htmlFor="settings-theme">
+                    Theme
+                  </label>
+                  <Select
+                    value={settings.theme}
+                    onValueChange={(value) =>
+                      setSettings({ theme: value as SepiaSettings["theme"] })
+                    }
+                  >
+                    <SelectTrigger id="settings-theme" aria-label="Theme" className="w-full">
+                      {settings.theme.charAt(0).toUpperCase() + settings.theme.slice(1)}
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="dark">Dark</SelectItem>
+                      <SelectItem value="light">Light</SelectItem>
+                      <SelectItem value="system">System</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium" htmlFor="settings-agent">
                     Default agent

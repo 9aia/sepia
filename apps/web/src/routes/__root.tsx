@@ -1,4 +1,6 @@
 import { useEffect, type ReactNode } from "react";
+import { useStore } from "@tanstack/react-store";
+import { settingsStore } from "../lib/settings";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
@@ -53,12 +55,27 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
+  const theme = useStore(settingsStore, (state) => state.theme);
   useEffect(() => {
     // PWA service worker — delivers push notifications.
     if ("serviceWorker" in navigator) {
       void navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
   }, []);
+
+  // Theme — "system" follows the OS; toggles a .light class on <html>.
+  useEffect(() => {
+    const media = matchMedia("(prefers-color-scheme: light)");
+    const apply = (): void => {
+      document.documentElement.classList.toggle(
+        "light",
+        theme === "light" || (theme === "system" && media.matches),
+      );
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [theme]);
   return (
     <RootDocument>
       <QueryClientProvider client={queryClient}>
