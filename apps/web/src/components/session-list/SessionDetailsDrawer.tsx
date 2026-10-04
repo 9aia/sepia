@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Copy01Icon, Delete02Icon, FolderOpenIcon, Tick02Icon } from "@hugeicons/core-free-icons";
+import {
+  Copy01Icon,
+  Delete02Icon,
+  Edit02Icon,
+  FolderOpenIcon,
+  Tick02Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
 import { useRenameSession } from "../../hooks/query/useRenameSession";
@@ -15,6 +21,15 @@ import {
 } from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
 import {
   Drawer,
   DrawerClose,
@@ -68,6 +83,73 @@ function Detail({
   );
 }
 
+function RenameDialog({
+  session,
+  open,
+  onOpenChange,
+}: {
+  readonly session: SessionSummary;
+  readonly open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const renameMutation = useRenameSession();
+  const [title, setTitle] = useState(session.title);
+  const titleRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setTitle(session.title);
+    requestAnimationFrame(() => {
+      titleRef.current?.focus();
+      titleRef.current?.select();
+    });
+  }, [open, session.title]);
+
+  const dirty = title.trim() !== "" && title.trim() !== session.title;
+  const rename = (): void => {
+    if (!dirty) return;
+    renameMutation.mutate(
+      { id: session.id, title: title.trim() },
+      { onSuccess: () => onOpenChange(false) },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Rename session</DialogTitle>
+          <DialogDescription>
+            Saved as a Sepia overlay — the agent&apos;s own store is read-only.
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          ref={titleRef}
+          value={title}
+          aria-label="Session title"
+          onChange={(event) => setTitle(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") rename();
+          }}
+        />
+        {renameMutation.isError && (
+          <p className="text-xs text-destructive">
+            {renameMutation.error instanceof Error
+              ? renameMutation.error.message
+              : "Failed to rename session"}
+          </p>
+        )}
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <Button disabled={!dirty || renameMutation.isPending} onClick={rename}>
+            Rename
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 interface SessionDetailsDrawerProps {
   readonly session: SessionSummary | undefined;
   /** Focus the title field on open (context-menu "Rename…"). */
@@ -84,26 +166,12 @@ export function SessionDetailsDrawer({
   onOpen,
   onDelete,
 }: SessionDetailsDrawerProps) {
-  const renameMutation = useRenameSession();
-  const [title, setTitle] = useState(session?.title ?? "");
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const titleRef = useRef<HTMLInputElement | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
 
   useEffect(() => {
-    setTitle(session?.title ?? "");
-    if (session !== undefined && focusRename) {
-      requestAnimationFrame(() => {
-        titleRef.current?.focus();
-        titleRef.current?.select();
-      });
-    }
+    if (session !== undefined && focusRename) setRenameOpen(true);
   }, [session, focusRename]);
-
-  const dirty = title.trim() !== "" && title.trim() !== session?.title;
-  const rename = (): void => {
-    if (session === undefined || !dirty) return;
-    renameMutation.mutate({ id: session.id, title: title.trim() });
-  };
 
   return (
     <Drawer
@@ -124,28 +192,6 @@ export function SessionDetailsDrawer({
             </DrawerHeader>
 
             <div className="flex flex-col gap-1 overflow-y-auto px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <Input
-                  ref={titleRef}
-                  value={title}
-                  aria-label="Session title"
-                  onChange={(event) => setTitle(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") rename();
-                  }}
-                />
-                <Button size="sm" disabled={!dirty || renameMutation.isPending} onClick={rename}>
-                  Rename
-                </Button>
-              </div>
-              {renameMutation.isError && (
-                <p className="text-xs text-destructive">
-                  {renameMutation.error instanceof Error
-                    ? renameMutation.error.message
-                    : "Failed to rename session"}
-                </p>
-              )}
-
               <div className="mt-2 divide-y divide-border/50">
                 <Detail label="ID" copyValue={session.id}>
                   <span className="font-mono text-xs">{session.id}</span>
@@ -183,6 +229,10 @@ export function SessionDetailsDrawer({
                 <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
                 Delete
               </Button>
+              <Button variant="outline" onClick={() => setRenameOpen(true)}>
+                <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
+                Rename
+              </Button>
               <Button
                 onClick={() => {
                   onOpen(session.id);
@@ -216,6 +266,7 @@ export function SessionDetailsDrawer({
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+            <RenameDialog session={session} open={renameOpen} onOpenChange={setRenameOpen} />
           </>
         )}
       </DrawerContent>

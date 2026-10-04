@@ -4,6 +4,17 @@ import { AlertCircleIcon, BotIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { Avatar, AvatarFallback } from "./ui/avatar";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "./ui/alert-dialog";
 import type { HistoryMessage } from "../lib/types";
 import type { LiveMessage } from "../lib/liveMessages";
 import { cancel, sendPrompt } from "../lib/api";
@@ -344,9 +355,22 @@ export function SessionChat({
       {readOnly ? (
         <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm text-muted-foreground">
           This session is held by another process.
-          <Button size="sm" onClick={onTakeover}>
-            Take over
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger render={<Button size="sm" />}>Take over</AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Take over this session?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The process holding this session will be detached and its in-progress work
+                  stopped. Attach it here instead?
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={onTakeover}>Take over</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       ) : (
         <PromptInput onSubmit={onSubmit} className="shrink-0 border-t border-border px-4 pb-4 pt-3">
