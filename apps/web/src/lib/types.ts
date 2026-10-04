@@ -12,6 +12,7 @@ export interface SessionSummary {
   busy: boolean;
   pinned: boolean;
   projectId: string | null;
+  model: string | null;
 }
 
 export interface Project {
@@ -28,6 +29,8 @@ export interface CreateSessionInput {
   cwd: string;
   agent?: string;
   title?: string;
+  model?: string;
+  fallbacks?: readonly string[];
 }
 
 export type HistoryRole = "user" | "assistant" | "tool" | "system";

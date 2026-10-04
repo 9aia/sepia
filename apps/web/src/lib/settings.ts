@@ -5,11 +5,23 @@ import { Store } from "@tanstack/react-store";
  * configuration (agents, spawn env) stays in `apps/server` env vars — these
  * are per-browser UI defaults only.
  */
+/** Per-agent model preferences — spawn-time flags, not a live switch. */
+export interface AgentModelPref {
+  /** Preferred model (fuzzy ok for devin). Empty = agent default. */
+  readonly model: string;
+  /** Comma-separated fallback models tried when the primary refuses/fails. */
+  readonly fallbacks: string;
+  /** auto = pass fallbacks to the agent; manual = primary model only. */
+  readonly mode: "auto" | "manual";
+}
+
 export interface SepiaSettings {
   /** Agent id preselected when creating sessions; null = server default. */
   defaultAgent: string | null;
   /** cwd prefilled when creating sessions; null = most recent session's. */
   defaultCwd: string | null;
+  /** Per-agent model prefs keyed by agent id. */
+  models: Record<string, AgentModelPref>;
 }
 
 const KEY = "sepia:settings";
@@ -17,14 +29,18 @@ const KEY = "sepia:settings";
 const load = (): SepiaSettings => {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw === null) return { defaultAgent: null, defaultCwd: null };
+    if (raw === null) return { defaultAgent: null, defaultCwd: null, models: {} };
     const parsed = JSON.parse(raw) as Partial<SepiaSettings>;
     return {
       defaultAgent: typeof parsed.defaultAgent === "string" ? parsed.defaultAgent : null,
       defaultCwd: typeof parsed.defaultCwd === "string" ? parsed.defaultCwd : null,
+      models:
+        typeof parsed.models === "object" && parsed.models !== null
+          ? (parsed.models as Record<string, AgentModelPref>)
+          : {},
     };
   } catch {
-    return { defaultAgent: null, defaultCwd: null };
+    return { defaultAgent: null, defaultCwd: null, models: {} };
   }
 };
 

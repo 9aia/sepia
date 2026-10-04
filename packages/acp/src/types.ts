@@ -100,4 +100,8 @@ export interface AcpConnection {
 export interface SpawnOptions {
   readonly cwd: string;
   readonly env?: Readonly<Record<string, string>>;
+  /** Preferred model — passed to the agent's spawn flag, applies at spawn. */
+  readonly model?: string;
+  /** Ordered fallback models (agent-specific flag, e.g. devin's refusal-fallback). */
+  readonly fallbacks?: ReadonlyArray<string>;
 }

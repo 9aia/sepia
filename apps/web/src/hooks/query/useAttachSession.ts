@@ -4,6 +4,8 @@ import { attach } from "../../lib/api";
 interface AttachInput {
   readonly id: string;
   readonly takeover?: boolean;
+  readonly model?: string;
+  readonly fallbacks?: ReadonlyArray<string>;
 }
 
 /**
@@ -12,4 +14,7 @@ interface AttachInput {
  * latest result belongs to, guarding against stale selections.
  */
 export const useAttachSession = () =>
-  useMutation({ mutationFn: ({ id, takeover }: AttachInput) => attach(id, { takeover }) });
+  useMutation({
+    mutationFn: ({ id, takeover, model, fallbacks }: AttachInput) =>
+      attach(id, { takeover, model, fallbacks }),
+  });

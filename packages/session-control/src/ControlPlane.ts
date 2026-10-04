@@ -237,7 +237,11 @@ export const make = (
     // last request fiber saw (or the make-time ambient if none ran yet).
     let attachRuntime: Runtime.Runtime<never> = yield* Effect.runtime<never>();
 
-    const performAttach = (id: string, takeover: boolean): Promise<AttachResult> =>
+    const performAttach = (
+      id: string,
+      takeover: boolean,
+      attachOptions?: { readonly model?: string; readonly fallbacks?: ReadonlyArray<string> },
+    ): Promise<AttachResult> =>
       Runtime.runPromise(attachRuntime)(
         Effect.gen(function* () {
           const maybe = yield* repo
@@ -262,7 +266,11 @@ export const make = (
           }
 
           const conn = yield* tryAcp("Failed to spawn agent", () =>
-            agent.spawn({ cwd: session.workingDirectory }),
+            agent.spawn({
+              cwd: session.workingDirectory,
+              model: attachOptions?.model,
+              fallbacks: attachOptions?.fallbacks,
+            }),
           );
           const translator = createTranslator({ threadId: id });
           const live: LiveSession = {
@@ -323,7 +331,11 @@ export const make = (
 
     const attach = (
       id: string,
-      attachOptions?: { readonly takeover?: boolean },
+      attachOptions?: {
+        readonly takeover?: boolean;
+        readonly model?: string;
+        readonly fallbacks?: ReadonlyArray<string>;
+      },
     ): Effect.Effect<AttachResult, ControlError> =>
       Effect.gen(function* () {
         if (liveSessions.has(id)) return { attached: true, readOnly: false };
@@ -336,7 +348,7 @@ export const make = (
         // Claim the id before the first await so concurrent attaches share one spawn.
         let pending = pendingAttaches.get(id);
         if (pending === undefined) {
-          pending = performAttach(id, attachOptions?.takeover === true);
+          pending = performAttach(id, attachOptions?.takeover === true, attachOptions);
           pendingAttaches.set(id, pending);
           const settled = pending;
           void settled
@@ -360,6 +372,8 @@ export const make = (
       readonly cwd: string;
       readonly agentId?: string;
       readonly title?: string;
+      readonly model?: string;
+      readonly fallbacks?: ReadonlyArray<string>;
     }): Effect.Effect<{ readonly id: string }, ControlError> =>
       Effect.gen(function* () {
         const cwd = createOptions.cwd;
@@ -383,7 +397,13 @@ export const make = (
           );
         }
 
-        const conn = yield* tryAcp("Failed to spawn agent", () => agent.spawn({ cwd }));
+        const conn = yield* tryAcp("Failed to spawn agent", () =>
+          agent.spawn({
+            cwd,
+            model: createOptions.model,
+            fallbacks: createOptions.fallbacks,
+          }),
+        );
         const close = tryAcp("Failed to close agent connection", () => conn.close()).pipe(
           Effect.ignore,
         );

@@ -314,6 +314,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
               title: meta?.title ?? session.title,
               pinned: meta?.pinned ?? false,
               projectId: meta?.projectId ?? null,
+              model: meta?.model ?? null,
             };
           }),
         }),
@@ -343,7 +344,34 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       if (title !== undefined && typeof title !== "string") {
         return jsonResponse({ error: "title must be a string" }, 400, cors);
       }
-      return respond(run, plane.createSession({ cwd, agentId, title }), cors, {
+      const model = body.model;
+      if (model !== undefined && typeof model !== "string") {
+        return jsonResponse({ error: "model must be a string" }, 400, cors);
+      }
+      const fallbacks = body.fallbacks;
+      if (
+        fallbacks !== undefined &&
+        !(Array.isArray(fallbacks) && fallbacks.every((f) => typeof f === "string"))
+      ) {
+        return jsonResponse({ error: "fallbacks must be an array of strings" }, 400, cors);
+      }
+      const created = plane
+        .createSession({
+          cwd,
+          agentId,
+          title,
+          model,
+          fallbacks: fallbacks as string[] | undefined,
+        })
+        .pipe(
+          Effect.tap(({ id }) =>
+            Effect.sync(() => {
+              if (model !== undefined) options.meta?.patch(id, { model });
+              if (title !== undefined) options.meta?.patch(id, { title });
+            }),
+          ),
+        );
+      return respond(run, created, cors, {
         status: 201,
         span: "http.post /api/sessions",
       });
@@ -389,6 +417,13 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           return jsonResponse({ error: "projectId must be a string or null" }, 400, cors);
         }
         patch.projectId = projectId;
+      }
+      if ("model" in patchBody) {
+        const model = patchBody.model;
+        if (model !== null && (typeof model !== "string" || model.length > 100)) {
+          return jsonResponse({ error: "model must be a string or null" }, 400, cors);
+        }
+        patch.model = model;
       }
       if (Object.keys(patch).length === 0) {
         return jsonResponse({ error: "Nothing to patch" }, 400, cors);
@@ -574,6 +609,8 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
 
       if (method === "POST" && action === "attach") {
         let takeover = false;
+        let model: string | undefined;
+        let fallbacks: ReadonlyArray<string> | undefined;
         try {
           const body = await readJsonBody(request);
           if (body !== undefined) {
@@ -581,11 +618,18 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
               return jsonResponse({ error: "Expected a JSON object body" }, 400, cors);
             }
             takeover = body.takeover === true;
+            if (typeof body.model === "string") model = body.model;
+            if (
+              Array.isArray(body.fallbacks) &&
+              body.fallbacks.every((f: unknown) => typeof f === "string")
+            ) {
+              fallbacks = body.fallbacks as string[];
+            }
           }
         } catch {
           return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
         }
-        return respond(run, plane.attach(id, { takeover }), cors, {
+        return respond(run, plane.attach(id, { takeover, model, fallbacks }), cors, {
           span: "http.post /api/sessions/:id/attach",
         });
       }

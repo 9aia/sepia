@@ -39,7 +39,11 @@ const agents = builtinAgents.map((spec) => {
   return {
     id: spec.id,
     label: spec.label,
-    spawn: ({ cwd }: { readonly cwd: string }) => spawnAgent(effective, { cwd }),
+    spawn: (options: {
+      readonly cwd: string;
+      readonly model?: string;
+      readonly fallbacks?: ReadonlyArray<string>;
+    }) => spawnAgent(effective, options),
   };
 });
 

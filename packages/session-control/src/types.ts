@@ -57,7 +57,11 @@ export interface AgentInfo {
 
 /** One runnable ACP agent binary, injected so tests can fake it. */
 export interface AgentRuntime extends AgentInfo {
-  readonly spawn: (options: { readonly cwd: string }) => Promise<AcpConnection>;
+  readonly spawn: (options: {
+    readonly cwd: string;
+    readonly model?: string;
+    readonly fallbacks?: ReadonlyArray<string>;
+  }) => Promise<AcpConnection>;
 }
 
 export type SessionEventListener = (events: ReadonlyArray<Event>) => void;
@@ -97,12 +101,18 @@ export interface ControlPlaneService {
     readonly cwd: string;
     readonly agentId?: string;
     readonly title?: string;
+    readonly model?: string;
+    readonly fallbacks?: ReadonlyArray<string>;
   }) => Effect.Effect<{ readonly id: string }, ControlError>;
 
   /** Spawns the session's agent and loads the session. Locked sessions attach read-only unless `takeover`. */
   readonly attach: (
     id: string,
-    options?: { readonly takeover?: boolean },
+    options?: {
+      readonly takeover?: boolean;
+      readonly model?: string;
+      readonly fallbacks?: ReadonlyArray<string>;
+    },
   ) => Effect.Effect<AttachResult, ControlError>;
 
   readonly detach: (id: string) => Effect.Effect<void, ControlError>;

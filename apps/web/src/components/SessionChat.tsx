@@ -3,6 +3,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { AlertCircleIcon, BotIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../hooks/query/useUserInfo";
+import { useSessions } from "../hooks/query/useSessions";
+import { useStore } from "@tanstack/react-store";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
   AlertDialog,
@@ -18,6 +20,9 @@ import {
 import type { HistoryMessage } from "../lib/types";
 import type { LiveMessage } from "../lib/liveMessages";
 import { cancel, sendPrompt } from "../lib/api";
+import { settingsStore } from "../lib/settings";
+import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { Button } from "./ui/button";
 import { ErrorBanner } from "./ErrorBanner";
@@ -379,6 +384,7 @@ export function SessionChat({
           </PromptInputBody>
           <PromptInputFooter>
             <PromptInputTools />
+            <ModelSelect sessionId={sessionId} />
             <PromptInputSubmit
               status={running ? "streaming" : submitting ? "submitted" : "ready"}
               disabled={submitting}
@@ -388,5 +394,49 @@ export function SessionChat({
         </PromptInput>
       )}
     </>
+  );
+}
+
+/** Per-session model selector — the choice applies on the next agent spawn. */
+function ModelSelect({ sessionId }: { readonly sessionId: string }) {
+  const patch = usePatchSessionMeta();
+  const settings = useStore(settingsStore);
+  const { data: sessions = [] } = useSessions();
+  const session = sessions.find((s) => s.id === sessionId);
+  if (session === undefined) return null;
+  const pref = settings.models[session.agent];
+  const options = [
+    ...new Set(
+      [
+        pref?.model,
+        ...(pref?.fallbacks.split(",").map((f) => f.trim()) ?? []),
+        session.model,
+      ].filter((m): m is string => typeof m === "string" && m !== ""),
+    ),
+  ];
+  const value = session.model ?? "__default__";
+  return (
+    <Select
+      value={value}
+      onValueChange={(v) =>
+        patch.mutate({ id: session.id, patch: { model: v === "__default__" ? null : v } })
+      }
+    >
+      <SelectTrigger
+        aria-label="Session model"
+        title="Model for the next agent spawn"
+        className="h-7 w-auto gap-1 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:text-foreground"
+      >
+        {session.model ?? "Default model"}
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__default__">Agent default</SelectItem>
+        {options.map((model) => (
+          <SelectItem key={model} value={model}>
+            {model}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

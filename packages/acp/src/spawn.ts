@@ -4,6 +4,7 @@ import * as acp from "@agentclientprotocol/sdk";
 import { createAcpConnection } from "./AcpConnection.js";
 import { StderrTail } from "./stderr.js";
 import type { AcpConnection, AgentSpec, SpawnOptions } from "./types.js";
+import { modelArgs } from "./AgentRegistry.js";
 
 /** Environment variables a spawned agent needs; everything else is dropped. */
 const ALLOWED_ENV_KEYS = [
@@ -51,11 +52,15 @@ export const spawnAgent = async (
     throw new Error(`Agent "${spec.id}" has no command to spawn`);
   }
 
-  const child: ChildProcess = spawn(command, args, {
-    cwd: options.cwd,
-    env: buildChildEnv(spec, options),
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const child: ChildProcess = spawn(
+    command,
+    [...args, ...modelArgs(spec.id, options.model, options.fallbacks)],
+    {
+      cwd: options.cwd,
+      env: buildChildEnv(spec, options),
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
 
   const stderr = new StderrTail({ id: spec.id, debug: process.env.SEPIA_DEBUG === "1" });
   child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk.toString()));

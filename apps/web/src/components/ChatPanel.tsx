@@ -8,6 +8,8 @@ import { subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
 import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
 import { sepiaStore } from "../lib/store";
+import { settingsStore } from "../lib/settings";
+import { modelArgsFor } from "../lib/models";
 import { queryKeys } from "../hooks/query/keys";
 import { useAttachSession } from "../hooks/query/useAttachSession";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
@@ -76,10 +78,12 @@ export function ChatPanel() {
   const [running, setRunning] = useState(false);
   const [liveMessages, setLiveMessages] = useState<LiveMessage[]>([]);
   const { mutate: attach } = attachMutation;
-
+  const settings = useStore(settingsStore);
   useEffect(() => {
-    if (sessionId !== null) attach({ id: sessionId });
-  }, [sessionId, attach]);
+    if (sessionId === null) return;
+    attach({ id: sessionId, ...modelArgsFor(session?.agent ?? "", session?.model, settings) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, attach, session?.model, settings]);
 
   // Live rows are optimistic: once the run ends, the refetched IR backlog
   // duplicates them. Clear them only once every live user/assistant text is
@@ -195,7 +199,13 @@ export function ChatPanel() {
             running={running || session.busy}
             liveMessages={liveMessages}
             onUserMessage={addUserMessage}
-            onTakeover={() => attach({ id: session.id, takeover: true })}
+            onTakeover={() =>
+              attach({
+                id: session.id,
+                takeover: true,
+                ...modelArgsFor(session.agent, session.model, settings),
+              })
+            }
           />
         )}
       </div>

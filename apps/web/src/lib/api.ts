@@ -91,10 +91,20 @@ export async function getHistory(
   return request<HistoryPage>(`/api/sessions/${encodeURIComponent(id)}/history${query}`);
 }
 
-export async function attach(id: string, options?: { takeover?: boolean }): Promise<AttachResult> {
+export interface AttachOptions {
+  readonly takeover?: boolean;
+  readonly model?: string;
+  readonly fallbacks?: ReadonlyArray<string>;
+}
+
+export async function attach(id: string, options?: AttachOptions): Promise<AttachResult> {
+  const body: Record<string, unknown> = {};
+  if (options?.takeover === true) body.takeover = true;
+  if (options?.model !== undefined) body.model = options.model;
+  if (options?.fallbacks !== undefined) body.fallbacks = options.fallbacks;
   return request<AttachResult>(`/api/sessions/${encodeURIComponent(id)}/attach`, {
     method: "POST",
-    body: options?.takeover === true ? JSON.stringify({ takeover: true }) : undefined,
+    body: Object.keys(body).length === 0 ? undefined : JSON.stringify(body),
   });
 }
 
@@ -117,6 +127,7 @@ export interface SessionMetaPatch {
   title?: string;
   pinned?: boolean;
   projectId?: string | null;
+  model?: string | null;
 }
 
 export async function patchSessionMeta(id: string, patch: SessionMetaPatch): Promise<boolean> {

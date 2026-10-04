@@ -12,6 +12,8 @@ export interface SessionMeta {
   readonly title?: string;
   readonly pinned?: boolean;
   readonly projectId?: string | null;
+  /** Preferred spawn model for this session — applied on next attach. */
+  readonly model?: string | null;
 }
 
 export interface Project {

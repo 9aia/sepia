@@ -14,6 +14,8 @@ import { useCreateSession } from "../../hooks/query/useCreateSession";
 import { useDirs } from "../../hooks/query/useDirs";
 import { useUserInfo } from "../../hooks/query/useUserInfo";
 import { sepiaStore, setCreateCwd } from "../../lib/store";
+import { settingsStore } from "../../lib/settings";
+import { modelArgsFor } from "../../lib/models";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -53,10 +55,12 @@ export function CreateForm({
     },
     onSubmit: async ({ value }) => {
       try {
+        const settings = settingsStore.state;
         await createMutation.mutateAsync({
           cwd: value.cwd.trim(),
           agent: value.agent,
           title: value.title.trim() === "" ? undefined : value.title.trim(),
+          ...modelArgsFor(value.agent ?? settings.defaultAgent ?? "", null, settings),
         });
         form.reset();
         onOpenChange(false);
