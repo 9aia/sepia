@@ -340,64 +340,66 @@ function ProjectsSection({
           const members = sessions.filter((s) => s.projectIds.includes(project.id));
           const open = !collapsed[project.id];
           return (
-            <div key={project.id} className="group/row relative">
-              <button
-                type="button"
-                className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
-                onClick={() =>
-                  setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
-                }
-              >
-                <HugeiconsIcon
-                  icon={ChevronRightIcon}
-                  strokeWidth={2}
-                  className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
-                />
-                <HugeiconsIcon
-                  icon={FolderLibraryIcon}
-                  strokeWidth={2}
-                  className="size-4 shrink-0 text-muted-foreground"
-                />
-                <span className="min-w-0 flex-1 truncate font-medium" title={project.name}>
-                  {project.name}
-                </span>
-              </button>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
-                      aria-label={`Actions for project ${project.name}`}
-                      title="Project actions"
-                    />
+            <div key={project.id} className="group/row">
+              <div className="relative">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+                  onClick={() =>
+                    setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
                   }
-                  onClick={(event) => event.stopPropagation()}
                 >
-                  <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-44">
-                  <DropdownMenuItem onClick={() => setDetailsFor(project)}>
-                    <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
-                    Project details
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setAddFor(project)}>
-                    <HugeiconsIcon icon={UserAdd01Icon} strokeWidth={2} />
-                    Add session…
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => setDialog({ id: project.id, name: project.name })}
+                  <HugeiconsIcon
+                    icon={ChevronRightIcon}
+                    strokeWidth={2}
+                    className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+                  />
+                  <HugeiconsIcon
+                    icon={FolderLibraryIcon}
+                    strokeWidth={2}
+                    className="size-4 shrink-0 text-muted-foreground"
+                  />
+                  <span className="min-w-0 flex-1 truncate font-medium" title={project.name}>
+                    {project.name}
+                  </span>
+                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                        aria-label={`Actions for project ${project.name}`}
+                        title="Project actions"
+                      />
+                    }
+                    onClick={(event) => event.stopPropagation()}
                   >
-                    <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-                    Rename project
-                  </DropdownMenuItem>
-                  <DropdownMenuItem variant="destructive" onClick={() => setDeleteFor(project)}>
-                    <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-                    Delete project
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem onClick={() => setDetailsFor(project)}>
+                      <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
+                      Project details
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setAddFor(project)}>
+                      <HugeiconsIcon icon={UserAdd01Icon} strokeWidth={2} />
+                      Add session…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setDialog({ id: project.id, name: project.name })}
+                    >
+                      <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
+                      Rename project
+                    </DropdownMenuItem>
+                    <DropdownMenuItem variant="destructive" onClick={() => setDeleteFor(project)}>
+                      <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                      Delete project
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
               {open && (
                 <div className="ml-4 flex flex-col gap-1 border-l border-border/50 pl-1.5">
                   {members.length === 0 && (
