@@ -316,7 +316,7 @@ export const make = (
           if (info?.locked === true && !takeover) {
             yield* teardown;
             yield* close;
-            return { attached: false, readOnly: true };
+            return { attached: false, readOnly: true, agentId: agent.id };
           }
 
           emit(live, translator.startRun());
@@ -329,13 +329,15 @@ export const make = (
             emit(live, translator.endTurn());
             // A load failure is authoritative: re-probe once, treating a lock as read-only.
             const locks = yield* lockState(session.workingDirectory, true);
-            if (locks.get(id)?.locked === true) return { attached: false, readOnly: true };
+            if (locks.get(id)?.locked === true) {
+              return { attached: false, readOnly: true, agentId: agent.id };
+            }
             return yield* Effect.fail(loaded.left);
           }
           emit(live, translator.endTurn());
           touchIdle(live);
           liveSessions.set(id, live);
-          return { attached: true, readOnly: false };
+          return { attached: true, readOnly: false, agentId: agent.id };
         }).pipe(
           Effect.withSpan("sepia.control.attach_work", {
             attributes: { "sepia.session.id": id },
@@ -356,7 +358,7 @@ export const make = (
         const existing = liveSessions.get(id);
         if (existing !== undefined) {
           if (attachOptions?.agentId === undefined || existing.agentId === attachOptions.agentId) {
-            return { attached: true, readOnly: false };
+            return { attached: true, readOnly: false, agentId: existing.agentId };
           }
           // The id is held by another agent's live session; liveSessions is
           // keyed by bare id and cannot host both copies at once.

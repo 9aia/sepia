@@ -55,6 +55,9 @@ POST   /api/sessions/:id/permission   reply to a pending permission
 PATCH  /api/sessions/:id              meta overlay { title?, pinned?, archived?, projectIds?, model? }
 DELETE /api/sessions/:id
 POST   /api/sessions/:id/convert      { agent } → new session in another agent's store
+POST   /api/sessions/import           { agent, cwd?, title?, history } → session summary
+                                        (IR messages from GET .../history; the
+                                        "Resume on…" write — convert with explicit IR)
 GET    /api/sessions/:id/stream       AG-UI SSE (live run)
 GET    /api/events                    node event feed (see below)
 GET    /api/projects                  node-local projects

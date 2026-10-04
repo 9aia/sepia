@@ -2,6 +2,7 @@ import type {
   AgentInfo,
   AttachResult,
   CreateSessionInput,
+  HistoryMessage,
   HistoryPage,
   NodeDescriptor,
   SessionSummary,
@@ -233,6 +234,86 @@ export async function convertSession(
     {
       method: "POST",
       body: JSON.stringify({ agent }),
+    },
+    target,
+  );
+}
+
+export interface ImportSessionInput {
+  readonly agent: string;
+  readonly cwd?: string;
+  readonly title?: string;
+  readonly history: ReadonlyArray<HistoryMessage>;
+}
+
+/** POST /api/sessions/import — write explicit IR history into an agent's store. */
+export async function importSession(
+  input: ImportSessionInput,
+  target?: ApiTarget,
+): Promise<SessionSummary> {
+  return request<SessionSummary>(
+    "/api/sessions/import",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    target,
+  );
+}
+
+const RESUME_PAGE_SIZE = 500;
+
+/**
+ * Every backlog page, oldest → newest. The server pages backwards through
+ * `before`; `start > 0` on a page means earlier messages still exist.
+ */
+export async function fetchAllHistory(
+  id: string,
+  options?: { agent?: string },
+  source?: ApiTarget,
+): Promise<HistoryMessage[]> {
+  const pages: HistoryMessage[][] = [];
+  let before: number | undefined;
+  for (;;) {
+    const page = await getHistory(
+      id,
+      { limit: RESUME_PAGE_SIZE, before, agent: options?.agent },
+      source,
+    );
+    pages.unshift(page.messages);
+    if (page.start <= 0 || page.messages.length === 0) break;
+    before = page.start;
+  }
+  return pages.flat();
+}
+
+export interface ResumeOptions {
+  /** Scopes the history lookup — bare ids collide across the source's agents. */
+  readonly fromAgent?: string;
+  readonly cwd?: string;
+  readonly title?: string;
+}
+
+/**
+ * "Resume on…": pull the full IR history off the source node, then replay it
+ * into `agent`'s store on the target node via POST /api/sessions/import.
+ * Same node + different agent is the same-machine agent switch; a peer
+ * target moves the session to another machine.
+ */
+export async function resumeSession(
+  source: ApiTarget | undefined,
+  id: string,
+  agent: string,
+  target: ApiTarget | undefined,
+  options?: ResumeOptions,
+): Promise<SessionSummary> {
+  const history = await fetchAllHistory(id, { agent: options?.fromAgent }, source);
+  return importSession(
+    {
+      agent,
+      history,
+      ...(options?.cwd !== undefined ? { cwd: options.cwd } : {}),
+      ...(options?.title !== undefined ? { title: options.title } : {}),
     },
     target,
   );

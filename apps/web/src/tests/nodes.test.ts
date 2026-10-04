@@ -56,6 +56,7 @@ const session = (id: string, projectIds: string[] = []): SessionSummary => ({
   archived: false,
   projectIds,
   model: null,
+  spans: [],
 });
 
 beforeEach(() => {

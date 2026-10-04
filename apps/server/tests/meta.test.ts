@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { createMetaStore } from "../src/meta";
+import { appendSpan, createMetaStore } from "../src/meta";
 
 const tempStore = () => {
   const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
@@ -145,6 +145,67 @@ describe("createMetaStore", () => {
     const path = join(dir, "meta.json");
     writeFileSync(path, JSON.stringify([{ title: "zero" }]));
     expect(createMetaStore(path).of("0")?.title).toBe("zero");
+  });
+
+  it("records run spans and round-trips them through the meta file", () => {
+    const { path, store } = tempStore();
+    store.addSpan("s1", { at: 1_000, agent: "devin", node: "node_a" });
+    expect(store.of("s1")?.spans).toEqual([{ at: 1_000, agent: "devin", node: "node_a" }]);
+
+    // Persisted — a fresh store over the same file sees the span.
+    const reloaded = createMetaStore(path);
+    expect(reloaded.of("s1")?.spans).toEqual([{ at: 1_000, agent: "devin", node: "node_a" }]);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toHaveProperty("sessions.s1.spans", [
+      { at: 1000, agent: "devin", node: "node_a" },
+    ]);
+  });
+
+  it("addSpan is idempotent on the trailing agent+node and keeps span order", () => {
+    const { store } = tempStore();
+    store.addSpan("s1", { at: 1, agent: "devin", node: "node_a" });
+    store.addSpan("s1", { at: 2, agent: "devin", node: "node_a" }); // same run — deduped
+    store.addSpan("s1", { at: 3, agent: "cline", node: "node_a" }); // new agent
+    store.addSpan("s1", { at: 4, agent: "cline", node: "node_b" }); // new node
+    store.addSpan("s1", { at: 5, agent: "devin", node: "node_a" }); // moved back — new span
+
+    expect(store.of("s1")?.spans).toEqual([
+      { at: 1, agent: "devin", node: "node_a" },
+      { at: 3, agent: "cline", node: "node_a" },
+      { at: 4, agent: "cline", node: "node_b" },
+      { at: 5, agent: "devin", node: "node_a" },
+    ]);
+  });
+
+  it("appendSpan returns the input unchanged on a duplicate tail", () => {
+    const spans = [{ at: 1, agent: "devin", node: "n" }];
+    expect(appendSpan(spans, { at: 2, agent: "devin", node: "n" })).toBe(spans);
+    expect(appendSpan(undefined, { at: 1, agent: "d", node: "n" })).toEqual([
+      { at: 1, agent: "d", node: "n" },
+    ]);
+  });
+
+  it("normalization drops malformed span entries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
+    const path = join(dir, "meta.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        sessions: {
+          s1: {
+            spans: [
+              { at: 1, agent: "devin", node: "node_a" },
+              { at: "later", agent: "devin", node: "node_a" },
+              { at: 2, agent: "", node: "node_a" },
+              "nope",
+              { at: 3, agent: "cline" },
+            ],
+          },
+        },
+      }),
+    );
+    expect(createMetaStore(path).of("s1")?.spans).toEqual([
+      { at: 1, agent: "devin", node: "node_a" },
+    ]);
   });
 
   it("creates the parent directory on first write", () => {

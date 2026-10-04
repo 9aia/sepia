@@ -36,6 +36,8 @@ import {
 } from "./ui/alert-dialog";
 
 import type { LiveMessage } from "../lib/liveMessages";
+import type { RunSpan } from "../lib/types";
+import { spanNodeLabel } from "../lib/nodes";
 import { cancel, sendPrompt, type StreamStatus } from "../lib/api";
 import { sepiaStore, setReplyTo } from "../lib/store";
 import { formatReplyPrompt, replyAuthorLabel, type ReplyQuote } from "../lib/reply";
@@ -75,8 +77,18 @@ import {
   type PromptInputMessage,
 } from "./prompt-input";
 
+/** Provenance separator — "devin @ thinkpad" — between run segments. */
+const spanLabel = (span: RunSpan): string => `${span.agent} @ ${spanNodeLabel(span.node)}`;
+
 function RowContent({ row }: { readonly row: ChatRow }) {
   if (row.kind === "system") return <SystemContextRow context={row.context} />;
+  if (row.kind === "span") {
+    return (
+      <Marker variant="separator">
+        <MarkerContent>{row.label}</MarkerContent>
+      </Marker>
+    );
+  }
   if (row.kind === "history") {
     const message = row.message;
     if (message.role === "tool") {
@@ -217,13 +229,16 @@ function ChatRows({
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index];
             if (row === undefined) return null;
-            const isTurnStart = row.kind !== "system" && row.message.role === "user";
+            const isTurnStart =
+              (row.kind === "history" || row.kind === "live") && row.message.role === "user";
             const key =
               row.kind === "history"
                 ? `h-${row.message.createdAt}-${virtualRow.index}`
                 : row.kind === "system"
                   ? `sys-${virtualRow.index}`
-                  : `l-${row.message.id}`;
+                  : row.kind === "span"
+                    ? `span-${row.at}-${virtualRow.index}`
+                    : `l-${row.message.id}`;
             return (
               <MessageScrollerItem
                 key={key}
@@ -415,10 +430,15 @@ export function SessionChat({
   const scrollToEnd = useRef<(() => void) | null>(null);
   const scrollOnSent = useRef(false);
 
+  // Run provenance rides on the session row — the meta overlay's spans land
+  // in the merged sessions list.
+  const { data: sessions = [] } = useSessions();
+  const spans = sessions.find((s) => s.id === sessionId && s.agent === agent)?.spans;
+
   const rows = useMemo<ChatRow[]>(() => {
     const context = parseSystemContext(history.filter((m) => m.role === "system"));
-    return buildRows(history, liveMessages, context);
-  }, [history, liveMessages]);
+    return buildRows(history, liveMessages, context, spans, spanLabel);
+  }, [history, liveMessages, spans]);
 
   const send = (text: string): void => {
     // Consume any pending reply — the quote rides inside the sent prompt.

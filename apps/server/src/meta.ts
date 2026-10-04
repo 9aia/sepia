@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
+import type { RunSpan } from "sepia-session-control";
 
 /**
  * Sepia-owned per-session metadata (title overrides, pins, project
@@ -16,6 +17,13 @@ export interface SessionMeta {
   /** Preferred spawn model for this session — applied on next attach. */
   readonly model?: string | null;
   /**
+   * Run provenance: each `POST /api/sessions/:id/attach` appends a span
+   * recording which agent ran the session on which node — the same session
+   * can resume under different agents/machines (that's Sepia's purpose), so
+   * the transcript's segments stay attributable.
+   */
+  readonly spans?: ReadonlyArray<RunSpan>;
+  /**
    * Recorded on `POST /api/sessions`: a created session may not exist in the
    * agent's store yet (it flushes on first prompt), so the agent/cwd pair is
    * what lets the server still identify it after a restart.
@@ -24,6 +32,35 @@ export interface SessionMeta {
   readonly cwd?: string;
   readonly createdAt?: string;
 }
+
+/**
+ * Idempotent span append — a re-attach under the same agent+node is the same
+ * run continuing, not a new one. Returns the input unchanged when the last
+ * span already matches, so callers can skip the write.
+ */
+export const appendSpan = (
+  spans: ReadonlyArray<RunSpan> | undefined,
+  span: RunSpan,
+): ReadonlyArray<RunSpan> => {
+  const last = spans?.[spans.length - 1];
+  if (last !== undefined && last.agent === span.agent && last.node === span.node) {
+    return spans ?? [];
+  }
+  return [...(spans ?? []), span];
+};
+
+const isRunSpan = (value: unknown): value is RunSpan => {
+  if (typeof value !== "object" || value === null) return false;
+  const raw = value as Record<string, unknown>;
+  return (
+    typeof raw.at === "number" &&
+    Number.isFinite(raw.at) &&
+    typeof raw.agent === "string" &&
+    raw.agent !== "" &&
+    typeof raw.node === "string" &&
+    raw.node !== ""
+  );
+};
 
 export interface Project {
   readonly id: string;
@@ -42,6 +79,8 @@ export interface MetaStore {
   /** Every recorded session meta, keyed by session id. */
   readonly sessions: () => Readonly<Record<string, SessionMeta>>;
   readonly patch: (id: string, patch: Partial<SessionMeta>) => void;
+  /** Record a run span; a no-op when it repeats the current agent+node. */
+  readonly addSpan: (id: string, span: RunSpan) => void;
   readonly remove: (id: string) => void;
   readonly listProjects: () => ReadonlyArray<Project>;
   readonly createProject: (name: string) => Project;
@@ -75,6 +114,7 @@ export const createMetaStore = (path: string): MetaStore => {
           ? [raw.projectId]
           : [],
       model: raw.model === null || typeof raw.model === "string" ? raw.model : undefined,
+      spans: Array.isArray(raw.spans) ? raw.spans.filter(isRunSpan) : [],
       agent: typeof raw.agent === "string" ? raw.agent : undefined,
       cwd: typeof raw.cwd === "string" ? raw.cwd : undefined,
       createdAt: typeof raw.createdAt === "string" ? raw.createdAt : undefined,
@@ -125,6 +165,11 @@ export const createMetaStore = (path: string): MetaStore => {
     of: (id) => data.sessions[id],
     sessions: () => data.sessions,
     patch: patchSession,
+    addSpan: (id, span) => {
+      const spans = appendSpan(data.sessions[id]?.spans, span);
+      if (spans === data.sessions[id]?.spans) return; // duplicate — skip the write
+      patchSession(id, { spans });
+    },
     remove: (id) => {
       if (!(id in data.sessions)) return;
       const next = { ...data.sessions };

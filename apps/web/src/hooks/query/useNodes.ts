@@ -52,6 +52,20 @@ export const useNodeStatuses = (
     })),
   }).map((result) => (result.data === undefined ? undefined : result.isSuccess));
 
+/**
+ * Each peer's own /api/node descriptor, aligned with `peers` by index —
+ * powers menus that list a peer's agents (e.g. "Resume on…").
+ */
+export const usePeerDescriptors = (peers: ReadonlyArray<PeerNode>) =>
+  useQueries({
+    queries: peers.map((peer) => ({
+      queryKey: [...queryKeys.node, "descriptor", peer.id],
+      queryFn: () => getNode(peerTarget(peer)),
+      retry: 1,
+      staleTime: 60_000,
+    })),
+  }).map((result) => result.data);
+
 /** Add + validate a peer, then refetch every merged list so it appears. */
 export const useAddNode = () => {
   const queryClient = useQueryClient();

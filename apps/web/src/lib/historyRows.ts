@@ -1,11 +1,49 @@
-import type { HistoryMessage } from "./types";
+import type { HistoryMessage, RunSpan } from "./types";
 import type { LiveMessage } from "./liveMessages";
 import type { SystemContext } from "./systemContext";
 
 export type ChatRow =
   | { readonly kind: "system"; readonly context: SystemContext }
   | { readonly kind: "history"; readonly message: HistoryMessage }
+  | { readonly kind: "span"; readonly label: string; readonly at: number }
   | { readonly kind: "live"; readonly message: LiveMessage };
+
+export type SpanLabel = (span: RunSpan) => string;
+
+const defaultSpanLabel: SpanLabel = (span) => `${span.agent} @ ${span.node}`;
+
+/**
+ * Marks which agent+node ran each transcript segment. The first span gets a
+ * leading marker so every segment is labeled; each later span's marker sits
+ * before the first message at/after its `at` (a span with no messages yet —
+ * e.g. the current attach — trails the backlog and labels upcoming live
+ * rows). Only rendered once a session has ≥2 spans; below that the single
+ * continuous run carries no provenance signal worth a separator.
+ */
+const insertSpanMarkers = (
+  rows: ChatRow[],
+  conversation: ReadonlyArray<HistoryMessage>,
+  spans: ReadonlyArray<RunSpan>,
+  labelFor: SpanLabel,
+): void => {
+  const ordered = [...spans].sort((a, b) => a.at - b.at);
+  const [first, ...rest] = ordered;
+  if (first === undefined) return;
+  rows.push({ kind: "span", label: labelFor(first), at: first.at });
+  let next = 0;
+  for (const message of conversation) {
+    while (next < rest.length && message.createdAt >= rest[next]!.at) {
+      const span = rest[next]!;
+      rows.push({ kind: "span", label: labelFor(span), at: span.at });
+      next++;
+    }
+    rows.push({ kind: "history", message });
+  }
+  for (; next < rest.length; next++) {
+    const span = rest[next]!;
+    rows.push({ kind: "span", label: labelFor(span), at: span.at });
+  }
+};
 
 /**
  * All system nodes roll up into one context card at the top — devin emits
@@ -18,6 +56,8 @@ export const buildRows = (
   history: ReadonlyArray<HistoryMessage>,
   liveMessages: ReadonlyArray<LiveMessage>,
   context: SystemContext,
+  spans?: ReadonlyArray<RunSpan>,
+  spanLabel: SpanLabel = defaultSpanLabel,
 ): ChatRow[] => {
   const conversation: HistoryMessage[] = [];
   for (const message of history) {
@@ -37,11 +77,14 @@ export const buildRows = (
     context.reports.length === 0 &&
     context.promptText === "" &&
     context.platform === null;
-  return [
-    ...(contextEmpty ? [] : [{ kind: "system", context } satisfies ChatRow]),
-    ...conversation.map((message): ChatRow => ({ kind: "history", message })),
-    ...liveMessages.map((message): ChatRow => ({ kind: "live", message })),
-  ];
+  const rows: ChatRow[] = contextEmpty ? [] : [{ kind: "system", context }];
+  if (spans !== undefined && spans.length >= 2) {
+    insertSpanMarkers(rows, conversation, spans, spanLabel);
+  } else {
+    for (const message of conversation) rows.push({ kind: "history", message });
+  }
+  for (const message of liveMessages) rows.push({ kind: "live", message });
+  return rows;
 };
 
 /**

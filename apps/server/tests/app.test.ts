@@ -33,7 +33,14 @@ const SESSION: SessionSummary = {
 };
 
 // GET /api/sessions always attaches the meta-overlay fields, meta store or not.
-const SESSION_JSON = { ...SESSION, pinned: false, archived: false, projectIds: [], model: null };
+const SESSION_JSON = {
+  ...SESSION,
+  pinned: false,
+  archived: false,
+  projectIds: [],
+  model: null,
+  spans: [],
+};
 
 const HISTORY: ReadonlyArray<HistoryMessage> = [
   { role: "user", content: "hello", createdAt: 1 },
@@ -92,7 +99,11 @@ const makeFakePlane = (): FakePlane => {
             return { id: "sess-new", agentId: options.agentId ?? "devin" };
           }),
     attach: (_id, options) =>
-      Effect.succeed({ attached: true, readOnly: options?.takeover !== true }),
+      Effect.succeed({
+        attached: true,
+        readOnly: options?.takeover !== true,
+        agentId: options?.agentId ?? "devin",
+      }),
     detach: () => Effect.void,
     prompt: (id, text) =>
       Effect.sync(() => {
@@ -401,10 +412,65 @@ describe("createApp", () => {
 
     const attached = await app(post("/api/sessions/sess-1/attach", {}));
     expect(attached.status).toBe(200);
-    await expect(attached.json()).resolves.toEqual({ attached: true, readOnly: true });
+    await expect(attached.json()).resolves.toEqual({
+      attached: true,
+      readOnly: true,
+      agentId: "devin",
+    });
 
     const taken = await app(post("/api/sessions/sess-1/attach", { takeover: true }));
-    await expect(taken.json()).resolves.toEqual({ attached: true, readOnly: false });
+    await expect(taken.json()).resolves.toEqual({
+      attached: true,
+      readOnly: false,
+      agentId: "devin",
+    });
+  });
+
+  it("POST /api/sessions/:id/attach records a run span in the meta overlay", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
+    const meta = createMetaStore(join(dir, "meta.json"));
+    const app = createApp(plane, {
+      meta,
+      node: { id: "node_test", name: "testbox", version: "0.0.0" },
+    });
+
+    const res = await app(post("/api/sessions/sess-1/attach?agent=cline", {}));
+    expect(res.status).toBe(200);
+    const spans = meta.of("sess-1")?.spans;
+    expect(spans).toHaveLength(1);
+    expect(spans?.[0]).toMatchObject({ agent: "cline", node: "node_test" });
+    expect(typeof spans?.[0]?.at).toBe("number");
+
+    // A same-agent re-attach on this node continues the same run — no dup.
+    await app(post("/api/sessions/sess-1/attach?agent=cline", {}));
+    expect(meta.of("sess-1")?.spans).toHaveLength(1);
+
+    // Resuming under another agent opens a new span.
+    await app(post("/api/sessions/sess-1/attach?agent=devin", {}));
+    expect(meta.of("sess-1")?.spans?.map((s) => s.agent)).toEqual(["cline", "devin"]);
+
+    // The spans ride out on the session list.
+    const listed = await app(get("/api/sessions"));
+    const body = (await listed.json()) as {
+      sessions: Array<{ spans?: Array<unknown> }>;
+    };
+    expect(body.sessions[0]?.spans).toHaveLength(2);
+  });
+
+  it("a read-only attach records no span", async () => {
+    const { plane } = makeFakePlane();
+    const locked: ControlPlaneService = {
+      ...plane,
+      attach: () => Effect.succeed({ attached: false, readOnly: true, agentId: "devin" }),
+    };
+    const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
+    const meta = createMetaStore(join(dir, "meta.json"));
+    const app = createApp(locked, { meta });
+
+    const res = await app(post("/api/sessions/sess-1/attach", {}));
+    expect(res.status).toBe(200);
+    expect(meta.of("sess-1")?.spans ?? []).toEqual([]);
   });
 
   it("POST /api/sessions/:id/prompt forwards text and returns ok", async () => {
@@ -974,6 +1040,120 @@ describe("createApp", () => {
   // throwing stub under node. Cover it in tests/e2e.ts (runs under `bun`)
   // once a fixture store pair exists.
   it.todo("POST /api/sessions/:id/convert returns { sessionId } for a real store pair");
+
+  const IMPORT_HISTORY = [
+    { role: "system", content: "sys", createdAt: 1_000 },
+    { role: "user", content: "hello", createdAt: 2_000 },
+    { role: "assistant", content: "hi", createdAt: 3_000 },
+    { role: "tool", content: "out", createdAt: 4_000, toolName: "exec" },
+  ];
+
+  it("POST /api/sessions/import returns 501 when conversion is not configured", async () => {
+    const { plane } = makeFakePlane();
+    const response = await createApp(plane)(
+      post("/api/sessions/import", { agent: "cline", history: IMPORT_HISTORY }),
+    );
+
+    expect(response.status).toBe(501);
+    await expect(response.json()).resolves.toEqual({
+      error: "Import is not configured on this server",
+    });
+  });
+
+  it("POST /api/sessions/import rejects a bad agent and malformed history", async () => {
+    const { plane } = makeFakePlane();
+    const app = createApp(plane, {
+      convert: { dbPath: "/unused", clineDir: "/unused" },
+      importSession: () => Effect.succeed("never"),
+    });
+
+    const badAgent = await app(
+      post("/api/sessions/import", { agent: "cursor", history: IMPORT_HISTORY }),
+    );
+    expect(badAgent.status).toBe(400);
+    await expect(badAgent.json()).resolves.toEqual({
+      error: "agent must be 'cline' or 'devin'",
+    });
+
+    const noHistory = await app(post("/api/sessions/import", { agent: "cline" }));
+    expect(noHistory.status).toBe(400);
+
+    const emptyHistory = await app(post("/api/sessions/import", { agent: "cline", history: [] }));
+    expect(emptyHistory.status).toBe(400);
+
+    const badItem = await app(
+      post("/api/sessions/import", {
+        agent: "cline",
+        history: [{ role: "narrator", content: "x", createdAt: 1 }],
+      }),
+    );
+    expect(badItem.status).toBe(400);
+
+    const badCwd = await app(
+      post("/api/sessions/import", { agent: "cline", cwd: "  ", history: IMPORT_HISTORY }),
+    );
+    expect(badCwd.status).toBe(400);
+  });
+
+  it("POST /api/sessions/import rebuilds the IR and returns the new session summary", async () => {
+    const { plane } = makeFakePlane();
+    const imported: Array<{ id: string; agent: string; nodes: number; promptHistory: number }> = [];
+    const app = createApp(plane, {
+      convert: { dbPath: "/unused", clineDir: "/unused" },
+      importSession: (session, agent) =>
+        Effect.sync(() => {
+          imported.push({
+            id: session.id,
+            agent,
+            nodes: session.nodes.length,
+            promptHistory: session.promptHistory.length,
+          });
+          return "imported-1";
+        }),
+    });
+
+    const response = await app(
+      post("/api/sessions/import", {
+        agent: "cline",
+        cwd: "/home/dev/project",
+        title: "Resumed work",
+        history: IMPORT_HISTORY,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      id: string;
+      title: string;
+      cwd: string;
+      agent: string;
+      updatedAt: string;
+    };
+    expect(body).toMatchObject({
+      id: "imported-1",
+      title: "Resumed work",
+      cwd: "/home/dev/project",
+      agent: "cline",
+    });
+    expect(imported).toEqual([
+      { id: expect.any(String), agent: "cline", nodes: 4, promptHistory: 1 },
+    ]);
+  });
+
+  it("POST /api/sessions/import maps an executor failure to 500 internal", async () => {
+    const { plane } = makeFakePlane();
+    const app = createApp(plane, {
+      convert: { dbPath: "/unused", clineDir: "/unused" },
+      importSession: () => Effect.fail(new Error("store exploded")),
+    });
+
+    const response = await app(
+      post("/api/sessions/import", { agent: "devin", history: IMPORT_HISTORY }),
+    );
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { error: string; code?: string };
+    expect(body.code).toBe("internal");
+  });
 });
 
 describe("push endpoints", () => {

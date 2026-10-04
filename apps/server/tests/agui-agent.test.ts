@@ -40,7 +40,7 @@ const makePlane = (over: Partial<ControlPlaneService> = {}): FakePlane => {
     createSession: () => Effect.succeed({ id: "new", agentId: "devin" }),
     attach: (id, options) => {
       calls.attach.push({ id, agentId: options?.agentId });
-      return Effect.succeed({ attached: true, readOnly: false });
+      return Effect.succeed({ attached: true, readOnly: false, agentId: "devin" });
     },
     detach: () => Effect.void,
     prompt: (id, text, agentId) => {
@@ -177,7 +177,7 @@ describe("createAguiAgentHandler — plane failures", () => {
 
   it("returns 409 when the session is locked by another process", async () => {
     const { plane } = makePlane({
-      attach: () => Effect.succeed({ attached: false, readOnly: true }),
+      attach: () => Effect.succeed({ attached: false, readOnly: true, agentId: "devin" }),
     });
     const res = await handler(plane)(runInput(BODY));
     expect(res.status).toBe(409);

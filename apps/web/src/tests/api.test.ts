@@ -20,6 +20,7 @@ import {
   renameProject,
   renameSession,
   respondToPermission,
+  resumeSession,
   sendPrompt,
   setConfigKey,
   setToken,
@@ -366,5 +367,91 @@ describe("subscribeSessionStream", () => {
     const unsubscribe = subscribeSessionStream("s1", () => {});
     unsubscribe();
     expect(FakeEventSource.instances[0]?.closed).toBe(true);
+  });
+});
+
+describe("resumeSession", () => {
+  const messages = (ids: ReadonlyArray<number>) =>
+    ids.map((n) => ({ role: "user" as const, content: `m${n}`, createdAt: n * 1000 }));
+
+  const RESUMED = {
+    id: "imported-1",
+    title: "Resumed",
+    cwd: "/work",
+    agent: "cline",
+    updatedAt: new Date(0).toISOString(),
+    locked: false,
+    lockHolderPid: null,
+    source: "cline",
+    busy: false,
+    pinned: false,
+    archived: false,
+    projectIds: [],
+    model: null,
+    spans: [],
+  };
+
+  it("pages backwards through history and posts the full IR to the target node", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/history")) {
+        const before = new URL(url, "http://x").searchParams.get("before");
+        return before === null
+          ? Response.json({ messages: messages([3, 4]), total: 5, start: 3 })
+          : Response.json({ messages: messages([0, 1, 2]), total: 5, start: 0 });
+      }
+      if (url.endsWith("/api/sessions/import") && init?.method === "POST") {
+        return Response.json(RESUMED, { status: 201 });
+      }
+      return new Response("nope", { status: 404 });
+    });
+
+    const source: ApiTarget = { baseUrl: "https://src.example", token: "s-tok" };
+    const target: ApiTarget = { baseUrl: "https://dst.example", token: "d-tok" };
+    const result = await resumeSession(source, "s 1", "cline", target, {
+      fromAgent: "devin",
+      cwd: "/work",
+      title: "Resumed",
+    });
+
+    expect(result).toEqual(RESUMED);
+
+    // Two history pages: latest window first, then before=start until 0.
+    expect(calls[0]?.url).toBe(
+      "https://src.example/api/sessions/s%201/history?limit=500&agent=devin",
+    );
+    expect(calls[1]?.url).toBe(
+      "https://src.example/api/sessions/s%201/history?limit=500&before=3&agent=devin",
+    );
+
+    // The import lands on the target node, with every message in order.
+    const post = calls[2];
+    expect(post?.url).toBe("https://dst.example/api/sessions/import");
+    expect(post?.init?.method).toBe("POST");
+    expect(post?.init?.headers).toMatchObject({ authorization: "Bearer d-tok" });
+    const body = JSON.parse(post?.init?.body as string) as {
+      agent: string;
+      cwd: string;
+      title: string;
+      history: Array<{ content: string }>;
+    };
+    expect(body.agent).toBe("cline");
+    expect(body.cwd).toBe("/work");
+    expect(body.title).toBe("Resumed");
+    expect(body.history.map((m) => m.content)).toEqual(["m0", "m1", "m2", "m3", "m4"]);
+  });
+
+  it("sends a single page when start is already 0", async () => {
+    stubFetch((url, _init) =>
+      url.includes("/history")
+        ? Response.json({ messages: messages([0]), total: 1, start: 0 })
+        : Response.json(RESUMED, { status: 201 }),
+    );
+
+    const result = await resumeSession(undefined, "s1", "devin", undefined);
+    expect(result).toEqual(RESUMED);
+    expect(calls[0]?.url).toBe("/api/sessions/s1/history?limit=500");
+    expect(calls[1]?.url).toBe("/api/sessions/import");
+    const body = JSON.parse(calls[1]?.init?.body as string) as { history: unknown[] };
+    expect(body.history).toHaveLength(1);
   });
 });

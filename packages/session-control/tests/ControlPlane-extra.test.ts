@@ -178,7 +178,7 @@ describe("attach — error and lock paths", () => {
     const plane = await makeService([agent.runtime], repository([session("s1")]));
 
     const result = await runEither(plane.attach("s1"));
-    expect(result).toEqual(Either.right({ attached: false, readOnly: true }));
+    expect(result).toEqual(Either.right({ attached: false, readOnly: true, agentId: "devin" }));
     expect(agent.conn.closed).toBe(true);
     await Effect.runPromise(plane.closeAll());
   });
@@ -193,7 +193,7 @@ describe("attach — error and lock paths", () => {
     if (Either.isLeft(result)) expect(result.left.code).toBe("conflict");
     // Same-agent reattach is a cheap no-op.
     const same = await runEither(plane.attach(created.id, { agentId: "devin" }));
-    expect(same).toEqual(Either.right({ attached: true, readOnly: false }));
+    expect(same).toEqual(Either.right({ attached: true, readOnly: false, agentId: "devin" }));
     await Effect.runPromise(plane.closeAll());
   });
 });

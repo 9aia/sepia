@@ -1,7 +1,8 @@
 import { Console, Effect, Option } from "effect";
 import * as Cline from "./Cline.js";
 import { ClineStore } from "./ClineStore.js";
-import { ConversionError, Session } from "./Domain.js";
+import * as Devin from "./Devin.js";
+import { ConversionError, MessageNode, PromptHistoryEntry, Session } from "./Domain.js";
 import { SessionRepository } from "./Storage.js";
 
 /** A cogs blob is usable when its `core/model` cog resolves to a real model. */
@@ -36,6 +37,74 @@ const withModel = (cogsJson: string, model: string): string => {
   return cogsJson;
 };
 
+// Sepia cannot mint Devin's cog scaffolding (model cog, tool allow-list,
+// profile prompt), so graft it from a sibling session in the store —
+// same working directory preferred — or at least fill the model cog.
+const graftCogs = (session: Session) =>
+  Effect.gen(function* () {
+    const repo = yield* SessionRepository;
+    const donors = yield* repo.list().pipe(Effect.orElseSucceed(() => [] as const));
+    const donor =
+      donors.find(
+        (s) =>
+          s.id !== session.id &&
+          s.workingDirectory === session.workingDirectory &&
+          modelCog(s.cogsJson),
+      ) ?? donors.find((s) => s.id !== session.id && modelCog(s.cogsJson));
+    if (donor) {
+      yield* Console.log(`Grafted cogs from session ${donor.id}`);
+      return donor.cogsJson;
+    }
+    yield* Console.log("Warning: no donor session found to graft cogs from; resume may fail");
+    return withModel(session.cogsJson, session.model);
+  });
+
+/**
+ * Save a session into the Devin store, grafting cog scaffolding from a donor
+ * session when the session's own cogs carry no usable model. Sessions that
+ * already exist are left untouched. Shared by `importCline` (Cline dir →
+ * Devin store) and `POST /api/sessions/import` (explicit IR → Devin store).
+ */
+export const importSession = (session: Session, importedLog?: string) =>
+  Effect.gen(function* () {
+    const repo = yield* SessionRepository;
+    const exists = yield* repo.hasSession(session.id);
+    if (exists) {
+      yield* Console.log(`Session ${session.id} is already imported; leaving it untouched`);
+      return session.id;
+    }
+
+    const cogsJson = yield* graftCogs(session);
+    yield* repo.save(
+      Session.make({
+        id: session.id,
+        title: session.title,
+        workingDirectory: session.workingDirectory,
+        backendType: session.backendType,
+        agentMode: session.agentMode,
+        model: session.model,
+        createdAt: session.createdAt,
+        lastActivityAt: session.lastActivityAt,
+        mainChainId: session.mainChainId,
+        shellLastSeenIndex: session.shellLastSeenIndex,
+        cogsJson,
+        workspaceDirs: session.workspaceDirs,
+        hidden: session.hidden,
+        metadata: session.metadata,
+        nodes: session.nodes,
+        promptHistory: session.promptHistory,
+      }),
+    );
+    yield* Console.log(importedLog ?? `Imported session ${session.id} into storage`);
+    return session.id;
+  }).pipe(
+    Effect.mapError((error) =>
+      error instanceof ConversionError
+        ? error
+        : new ConversionError({ message: `Import failed: ${String(error)}`, cause: error }),
+    ),
+  );
+
 export const importCline = (
   clineDir: string,
   sessionId?: string,
@@ -57,48 +126,7 @@ export const importCline = (
       return storedId;
     }
 
-    // Sepia cannot mint Devin's cog scaffolding (model cog, tool allow-list,
-    // profile prompt), so graft it from a sibling session in the store —
-    // same working directory preferred — or at least fill the model cog.
-    let cogsJson = session.cogsJson;
-    const donors = yield* repo.list().pipe(Effect.orElseSucceed(() => [] as const));
-    const donor =
-      donors.find(
-        (s) =>
-          s.id !== session.id &&
-          s.workingDirectory === session.workingDirectory &&
-          modelCog(s.cogsJson),
-      ) ?? donors.find((s) => s.id !== session.id && modelCog(s.cogsJson));
-    if (donor) {
-      cogsJson = donor.cogsJson;
-      yield* Console.log(`Grafted cogs from session ${donor.id}`);
-    } else {
-      cogsJson = withModel(cogsJson, session.model);
-      yield* Console.log("Warning: no donor session found to graft cogs from; resume may fail");
-    }
-
-    yield* repo.save(
-      Session.make({
-        id: session.id,
-        title: session.title,
-        workingDirectory: session.workingDirectory,
-        backendType: session.backendType,
-        agentMode: session.agentMode,
-        model: session.model,
-        createdAt: session.createdAt,
-        lastActivityAt: session.lastActivityAt,
-        mainChainId: session.mainChainId,
-        shellLastSeenIndex: session.shellLastSeenIndex,
-        cogsJson,
-        workspaceDirs: session.workspaceDirs,
-        hidden: session.hidden,
-        metadata: session.metadata,
-        nodes: session.nodes,
-        promptHistory: session.promptHistory,
-      }),
-    );
-    yield* Console.log(`Imported Cline session ${session.id} into storage`);
-    return session.id;
+    return yield* importSession(session, `Imported Cline session ${session.id} into storage`);
   }).pipe(
     Effect.mapError((error) =>
       error instanceof ConversionError
@@ -176,3 +204,82 @@ export const listSessions = () =>
       }
     }
   });
+
+/** One flattened IR message — the wire shape of `GET /api/sessions/:id/history`. */
+export interface ImportedHistoryMessage {
+  readonly role: "system" | "user" | "assistant" | "tool";
+  readonly content: string;
+  /** Epoch milliseconds. */
+  readonly createdAt: number;
+  readonly toolName?: string;
+}
+
+const historyMessageSeconds = (ms: number, fallback: number): number =>
+  Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : fallback;
+
+/**
+ * Rebuild a `Session` IR from the flattened message list `GET
+ * /api/sessions/:id/history` serves. The projection drops tool-call ids and
+ * thinking, so nodes are re-chained linearly — what survives (roles, text,
+ * tool output, timestamps) is exactly what a portable resume needs. The
+ * result feeds the same write paths as `importCline`/`installCline`.
+ */
+export const sessionFromHistory = (input: {
+  readonly id: string;
+  readonly title: string;
+  readonly cwd: string;
+  readonly model: string;
+  readonly history: ReadonlyArray<ImportedHistoryMessage>;
+}): Session => {
+  const now = Math.floor(Date.now() / 1000);
+  const nodes = input.history.map((message, index) =>
+    MessageNode.make({
+      nodeId: index,
+      parentNodeId: index === 0 ? Option.none<number>() : Option.some(index - 1),
+      role: message.role,
+      content: message.content,
+      createdAt: historyMessageSeconds(message.createdAt, now),
+      toolName:
+        typeof message.toolName === "string" && message.toolName !== ""
+          ? Option.some(message.toolName)
+          : Option.none<string>(),
+      metadata:
+        message.role === "assistant"
+          ? { summarized_from: null, num_tokens_preceding: null, is_system_prefix: null }
+          : message.role === "system"
+            ? { summarized_from: null, num_tokens_preceding: null, is_system_prefix: index === 0 }
+            : null,
+    }),
+  );
+  const createdAt = nodes[0]?.createdAt ?? now;
+  const lastActivityAt = nodes[nodes.length - 1]?.createdAt ?? createdAt;
+  const promptHistory = input.history.flatMap((message) =>
+    message.role === "user"
+      ? [
+          PromptHistoryEntry.make({
+            content: message.content,
+            timestamp: Number.isFinite(message.createdAt) ? message.createdAt : now * 1000,
+            isShell: false,
+          }),
+        ]
+      : [],
+  );
+  return Session.make({
+    id: input.id,
+    title: input.title,
+    workingDirectory: input.cwd,
+    backendType: "windsurf",
+    agentMode: "accept-edits",
+    model: input.model,
+    createdAt,
+    lastActivityAt,
+    mainChainId: nodes.length > 0 ? nodes.length - 1 : 0,
+    shellLastSeenIndex: 0,
+    cogsJson: Devin.defaultCogsJson(),
+    workspaceDirs: "[]",
+    hidden: 0,
+    metadata: Devin.defaultSessionMetadata(),
+    nodes,
+    promptHistory,
+  });
+};

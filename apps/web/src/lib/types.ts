@@ -1,5 +1,17 @@
 export type AgentKind = "devin" | "cline";
 
+/**
+ * One run span of a session — which agent on which node continued it. The
+ * owning server's meta overlay appends a span per attach; `node` is that
+ * server's real node id (never the `"local"` alias used in row keys).
+ */
+export interface RunSpan {
+  /** Epoch milliseconds when the span was recorded (attach time). */
+  at: number;
+  agent: string;
+  node: string;
+}
+
 export interface SessionSummary {
   id: string;
   title: string;
@@ -20,6 +32,8 @@ export interface SessionSummary {
   archived: boolean;
   projectIds: string[];
   model: string | null;
+  /** Run provenance — which agent ran the session on which node, per attach. */
+  spans: RunSpan[];
 }
 
 export interface Project {
@@ -70,6 +84,8 @@ export interface HistoryPage {
 export interface AttachResult {
   attached: boolean;
   readOnly: boolean;
+  /** The agent the session attached under (server ≥ provenance spans). */
+  agentId?: string;
 }
 
 export interface PermissionRequest {

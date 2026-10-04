@@ -404,7 +404,11 @@ test("attaches by spawning the agent and loading the session", async () => {
   const { runtime, spawns } = fakeAgent(conn);
   const cp = await makeService({ agents: [runtime] }, repository([session("s1", "/work")]));
 
-  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({ attached: true, readOnly: false });
+  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({
+    attached: true,
+    readOnly: false,
+    agentId: "devin",
+  });
   expect(spawns).toEqual([{ cwd: "/work" }]);
   expect(conn.loaded).toEqual(["s1"]);
 });
@@ -417,7 +421,11 @@ test("returns read-only and skips loading when the session is locked", async () 
     repository([session("s1", "/work")]),
   );
 
-  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({ attached: false, readOnly: true });
+  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({
+    attached: false,
+    readOnly: true,
+    agentId: "devin",
+  });
   expect(conn.loaded).toEqual([]);
   expect(conn.closed).toBe(true);
 });
@@ -433,6 +441,7 @@ test("loads a locked session when takeover is requested", async () => {
   expect(await Effect.runPromise(cp.attach("s1", { takeover: true }))).toEqual({
     attached: true,
     readOnly: false,
+    agentId: "devin",
   });
   expect(conn.loaded).toEqual(["s1"]);
 });
@@ -443,7 +452,11 @@ test("re-attaching a live session does not spawn again", async () => {
   const cp = await makeService({ agents: [runtime] }, repository([session("s1", "/work")]));
 
   await Effect.runPromise(cp.attach("s1"));
-  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({ attached: true, readOnly: false });
+  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({
+    attached: true,
+    readOnly: false,
+    agentId: "devin",
+  });
   expect(spawns).toHaveLength(1);
   expect(conn.loaded).toEqual(["s1"]);
 });
@@ -478,7 +491,11 @@ test("treats a loadSession failure as authoritative and re-probes", async () => 
     repository([session("s1", "/work")]),
   );
 
-  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({ attached: false, readOnly: true });
+  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({
+    attached: false,
+    readOnly: true,
+    agentId: "devin",
+  });
   expect(first.closed).toBe(true);
   expect(spawned).toBe(2);
 });
@@ -518,7 +535,11 @@ test("attach tolerates a live session that is not in the store", async () => {
 
   await Effect.runPromise(cp.createSession({ cwd: "/work" }));
 
-  expect(await Effect.runPromise(cp.attach("new"))).toEqual({ attached: true, readOnly: false });
+  expect(await Effect.runPromise(cp.attach("new"))).toEqual({
+    attached: true,
+    readOnly: false,
+    agentId: "devin",
+  });
   expect(spawns).toHaveLength(1);
 });
 
@@ -738,8 +759,8 @@ test("concurrent attaches spawn the agent exactly once", async () => {
     Effect.runPromise(cp.attach("s1")),
   ]);
 
-  expect(first).toEqual({ attached: true, readOnly: false });
-  expect(second).toEqual({ attached: true, readOnly: false });
+  expect(first).toEqual({ attached: true, readOnly: false, agentId: "devin" });
+  expect(second).toEqual({ attached: true, readOnly: false, agentId: "devin" });
   expect(spawns).toHaveLength(1);
   expect(conn.loaded).toEqual(["s1"]);
 });

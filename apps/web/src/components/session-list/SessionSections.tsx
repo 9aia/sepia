@@ -17,6 +17,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { Project, SessionSummary } from "../../lib/types";
 import { formatUpdated, nodeKey, projectKey, sessionKey } from "../../lib/format";
 import { useCreateSession } from "../../hooks/query/useCreateSession";
+import { useNodeLabel, useNodes } from "../../hooks/query/useNodes";
 import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
 import { settingsStore } from "../../lib/settings";
@@ -728,13 +729,19 @@ function ProjectDetailsDialog({
   onClose: () => void;
   onSelectSession: (id: string) => void;
 }) {
+  // Projects are node-local — show which machine owns this one (peer rows
+  // also get the origin so the label isn't the only identifier).
+  const { peers } = useNodes();
+  const nodeLabel = useNodeLabel(project.node);
+  const peer = peers.find((p) => p.id === project.node);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{project.name}</DialogTitle>
           <DialogDescription>
-            {members.length} session{members.length === 1 ? "" : "s"}
+            {members.length} session{members.length === 1 ? "" : "s"} · on {nodeLabel}
+            {peer !== undefined && ` (${new URL(peer.url).host})`}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-1.5 px-2">

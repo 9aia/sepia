@@ -7,6 +7,7 @@ import {
   Edit02Icon,
   FolderLibraryIcon,
   FolderOpenIcon,
+  Globe02Icon,
   PinIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
@@ -14,11 +15,14 @@ import { ChevronDownIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
 import { nodeKey, projectKey, sessionKey } from "../../lib/format";
+import { nodeName, spanNodeLabel } from "../../lib/nodes";
+import { useNodes } from "../../hooks/query/useNodes";
 import { useRenameSession } from "../../hooks/query/useRenameSession";
 import { useAgents } from "../../hooks/query/useAgents";
 import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { useConvertSession, useProjects } from "../../hooks/query/useProjects";
+import { useResumeSession, useResumeTargets } from "../../hooks/query/useResumeSession";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,6 +48,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import {
@@ -186,10 +193,15 @@ export function SessionDetailsDrawer({
 }: SessionDetailsDrawerProps) {
   const patch = usePatchSessionMeta();
   const convert = useConvertSession();
+  const resume = useResumeSession();
+  const resumeNodes = useResumeTargets();
   const { data: projects } = useProjects();
   const { data: agents = [] } = useAgents();
+  // Subscribing here also refreshes node labels when the peer registry lands.
+  const { peers } = useNodes();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  const peer = session === undefined ? undefined : peers.find((p) => p.id === session.node);
 
   useEffect(() => {
     if (session !== undefined && focusRename) setRenameOpen(true);
@@ -235,6 +247,12 @@ export function SessionDetailsDrawer({
                     <Badge variant="secondary">free</Badge>
                   )}
                 </Detail>
+                <Detail label="Server">
+                  {nodeName(session.node)}
+                  {peer !== undefined && (
+                    <span className="text-muted-foreground">{` · ${new URL(peer.url).host}`}</span>
+                  )}
+                </Detail>
               </div>
               <Collapsible className="mt-2">
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-md px-1 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
@@ -258,6 +276,26 @@ export function SessionDetailsDrawer({
                     <Badge variant="secondary">{session.agent}</Badge>
                   </Detail>
                   <Detail label="Source">{session.source}</Detail>
+                  {session.spans.length > 0 && (
+                    <div className="flex flex-col gap-0.5 py-2 text-sm">
+                      <span className="text-xs text-muted-foreground">Runs</span>
+                      <div className="flex flex-col gap-1.5">
+                        {session.spans.map((span, index) => (
+                          <span
+                            key={`${span.at}-${index}`}
+                            className="flex items-center gap-1.5 text-xs"
+                          >
+                            <Badge variant="secondary" className="font-normal">
+                              {span.agent} @ {spanNodeLabel(span.node)}
+                            </Badge>
+                            <span className="text-muted-foreground">
+                              {new Date(span.at).toLocaleString()}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </CollapsibleContent>
               </Collapsible>
             </div>
@@ -358,6 +396,55 @@ export function SessionDetailsDrawer({
                         {agent.label}
                       </DropdownMenuItem>
                     ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start"
+                      disabled={resume.isPending}
+                    >
+                      <HugeiconsIcon icon={Globe02Icon} strokeWidth={2} />
+                      Resume on…
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="start" className="w-(--anchor-width)">
+                  {resumeNodes.map((entry) => {
+                    const targets = entry.agents.filter(
+                      (id) =>
+                        !(nodeKey(entry.node) === nodeKey(session.node) && id === session.agent),
+                    );
+                    return (
+                      <DropdownMenuSub key={entry.node ?? "local"}>
+                        <DropdownMenuSubTrigger>{entry.label}</DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent className="w-40">
+                          {targets.length === 0 && (
+                            <DropdownMenuItem disabled>
+                              <span className="text-muted-foreground">No other agents</span>
+                            </DropdownMenuItem>
+                          )}
+                          {targets.map((agentId) => (
+                            <DropdownMenuItem
+                              key={agentId}
+                              disabled={resume.isPending}
+                              onClick={() =>
+                                resume.mutate({
+                                  session,
+                                  agent: agentId,
+                                  node: entry.node,
+                                })
+                              }
+                            >
+                              {agents.find((a) => a.id === agentId)?.label ?? agentId}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                    );
+                  })}
                 </DropdownMenuContent>
               </DropdownMenu>
               <Button

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Effect, Either } from "effect";
 import { encodeSse, sseHeaders, type Event } from "sepia-agui";
 import { Conversion, ClineStore, openSessionsDb, SqliteStorage } from "sepia-core";
+import type { Session } from "sepia-core";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Layer } from "effect";
@@ -39,6 +40,15 @@ export interface AppOptions {
   readonly meta?: MetaStore;
   /** Enables `POST /api/sessions/:id/convert` — needs the stores it converts between. */
   readonly convert?: { readonly dbPath: string; readonly clineDir: string };
+  /**
+   * Test seam for `POST /api/sessions/import`: replaces the store write
+   * (which needs real bun:sqlite stores) while keeping request validation,
+   * the IR rebuild and response shaping under test.
+   */
+  readonly importSession?: (
+    session: Session,
+    agent: "cline" | "devin",
+  ) => Effect.Effect<string, unknown>;
   /**
    * Node identity reported by `GET /api/node` (docs/protocol.md). Absent → an
    * ephemeral id is minted for the process lifetime (tests, embedded use).
@@ -246,6 +256,31 @@ const streamResponse = async (
   return new Response(stream, { headers: { ...sseHeaders, ...cors } });
 };
 
+/**
+ * The real store write behind `POST /api/sessions/import`: the rebuilt IR
+ * session goes through the same paths as `/convert` — Cline's install writes
+ * `<dataDir>/sessions/<id>/` + its index row, Devin's grafts cogs and saves
+ * into the sqlite store.
+ */
+const defaultImportSession =
+  (conv: { readonly dbPath: string; readonly clineDir: string }) =>
+  (session: Session, agent: "cline" | "devin"): Effect.Effect<string, unknown> => {
+    const fsLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
+    if (agent === "cline") {
+      return Effect.gen(function* () {
+        const store = yield* ClineStore.ClineStore;
+        return yield* store.install(session);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(ClineStore.layer(openSessionsDb, conv.clineDir), fsLayer)),
+      );
+    }
+    return Conversion.importSession(session).pipe(
+      Effect.provide(Layer.mergeAll(SqliteStorage.layer(conv.dbPath), fsLayer)),
+    );
+  };
+
+const HISTORY_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "tool"]);
+
 export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) => {
   const keepAliveMs = options.keepAliveMs ?? keepAliveMsFromEnv(process.env.SEPIA_SSE_KEEPALIVE_MS);
   const run: EffectRunner = options.run ?? Effect.runPromise;
@@ -448,6 +483,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
               archived: meta?.archived ?? false,
               projectIds: meta?.projectIds ?? [],
               model: meta?.model ?? null,
+              spans: meta?.spans ?? [],
             };
           });
           // Sessions created via POST /api/sessions but not yet flushed into
@@ -472,6 +508,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
                     archived: meta.archived ?? false,
                     projectIds: meta.projectIds ?? [],
                     model: meta.model ?? null,
+                    spans: meta.spans ?? [],
                   },
                 ],
           );
@@ -541,6 +578,116 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       return respond(run, created, cors, {
         status: 201,
         span: "http.post /api/sessions",
+      });
+    }
+
+    // Convert-with-explicit-IR: replays the flattened history of a session —
+    // possibly fetched from a peer node — into one of this node's agent
+    // stores (docs/protocol.md "Resume on…").
+    if (method === "POST" && segmentsEqual(segments, ["api", "sessions", "import"])) {
+      const conv = options.convert;
+      if (conv === undefined) {
+        return jsonResponse({ error: "Import is not configured on this server" }, 501, cors);
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(request);
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+      }
+      if (!isRecord(body)) {
+        return jsonResponse({ error: "Expected a JSON object body" }, 400, cors);
+      }
+      const target = body.agent;
+      if (target !== "cline" && target !== "devin") {
+        return jsonResponse({ error: "agent must be 'cline' or 'devin'" }, 400, cors);
+      }
+      const cwd = body.cwd;
+      if (cwd !== undefined && (typeof cwd !== "string" || cwd.trim() === "")) {
+        return jsonResponse({ error: "cwd must be a non-empty string" }, 400, cors);
+      }
+      const title = body.title;
+      if (title !== undefined && typeof title !== "string") {
+        return jsonResponse({ error: "title must be a string" }, 400, cors);
+      }
+      const model = body.model;
+      if (model !== undefined && typeof model !== "string") {
+        return jsonResponse({ error: "model must be a string" }, 400, cors);
+      }
+      const history = body.history;
+      if (!Array.isArray(history) || history.length === 0) {
+        return jsonResponse({ error: "history must be a non-empty array of messages" }, 400, cors);
+      }
+      const messages: Conversion.ImportedHistoryMessage[] = [];
+      for (const item of history) {
+        if (
+          !isRecord(item) ||
+          typeof item.role !== "string" ||
+          !HISTORY_ROLES.has(item.role) ||
+          typeof item.content !== "string" ||
+          typeof item.createdAt !== "number" ||
+          !Number.isFinite(item.createdAt) ||
+          (item.toolName !== undefined && typeof item.toolName !== "string")
+        ) {
+          return jsonResponse(
+            { error: "history items must be { role, content, createdAt, toolName? } messages" },
+            400,
+            cors,
+          );
+        }
+        messages.push({
+          role: item.role as Conversion.ImportedHistoryMessage["role"],
+          content: item.content,
+          createdAt: item.createdAt,
+          ...(typeof item.toolName === "string" ? { toolName: item.toolName } : {}),
+        });
+      }
+
+      const firstUser = messages.find((message) => message.role === "user");
+      const session = Conversion.sessionFromHistory({
+        id: randomUUID(),
+        title:
+          title ?? (firstUser !== undefined ? firstUser.content.slice(0, 80) : "Imported session"),
+        cwd: typeof cwd === "string" ? cwd.trim() : process.cwd(),
+        model: model ?? "sepia-import",
+        history: messages,
+      });
+
+      const executor = options.importSession ?? defaultImportSession(conv);
+      const importedAt = Date.now();
+      const runSpan = { at: importedAt, agent: target, node: node.id };
+      const asControl = executor(session, target).pipe(
+        Effect.tap((sessionId) =>
+          Effect.sync(() => {
+            // Provenance: the imported copy's run continues under `target` on
+            // this node — same record an attach would write.
+            options.meta?.addSpan(sessionId, runSpan);
+          }),
+        ),
+        Effect.mapError(
+          (error) =>
+            new ControlError({
+              code: "internal",
+              message: errorMessage(error),
+              cause: error,
+            }),
+        ),
+      );
+      return respond(run, asControl, cors, {
+        status: 201,
+        shape: (sessionId) => ({
+          id: sessionId,
+          title: session.title,
+          cwd: session.workingDirectory,
+          agent: target,
+          updatedAt: new Date(session.lastActivityAt * 1000).toISOString(),
+          locked: false,
+          lockHolderPid: null,
+          source: target,
+          busy: false,
+          spans: options.meta === undefined ? [] : [runSpan],
+        }),
+        span: "http.post /api/sessions/import",
       });
     }
 
@@ -849,9 +996,23 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         }
         return respond(
           run,
-          plane
-            .attach(id, { takeover, model, fallbacks, agentId: agentParam })
-            .pipe(Effect.tap(() => Effect.sync(() => registerPushListener(id, agentParam)))),
+          plane.attach(id, { takeover, model, fallbacks, agentId: agentParam }).pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                registerPushListener(id, agentParam);
+                // Provenance: an attach means the run continues under this
+                // node's control plane — record which agent + node own the
+                // span. Idempotent, so a same-agent re-attach doesn't dup.
+                if (result.attached) {
+                  options.meta?.addSpan(id, {
+                    at: Date.now(),
+                    agent: result.agentId,
+                    node: node.id,
+                  });
+                }
+              }),
+            ),
+          ),
           cors,
           {
             span: "http.post /api/sessions/:id/attach",

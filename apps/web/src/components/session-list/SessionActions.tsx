@@ -7,6 +7,7 @@ import {
   Edit02Icon,
   FolderLibraryIcon,
   FolderOpenIcon,
+  Globe02Icon,
   InformationCircleIcon,
   PinIcon,
 } from "@hugeicons/core-free-icons";
@@ -17,6 +18,7 @@ import { setNewProjectFor } from "../../lib/store";
 import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
 import { useConvertSession, useProjects } from "../../hooks/query/useProjects";
 import { useAgents } from "../../hooks/query/useAgents";
+import { useResumeSession, useResumeTargets } from "../../hooks/query/useResumeSession";
 import type {
   ContextMenuItem,
   ContextMenuSeparator,
@@ -56,9 +58,15 @@ export function SessionActions({
 }) {
   const patch = usePatchSessionMeta();
   const convert = useConvertSession();
+  const resume = useResumeSession();
+  const resumeNodes = useResumeTargets();
   const { data: projects } = useProjects();
   const { data: agents = [] } = useAgents();
   const convertTargets = agents.filter((a) => a.id !== session.agent);
+  const agentLabel = (id: string): string => agents.find((a) => a.id === id)?.label ?? id;
+  // Every node × agent pair except the session's own — that pair is a no-op.
+  const resumeAgentsFor = (agentsOnNode: ReadonlyArray<string>, node: string | undefined) =>
+    agentsOnNode.filter((id) => !(nodeKey(node) === nodeKey(session.node) && id === session.agent));
   // Projects are node-local — only offer ones living on this session's node.
   const sameNodeProjects = projects.filter(
     (project) => nodeKey(project.node) === nodeKey(session.node),
@@ -177,6 +185,38 @@ export function SessionActions({
           </SubContent>
         </Sub>
       )}
+      <Sub>
+        <SubTrigger>
+          <HugeiconsIcon icon={Globe02Icon} strokeWidth={2} />
+          Resume on…
+        </SubTrigger>
+        <SubContent className="w-44">
+          {resumeNodes.map((entry) => {
+            const targets = resumeAgentsFor(entry.agents, entry.node);
+            return (
+              <Sub key={entry.node ?? "local"}>
+                <SubTrigger>{entry.label}</SubTrigger>
+                <SubContent className="w-40">
+                  {targets.length === 0 && (
+                    <Item disabled>
+                      <span className="text-muted-foreground">No other agents</span>
+                    </Item>
+                  )}
+                  {targets.map((agentId) => (
+                    <Item
+                      key={agentId}
+                      disabled={resume.isPending}
+                      onClick={() => resume.mutate({ session, agent: agentId, node: entry.node })}
+                    >
+                      {agentLabel(agentId)}
+                    </Item>
+                  ))}
+                </SubContent>
+              </Sub>
+            );
+          })}
+        </SubContent>
+      </Sub>
       <Item onClick={() => copy(session.id)}>
         <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
         Copy session ID

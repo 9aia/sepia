@@ -165,6 +165,23 @@ export const nodeName = (node: string | undefined): string => {
   return nodesStore.state.peers.find((p) => p.id === node)?.name ?? node;
 };
 
+/**
+ * Label for a run span's node. Spans store the server's real node id (not
+ * the `"local"` key alias), so resolve against `self` first, then the peer
+ * registry; an unknown id falls back to a truncated prefix, and the local
+ * sentinel — recorded before the identity resolved — reads "local".
+ */
+export const spanNodeLabel = (node: string): string => {
+  const self = nodesStore.state.self;
+  if (node === LOCAL_NODE_ID || (self !== null && node === self.id)) {
+    return self?.name ?? "local";
+  }
+  const peer = nodesStore.state.peers.find((p) => p.id === node);
+  if (peer !== undefined) return peer.name;
+  if (node === "") return "local";
+  return node.length > 14 ? `${node.slice(0, 14)}…` : node;
+};
+
 // --- Fan-out fetches ---------------------------------------------------------
 //
 // Each merged list calls every registered node. The LOCAL node's failure is

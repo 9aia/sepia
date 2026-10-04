@@ -17,6 +17,7 @@ const makeSession = (over: Partial<SessionSummary>): SessionSummary => ({
   archived: false,
   projectIds: [],
   model: null,
+  spans: [],
   ...over,
 });
 

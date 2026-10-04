@@ -8,6 +8,18 @@ import { Context, Schema, type Effect } from "effect";
 import type { AcpConnection } from "sepia-acp";
 import type { Event } from "sepia-agui";
 
+/**
+ * One run span of a session: which agent on which Sepia node continued it.
+ * The session is a container — the same session can resume under different
+ * agents/machines, so the meta overlay appends a span at each attach.
+ */
+export interface RunSpan {
+  /** Epoch milliseconds when the span was recorded (attach time). */
+  readonly at: number;
+  readonly agent: string;
+  readonly node: string;
+}
+
 export interface SessionSummary {
   readonly id: string;
   readonly title: string;
@@ -22,6 +34,8 @@ export interface SessionSummary {
   readonly pinned?: boolean;
   readonly archived?: boolean;
   readonly projectIds?: ReadonlyArray<string>;
+  /** Run provenance from the meta overlay; empty until the first attach. */
+  readonly spans?: ReadonlyArray<RunSpan>;
 }
 
 export interface HistoryMessage {
@@ -34,6 +48,8 @@ export interface HistoryMessage {
 export interface AttachResult {
   readonly attached: boolean;
   readonly readOnly: boolean;
+  /** The agent runtime the session is (or would be) attached under. */
+  readonly agentId: string;
 }
 
 export interface HistoryPage {
