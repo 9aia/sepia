@@ -1,8 +1,10 @@
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
+import { useTree } from "@headless-tree/react";
+import { syncDataLoaderFeature } from "@headless-tree/core";
 import { sepiaStore, setSelectedId } from "../lib/store";
 import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
@@ -13,6 +15,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Tree, TreeItem, TreeItemLabel } from "./reui/tree";
 
 function formatUpdated(iso: string): string {
   const then = new Date(iso).getTime();
@@ -52,6 +55,18 @@ const sorters: Record<SortKey, (a: SessionSummary, b: SessionSummary) => number>
   oldest: (a, b) => a.updatedAt.localeCompare(b.updatedAt),
   title: (a, b) => a.title.localeCompare(b.title),
 };
+
+type TreeData =
+  | { readonly kind: "group"; readonly label: string; readonly cwd: string; readonly count: number }
+  | { readonly kind: "session"; readonly session: SessionSummary };
+
+const projectName = (cwd: string): string => {
+  const trimmed = cwd.replace(/\/+$/, "");
+  const last = trimmed.split("/").pop();
+  return last === undefined || last === "" ? cwd : last;
+};
+
+const ROOT_ID = "root";
 
 export function SessionList() {
   const { data: sessions = [], isLoading: loading, error } = useSessions();
@@ -97,20 +112,103 @@ export function SessionList() {
       .sort(sorters[sort]);
   }, [sessions, debouncedFilter, agentFilter, dateFilter, statusFilter, sort]);
 
+  // Group filtered sessions into project (cwd) folders for the tree. Groups
+  // order by their most recently updated session.
+  const { dataMap, childrenMap, rootChildren } = useMemo(() => {
+    const data = new Map<string, TreeData>();
+    const children = new Map<string, string[]>();
+    const groups = new Map<string, SessionSummary[]>();
+    for (const session of filtered) {
+      const list = groups.get(session.cwd) ?? [];
+      list.push(session);
+      groups.set(session.cwd, list);
+    }
+    const ordered = [...groups.entries()].sort((a, b) =>
+      (b[1][0]?.updatedAt ?? "").localeCompare(a[1][0]?.updatedAt ?? ""),
+    );
+    const rootChildren: string[] = [];
+    for (const [cwd, items] of ordered) {
+      const groupId = `group:${cwd}`;
+      data.set(groupId, { kind: "group", label: projectName(cwd), cwd, count: items.length });
+      children.set(
+        groupId,
+        items.map((session) => `session:${session.id}`),
+      );
+      for (const session of items) {
+        data.set(`session:${session.id}`, { kind: "session", session });
+      }
+      rootChildren.push(groupId);
+    }
+    children.set(ROOT_ID, rootChildren);
+    return { dataMap: data, childrenMap: children, rootChildren };
+  }, [filtered]);
+
+  const tree = useTree<TreeData>({
+    rootItemId: ROOT_ID,
+    getItemName: (item) => {
+      const data = item.getItemData();
+      if (data?.kind === "group") return data.label;
+      if (data?.kind === "session") return data.session.title;
+      return "sessions";
+    },
+    isItemFolder: (item) => item.getItemData()?.kind === "group" || item.getId() === ROOT_ID,
+    dataLoader: {
+      getItem: (id) => dataMap.get(id) as TreeData,
+      getChildren: (id) => childrenMap.get(id) ?? [],
+    },
+    initialState: { expandedItems: rootChildren },
+    features: [syncDataLoaderFeature],
+    onPrimaryAction: (item) => {
+      const data = item.getItemData();
+      if (data?.kind === "session") {
+        setSelectedId(data.session.id);
+      } else if (item.isExpanded()) {
+        item.collapse();
+      } else {
+        item.expand();
+      }
+    },
+    indent: 14,
+  });
+
+  // Auto-expand groups that appear (new sessions, filter hits) without
+  // disturbing groups the user collapsed manually.
+  const groupsKey = rootChildren.join(",");
+  useEffect(() => {
+    tree.applySubStateUpdate("expandedItems", (prev) => [
+      ...new Set([...(prev ?? []), ...groupsKey.split(",").filter(Boolean)]),
+    ]);
+  }, [groupsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const items = tree.getItems();
+
   const virtualizer = useVirtualizer({
-    count: filtered.length,
+    count: items.length,
     getScrollElement: () => listRef.current,
     estimateSize: () => 76,
     overscan: 8,
   });
 
-  const selectedIndex = filtered.findIndex((session) => session.id === selectedId);
+  // Keep the selected session's row visible (its group may be collapsed).
+  useEffect(() => {
+    if (selectedId === null) return;
+    const index = items.findIndex((item) => item.getId() === `session:${selectedId}`);
+    if (index !== -1) virtualizer.scrollToIndex(index, { align: "auto" });
+    // items/virtualizer change every render; only re-scroll on selection change.
+  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sessionRows = items.filter((item) => item.getItemData()?.kind === "session");
+  const selectedIndex = sessionRows.findIndex(
+    (item) => (item.getItemData() as { session: SessionSummary }).session.id === selectedId,
+  );
 
   const selectByIndex = (index: number): void => {
-    const session = filtered[index];
-    if (session === undefined) return;
-    virtualizer.scrollToIndex(index, { align: "auto" });
-    setSelectedId(session.id);
+    const row = sessionRows[index];
+    const data = row?.getItemData();
+    if (data?.kind !== "session") return;
+    const flatIndex = items.findIndex((item) => item.getId() === row.getId());
+    if (flatIndex !== -1) virtualizer.scrollToIndex(flatIndex, { align: "auto" });
+    setSelectedId(data.session.id);
   };
 
   useHotkey("Mod+K", () => filterRef.current?.focus(), { preventDefault: true });
@@ -122,7 +220,7 @@ export function SessionList() {
   useHotkey(
     "ArrowDown",
     () => {
-      const next = selectedIndex === -1 ? 0 : Math.min(selectedIndex + 1, filtered.length - 1);
+      const next = selectedIndex === -1 ? 0 : Math.min(selectedIndex + 1, sessionRows.length - 1);
       selectByIndex(next);
     },
     { target: asideRef, preventDefault: true, ignoreInputs: false },
@@ -130,7 +228,7 @@ export function SessionList() {
   useHotkey(
     "ArrowUp",
     () => {
-      const next = selectedIndex === -1 ? filtered.length - 1 : Math.max(selectedIndex - 1, 0);
+      const next = selectedIndex === -1 ? sessionRows.length - 1 : Math.max(selectedIndex - 1, 0);
       selectByIndex(next);
     },
     { target: asideRef, preventDefault: true, ignoreInputs: false },
@@ -297,80 +395,91 @@ export function SessionList() {
         </p>
       )}
 
-      <div
-        className="session-list__items"
-        ref={listRef}
-        role="listbox"
-        aria-label="Sessions"
-        aria-activedescendant={selectedId === null ? undefined : `session-option-${selectedId}`}
-      >
-        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
-          {virtualizer.getVirtualItems().map((row) => {
-            const session = filtered[row.index];
-            if (session === undefined) return null;
-            const selected = session.id === selectedId;
-            return (
-              <div
-                key={session.id}
-                id={`session-option-${session.id}`}
-                role="option"
-                aria-selected={selected}
-                data-index={row.index}
-                ref={virtualizer.measureElement}
-                className="session-row"
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${row.start}px)`,
-                }}
-              >
-                <button
-                  type="button"
-                  className={"session-item" + (selected ? " session-item--selected" : "")}
-                  onClick={() => setSelectedId(session.id)}
-                >
-                  <div className="session-item__top">
-                    <span className="session-item__title">{session.title}</span>
-                    <Badge variant={session.agent === "cline" ? "outline" : "secondary"}>
-                      {session.agent}
-                    </Badge>
-                  </div>
-                  <div className="session-item__cwd" title={session.cwd}>
-                    {session.cwd}
-                  </div>
-                  <div className="session-item__meta">
-                    <span>{formatUpdated(session.updatedAt)}</span>
-                    {session.locked && (
-                      <Badge
-                        variant="destructive"
-                        title={`Locked by pid ${session.lockHolderPid ?? "unknown"}`}
-                      >
-                        locked
-                      </Badge>
-                    )}
-                  </div>
-                </button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="session-item__delete"
-                  aria-label={`Delete session ${session.title}`}
-                  title="Delete session"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (window.confirm(`Delete session "${session.title}"?`)) {
-                      deleteMutation.mutate(session.id);
-                    }
+      <div className="session-list__items" ref={listRef}>
+        <Tree tree={tree} indent={14} className="session-tree">
+          <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
+            {virtualizer.getVirtualItems().map((row) => {
+              const item = items[row.index];
+              if (item === undefined) return null;
+              const data = item.getItemData();
+              return (
+                <div
+                  key={item.getId()}
+                  data-index={row.index}
+                  ref={virtualizer.measureElement}
+                  className="session-row"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${row.start}px)`,
                   }}
                 >
-                  ×
-                </Button>
-              </div>
-            );
-          })}
-        </div>
+                  {data?.kind === "group" ? (
+                    <TreeItem item={item} className="session-group">
+                      <TreeItemLabel>
+                        <span className="session-group__label" title={data.cwd}>
+                          {data.label}
+                        </span>
+                        <Badge variant="secondary">{data.count}</Badge>
+                      </TreeItemLabel>
+                    </TreeItem>
+                  ) : data?.kind === "session" ? (
+                    <>
+                      <TreeItem
+                        item={item}
+                        className={
+                          "session-item" +
+                          (data.session.id === selectedId ? " session-item--selected" : "")
+                        }
+                      >
+                        <TreeItemLabel className="session-item__label">
+                          <div className="session-item__body">
+                            <div className="session-item__top">
+                              <span className="session-item__title">{data.session.title}</span>
+                              <Badge
+                                variant={data.session.agent === "cline" ? "outline" : "secondary"}
+                              >
+                                {data.session.agent}
+                              </Badge>
+                            </div>
+                            <div className="session-item__meta">
+                              <span>{formatUpdated(data.session.updatedAt)}</span>
+                              {data.session.locked && (
+                                <Badge
+                                  variant="destructive"
+                                  title={`Locked by pid ${data.session.lockHolderPid ?? "unknown"}`}
+                                >
+                                  locked
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        </TreeItemLabel>
+                      </TreeItem>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="session-item__delete"
+                        aria-label={`Delete session ${data.session.title}`}
+                        title="Delete session"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (window.confirm(`Delete session "${data.session.title}"?`)) {
+                            deleteMutation.mutate(data.session.id);
+                          }
+                        }}
+                      >
+                        ×
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </Tree>
       </div>
     </aside>
   );
