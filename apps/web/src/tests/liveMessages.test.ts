@@ -36,7 +36,9 @@ describe("applyAguiEvent", () => {
     m = applyAguiEvent(m, ev("TOOL_CALL_END", { toolCallId: "t1" }));
     expect(m[0]?.role).toBe("tool");
     expect(m[0]?.toolName).toBe("read");
-    expect(m[0]?.content).toBe("{}ok");
+    // Args stay in their own field so each side renders on its own.
+    expect(m[0]?.args).toBe("{}");
+    expect(m[0]?.content).toBe("ok");
     expect(m[0]?.done).toBe(true);
   });
 

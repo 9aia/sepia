@@ -7,6 +7,8 @@ export interface SystemContext {
   readonly osVersion: string | null;
   readonly date: string | null;
   readonly rules: ReadonlyArray<{ readonly name: string; readonly path: string }>;
+  /** Background-subagent reports delivered as system notifications. */
+  readonly reports: ReadonlyArray<string>;
   /** The rest of the system text — the agent's own prompt. */
   readonly promptText: string;
 }
@@ -14,6 +16,8 @@ export interface SystemContext {
 const SYS_INFO_RE = /<system_info>([\s\S]*?)<\/system_info>/g;
 const RULES_RE = /<rules[^>]*>([\s\S]*?)<\/rules>/g;
 const RULE_RE = /<rule[^>]*?name="([^"]+)"[^>]*?path="([^"]+)"[^>]*>/g;
+const SUBAGENT_RE =
+  /<subagent_completion_notification>([\s\S]*?)<\/subagent_completion_notification>/g;
 const FIELD_RE = /^(Platform|OS Version|Today's date):\s*(.+)$/;
 
 const parseSystemInfo = (
@@ -44,9 +48,15 @@ export const parseSystemContext = (messages: ReadonlyArray<HistoryMessage>): Sys
   const workspaces: string[] = [];
   const fields = new Map<string, string>();
   const rules: Array<{ name: string; path: string }> = [];
+  const reports: string[] = [];
   const rest: string[] = [];
   for (const message of messages) {
     let text = message.content;
+    text = text.replace(SUBAGENT_RE, (_match, body: string) => {
+      const report = body.trim();
+      if (report !== "" && !reports.includes(report)) reports.push(report);
+      return "";
+    });
     text = text.replace(SYS_INFO_RE, (_match, info: string) => {
       parseSystemInfo(info, { workspaces, fields });
       return "";
@@ -69,6 +79,7 @@ export const parseSystemContext = (messages: ReadonlyArray<HistoryMessage>): Sys
     osVersion: fields.get("OS Version") ?? null,
     date: fields.get("Today's date") ?? null,
     rules,
+    reports,
     promptText: rest.join("\n\n"),
   };
 };

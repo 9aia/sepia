@@ -1,6 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertCircleIcon, BotIcon, Loading03Icon } from "@hugeicons/core-free-icons";
+import {
+  AlertCircleIcon,
+  BotIcon,
+  CheckListIcon,
+  ComputerIcon,
+  File01Icon,
+  Folder01Icon,
+  Loading03Icon,
+  SourceCodeIcon,
+} from "@hugeicons/core-free-icons";
 import { ArrowDown01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../hooks/query/useUserInfo";
@@ -32,6 +49,7 @@ import { BubbleContent } from "./bubble";
 import { Message, MessageContent, MessageCopy, MessageFooter, MessageReply } from "./message";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { parseSystemContext, type SystemContext } from "../lib/systemContext";
+import { parseErrorPayload, prettifyCode, type ParsedError } from "../lib/errorPayload";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { ErrorBanner } from "./ErrorBanner";
 import { Button } from "./ui/button";
@@ -61,7 +79,7 @@ function RowContent({ row }: { readonly row: ChatRow }) {
   if (row.kind === "system") return <SystemContextRow context={row.context} />;
   if (row.kind === "history") {
     const message = row.message;
-    if (message.toolName !== undefined) {
+    if (message.role === "tool") {
       return (
         <ToolCall toolName={message.toolName ?? "tool"} done={true} content={message.content} />
       );
@@ -81,6 +99,7 @@ function RowContent({ row }: { readonly row: ChatRow }) {
       <ToolCall
         toolName={message.toolName ?? "tool"}
         done={message.done}
+        args={message.args}
         content={message.content}
       />
     );
@@ -103,40 +122,6 @@ function RowContent({ row }: { readonly row: ChatRow }) {
     />
   );
 }
-
-interface ParsedError {
-  readonly code?: string;
-  readonly message: string;
-}
-
-/** Detect JSON error payloads agents emit as message content. */
-function parseErrorPayload(content: string): ParsedError | null {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const record = parsed as Record<string, unknown>;
-    const inner =
-      typeof record.error === "object" && record.error !== null
-        ? (record.error as Record<string, unknown>)
-        : record;
-    if (typeof inner.message !== "string") return null;
-    return {
-      code: typeof inner.code === "string" ? inner.code : undefined,
-      message: inner.message,
-    };
-  } catch {
-    return null;
-  }
-}
-
-const prettifyCode = (code: string): string =>
-  code
-    .toLowerCase()
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 
 function ErrorMessage({ error }: { readonly error: ParsedError }) {
   return (
@@ -265,6 +250,22 @@ function ChatRows({
   );
 }
 
+/** Section heading inside the context card — icon + label. */
+function ContextSectionLabel({
+  icon,
+  children,
+}: {
+  readonly icon: typeof Folder01Icon;
+  readonly children: ReactNode;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 font-medium text-foreground/80">
+      <HugeiconsIcon icon={icon} className="size-3.5 text-muted-foreground" strokeWidth={2} />
+      {children}
+    </span>
+  );
+}
+
 /** The agent's stored system prompt, parsed into a compact context card. */
 function SystemContextRow({ context }: { readonly context: SystemContext }) {
   const summary = [context.workspaces[0], context.platform, context.osVersion, context.date]
@@ -291,9 +292,9 @@ function SystemContextRow({ context }: { readonly context: SystemContext }) {
         <div className="flex flex-col gap-3 border-t border-border/60 px-3 py-2.5 text-xs">
           {context.workspaces.length > 0 && (
             <div className="flex flex-col gap-1">
-              <span className="font-medium text-foreground/80">Workspace</span>
+              <ContextSectionLabel icon={Folder01Icon}>Workspace</ContextSectionLabel>
               {context.workspaces.map((cwd) => (
-                <code key={cwd} className="truncate text-muted-foreground">
+                <code key={cwd} className="truncate text-muted-foreground" title={cwd}>
                   {cwd}
                 </code>
               ))}
@@ -301,7 +302,7 @@ function SystemContextRow({ context }: { readonly context: SystemContext }) {
           )}
           {(context.platform !== null || context.osVersion !== null || context.date !== null) && (
             <div className="flex flex-col gap-1">
-              <span className="font-medium text-foreground/80">Environment</span>
+              <ContextSectionLabel icon={ComputerIcon}>Environment</ContextSectionLabel>
               <span className="text-muted-foreground">
                 {[
                   context.platform !== null ? `Platform: ${context.platform}` : null,
@@ -315,20 +316,42 @@ function SystemContextRow({ context }: { readonly context: SystemContext }) {
           )}
           {context.rules.length > 0 && (
             <div className="flex flex-col gap-1">
-              <span className="font-medium text-foreground/80">Rules</span>
+              <ContextSectionLabel icon={CheckListIcon}>Rules</ContextSectionLabel>
               {context.rules.map((rule) => (
-                <code key={`${rule.name}:${rule.path}`} className="truncate text-muted-foreground">
-                  {rule.name} — {rule.path}
-                </code>
+                <div key={`${rule.name}:${rule.path}`} className="flex min-w-0 gap-1.5">
+                  <span className="shrink-0 text-foreground/70">{rule.name}</span>
+                  <code className="truncate text-muted-foreground/80" title={rule.path}>
+                    {rule.path}
+                  </code>
+                </div>
               ))}
             </div>
           )}
+          {context.reports.length > 0 && (
+            <details className="group/reports">
+              <summary className="cursor-pointer select-none">
+                <ContextSectionLabel icon={SourceCodeIcon}>
+                  {`Background agent reports (${context.reports.length})`}
+                </ContextSectionLabel>
+              </summary>
+              <div className="mt-1.5 flex flex-col gap-2">
+                {context.reports.map((report, i) => (
+                  <pre
+                    key={i}
+                    className="max-h-64 overflow-y-auto rounded-md bg-muted/40 p-2 text-muted-foreground whitespace-pre-wrap"
+                  >
+                    {report}
+                  </pre>
+                ))}
+              </div>
+            </details>
+          )}
           {context.promptText !== "" && (
             <details className="group/prompt">
-              <summary className="cursor-pointer font-medium text-foreground/80 select-none">
-                System prompt
+              <summary className="cursor-pointer select-none">
+                <ContextSectionLabel icon={File01Icon}>System prompt</ContextSectionLabel>
               </summary>
-              <pre className="mt-1.5 max-h-64 overflow-y-auto text-muted-foreground whitespace-pre-wrap">
+              <pre className="mt-1.5 max-h-64 overflow-y-auto rounded-md bg-muted/40 p-2 text-muted-foreground whitespace-pre-wrap">
                 {context.promptText}
               </pre>
             </details>

@@ -24,6 +24,7 @@ const emptyContext: SystemContext = {
   osVersion: null,
   date: null,
   rules: [],
+  reports: [],
   promptText: "",
 };
 
@@ -76,6 +77,23 @@ describe("buildRows", () => {
 
   it("keeps same content across different roles", () => {
     const rows = buildRows([msg("user", "x"), msg("assistant", "x")], [], emptyContext);
+    expect(rows.filter((r) => r.kind === "history")).toHaveLength(2);
+  });
+
+  it("drops empty assistant nodes (tool-call carriers)", () => {
+    const tool: HistoryMessage = { role: "tool", content: "out", createdAt: 1, toolName: "exec" };
+    const rows = buildRows(
+      [msg("assistant", ""), tool, msg("assistant", "  "), msg("assistant", "answer")],
+      [],
+      emptyContext,
+    );
+    const texts = rows.filter((r) => r.kind === "history");
+    expect(texts).toHaveLength(2);
+    expect(texts[0]?.kind === "history" && texts[0].message.role).toBe("tool");
+  });
+
+  it("keeps empty user and tool messages", () => {
+    const rows = buildRows([msg("user", ""), msg("tool", "")], [], emptyContext);
     expect(rows.filter((r) => r.kind === "history")).toHaveLength(2);
   });
 

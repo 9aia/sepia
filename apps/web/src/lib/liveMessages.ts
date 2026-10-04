@@ -6,6 +6,8 @@ export interface LiveMessage {
   readonly createdAt?: number;
   readonly role: "user" | "assistant" | "reasoning" | "tool" | "status";
   readonly content: string;
+  /** Tool-call input JSON, kept apart from `content` (the result) so each can render on its own. */
+  readonly args?: string;
   readonly toolName?: string;
   readonly done: boolean;
 }
@@ -81,7 +83,7 @@ export function applyAguiEvent(
         done: false,
       });
     case "TOOL_CALL_ARGS":
-      return update(messages, toolCallId, (m) => ({ ...m, content: m.content + delta }));
+      return update(messages, toolCallId, (m) => ({ ...m, args: (m.args ?? "") + delta }));
     case "TOOL_CALL_RESULT": {
       const content =
         typeof event.content === "string" ? event.content : JSON.stringify(event.content ?? "");

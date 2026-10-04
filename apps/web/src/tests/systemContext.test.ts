@@ -34,8 +34,26 @@ describe("parseSystemContext", () => {
       osVersion: null,
       date: null,
       rules: [],
+      reports: [],
       promptText: "",
     });
+  });
+
+  it("pulls subagent completion notifications out of promptText", () => {
+    const ctx = parseSystemContext([
+      msg("You are a helpful agent."),
+      msg(
+        "<subagent_completion_notification>\n[done]\n\n## Report\nAll good\n</subagent_completion_notification>",
+      ),
+    ]);
+    expect(ctx.reports).toEqual(["[done]\n\n## Report\nAll good"]);
+    expect(ctx.promptText).toBe("You are a helpful agent.");
+  });
+
+  it("dedupes repeated reports", () => {
+    const notice = "<subagent_completion_notification>same</subagent_completion_notification>";
+    const ctx = parseSystemContext([msg(notice), msg(notice)]);
+    expect(ctx.reports).toEqual(["same"]);
   });
 
   it("extracts workspaces, fields, and rules out of system blocks", () => {

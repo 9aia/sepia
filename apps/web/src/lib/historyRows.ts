@@ -22,6 +22,9 @@ export const buildRows = (
   const conversation: HistoryMessage[] = [];
   for (const message of history) {
     if (message.role === "system") continue;
+    // Empty assistant nodes carry the turn's tool_calls in the IR — the calls
+    // themselves surface as `tool` rows, so a blank bubble is pure noise.
+    if (message.role === "assistant" && message.content.trim() === "") continue;
     const prev = conversation[conversation.length - 1];
     if (prev !== undefined && prev.role === message.role && prev.content === message.content) {
       continue;
@@ -31,6 +34,7 @@ export const buildRows = (
   const contextEmpty =
     context.workspaces.length === 0 &&
     context.rules.length === 0 &&
+    context.reports.length === 0 &&
     context.promptText === "" &&
     context.platform === null;
   return [
