@@ -48,7 +48,7 @@ Treat network access to the API as remote code execution.
 | `SEPIA_IDLE_TTL_MS`           | `600000`                                      | Detach live sessions idle this long; `0` disables.                 |
 | `SEPIA_SWEEP_MS`              | `30000`                                       | Idle-sweep interval.                                               |
 | `SEPIA_LOCK_TTL_MS`           | `5000`                                        | Lock-probe result cache.                                           |
-| `SEPIA_META`                 | `~/.local/share/sepia/meta.json`              | Sepia-owned session metadata (title overrides via PATCH).          |
+| `SEPIA_META`                  | `~/.local/share/sepia/meta.json`              | Sepia-owned session metadata (title overrides via PATCH).          |
 | `SEPIA_HISTORY_LIMIT`         | `500`                                         | Default tail limit for `GET .../history`.                          |
 | `SEPIA_SSE_KEEPALIVE_MS`      | `15000`                                       | SSE keep-alive frame interval; `0` disables.                       |
 | `SEPIA_INHERIT_ENV`           | unset                                         | `1` forwards the whole parent env to agents (allowlist otherwise). |
