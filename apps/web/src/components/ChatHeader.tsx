@@ -2,7 +2,6 @@ import { useState } from "react";
 import { MoreVerticalIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../lib/types";
-import type { StreamStatus } from "../lib/api";
 import { setDetailsFor, setSelectedId } from "../lib/store";
 import { sessionKey } from "../lib/format";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
@@ -40,10 +39,9 @@ import { SessionActions } from "./session-list/SessionActions";
 interface ChatHeaderProps {
   readonly session: SessionSummary;
   readonly running: boolean;
-  readonly streamStatus: StreamStatus;
 }
 
-export function ChatHeader({ session, running, streamStatus }: ChatHeaderProps) {
+export function ChatHeader({ session, running }: ChatHeaderProps) {
   const deleteMutation = useDeleteSession();
   const [confirmOpen, setConfirmOpen] = useState(false);
   return (
@@ -62,11 +60,7 @@ export function ChatHeader({ session, running, streamStatus }: ChatHeaderProps) 
       </button>
       <div className="flex shrink-0 items-center gap-2">
         {(session.busy || running) && <Badge variant="destructive">busy</Badge>}
-        {streamStatus === "reconnecting" && (
-          <Badge variant="outline" role="status">
-            reconnecting…
-          </Badge>
-        )}
+
         <DropdownMenu>
           <DropdownMenuTrigger
             render={

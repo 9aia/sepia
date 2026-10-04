@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertCircleIcon, BotIcon } from "@hugeicons/core-free-icons";
+import { AlertCircleIcon, BotIcon, Loading03Icon } from "@hugeicons/core-free-icons";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../hooks/query/useUserInfo";
@@ -19,7 +19,7 @@ import {
 } from "./ui/alert-dialog";
 
 import type { LiveMessage } from "../lib/liveMessages";
-import { cancel, sendPrompt } from "../lib/api";
+import { cancel, sendPrompt, type StreamStatus } from "../lib/api";
 import { settingsStore } from "../lib/settings";
 import { buildRows, type ChatRow } from "../lib/historyRows";
 import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
@@ -360,6 +360,7 @@ interface SessionChatProps {
   readonly agent: string;
   readonly readOnly: boolean;
   readonly running: boolean;
+  readonly streamStatus: StreamStatus;
   readonly liveMessages: ReadonlyArray<LiveMessage>;
   readonly onUserMessage: (text: string) => string;
   readonly onRemoveLiveMessage: (id: string) => void;
@@ -375,6 +376,7 @@ export function SessionChat({
   agent,
   readOnly,
   running,
+  streamStatus,
   liveMessages,
   onUserMessage,
   onRemoveLiveMessage,
@@ -446,6 +448,18 @@ export function SessionChat({
     <>
       <MessageScrollerProvider autoScroll defaultScrollPosition="end">
         <MessageScroller className="relative flex min-h-0 flex-1 flex-col">
+          {streamStatus === "reconnecting" && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+              <span className="flex items-center gap-2 rounded-full border border-border bg-popover/95 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur-sm">
+                <HugeiconsIcon
+                  icon={Loading03Icon}
+                  className="size-3.5 animate-spin"
+                  strokeWidth={2}
+                />
+                Reconnecting…
+              </span>
+            </div>
+          )}
           {rows.length > 0 ? (
             <ChatRows
               rows={rows}

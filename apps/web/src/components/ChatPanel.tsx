@@ -194,7 +194,7 @@ export function ChatPanel() {
 
   return (
     <section className="flex h-svh flex-col overflow-hidden">
-      <ChatHeader session={session} running={running} streamStatus={streamStatus} />
+      <ChatHeader session={session} running={running} />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {attachError !== null && <ErrorBanner>{attachError}</ErrorBanner>}
@@ -206,6 +206,7 @@ export function ChatPanel() {
             readOnly={readOnly}
             running={running || session.busy}
             liveMessages={liveMessages}
+            streamStatus={streamStatus}
             onUserMessage={addUserMessage}
             onRemoveLiveMessage={removeLiveMessage}
             onTakeover={() =>
