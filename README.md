@@ -58,6 +58,9 @@ spawns an agent in a working directory you choose.
   on one session return `409 busy`.
 - **Cancel / permission** — `POST .../cancel` and `POST .../permission` route
   turn cancellation and tool-permission decisions.
+- **History** — `GET /api/sessions/:id/history` returns the tail of the
+  stored backlog; `?limit=` caps it and `?before=<index>` pages backwards
+  (the `start` field is the next cursor).
 - **Stream** — `GET /api/sessions/:id/stream` is a raw AG-UI SSE feed.
 
 ## Security
