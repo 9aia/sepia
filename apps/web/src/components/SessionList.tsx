@@ -168,15 +168,12 @@ export function SessionList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, selectedId]);
 
-  // preventDefault — Mod+N is the browser's new-window shortcut.
-  useAppHotkey(
-    "session.new",
-    () => {
-      if (inFormField()) return;
-      create(resolvedCwd);
-    },
-    { preventDefault: true },
-  );
+  // Bare N — inFormField guards against typing; Mod+N is browser-reserved
+  // (Ctrl+N = new window can't be preventDefault'd in Chrome/Firefox).
+  useAppHotkey("session.new", () => {
+    if (inFormField()) return;
+    create(resolvedCwd);
+  });
   useAppHotkey(
     "filter.clear",
     () => {
