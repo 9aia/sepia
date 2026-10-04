@@ -41,7 +41,7 @@ export function ApprovalDialog({ requests, onResolve, onCancel }: ApprovalDialog
         if (!open) onCancel();
       }}
     >
-      <DialogContent>
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Permission requested</DialogTitle>
           <DialogDescription>The agent is waiting for your decision.</DialogDescription>

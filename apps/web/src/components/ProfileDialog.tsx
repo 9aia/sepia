@@ -32,7 +32,7 @@ export function ProfileDialog({ open, onOpenChange }: ProfileDialogProps) {
   const { data: user, isLoading } = useUserInfo();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Profile</DialogTitle>
           <DialogDescription>

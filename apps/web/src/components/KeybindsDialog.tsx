@@ -26,7 +26,7 @@ export function KeybindsDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setKeybindsOpen}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>Available anywhere in the app.</DialogDescription>
