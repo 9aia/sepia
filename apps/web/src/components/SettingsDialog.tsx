@@ -78,7 +78,7 @@ function KeyboardSection() {
                     </span>
                   )}
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="xs"
                     onClick={() => {
                       setRecordingId(keybind.id);
