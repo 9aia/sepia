@@ -361,7 +361,8 @@ interface SessionChatProps {
   readonly readOnly: boolean;
   readonly running: boolean;
   readonly liveMessages: ReadonlyArray<LiveMessage>;
-  readonly onUserMessage: (text: string) => void;
+  readonly onUserMessage: (text: string) => string;
+  readonly onRemoveLiveMessage: (id: string) => void;
   readonly onTakeover: () => void;
 }
 
@@ -376,6 +377,7 @@ export function SessionChat({
   running,
   liveMessages,
   onUserMessage,
+  onRemoveLiveMessage,
   onTakeover,
 }: SessionChatProps) {
   const historyQuery = useHistory(sessionId, agent);
@@ -393,14 +395,19 @@ export function SessionChat({
   const send = (text: string): void => {
     setSubmitting(true);
     setPromptError(null);
+    // Optimistic — the row shows instantly; rolled back if the send fails.
+    const liveId = onUserMessage(text);
     sendPrompt(sessionId, text, agent)
       .then((ok) => {
-        if (ok) onUserMessage(text);
-        else setPromptError("Prompt failed.");
+        if (!ok) {
+          onRemoveLiveMessage(liveId);
+          setPromptError("Prompt failed.");
+        }
       })
-      .catch((error: unknown) =>
-        setPromptError(error instanceof Error ? error.message : "Prompt failed."),
-      )
+      .catch((error: unknown) => {
+        onRemoveLiveMessage(liveId);
+        setPromptError(error instanceof Error ? error.message : "Prompt failed.");
+      })
       .finally(() => setSubmitting(false));
   };
 

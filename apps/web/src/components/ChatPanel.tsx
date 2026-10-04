@@ -166,11 +166,14 @@ export function ChatPanel() {
     resolvePermissions({});
   }, [resolvePermissions]);
 
-  const addUserMessage = useCallback((text: string) => {
-    setLiveMessages((messages) => [
-      ...messages,
-      { id: `user-${Date.now()}`, role: "user", content: text, done: true },
-    ]);
+  // Optimistic — returns the id so a failed send can roll the row back.
+  const addUserMessage = useCallback((text: string): string => {
+    const id = `user-${Date.now()}`;
+    setLiveMessages((messages) => [...messages, { id, role: "user", content: text, done: true }]);
+    return id;
+  }, []);
+  const removeLiveMessage = useCallback((id: string): void => {
+    setLiveMessages((messages) => messages.filter((m) => m.id !== id));
   }, []);
 
   if (!session) {
@@ -204,6 +207,7 @@ export function ChatPanel() {
             running={running || session.busy}
             liveMessages={liveMessages}
             onUserMessage={addUserMessage}
+            onRemoveLiveMessage={removeLiveMessage}
             onTakeover={() =>
               attach({
                 id: session.id,
