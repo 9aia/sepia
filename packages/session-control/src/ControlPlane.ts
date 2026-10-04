@@ -234,6 +234,8 @@ export const make = (
               blocks: node.blocks.length === 0 ? undefined : node.blocks,
               createdAt: node.createdAt * 1000,
               toolName: Option.getOrUndefined(node.toolName),
+              thinking: Option.getOrUndefined(node.thinking),
+              thinkingSignature: Option.getOrUndefined(node.thinkingSignature),
               usage: Option.getOrUndefined(node.usage),
               model: Option.getOrUndefined(node.model),
               requestId: Option.getOrUndefined(node.requestId),

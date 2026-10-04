@@ -13,7 +13,8 @@ cogsJson, workspaceDirs, hidden, metadata, nodes[], promptHistory[]`.
 
 `MessageNode` (`Domain.ts:19`): `nodeId, parentNodeId (tree, not a flat list),
 role ∈ {system,user,assistant,tool}, content (string), toolCalls[]
-{id,name,arguments,index,kind}, toolCallId, toolName, thinking, createdAt
+{id,name,arguments,index,kind}, toolCallId, toolName, thinking,
+thinkingSignature (opaque provider seal — see gap #4), createdAt
 (epoch **seconds**), metadata`.
 
 Notable: nodes form a **forest** (node_id + parent_node_id), matching Devin's
@@ -86,8 +87,10 @@ tool_call_update_json)`** — serialised **ACP** `ToolCall` /
 }
 ```
 
-**What sepia keeps**: role, content, tool_calls, thinking **text only**
-(`parseChatMessage` drops `thinking.signature`, `Devin.ts:163`), tool_call_id,
+**What sepia keeps**: role, content, tool_calls, thinking text **and
+`thinking.signature`** (`parseChatMessage` → `thinking`/`thinkingSignature`;
+`buildChatMessage` writes the sealed object back and drops unsigned thinking),
+tool_call_id,
 `tool_result_meta.kind` → toolName, row `metadata` blob. **Dropped on
 read** (and rewritten as `null` on save, `Devin.ts:91-96`): `num_tokens`,
 `request_id`, `metrics` (all token/timing data), `finish_reason`,
@@ -230,7 +233,7 @@ name, mode, isRunEverything, createdAt, lastUsedModel}`.
 {"success":{…,"executionTime":ms},"isError":false}}}}}`
     - **Thinking is `redacted-reasoning` — opaque/encrypted**, not
       recoverable as text from this store; sepia records a `[redacted]`
-      thinking marker.
+      thinking marker and keeps the blob verbatim as `thinkingSignature`.
     - No per-message timestamps or usage — `meta.json`/`meta['0']` carry
       session-level `createdAtMs`/`updatedAtMs` only.
 - `projects/<project-slug>/agent-transcripts/<chat-id>/<chat-id>.jsonl` —
@@ -324,30 +327,30 @@ sidechains reconstructable via `parentUuid`+`isSidechain`).
 
 Fields each agent persists vs. what the IR normalizes:
 
-| Field                        | Devin                                    | Cline                              | Cursor                               | Claude Code                               | IR today                        |
-| ---------------------------- | ---------------------------------------- | ---------------------------------- | ------------------------------------ | ----------------------------------------- | ------------------------------- |
-| Message tree (branch/rewind) | ✅ parent_node_id                        | ❌ flat                            | headers list                         | ✅ parentUuid                             | ✅ parentNodeId                 |
-| Timestamps per message       | ✅ ISO+epoch                             | ✅ ms                              | ✅ ms/ISO                            | ✅ ISO                                    | ✅ createdAt (s)                |
-| Token usage per message      | ✅ metrics.*                             | ✅ metrics                         | ✅ tokenCount                        | ✅ usage (incl. cache tiers)              | ❌ dropped                      |
-| Cost / credits               | ✅ session metadata (acu/credit)         | ~ cost field                       | ~ usageUuid                          | service_tier only                         | ❌                              |
-| Model per message            | ✅ generation_model                      | ✅ modelInfo                       | ✅ modelInfo/lastUsedModel           | ✅ message.model                          | ❌ session only                 |
-| Request id                   | ✅ request_id                            | ❌                                 | ✅ requestId                         | ✅ requestId                              | ❌                              |
-| Tool call args               | ✅ arguments                             | ✅ input                           | ✅ toolFormerData                    | ✅ input                                  | ✅                              |
-| Tool call result             | ✅ tool node + terminal_output ext       | ✅ tool_result                     | ✅ tool-result                       | ✅ tool_result(+toolUseResult)            | ✅ tool node                    |
-| Tool call status/error       | ✅ tool_call_state + result_meta.success | result.success                     | status field                         | is_error                                  | ❌ assumed success              |
-| Tool timing                  | ✅ tool_call_timing                      | ❌                                 | ✅ timingInfo                        | ❌                                        | ❌                              |
-| Reasoning/thinking           | ✅ text + **signature**                  | ✅ thinking                        | ⚠️ redacted-reasoning (opaque)       | ✅ thinking / redacted_thinking           | ⚠️ text only, signature dropped |
-| File diffs / edits           | via tool args                            | via editor args                    | ✅ suggestedCodeBlocks/diffHistories | via Edit tool args + file-history backups | ❌ args only                    |
-| Images/attachments           | ✅ chisel/acp-content-blocks (ACP)       | image/document blocks              | ✅ images, attached chunks           | ✅ image/document blocks                  | ✅ blocks (non-text only)       |
-| Sub-agent/task trees         | ⚠️ subagent_heads table                  | ✅ parent_session_id/agent_id/team | ✅ subComposerIds                    | ✅ isSidechain + Task tool                | ❌                              |
-| Checkpoints/file history     | ❌                                       | ✅ checkpoint-scratch git          | ✅ originalFileStates                | ✅ file-history-snapshot                  | ❌                              |
-| Compaction/summaries         | ✅ summarized_from row meta              | ✅ .compaction.json                | ✅ summarizedComposers               | ✅ isCompactSummary+compact_boundary      | ⚠️ raw in node.metadata         |
-| Prompt history               | ✅ prompt_history table                  | prompt field/manifest              | ✅ prompt_history.json               | user entries                              | ✅ promptHistory                |
-| Shell/exec identity          | ✅ terminal_id, cwd, exit_code           | run_commands items                 | Shell tool                           | Bash tool                                 | ❌ flattened to exec            |
-| Session status/lifecycle     | locks + hidden flag                      | ✅ status, exit_code, pid          | status                               | implicit                                  | ❌                              |
-| Git context (branch/sha)     | ❌                                       | ❌                                 | branches field                       | ✅ gitBranch                              | ❌                              |
-| Web citations                | ❌                                       | fetch tool                         | ✅ webCitations                      | WebSearch result blocks                   | ❌                              |
-| Todos/plans                  | ❌                                       | team tasks                         | ✅ todos, plans/*.md                 | ✅ todos files, TodoWrite                 | ❌                              |
+| Field                        | Devin                                    | Cline                              | Cursor                               | Claude Code                               | IR today                      |
+| ---------------------------- | ---------------------------------------- | ---------------------------------- | ------------------------------------ | ----------------------------------------- | ----------------------------- |
+| Message tree (branch/rewind) | ✅ parent_node_id                        | ❌ flat                            | headers list                         | ✅ parentUuid                             | ✅ parentNodeId               |
+| Timestamps per message       | ✅ ISO+epoch                             | ✅ ms                              | ✅ ms/ISO                            | ✅ ISO                                    | ✅ createdAt (s)              |
+| Token usage per message      | ✅ metrics.*                             | ✅ metrics                         | ✅ tokenCount                        | ✅ usage (incl. cache tiers)              | ❌ dropped                    |
+| Cost / credits               | ✅ session metadata (acu/credit)         | ~ cost field                       | ~ usageUuid                          | service_tier only                         | ❌                            |
+| Model per message            | ✅ generation_model                      | ✅ modelInfo                       | ✅ modelInfo/lastUsedModel           | ✅ message.model                          | ❌ session only               |
+| Request id                   | ✅ request_id                            | ❌                                 | ✅ requestId                         | ✅ requestId                              | ❌                            |
+| Tool call args               | ✅ arguments                             | ✅ input                           | ✅ toolFormerData                    | ✅ input                                  | ✅                            |
+| Tool call result             | ✅ tool node + terminal_output ext       | ✅ tool_result                     | ✅ tool-result                       | ✅ tool_result(+toolUseResult)            | ✅ tool node                  |
+| Tool call status/error       | ✅ tool_call_state + result_meta.success | result.success                     | status field                         | is_error                                  | ❌ assumed success            |
+| Tool timing                  | ✅ tool_call_timing                      | ❌                                 | ✅ timingInfo                        | ❌                                        | ❌                            |
+| Reasoning/thinking           | ✅ text + **signature**                  | ✅ thinking(+signature)            | ⚠️ redacted-reasoning (opaque)       | ✅ thinking / redacted_thinking           | ✅ text + `thinkingSignature` |
+| File diffs / edits           | via tool args                            | via editor args                    | ✅ suggestedCodeBlocks/diffHistories | via Edit tool args + file-history backups | ❌ args only                  |
+| Images/attachments           | ✅ chisel/acp-content-blocks (ACP)       | image/document blocks              | ✅ images, attached chunks           | ✅ image/document blocks                  | ✅ blocks (non-text only)     |
+| Sub-agent/task trees         | ⚠️ subagent_heads table                  | ✅ parent_session_id/agent_id/team | ✅ subComposerIds                    | ✅ isSidechain + Task tool                | ❌                            |
+| Checkpoints/file history     | ❌                                       | ✅ checkpoint-scratch git          | ✅ originalFileStates                | ✅ file-history-snapshot                  | ❌                            |
+| Compaction/summaries         | ✅ summarized_from row meta              | ✅ .compaction.json                | ✅ summarizedComposers               | ✅ isCompactSummary+compact_boundary      | ⚠️ raw in node.metadata       |
+| Prompt history               | ✅ prompt_history table                  | prompt field/manifest              | ✅ prompt_history.json               | user entries                              | ✅ promptHistory              |
+| Shell/exec identity          | ✅ terminal_id, cwd, exit_code           | run_commands items                 | Shell tool                           | Bash tool                                 | ❌ flattened to exec          |
+| Session status/lifecycle     | locks + hidden flag                      | ✅ status, exit_code, pid          | status                               | implicit                                  | ❌                            |
+| Git context (branch/sha)     | ❌                                       | ❌                                 | branches field                       | ✅ gitBranch                              | ❌                            |
+| Web citations                | ❌                                       | fetch tool                         | ✅ webCitations                      | WebSearch result blocks                   | ❌                            |
+| Todos/plans                  | ❌                                       | team tasks                         | ✅ todos, plans/*.md                 | ✅ todos files, TodoWrite                 | ❌                            |
 
 ### Ranked gaps
 
@@ -365,10 +368,13 @@ Fields each agent persists vs. what the IR normalizes:
    `isSidechain`/`Task`; Devin has `subagent_heads`; Cursor has
    `subComposerIds`. IR has no session-link field, and `ClineRepository`
    flattens `__teamtask__` dirs into siblings.
-4. **Thinking signatures / opaque reasoning** — Devin and Claude seal
-   thinking blocks (`signature`, `redacted_thinking`); Cursor fully
-   redacts. IR keeps bare text — replay-safe exports need the signature
-   round-tripped (currently dropped at `Devin.ts:163-166`).
+4. ~~**Thinking signatures / opaque reasoning**~~ — **done**: Devin and
+   Claude seal thinking blocks (`signature`, `redacted_thinking`); Cursor
+   fully redacts. IR keeps the seal in `MessageNode.thinkingSignature`
+   (opaque, verbatim; last one wins when several sealed blocks fold into a
+   node) and writers echo it back — Devin writes `thinking{thinking,
+signature}`, Cline writes `signature`/`redacted_thinking`. Unsigned
+   thinking is still dropped on write: the backend rejects it on replay.
 5. **Per-message model + requestId** — mixed-model sessions (sub-agents,
    model switches) can't be represented; `session.model` is single.
 6. ~~Attachments / content blocks~~ — **done**: `MessageNode.blocks` holds
@@ -402,8 +408,9 @@ usage: Option<{
 model: Option<string>,           // per-message model (all agents)
 requestId: Option<string>,       // Devin request_id, CC requestId, Cursor requestId
 finishReason: Option<string>,    // Devin finish_reason, CC stop_reason
-signature: Option<string>,       // thinking-block signature (Devin, CC redacted_thinking)
-                                 // — or better: thinking: {text, signature?, redacted?}
+thinkingSignature: Option<string>, // ✅ done — thinking-block seal (Devin
+                                 // signature, CC signature/redacted_thinking.data,
+                                 // Cursor redacted-reasoning.data)
 
 // ToolCall
 status: Option<"pending"|"running"|"completed"|"failed"|"cancelled">,
@@ -432,8 +439,8 @@ citations: Option<{title,url}[]> // Cursor webCitations, CC WebSearch results
 ```
 
 Priority order for implementation mirrors the ranked gaps: `usage` →
-tool `status`/`isError` → `parentSessionId` → thinking `signature` →
-per-message `model`/`requestId` → `blocks`/attachments → `status`/
+tool `status`/`isError` → `parentSessionId` → ~~thinking `signature`~~
+(done) → per-message `model`/`requestId` → `blocks`/attachments → `status`/
 `exitCode` → `git`/`checkpoints`.
 
 ## Format surprises worth remembering

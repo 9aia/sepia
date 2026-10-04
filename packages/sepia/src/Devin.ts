@@ -285,8 +285,16 @@ export const buildChatMessage = (node: MessageNode, generationModel: string): un
         },
       };
 
-      // Unsigned thinking blocks are dropped: Devin persists provider-sealed
-      // signatures and the backend rejects replayed blocks without one.
+      // The `thinking` object is written only with its provider seal:
+      // unsigned thinking is dropped — the backend rejects replayed blocks
+      // without a signature.
+      const signature = Option.getOrUndefined(node.thinkingSignature);
+      if (signature !== undefined) {
+        msg.thinking = {
+          thinking: Option.getOrElse(node.thinking, () => ""),
+          signature,
+        };
+      }
 
       return msg;
     }
@@ -401,9 +409,16 @@ export const parseChatMessage = (
     (extensions as Record<string, unknown> | null | undefined)?.["chisel/acp-content-blocks"],
   );
   const toolCalls = parseToolCalls(msg.tool_calls, toolCallStatusMap(extensions));
+  const thinkingRaw = msg.thinking;
   const thinking =
-    msg.thinking && typeof (msg.thinking as any).thinking === "string"
-      ? Option.some((msg.thinking as any).thinking)
+    thinkingRaw && typeof (thinkingRaw as any).thinking === "string"
+      ? Option.some((thinkingRaw as any).thinking)
+      : Option.none<string>();
+  // `signature` is the provider's seal on the thinking text — opaque, kept
+  // verbatim (an empty string means Devin stored the block unsigned).
+  const thinkingSignature =
+    thinkingRaw && typeof (thinkingRaw as any).signature === "string"
+      ? Option.some((thinkingRaw as any).signature)
       : Option.none<string>();
   const toolCallId =
     typeof msg.tool_call_id === "string" ? Option.some(msg.tool_call_id) : Option.none<string>();
@@ -426,6 +441,7 @@ export const parseChatMessage = (
     toolCallId,
     toolName,
     thinking,
+    thinkingSignature,
     usage: usageFromMetrics(meta?.metrics),
     model:
       typeof meta?.generation_model === "string"
@@ -503,6 +519,7 @@ export const applyToolCallOutcomes = (
       toolCallId: node.toolCallId,
       toolName: node.toolName,
       thinking: node.thinking,
+      thinkingSignature: node.thinkingSignature,
       usage: node.usage,
       model: node.model,
       requestId: node.requestId,

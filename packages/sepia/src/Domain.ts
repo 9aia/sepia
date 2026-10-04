@@ -93,6 +93,13 @@ export const FileBlock = Schema.Struct({
 export const Block = Schema.Union(TextBlock, ImageBlock, AudioBlock, FileBlock);
 export type Block = Schema.Schema.Type<typeof Block>;
 
+/**
+ * Display text recorded in `thinking` when a store held reasoning it cannot
+ * show — Cursor `redacted-reasoning`, Claude `redacted_thinking`. The opaque
+ * blob rides in `thinkingSignature`.
+ */
+export const REDACTED_THINKING = "[redacted]";
+
 export class PromptHistoryEntry extends Schema.Class<PromptHistoryEntry>("PromptHistoryEntry")({
   content: Schema.String,
   timestamp: Schema.Number,
@@ -121,6 +128,18 @@ export class MessageNode extends Schema.Class<MessageNode>("MessageNode")({
     Schema.optionalWith({ default: () => Option.none() }),
   ),
   thinking: Schema.OptionFromSelf(Schema.String).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
+  /**
+   * The opaque provider seal for `thinking` — Devin `thinking.signature`
+   * (`sealed.v1.…`), Claude's `signature` on `thinking` blocks or `data` on
+   * `redacted_thinking`, Cursor's `redacted-reasoning.data`. Never decoded,
+   * preserved verbatim so a converted session replays signed thinking;
+   * writers echo it back or drop the block entirely (unsigned thinking is
+   * rejected on replay). When several sealed blocks fold into one node the
+   * last signature wins.
+   */
+  thinkingSignature: Schema.OptionFromSelf(Schema.String).pipe(
     Schema.optionalWith({ default: () => Option.none() }),
   ),
   /** Token metrics the store recorded for this message (assistant turns mostly). */

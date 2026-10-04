@@ -231,6 +231,10 @@ export interface ImportedHistoryMessage {
   /** Epoch milliseconds. */
   readonly createdAt: number;
   readonly toolName?: string;
+  /** Display text of the message's reasoning, when the store recorded any. */
+  readonly thinking?: string;
+  /** Opaque provider seal on `thinking` — never decoded, replayed verbatim. */
+  readonly thinkingSignature?: string;
   readonly usage?: TokenUsage;
   readonly model?: string;
   readonly requestId?: string;
@@ -246,10 +250,10 @@ const historyMessageSeconds = (ms: number, fallback: number): number =>
 
 /**
  * Rebuild a `Session` IR from the flattened message list `GET
- * /api/sessions/:id/history` serves. The projection drops tool-call ids and
- * thinking, so nodes are re-chained linearly — what survives (roles, text,
- * tool output, timestamps) is exactly what a portable resume needs. The
- * result feeds the same write paths as `importCline`/`installCline`.
+ * /api/sessions/:id/history` serves. The projection drops tool-call ids, so
+ * nodes are re-chained linearly — what survives (roles, text, thinking and
+ * its signature, tool output, timestamps) is exactly what a portable resume
+ * needs. The result feeds the same write paths as `importCline`/`installCline`.
  */
 export const sessionFromHistory = (input: {
   readonly id: string;
@@ -270,6 +274,14 @@ export const sessionFromHistory = (input: {
       toolName:
         typeof message.toolName === "string" && message.toolName !== ""
           ? Option.some(message.toolName)
+          : Option.none<string>(),
+      thinking:
+        typeof message.thinking === "string" && message.thinking !== ""
+          ? Option.some(message.thinking)
+          : Option.none<string>(),
+      thinkingSignature:
+        typeof message.thinkingSignature === "string"
+          ? Option.some(message.thinkingSignature)
           : Option.none<string>(),
       usage: message.usage === undefined ? Option.none() : Option.some(message.usage),
       model: typeof message.model === "string" ? Option.some(message.model) : Option.none<string>(),
@@ -358,6 +370,7 @@ const MessageNodeJson = Schema.Struct({
   toolCallId: Schema.OptionFromUndefinedOr(Schema.String),
   toolName: Schema.OptionFromUndefinedOr(Schema.String),
   thinking: Schema.OptionFromUndefinedOr(Schema.String),
+  thinkingSignature: Schema.OptionFromUndefinedOr(Schema.String),
   usage: Schema.OptionFromUndefinedOr(TokenUsage),
   model: Schema.OptionFromUndefinedOr(Schema.String),
   requestId: Schema.OptionFromUndefinedOr(Schema.String),

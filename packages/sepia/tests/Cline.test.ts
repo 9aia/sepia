@@ -16,6 +16,8 @@ const makeNode = (input: {
   toolCallId?: Option.Option<string>;
   toolName?: Option.Option<string>;
   toolResult?: Option.Option<import("../src/Domain.js").ToolResultInfo>;
+  thinking?: string;
+  thinkingSignature?: string;
   metadata?: unknown;
 }): MessageNode =>
   MessageNode.make({
@@ -27,7 +29,8 @@ const makeNode = (input: {
     toolCallId: input.toolCallId ?? Option.none(),
     toolName: input.toolName ?? Option.none(),
     toolResult: input.toolResult ?? Option.none(),
-    thinking: Option.none(),
+    thinking: Option.fromNullable(input.thinking),
+    thinkingSignature: Option.fromNullable(input.thinkingSignature),
     createdAt: 1700000000 + input.nodeId,
     metadata: input.metadata ?? null,
   });
@@ -263,6 +266,45 @@ test("sessionMessages hoists a result the store recorded behind a user turn", ()
   expect(Cline.transcriptViolations(messages)).toEqual([]);
 });
 
+test("sessionMessages writes thinking seals back verbatim", () => {
+  const session = makeSession([
+    makeNode({ nodeId: 0, role: "user", content: "go" }),
+    makeNode({
+      nodeId: 1,
+      parentNodeId: Option.some(0),
+      role: "assistant",
+      content: "done",
+      thinking: "ponder",
+      thinkingSignature: "sealed.v1.sig",
+      metadata: rendered,
+    }),
+    makeNode({
+      nodeId: 2,
+      parentNodeId: Option.some(1),
+      role: "assistant",
+      content: "ok",
+      thinking: "[redacted]",
+      thinkingSignature: "opaque-blob",
+      metadata: rendered,
+    }),
+  ]);
+
+  const messages = Cline.sessionMessages(session, "imported-session")
+    .messages as ReadonlyArray<any>;
+  const assistants = messages.filter((m) => m.role === "assistant");
+
+  expect(assistants[0].content).toContainEqual({
+    type: "thinking",
+    thinking: "ponder",
+    signature: "sealed.v1.sig",
+  });
+  // a marker-only thinking + opaque blob was a redacted block — write it as one
+  expect(assistants[1].content).toContainEqual({
+    type: "redacted_thinking",
+    data: "opaque-blob",
+  });
+});
+
 const readOnlyFs = (files: Record<string, string>) =>
   FileSystem.layerNoop({
     exists: (path) =>
@@ -306,6 +348,51 @@ const toolResultContents = (session: Session): ReadonlyArray<string> =>
   Cline.visibleNodes(session)
     .filter((node) => node.role === "tool")
     .map((node) => node.content);
+
+test("import keeps thinking signatures and redacted blobs verbatim", async () => {
+  const session = await importedSession("sealed", [
+    { id: "u0", role: "user", content: [{ type: "text", text: "go" }], ts: 1 },
+    {
+      id: "a0",
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "ponder", signature: "sealed.v1.sig" },
+        { type: "text", text: "done" },
+      ],
+      ts: 2,
+    },
+    {
+      id: "a1",
+      role: "assistant",
+      content: [
+        { type: "redacted_thinking", data: "opaque-blob" },
+        { type: "text", text: "ok" },
+      ],
+      ts: 3,
+    },
+  ]);
+
+  const [sealed, redacted] = Cline.visibleNodes(session).filter(
+    (node) => node.role === "assistant",
+  );
+  expect(Option.getOrUndefined(sealed?.thinking ?? Option.none())).toBe("ponder");
+  expect(Option.getOrUndefined(sealed?.thinkingSignature ?? Option.none())).toBe("sealed.v1.sig");
+  // the redacted blob has no text — the marker stands in, `data` is the seal
+  expect(Option.getOrUndefined(redacted?.thinking ?? Option.none())).toBe("[redacted]");
+  expect(Option.getOrUndefined(redacted?.thinkingSignature ?? Option.none())).toBe("opaque-blob");
+
+  // … and an export writes both back in provider shape.
+  const messages = Cline.sessionMessages(session, "sealed").messages as ReadonlyArray<any>;
+  const blocks = messages
+    .filter((m) => m.role === "assistant")
+    .flatMap((m) => m.content as ReadonlyArray<any>);
+  expect(blocks).toContainEqual({
+    type: "thinking",
+    thinking: "ponder",
+    signature: "sealed.v1.sig",
+  });
+  expect(blocks).toContainEqual({ type: "redacted_thinking", data: "opaque-blob" });
+});
 
 test("import keeps calls whose list fields arrived as strings", async () => {
   const session = await importedSession("stringy", [

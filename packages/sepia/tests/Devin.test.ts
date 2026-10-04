@@ -212,6 +212,25 @@ describe("buildChatMessage", () => {
     expect(ext["chisel/terminal_output"]).toEqual({ exit: { exit_code: 2 } });
     expect(ext["chisel/tool_call_timing"]).toEqual({ duration_ms: 42 });
   });
+
+  it("persists thinking only when the node carries its seal", () => {
+    const signed = buildChatMessage(
+      node({
+        thinking: Option.some("ponder"),
+        thinkingSignature: Option.some("sealed.v1.sig"),
+      }),
+      "m",
+    ) as Record<string, unknown>;
+    expect(signed.thinking).toEqual({ thinking: "ponder", signature: "sealed.v1.sig" });
+
+    // Unsigned thinking is dropped: the backend rejects replayed blocks
+    // without the provider's seal.
+    const unsigned = buildChatMessage(node({ thinking: Option.some("ponder") }), "m") as Record<
+      string,
+      unknown
+    >;
+    expect(unsigned.thinking).toBeUndefined();
+  });
 });
 
 describe("parseChatMessage", () => {
@@ -221,7 +240,7 @@ describe("parseChatMessage", () => {
         role: "tool",
         content: "out",
         tool_call_id: "call-1",
-        thinking: { thinking: "ponder" },
+        thinking: { thinking: "ponder", signature: "sealed.v1.sig" },
         tool_calls: [{ id: "t1", name: "read", arguments: { a: 1 } }, "junk", null],
         metadata: { extensions: { "chisel/tool_result_meta": { kind: "read" } } },
       },
@@ -236,8 +255,32 @@ describe("parseChatMessage", () => {
     expect(Option.getOrNull(parsed.toolCallId)).toBe("call-1");
     expect(Option.getOrNull(parsed.toolName)).toBe("read");
     expect(Option.getOrNull(parsed.thinking)).toBe("ponder");
+    expect(Option.getOrNull(parsed.thinkingSignature)).toBe("sealed.v1.sig");
     expect(parsed.nodeId).toBe(7);
     expect(parsed.metadata).toEqual({ src: "row" });
+  });
+
+  it("thinking text and signature survive a build → parse round-trip", () => {
+    const built = buildChatMessage(
+      node({
+        thinking: Option.some("ponder"),
+        thinkingSignature: Option.some("sealed.v1.sig"),
+      }),
+      "m",
+    );
+    const parsed = parseChatMessage(built, null, 0, Option.none(), 0);
+    expect(Option.getOrNull(parsed.thinking)).toBe("ponder");
+    expect(Option.getOrNull(parsed.thinkingSignature)).toBe("sealed.v1.sig");
+
+    // An unsigned seal (Devin stores `"signature": ""`) reads back as-is.
+    const empty = parseChatMessage(
+      { role: "assistant", content: "", thinking: { thinking: "t", signature: "" } },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    expect(Option.getOrNull(empty.thinkingSignature)).toBe("");
   });
 
   it("coerces missing/odd fields to safe defaults", () => {
@@ -246,6 +289,7 @@ describe("parseChatMessage", () => {
     expect(parsed.content).toBe(JSON.stringify({ weird: true }));
     expect(parsed.toolCalls).toEqual([]);
     expect(Option.isNone(parsed.thinking)).toBe(true);
+    expect(Option.isNone(parsed.thinkingSignature)).toBe(true);
     expect(Option.isNone(parsed.toolName)).toBe(true);
     expect(Option.isNone(parsed.toolCallId)).toBe(true);
     expect(Option.isNone(parsed.usage)).toBe(true);

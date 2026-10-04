@@ -5,6 +5,7 @@ import {
   ConversionError,
   MessageNode,
   PromptHistoryEntry,
+  REDACTED_THINKING,
   Session,
   ToolCall,
   type Block,
@@ -400,6 +401,10 @@ const buildNodes = (
       const textParts: Array<string> = [];
       const thinkingParts: Array<string> = [];
       const toolCalls: Array<ToolCall> = [];
+      // Provider seal of the thinking payload — `signature` on `thinking`
+      // blocks, `data` on `redacted_thinking`; the last one wins when several
+      // sealed blocks fold into the single `thinking` projection.
+      let thinkingSignature: string | undefined;
       for (const item of content) {
         if (!isObject(item)) continue;
         if (item.type === "text" && typeof item.text === "string") {
@@ -408,9 +413,18 @@ const buildNodes = (
         }
         if (item.type === "thinking" && typeof item.thinking === "string") {
           thinkingParts.push(item.thinking);
+          const signature = strField(item, "signature");
+          if (signature !== undefined) thinkingSignature = signature;
           continue;
         }
-        // `redacted_thinking` is an opaque blob — there is no text to keep.
+        // `redacted_thinking` is an opaque blob — no text to keep, so the
+        // marker stands in and `data` rides as the signature.
+        if (item.type === "redacted_thinking") {
+          thinkingParts.push(REDACTED_THINKING);
+          const data = strField(item, "data");
+          if (data !== undefined) thinkingSignature = data;
+          continue;
+        }
         if (item.type === "tool_use") {
           const id = strField(item, "id") ?? `claude-tool-${nodes.length}-${toolCalls.length}`;
           const name = strField(item, "name") ?? "unknown";
@@ -436,6 +450,7 @@ const buildNodes = (
           role: "assistant",
           content: sanitize(textParts.join("\n")),
           thinking: thinking === "" ? Option.none() : Option.some(sanitize(thinking)),
+          thinkingSignature: Option.fromNullable(thinkingSignature),
           toolCalls,
           usage: usageFromClaude(message.usage),
           model: Option.fromNullable(strField(message, "model")),

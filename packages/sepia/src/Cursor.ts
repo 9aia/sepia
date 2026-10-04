@@ -2,6 +2,7 @@ import { Option } from "effect";
 import {
   MessageNode,
   PromptHistoryEntry,
+  REDACTED_THINKING,
   Session,
   ToolCall,
   type ToolResultInfo,
@@ -71,7 +72,7 @@ const fromHex = (text: string): Uint8Array | undefined => {
 const utf8 = (bytes: Uint8Array): string => new TextDecoder("utf-8").decode(bytes);
 
 /** Marker recorded in `thinking` when a message carried opaque reasoning. */
-export const REDACTED_THINKING = "[redacted]";
+export { REDACTED_THINKING };
 
 /* ------------------------------------------------------------------ */
 /* meta['0'] — hex-encoded JSON                                        */
@@ -413,6 +414,9 @@ const messageNodes = (
     const textParts: Array<string> = [];
     const toolCalls: Array<ToolCall> = [];
     let redacted = false;
+    // The `redacted-reasoning` payload is opaque; it rides the IR verbatim as
+    // the thinking block's signature so a converted session keeps the seal.
+    let redactedData: string | undefined;
     const content = Array.isArray(msg.content) ? msg.content : [];
     for (const item of content) {
       if (!isObject(item)) continue;
@@ -422,6 +426,8 @@ const messageNodes = (
       }
       if (item.type === "redacted-reasoning") {
         redacted = true;
+        const data = strField(item, "data");
+        if (data !== undefined) redactedData = data;
         continue;
       }
       if (item.type === "tool-call") {
@@ -439,6 +445,7 @@ const messageNodes = (
         role: "assistant",
         content: sanitize(textParts.join("\n")),
         thinking: redacted ? Option.some(REDACTED_THINKING) : Option.none(),
+        thinkingSignature: Option.fromNullable(redactedData),
         toolCalls,
         metadata: { blobId, ...(redacted ? { redactedReasoning: true } : {}) },
       }),

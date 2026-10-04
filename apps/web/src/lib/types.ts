@@ -109,6 +109,10 @@ export interface HistoryMessage {
   blocks?: HistoryBlock[];
   createdAt: number;
   toolName?: string;
+  /** Reasoning text the store recorded (`"[redacted]"` marks an opaque block). */
+  thinking?: string;
+  /** Opaque provider seal on `thinking` — preserved verbatim for resume. */
+  thinkingSignature?: string;
   usage?: MessageUsage;
   model?: string;
   requestId?: string;

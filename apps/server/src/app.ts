@@ -774,10 +774,11 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       let session: Session;
       if (body.session !== undefined) {
         // Full-IR form: the `session` payload of GET /api/sessions/:id/export,
-        // decoded verbatim — tool-call ids/args, thinking, per-node usage and
-        // the parent-linked tree all survive, where the flat history form
-        // below drops them. A fresh id keeps import semantics: every call
-        // lands as a new copy in the target store.
+        // decoded verbatim — tool-call ids/args, thinking (+ signature),
+        // per-node usage and the parent-linked tree all survive, where the
+        // flat history form below keeps only the flat fields. A fresh id
+        // keeps import semantics: every call lands as a new copy in the
+        // target store.
         let decoded: Session;
         try {
           decoded = Conversion.sessionFromJson(body.session);
@@ -839,6 +840,10 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
             content: item.content,
             createdAt: item.createdAt,
             ...(typeof item.toolName === "string" ? { toolName: item.toolName } : {}),
+            ...(typeof item.thinking === "string" ? { thinking: item.thinking } : {}),
+            ...(typeof item.thinkingSignature === "string"
+              ? { thinkingSignature: item.thinkingSignature }
+              : {}),
             // IR v2 fields ride through when present so a converted session
             // keeps its metrics; anything malformed is dropped, not rejected.
             ...(isRecord(item.usage) &&

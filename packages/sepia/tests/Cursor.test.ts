@@ -253,6 +253,8 @@ test("sessionFromStore decodes the checkpoint's ordered messages", () => {
   expect(assistant.role).toBe("assistant");
   expect(assistant.content).toContain("Taking a screenshot.");
   expect(Option.getOrUndefined(assistant.thinking)).toBe(Cursor.REDACTED_THINKING);
+  // the opaque redacted-reasoning blob rides verbatim as the seal
+  expect(Option.getOrUndefined(assistant.thinkingSignature)).toBe("opaque-payload");
   expect(assistant.toolCalls).toHaveLength(1);
   expect(assistant.toolCalls[0]).toMatchObject({
     id: "tool_1",
@@ -389,6 +391,8 @@ test("fromTranscriptJsonl maps the lossy projection honestly", () => {
   expect(user.role).toBe("user");
   expect(assistant.content).toBe("I'll look around.");
   expect(Option.getOrUndefined(assistant.thinking)).toBe(Cursor.REDACTED_THINKING);
+  // the lossy projection keeps no blob — marker only, no signature
+  expect(Option.isNone(assistant.thinkingSignature)).toBe(true);
   expect(assistant.toolCalls[0]).toMatchObject({
     name: "Glob",
     arguments: { glob_pattern: "src/**" },

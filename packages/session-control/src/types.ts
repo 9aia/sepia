@@ -54,6 +54,10 @@ export interface HistoryMessage {
   readonly blocks?: ReadonlyArray<Block>;
   readonly createdAt: number;
   readonly toolName?: string;
+  /** Reasoning text the store recorded (`"[redacted]"` marks an opaque block). */
+  readonly thinking?: string;
+  /** Opaque provider seal on `thinking` — replayed verbatim, never decoded. */
+  readonly thinkingSignature?: string;
   /** Token metrics the agent's store recorded for this message. */
   readonly usage?: TokenUsage;
   readonly model?: string;

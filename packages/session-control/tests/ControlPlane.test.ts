@@ -355,6 +355,33 @@ test("history surfaces a node's content blocks when the store recorded them", as
   expect(page.messages[1]?.blocks).toBeUndefined();
 });
 
+test("history surfaces thinking text and its signature verbatim", async () => {
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([
+      session("s1", "/work", [
+        node(1, "user", "hi", 10),
+        new MessageNode({
+          nodeId: 2,
+          role: "assistant",
+          content: "done",
+          thinking: Option.some("ponder"),
+          thinkingSignature: Option.some("sealed.v1.sig"),
+          createdAt: 11,
+          metadata: null,
+        }),
+      ]),
+    ]),
+  );
+
+  const page = await Effect.runPromise(cp.getHistory("s1"));
+
+  expect(page.messages[1]?.thinking).toBe("ponder");
+  expect(page.messages[1]?.thinkingSignature).toBe("sealed.v1.sig");
+  expect(page.messages[0]?.thinking).toBeUndefined();
+  expect(page.messages[0]?.thinkingSignature).toBeUndefined();
+});
+
 test("returns the last limit messages and the full node count", async () => {
   const nodes = Array.from({ length: 10 }, (_, index) =>
     node(index + 1, "user", `m${index + 1}`, index + 1),

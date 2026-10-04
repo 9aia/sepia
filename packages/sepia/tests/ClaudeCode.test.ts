@@ -63,7 +63,7 @@ test("fromJsonl maps entries to a linked node tree", () => {
       line(userEntry("u1", null, "fix the login bug please")),
       line(
         assistantEntry("u2", "u1", [
-          { type: "thinking", thinking: "look at auth" },
+          { type: "thinking", thinking: "look at auth", signature: "sig-1" },
           { type: "text", text: "I'll check the auth module" },
           { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "/src/a.ts" } },
         ]),
@@ -111,6 +111,7 @@ test("fromJsonl maps entries to a linked node tree", () => {
   expect(assistant.role).toBe("assistant");
   expect(Option.getOrUndefined(assistant.parentNodeId)).toBe(user.nodeId);
   expect(Option.getOrUndefined(assistant.thinking)).toBe("look at auth");
+  expect(Option.getOrUndefined(assistant.thinkingSignature)).toBe("sig-1");
   expect(assistant.toolCalls).toHaveLength(1);
   expect(assistant.toolCalls[0].name).toBe("Read");
   expect(assistant.toolCalls[0].arguments).toEqual({ file_path: "/src/a.ts" });
@@ -517,7 +518,10 @@ test("user entries without content emit no node; assistant text/thinking/redacte
   expect(session.nodes).toHaveLength(2);
   const assistant = session.nodes[1];
   expect(assistant.content).toBe("answer");
-  expect(Option.getOrUndefined(assistant.thinking)).toBe("plan");
+  // the redacted block folds to the marker and its opaque blob rides as the
+  // thinking signature — the unsealed `thinking` block adds only its text.
+  expect(Option.getOrUndefined(assistant.thinking)).toBe("[redacted]\nplan");
+  expect(Option.getOrUndefined(assistant.thinkingSignature)).toBe("opaque");
   expect(assistant.toolCalls[0].id).toMatch(/^claude-tool-/);
   expect(assistant.toolCalls[0].name).toBe("NoId");
   expect(assistant.toolCalls[0].arguments).toEqual({});

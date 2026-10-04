@@ -86,6 +86,7 @@ const IR_SESSION = Session.make({
       role: "assistant",
       content: "",
       thinking: Option.some("run ls"),
+      thinkingSignature: Option.some("sealed.v1.sig"),
       usage: Option.some({ input: 12, output: 34, thinking: 5 }),
       model: Option.some("test-model"),
       requestId: Option.some("req-9"),
@@ -454,6 +455,7 @@ describe("createApp", () => {
         agentId?: string;
         nodes: Array<{
           thinking?: string;
+          thinkingSignature?: string;
           usage?: Record<string, number>;
           toolCallId?: string;
           parentNodeId?: number;
@@ -470,6 +472,7 @@ describe("createApp", () => {
     // fields the history projection drops are all here.
     const assistant = body.session.nodes[1];
     expect(assistant?.thinking).toBe("run ls");
+    expect(assistant?.thinkingSignature).toBe("sealed.v1.sig");
     expect(assistant?.usage).toEqual({ input: 12, output: 34, thinking: 5 });
     expect(assistant?.toolCalls?.[0]).toMatchObject({
       id: "call-1",

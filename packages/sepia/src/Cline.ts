@@ -6,6 +6,7 @@ import {
   ConversionError,
   MessageNode,
   PromptHistoryEntry,
+  REDACTED_THINKING,
   Session,
   ToolCall,
   type Block,
@@ -448,6 +449,7 @@ const buildAssistantNode = (
   parentNodeId: Option.Option<number>,
   text: string,
   thinking: string,
+  thinkingSignature: Option.Option<string>,
   toolCalls: ReadonlyArray<ToolCall>,
   createdAt: number,
   rendered: boolean,
@@ -460,6 +462,7 @@ const buildAssistantNode = (
     role: "assistant",
     content: sanitize(text),
     thinking: thinking ? Option.some(sanitize(thinking)) : Option.none<string>(),
+    thinkingSignature,
     toolCalls,
     usage,
     model,
@@ -749,11 +752,22 @@ const buildSession = (
       const content = Array.isArray(m.content) ? m.content : [];
       const textParts: Array<string> = [];
       let thinkingText = "";
+      // Provider seal on the thinking block (`signature`), or the opaque
+      // payload of a `redacted_thinking` entry (`data`) — preserved verbatim.
+      let thinkingSignature: string | undefined;
       const toolUses: Array<any> = [];
 
       for (const c of content) {
         if (c.type === "text") textParts.push(c.text);
-        if (c.type === "thinking") thinkingText = c.thinking ?? "";
+        if (c.type === "thinking") {
+          thinkingText = c.thinking ?? "";
+          if (typeof c.signature === "string") thinkingSignature = c.signature;
+        }
+        if (c.type === "redacted_thinking") {
+          thinkingText =
+            thinkingText === "" ? REDACTED_THINKING : `${thinkingText}\n${REDACTED_THINKING}`;
+          if (typeof c.data === "string") thinkingSignature = c.data;
+        }
         if (c.type === "tool_use") toolUses.push(c);
       }
 
@@ -790,11 +804,34 @@ const buildSession = (
           : Option.some(lastRenderedAssistantNode);
       const usage = usageFromClineMetrics(m.metrics);
       const model = modelFromMessage(m);
+      const signature = Option.fromNullable(thinkingSignature);
       addNode(parent, (nid, p) =>
-        buildAssistantNode(nid, p, text, thinkingText, devinToolCalls, ts, false, usage, model),
+        buildAssistantNode(
+          nid,
+          p,
+          text,
+          thinkingText,
+          signature,
+          devinToolCalls,
+          ts,
+          false,
+          usage,
+          model,
+        ),
       );
       addNode(parent, (nid, p) =>
-        buildAssistantNode(nid, p, text, thinkingText, devinToolCalls, ts, true, usage, model),
+        buildAssistantNode(
+          nid,
+          p,
+          text,
+          thinkingText,
+          signature,
+          devinToolCalls,
+          ts,
+          true,
+          usage,
+          model,
+        ),
       );
 
       lastRenderedAssistantNode = nodes[nodes.length - 1].nodeId;
@@ -1092,7 +1129,22 @@ export const sessionMessages = (session: Session, sessionId: string): Record<str
       const content: Array<unknown> = [];
       if (node.content) content.push({ type: "text", text: node.content });
       if (Option.isSome(node.thinking)) {
-        content.push({ type: "thinking", thinking: node.thinking.value });
+        const signature = Option.getOrUndefined(node.thinkingSignature);
+        // A node whose thinking is only the redacted marker + an opaque blob
+        // was a redacted reasoning block — write it back in that form so the
+        // seal replays verbatim instead of signing the marker text.
+        if (signature !== undefined && node.thinking.value === REDACTED_THINKING) {
+          content.push({ type: "redacted_thinking", data: signature });
+        } else {
+          content.push({
+            type: "thinking",
+            thinking: node.thinking.value,
+            ...(signature === undefined ? {} : { signature }),
+          });
+        }
+      } else if (Option.isSome(node.thinkingSignature)) {
+        // No text at all — the seal belongs to a fully redacted block.
+        content.push({ type: "redacted_thinking", data: node.thinkingSignature.value });
       }
       for (const tc of node.toolCalls) {
         content.push({
