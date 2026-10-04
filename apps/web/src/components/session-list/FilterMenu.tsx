@@ -1,7 +1,6 @@
 import { BotIcon, Clock01Icon, FilterHorizontalIcon, StatusIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { AgentInfo } from "../../lib/types";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   DropdownMenu,
@@ -60,14 +59,18 @@ export function FilterMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="outline" className="h-9 shrink-0 gap-1.5 px-2" aria-label="Filters" />
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="relative shrink-0"
+            aria-label="Filters"
+            title="Filters"
+          />
         }
       >
         <HugeiconsIcon icon={FilterHorizontalIcon} strokeWidth={2} />
         {active > 0 && (
-          <Badge variant="secondary" className="px-1">
-            {active}
-          </Badge>
+          <span className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-primary" />
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">

@@ -61,9 +61,9 @@ export function FilterBar({
         <PopoverTrigger
           render={
             <Button
-              variant="outline"
-              size="icon"
-              className="h-9 w-9 shrink-0"
+              variant="ghost"
+              size="icon-xs"
+              className="shrink-0"
               aria-label="Search sessions"
               title={`Search (${modKey}K)`}
             />
@@ -108,8 +108,8 @@ export function FilterBar({
       <SortMenu sort={sort} onSortChange={onSortChange} />
       <Button
         variant="ghost"
-        size="icon"
-        className="ml-auto h-9 w-9"
+        size="icon-xs"
+        className="shrink-0"
         aria-label="Close sidebar"
         title="Close sidebar"
         onClick={toggleSidebar}

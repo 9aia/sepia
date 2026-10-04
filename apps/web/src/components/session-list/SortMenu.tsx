@@ -27,9 +27,9 @@ export function SortMenu({ sort, onSortChange }: SortMenuProps) {
       <DropdownMenuTrigger
         render={
           <Button
-            variant="outline"
-            size="icon"
-            className="h-9 w-9 shrink-0"
+            variant="ghost"
+            size="icon-xs"
+            className="shrink-0"
             aria-label="Sort sessions"
             title={`Sort: ${SORT_LABELS[sort]}`}
           />
