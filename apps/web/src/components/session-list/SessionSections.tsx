@@ -541,17 +541,17 @@ export function SessionSections({
         selectedId={selectedId}
         {...handlers}
       />
+      <ProjectsSection
+        projects={projects}
+        sessions={sessions}
+        selectedId={selectedId}
+        {...handlers}
+      />
       <FlatSection
         label="Recents"
         sectionKey="recents"
         limit={8}
         sessions={recentSessions}
-        selectedId={selectedId}
-        {...handlers}
-      />
-      <ProjectsSection
-        projects={projects}
-        sessions={sessions}
         selectedId={selectedId}
         {...handlers}
       />
