@@ -1,4 +1,10 @@
-import { FilterHorizontalIcon } from "@hugeicons/core-free-icons";
+import {
+  ArrowUpDownIcon,
+  BotIcon,
+  Clock01Icon,
+  FilterHorizontalIcon,
+  StatusIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { AgentInfo } from "../../lib/types";
 import { Badge } from "../ui/badge";
@@ -7,14 +13,39 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import type { DateFilter, SortKey, StatusFilter } from "./FilterBar";
+
+const DATE_LABELS: Record<DateFilter, string> = {
+  all: "Any time",
+  day: "Today",
+  week: "Last 7 days",
+  month: "Last 30 days",
+};
+
+const STATUS_LABELS: Record<StatusFilter, string> = {
+  all: "Any status",
+  free: "Free",
+  locked: "Locked",
+};
+
+const SORT_LABELS: Record<SortKey, string> = {
+  newest: "Newest",
+  oldest: "Oldest",
+  title: "Title",
+};
+
+/** Muted right-hand hint showing the active choice on a submenu trigger. */
+function Hint({ children }: { readonly children: React.ReactNode }) {
+  return <span className="ml-auto text-xs text-muted-foreground">{children}</span>;
+}
 
 interface FilterMenuProps {
   readonly agents: ReadonlyArray<AgentInfo>;
@@ -59,68 +90,85 @@ export function FilterMenu({
           </Badge>
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Agents</DropdownMenuLabel>
-          {agents.map((agent) => (
-            <DropdownMenuCheckboxItem
-              key={agent.id}
-              checked={agentFilter.includes(agent.id)}
-              onCheckedChange={(checked) => onToggleAgent(agent.id, checked)}
-              closeOnClick={false}
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <HugeiconsIcon icon={BotIcon} strokeWidth={2} />
+            Agents
+            {agentFilter.length > 0 && <Hint>{agentFilter.length}</Hint>}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            {agents.map((agent) => (
+              <DropdownMenuCheckboxItem
+                key={agent.id}
+                checked={agentFilter.includes(agent.id)}
+                onCheckedChange={(checked) => onToggleAgent(agent.id, checked)}
+                closeOnClick={false}
+              >
+                {agent.label}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <HugeiconsIcon icon={Clock01Icon} strokeWidth={2} />
+            Recency
+            {dateFilter !== "all" && <Hint>{DATE_LABELS[dateFilter]}</Hint>}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup
+              value={dateFilter}
+              onValueChange={(v) => onDateFilterChange(v as DateFilter)}
             >
-              {agent.label}
-            </DropdownMenuCheckboxItem>
-          ))}
-        </DropdownMenuGroup>
+              {(["all", "day", "week", "month"] as const).map((value) => (
+                <DropdownMenuRadioItem key={value} value={value} closeOnClick={false}>
+                  {DATE_LABELS[value]}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <HugeiconsIcon icon={StatusIcon} strokeWidth={2} />
+            Status
+            {statusFilter !== "all" && <Hint>{STATUS_LABELS[statusFilter]}</Hint>}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup
+              value={statusFilter}
+              onValueChange={(v) => onStatusFilterChange(v as StatusFilter)}
+            >
+              {(["all", "free", "locked"] as const).map((value) => (
+                <DropdownMenuRadioItem key={value} value={value} closeOnClick={false}>
+                  {STATUS_LABELS[value]}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
         <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup
-          value={dateFilter}
-          onValueChange={(v) => onDateFilterChange(v as DateFilter)}
-        >
-          <DropdownMenuLabel>Recency</DropdownMenuLabel>
-          <DropdownMenuRadioItem value="all" closeOnClick={false}>
-            Any time
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="day" closeOnClick={false}>
-            Today
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="week" closeOnClick={false}>
-            Last 7 days
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="month" closeOnClick={false}>
-            Last 30 days
-          </DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup
-          value={statusFilter}
-          onValueChange={(v) => onStatusFilterChange(v as StatusFilter)}
-        >
-          <DropdownMenuLabel>Status</DropdownMenuLabel>
-          <DropdownMenuRadioItem value="all" closeOnClick={false}>
-            Any status
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="free" closeOnClick={false}>
-            Free
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="locked" closeOnClick={false}>
-            Locked
-          </DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSortChange(v as SortKey)}>
-          <DropdownMenuLabel>Sort</DropdownMenuLabel>
-          <DropdownMenuRadioItem value="newest" closeOnClick={false}>
-            Newest
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="oldest" closeOnClick={false}>
-            Oldest
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="title" closeOnClick={false}>
-            Title
-          </DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <HugeiconsIcon icon={ArrowUpDownIcon} strokeWidth={2} />
+            Sort
+            {sort !== "newest" && <Hint>{SORT_LABELS[sort]}</Hint>}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSortChange(v as SortKey)}>
+              {(["newest", "oldest", "title"] as const).map((value) => (
+                <DropdownMenuRadioItem key={value} value={value} closeOnClick={false}>
+                  {SORT_LABELS[value]}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
       </DropdownMenuContent>
     </DropdownMenu>
   );
