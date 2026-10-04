@@ -227,16 +227,22 @@ describe("POST/PATCH/DELETE wrappers", () => {
 
   it("sendPrompt, cancel, and respondToPermission unwrap { ok }", async () => {
     stubFetch(jsonOk({ ok: true }));
-    await expect(sendPrompt("s1", "go")).resolves.toBe(true);
+    await expect(sendPrompt("s1", { text: "go" })).resolves.toBe(true);
     expect(calls[0]?.url).toBe("/api/sessions/s1/prompt");
     expect(JSON.parse(calls[0]?.init?.body as string)).toEqual({ text: "go" });
 
+    const attachments = [
+      { type: "image" as const, data: "aGk=", mimeType: "image/png", uri: "attachment://hi.png" },
+    ];
+    await expect(sendPrompt("s1", { text: "see", attachments })).resolves.toBe(true);
+    expect(JSON.parse(calls[1]?.init?.body as string)).toEqual({ text: "see", attachments });
+
     await expect(cancel("s1", "cline")).resolves.toBe(true);
-    expect(calls[1]?.url).toBe("/api/sessions/s1/cancel?agent=cline");
-    expect(calls[1]?.init?.method).toBe("POST");
+    expect(calls[2]?.url).toBe("/api/sessions/s1/cancel?agent=cline");
+    expect(calls[2]?.init?.method).toBe("POST");
 
     await expect(respondToPermission("s1", "req-1", null)).resolves.toBe(true);
-    expect(JSON.parse(calls[2]?.init?.body as string)).toEqual({
+    expect(JSON.parse(calls[3]?.init?.body as string)).toEqual({
       requestId: "req-1",
       optionId: null,
     });

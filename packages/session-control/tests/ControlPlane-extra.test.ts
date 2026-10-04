@@ -275,7 +275,10 @@ describe("live-session operations", () => {
 
   it("cancel/prompt on a detached session fails invalid", async () => {
     const plane = await makeService([fakeAgent().runtime], repository([]));
-    for (const effect of [plane.cancel("nope"), plane.prompt("nope", "hi")]) {
+    for (const effect of [
+      plane.cancel("nope"),
+      plane.prompt("nope", [{ type: "text", text: "hi" }]),
+    ]) {
       const result = await runEither(effect);
       expect(Either.isLeft(result)).toBe(true);
       if (Either.isLeft(result)) expect(result.left.code).toBe("invalid");

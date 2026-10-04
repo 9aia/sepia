@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import type { AcpConnection } from "sepia-acp";
+import type { AcpConnection, PromptPart } from "sepia-acp";
 import {
   Conversion,
   MessageNode,
@@ -135,7 +135,7 @@ const failure = (message: string, code?: ControlErrorCode): Effect.Effect<never,
 interface FakePlane {
   readonly plane: ControlPlaneService;
   readonly push: (id: string, events: ReadonlyArray<Event>) => void;
-  readonly prompts: Array<{ readonly id: string; readonly text: string }>;
+  readonly prompts: Array<{ readonly id: string; readonly parts: ReadonlyArray<PromptPart> }>;
   readonly cancels: string[];
   readonly permissions: Array<{
     readonly id: string;
@@ -151,7 +151,7 @@ interface FakePlane {
 
 const makeFakePlane = (): FakePlane => {
   const listeners = new Map<string, SessionEventListener>();
-  const prompts: Array<{ id: string; text: string }> = [];
+  const prompts: Array<{ id: string; parts: ReadonlyArray<PromptPart> }> = [];
   const cancels: string[] = [];
   const permissions: Array<{ id: string; requestId: string; optionId: string | null }> = [];
   const created: Array<{ cwd: string; agentId?: string; title?: string }> = [];
@@ -181,9 +181,9 @@ const makeFakePlane = (): FakePlane => {
         agentId: options?.agentId ?? "devin",
       }),
     detach: () => Effect.void,
-    prompt: (id, text) =>
+    prompt: (id, parts) =>
       Effect.sync(() => {
-        prompts.push({ id, text });
+        prompts.push({ id, parts });
       }),
     cancel: (id) =>
       Effect.sync(() => {
@@ -612,15 +612,71 @@ describe("createApp", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
-    expect(prompts).toEqual([{ id: "sess-1", text: "go" }]);
+    expect(prompts).toEqual([{ id: "sess-1", parts: [{ type: "text", text: "go" }] }]);
   });
 
-  it("rejects an empty prompt with 400", async () => {
+  it("POST /api/sessions/:id/prompt forwards attachments as content blocks", async () => {
+    const { plane, prompts } = makeFakePlane();
+    const attachments = [
+      { type: "image", data: "aGk=", mimeType: "image/png", uri: "attachment://hi.png" },
+      {
+        type: "resource",
+        resource: { uri: "attachment://notes.md", mimeType: "text/markdown", text: "# hi" },
+      },
+      { type: "resource_link", uri: "file:///tmp/log.txt", name: "log.txt", size: 12 },
+    ];
+    const response = await createApp(plane)(
+      post("/api/sessions/sess-1/prompt", { text: "look", attachments }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(prompts).toEqual([
+      { id: "sess-1", parts: [{ type: "text", text: "look" }, ...attachments] },
+    ]);
+  });
+
+  it("POST /api/sessions/:id/prompt accepts an attachments-only prompt", async () => {
+    const { plane, prompts } = makeFakePlane();
+    const attachments = [{ type: "image", data: "aGk=", mimeType: "image/png" }];
+    const response = await createApp(plane)(
+      post("/api/sessions/sess-1/prompt", { text: "", attachments }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(prompts).toEqual([{ id: "sess-1", parts: attachments }]);
+  });
+
+  it.each([
+    [{ text: "  " }, "text or attachments is required"],
+    [{ attachments: "nope" }, "attachments must be an array of content blocks"],
+    [
+      { text: "hi", attachments: [{ type: "video", data: "xx" }] },
+      "attachments must be ACP content blocks (text, image, audio, resource, resource_link)",
+    ],
+    [
+      { attachments: [{ type: "image", mimeType: "image/png" }] },
+      "attachments must be ACP content blocks (text, image, audio, resource, resource_link)",
+    ],
+    [
+      { attachments: [{ type: "resource", resource: { uri: "attachment://x" } }] },
+      "attachments must be ACP content blocks (text, image, audio, resource, resource_link)",
+    ],
+    [{ attachments: Array.from({ length: 17 }, () => ({ type: "text", text: "x" })) }, "max 16"],
+    [
+      {
+        attachments: [
+          { type: "image", data: "x".repeat(8 * 1024 * 1024 + 1), mimeType: "image/png" },
+        ],
+      },
+      "size limit",
+    ],
+  ])("rejects a malformed prompt with 400 (%j)", async (body, fragment) => {
     const { plane } = makeFakePlane();
-    const response = await createApp(plane)(post("/api/sessions/sess-1/prompt", { text: "  " }));
+    const response = await createApp(plane)(post("/api/sessions/sess-1/prompt", body));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "text is required" });
+    const payload = (await response.json()) as { error: string };
+    expect(payload.error).toContain(fragment);
   });
 
   it("POST /api/sessions/:id/cancel returns ok", async () => {
@@ -801,7 +857,7 @@ describe("createApp", () => {
     await reader.read();
 
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(prompts).toEqual([{ id: "sess-1", text: "hi" }]);
+    expect(prompts).toEqual([{ id: "sess-1", parts: [{ type: "text", text: "hi" }] }]);
   });
 
   it("delivers an event pushed during the subscribe window", async () => {

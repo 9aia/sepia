@@ -4,6 +4,7 @@ import type { ControlPlaneService, HistoryMessage } from "sepia-session-control"
 import { ControlError } from "sepia-session-control";
 import type { Event } from "sepia-agui";
 import { EventType } from "sepia-agui";
+import type { PromptPart } from "sepia-acp";
 import { createAguiAgentHandler } from "../src/agui-agent";
 
 const HISTORY: ReadonlyArray<HistoryMessage> = [
@@ -16,7 +17,7 @@ interface FakePlane {
   readonly calls: {
     attach: Array<{ id: string; agentId?: string }>;
     subscribe: Array<{ id: string; agentId?: string }>;
-    prompt: Array<{ id: string; text: string; agentId?: string }>;
+    prompt: Array<{ id: string; parts: ReadonlyArray<PromptPart>; agentId?: string }>;
     history: Array<{ id: string; agentId?: string }>;
     cancel: string[];
   };
@@ -46,8 +47,8 @@ const makePlane = (over: Partial<ControlPlaneService> = {}): FakePlane => {
       return Effect.succeed({ attached: true, readOnly: false, agentId: "devin" });
     },
     detach: () => Effect.void,
-    prompt: (id, text, agentId) => {
-      calls.prompt.push({ id, text, agentId });
+    prompt: (id, parts, agentId) => {
+      calls.prompt.push({ id, parts, agentId });
       return Effect.void;
     },
     cancel: (id) => {
@@ -276,7 +277,9 @@ describe("createAguiAgentHandler — streaming", () => {
       }),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(calls.prompt).toEqual([{ id: "sess-1", text: "the real prompt", agentId: undefined }]);
+    expect(calls.prompt).toEqual([
+      { id: "sess-1", parts: [{ type: "text", text: "the real prompt" }], agentId: undefined },
+    ]);
     await res.body?.cancel();
   });
 });

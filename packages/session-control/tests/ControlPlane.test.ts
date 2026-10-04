@@ -607,7 +607,7 @@ test("createSession spawns the agent, returns the id, and registers a live sessi
   expect(result).toEqual({ id: "new", agentId: "devin" });
   expect(spawns).toEqual([{ cwd: "/work" }]);
 
-  await Effect.runPromise(cp.prompt("new", "hi"));
+  await Effect.runPromise(cp.prompt("new", [{ type: "text", text: "hi" }]));
   expect(conn.prompted).toEqual([{ id: "new", parts: [{ type: "text", text: "hi" }] }]);
 });
 
@@ -694,7 +694,7 @@ test("prompt emits RUN_STARTED before RUN_FINISHED", async () => {
       events.push(...batch);
     }),
   );
-  await Effect.runPromise(cp.prompt("s1", "hi"));
+  await Effect.runPromise(cp.prompt("s1", [{ type: "text", text: "hi" }]));
 
   expect(events.map((event) => event.type)).toEqual([
     EventType.RUN_STARTED,
@@ -740,13 +740,15 @@ test("detach closes the connection and stops routing", async () => {
     }),
   );
   unsubscribe();
-  await Effect.runPromise(cp.prompt("s1", "hi"));
+  await Effect.runPromise(cp.prompt("s1", [{ type: "text", text: "hi" }]));
   expect(events).toEqual([]);
 
   await Effect.runPromise(cp.detach("s1"));
   expect(conn.closed).toBe(true);
 
-  expect(Either.isLeft(await runEither(cp.prompt("s1", "again")))).toBe(true);
+  expect(Either.isLeft(await runEither(cp.prompt("s1", [{ type: "text", text: "again" }])))).toBe(
+    true,
+  );
 });
 
 test("prompt before attach fails with ControlError", async () => {
@@ -755,7 +757,7 @@ test("prompt before attach fails with ControlError", async () => {
     repository([session("s1", "/work")]),
   );
 
-  const result = await runEither(cp.prompt("s1", "hi"));
+  const result = await runEither(cp.prompt("s1", [{ type: "text", text: "hi" }]));
 
   expect(Either.isLeft(result)).toBe(true);
   if (Either.isLeft(result)) expect(result.left._tag).toBe("ControlError");
@@ -770,18 +772,20 @@ test("rejects a concurrent prompt with busy and clears the flag after the turn",
   await Effect.runPromise(cp.attach("s1"));
 
   const release = conn.holdPrompt();
-  const first = Effect.runPromise(cp.prompt("s1", "one"));
+  const first = Effect.runPromise(cp.prompt("s1", [{ type: "text", text: "one" }]));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  const busy = await runEither(cp.prompt("s1", "two"));
+  const busy = await runEither(cp.prompt("s1", [{ type: "text", text: "two" }]));
   expect(Either.isLeft(busy)).toBe(true);
   if (Either.isLeft(busy)) expect(busy.left.code).toBe("busy");
 
   release();
   await first;
 
-  await Effect.runPromise(cp.prompt("s1", "three"));
-  expect(conn.prompted.map((item) => item.parts[0]?.text)).toEqual(["one", "three"]);
+  await Effect.runPromise(cp.prompt("s1", [{ type: "text", text: "three" }]));
+  expect(
+    conn.prompted.map((item) => (item.parts[0]?.type === "text" ? item.parts[0].text : undefined)),
+  ).toEqual(["one", "three"]);
 });
 
 test("reports busy on the live summary while a turn is running", async () => {
@@ -790,7 +794,7 @@ test("reports busy on the live summary while a turn is running", async () => {
   await Effect.runPromise(cp.createSession({ cwd: "/work" }));
 
   const release = conn.holdPrompt();
-  const first = Effect.runPromise(cp.prompt("new", "one"));
+  const first = Effect.runPromise(cp.prompt("new", [{ type: "text", text: "one" }]));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const [summary] = await Effect.runPromise(cp.listSessions());
@@ -820,7 +824,9 @@ test("closeAll detaches every live session", async () => {
   await Effect.runPromise(cp.closeAll());
 
   expect(conn.closed).toBe(true);
-  expect(Either.isLeft(await runEither(cp.prompt("s1", "hi")))).toBe(true);
+  expect(Either.isLeft(await runEither(cp.prompt("s1", [{ type: "text", text: "hi" }])))).toBe(
+    true,
+  );
 });
 
 test("concurrent attaches spawn the agent exactly once", async () => {
@@ -938,7 +944,9 @@ test("the idle sweep detaches a session with no listeners after the TTL", async 
   await new Promise((resolve) => setTimeout(resolve, 200));
 
   expect(conn.closed).toBe(true);
-  expect(Either.isLeft(await runEither(cp.prompt("s1", "hi")))).toBe(true);
+  expect(Either.isLeft(await runEither(cp.prompt("s1", [{ type: "text", text: "hi" }])))).toBe(
+    true,
+  );
   await Effect.runPromise(cp.closeAll());
 });
 
@@ -951,7 +959,7 @@ test("the idle sweep skips a session with an in-flight turn", async () => {
   await Effect.runPromise(cp.attach("s1"));
 
   const release = conn.holdPrompt();
-  const first = Effect.runPromise(cp.prompt("s1", "one"));
+  const first = Effect.runPromise(cp.prompt("s1", [{ type: "text", text: "one" }]));
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 200));
   expect(conn.closed).toBe(false);
@@ -973,7 +981,9 @@ test("deleteSession detaches a live session, then deletes through the agent", as
 
   expect(conn.deleted).toEqual(["s1"]);
   expect(spawns).toHaveLength(2);
-  expect(Either.isLeft(await runEither(cp.prompt("s1", "hi")))).toBe(true);
+  expect(Either.isLeft(await runEither(cp.prompt("s1", [{ type: "text", text: "hi" }])))).toBe(
+    true,
+  );
 });
 
 test("deleteSession fails for an unknown session", async () => {

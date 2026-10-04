@@ -5,7 +5,7 @@
  */
 
 import { Context, Schema, type Effect } from "effect";
-import type { AcpConnection } from "sepia-acp";
+import type { AcpConnection, PromptPart } from "sepia-acp";
 import type { Event } from "sepia-agui";
 import type { Block, Session, TokenUsage, ToolCallStatus } from "sepia-core";
 
@@ -175,9 +175,14 @@ export interface ControlPlaneService {
 
   readonly detach: (id: string) => Effect.Effect<void, ControlError>;
 
+  /**
+   * Sends one turn: `parts` is the ACP `session/prompt` content-block list —
+   * a `text` part plus any attachment blocks (`image`, `audio`, `resource`,
+   * `resource_link`). Forwarded to the agent verbatim.
+   */
   readonly prompt: (
     id: string,
-    text: string,
+    parts: ReadonlyArray<PromptPart>,
     agentId?: string,
   ) => Effect.Effect<void, ControlError>;
 

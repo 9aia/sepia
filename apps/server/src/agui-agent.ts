@@ -171,7 +171,9 @@ export const createAguiAgentHandler =
       ];
     }
 
-    const promptRun = run(Effect.either(plane.prompt(sessionId, text, agentId)));
+    const promptRun = run(
+      Effect.either(plane.prompt(sessionId, [{ type: "text", text }], agentId)),
+    );
 
     // A busy rejection is synchronous; race one tick so we can answer 409 before
     // committing to a stream instead of surfacing it as a RUN_ERROR event.

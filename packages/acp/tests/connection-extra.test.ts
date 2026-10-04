@@ -151,22 +151,33 @@ describe("session requests", () => {
     await loaded;
   });
 
-  it("prompt maps text parts into the ACP prompt shape", async () => {
+  it("prompt forwards content blocks verbatim", async () => {
     const { conn, written, respondLast } = await initialized();
-    const prompted = conn.prompt("s1", [
+    const parts = [
       { type: "text", text: "hello" },
-      { type: "text", text: "world" },
-    ]);
+      { type: "image", data: "aGk=", mimeType: "image/png", uri: "attachment://hi.png" },
+      { type: "audio", data: "AAA=", mimeType: "audio/mpeg" },
+      {
+        type: "resource",
+        resource: { uri: "attachment://notes.md", mimeType: "text/markdown", text: "# hi" },
+      },
+      {
+        type: "resource",
+        resource: { uri: "attachment://blob.bin", blob: "AAE=" },
+      },
+      {
+        type: "resource_link",
+        uri: "file:///tmp/log.txt",
+        name: "log.txt",
+        mimeType: "text/plain",
+        size: 12,
+      },
+    ] as const;
+    const prompted = conn.prompt("s1", parts);
     await tick();
     const request = written[0] as { method?: string; params?: Record<string, unknown> };
     expect(request.method).toBe(acp.methods.agent.session.prompt);
-    expect(request.params).toEqual({
-      sessionId: "s1",
-      prompt: [
-        { type: "text", text: "hello" },
-        { type: "text", text: "world" },
-      ],
-    });
+    expect(request.params).toEqual({ sessionId: "s1", prompt: [...parts] });
     respondLast({ stopReason: "end_turn" });
     await prompted;
   });

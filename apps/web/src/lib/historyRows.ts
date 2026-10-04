@@ -112,9 +112,13 @@ export const liveCoveredByHistory = (
   history: ReadonlyArray<HistoryMessage>,
 ): boolean => {
   if (live.length === 0) return true;
-  const historyTexts = new Set(history.map((m) => `${m.role}:${m.content}`));
-  return live.every(
-    (m) =>
-      (m.role !== "user" && m.role !== "assistant") || historyTexts.has(`${m.role}:${m.content}`),
-  );
+  return live.every((m) => {
+    if (m.role !== "user" && m.role !== "assistant") return true;
+    const candidates = history.filter((h) => h.role === m.role && h.content === m.content);
+    if (candidates.length === 0) return false;
+    // A row sent with attachments only counts once the flush kept them —
+    // stores that drop blocks would otherwise leave the live row ghosting.
+    if (!hasAttachments(m.blocks)) return true;
+    return candidates.some((h) => hasAttachments(h.blocks));
+  });
 };

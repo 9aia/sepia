@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import { AlertCircleIcon, BubbleChatIcon } from "@hugeicons/core-free-icons";
 import { EmptyScreen } from "./EmptyScreen";
-import type { PermissionRequest } from "../lib/types";
+import type { HistoryBlock, PermissionRequest } from "../lib/types";
 import { subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
 import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
@@ -176,14 +176,24 @@ export function ChatPanel() {
   }, [resolvePermissions]);
 
   // Optimistic — returns the id so a failed send can roll the row back.
-  const addUserMessage = useCallback((text: string): string => {
-    const id = `user-${Date.now()}`;
-    setLiveMessages((messages) => [
-      ...messages,
-      { id, createdAt: Date.now(), role: "user", content: text, done: true },
-    ]);
-    return id;
-  }, []);
+  const addUserMessage = useCallback(
+    (text: string, blocks?: ReadonlyArray<HistoryBlock>): string => {
+      const id = `user-${Date.now()}`;
+      setLiveMessages((messages) => [
+        ...messages,
+        {
+          id,
+          createdAt: Date.now(),
+          role: "user",
+          content: text,
+          ...(blocks !== undefined ? { blocks } : {}),
+          done: true,
+        },
+      ]);
+      return id;
+    },
+    [],
+  );
   const removeLiveMessage = useCallback((id: string): void => {
     setLiveMessages((messages) => messages.filter((m) => m.id !== id));
   }, []);

@@ -9,6 +9,7 @@ import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Layer } from "effect";
 import { ControlError } from "sepia-session-control";
+import type { PromptPart } from "sepia-acp";
 import type {
   ControlErrorCode,
   ControlPlaneService,
@@ -377,6 +378,99 @@ const HISTORY_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant
 
 /** Guard for the `blocks` field of an imported history item — malformed entries drop, not reject. */
 const isHistoryBlock = Schema.is(Block);
+
+/** Prompt payload caps — roughly the web composer's 5MB budget after base64 inflation. */
+const MAX_PROMPT_PARTS = 16;
+const MAX_PROMPT_PART_CHARS = 8 * 1024 * 1024;
+
+const nonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value !== "";
+
+const optionalString = (value: unknown): value is string | undefined =>
+  value === undefined || typeof value === "string";
+
+const payloadChars = (part: PromptPart): number => {
+  switch (part.type) {
+    case "text":
+      return part.text.length;
+    case "image":
+    case "audio":
+      return part.data.length;
+    case "resource":
+      return ("text" in part.resource ? part.resource.text : part.resource.blob).length;
+    default:
+      return 0;
+  }
+};
+
+/**
+ * Structural guard for one ACP `session/prompt` content block — the
+ * `PromptPart` union (`text`, `image`, `audio`, `resource`, `resource_link`).
+ * Anything else rejects the whole request: a silently dropped part would
+ * make the agent see a prompt the user didn't send.
+ */
+const isPromptPart = (value: unknown): value is PromptPart => {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  switch (value.type) {
+    case "text":
+      return typeof value.text === "string";
+    case "image":
+    case "audio":
+      return nonEmptyString(value.data) && nonEmptyString(value.mimeType);
+    case "resource": {
+      const resource = value.resource;
+      if (!isRecord(resource) || !nonEmptyString(resource.uri)) return false;
+      const hasText = typeof resource.text === "string";
+      const hasBlob = typeof resource.blob === "string";
+      return (hasText || hasBlob) && optionalString(resource.mimeType);
+    }
+    case "resource_link":
+      return (
+        nonEmptyString(value.uri) &&
+        nonEmptyString(value.name) &&
+        optionalString(value.mimeType) &&
+        (value.size === undefined || (typeof value.size === "number" && value.size >= 0))
+      );
+    default:
+      return false;
+  }
+};
+
+/**
+ * `{text, attachments?}` → the content-block list handed to the agent: the
+ * text part first, attachments in send order. Returns an error string when
+ * the shape or budget is off.
+ */
+const promptPartsFromBody = (body: unknown): PromptPart[] | string => {
+  if (!isRecord(body)) return "Expected a JSON object body";
+  if (body.text !== undefined && typeof body.text !== "string") {
+    return "text must be a string";
+  }
+  const text = typeof body.text === "string" ? body.text : "";
+  const attachments = body.attachments;
+  if (attachments !== undefined && !Array.isArray(attachments)) {
+    return "attachments must be an array of content blocks";
+  }
+  const list = (attachments ?? []) as ReadonlyArray<unknown>;
+  if (list.length > MAX_PROMPT_PARTS) {
+    return `Too many attachments — max ${MAX_PROMPT_PARTS}`;
+  }
+  const parts: PromptPart[] = [];
+  if (text.trim() !== "") parts.push({ type: "text", text });
+  let chars = 0;
+  for (const item of list) {
+    if (!isPromptPart(item)) {
+      return "attachments must be ACP content blocks (text, image, audio, resource, resource_link)";
+    }
+    chars += payloadChars(item);
+    if (chars > MAX_PROMPT_PART_CHARS) {
+      return "Attachments exceed the size limit";
+    }
+    parts.push(item);
+  }
+  if (parts.length === 0) return "text or attachments is required";
+  return parts;
+};
 
 export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) => {
   const keepAliveMs = options.keepAliveMs ?? keepAliveMsFromEnv(process.env.SEPIA_SSE_KEEPALIVE_MS);
@@ -1279,10 +1373,11 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         } catch {
           return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
         }
-        if (!isRecord(body) || typeof body.text !== "string" || body.text.trim() === "") {
-          return jsonResponse({ error: "text is required" }, 400, cors);
+        const parts = promptPartsFromBody(body);
+        if (typeof parts === "string") {
+          return jsonResponse({ error: parts }, 400, cors);
         }
-        return respond(run, plane.prompt(id, body.text, agentParam), cors, {
+        return respond(run, plane.prompt(id, parts, agentParam), cors, {
           shape: () => ({ ok: true }),
           span: "http.post /api/sessions/:id/prompt",
         });

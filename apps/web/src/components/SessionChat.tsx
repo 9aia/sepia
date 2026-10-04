@@ -37,6 +37,7 @@ import {
 
 import type { LiveMessage } from "../lib/liveMessages";
 import type { HistoryBlock, MessageUsage, RunSpan } from "../lib/types";
+import { attachmentToPart, partToBlock, type PendingAttachment } from "../lib/attachments";
 import { attachmentViews } from "../lib/blocks";
 import { finishReasonLabel, formatUsage, usageLabel } from "../lib/format";
 import { spanNodeLabel } from "../lib/nodes";
@@ -71,6 +72,8 @@ import { ReasoningBlock } from "./reasoning-block";
 import { ToolCall } from "./tool-call";
 import {
   PromptInput,
+  PromptInputAttachButton,
+  PromptInputAttachments,
   PromptInputBody,
   PromptInputFooter,
   PromptInputSubmit,
@@ -145,6 +148,7 @@ function RowContent({ row }: { readonly row: ChatRow }) {
     <MessageRow
       role={message.role === "user" ? "user" : "assistant"}
       content={message.content}
+      blocks={message.blocks}
       createdAt={message.createdAt}
       usage={message.usage}
       finishReason={message.finishReason}
@@ -416,7 +420,7 @@ interface SessionChatProps {
   readonly running: boolean;
   readonly streamStatus: StreamStatus;
   readonly liveMessages: ReadonlyArray<LiveMessage>;
-  readonly onUserMessage: (text: string) => string;
+  readonly onUserMessage: (text: string, blocks?: ReadonlyArray<HistoryBlock>) => string;
   readonly onRemoveLiveMessage: (id: string) => void;
   readonly onTakeover: () => void;
 }
@@ -442,7 +446,10 @@ export function SessionChat({
   const [promptError, setPromptError] = useState<string | null>(null);
   const replyTo = useStore(sepiaStore, (state) => state.replyTo);
   // Held by another process → the send asks to take over first.
-  const [takeoverPrompt, setTakeoverPrompt] = useState<string | null>(null);
+  const [takeoverPrompt, setTakeoverPrompt] = useState<{
+    text: string;
+    attachments: PendingAttachment[];
+  } | null>(null);
   // Populated by ScrollerApiBridge — lets `send` reveal the row it appended.
   const scrollToEnd = useRef<(() => void) | null>(null);
   const scrollOnSent = useRef(false);
@@ -457,20 +464,28 @@ export function SessionChat({
     return buildRows(history, liveMessages, context, spans, spanLabel);
   }, [history, liveMessages, spans]);
 
-  const send = (text: string): void => {
+  const send = (text: string, attachments: ReadonlyArray<PendingAttachment> = []): void => {
     // Consume any pending reply — the quote rides inside the sent prompt.
     const reply = sepiaStore.state.replyTo;
     if (reply !== null) setReplyTo(null);
     const prompt = reply !== null ? formatReplyPrompt(reply, text) : text;
+    const parts = attachments.map(attachmentToPart);
     setSubmitting(true);
     setPromptError(null);
     // Optimistic — the row shows instantly; rolled back if the send fails.
-    const liveId = onUserMessage(prompt);
+    // The blocks mirror what the flushed IR carries, so attachments render
+    // in the live row exactly as history will show them.
+    const liveId = onUserMessage(prompt, [
+      // The text part only goes on the wire when non-empty — same here, so the
+      // optimistic blocks match what the flushed IR records.
+      ...(prompt !== "" ? ([{ type: "text", text: prompt }] as const) : []),
+      ...parts.map(partToBlock),
+    ]);
     // The scroller only trails the bottom while it's already pinned — a send
     // while scrolled up would leave the row appended below the fold (and
     // unmounted by the virtualizer). Flag a scroll for when it commits.
     scrollOnSent.current = true;
-    sendPrompt(sessionId, prompt, agent)
+    sendPrompt(sessionId, { text: prompt, attachments: parts }, agent)
       .then((ok) => {
         if (!ok) {
           onRemoveLiveMessage(liveId);
@@ -486,12 +501,12 @@ export function SessionChat({
 
   const onSubmit = (message: PromptInputMessage) => {
     const text = message.text.trim();
-    if (text === "" || running || submitting) return;
+    if ((text === "" && message.attachments.length === 0) || running || submitting) return;
     if (readOnly) {
-      setTakeoverPrompt(text);
+      setTakeoverPrompt({ text, attachments: message.attachments });
       return;
     }
-    send(text);
+    send(text, message.attachments);
   };
 
   // Reveal the just-sent row once it's committed — a second pass after a
@@ -504,12 +519,12 @@ export function SessionChat({
     return () => cancelAnimationFrame(frame);
   }, [liveMessages]);
 
-  // Takeover confirmed → attach resolved readOnly off → send the held text.
+  // Takeover confirmed → attach resolved readOnly off → send the held prompt.
   useEffect(() => {
     if (!readOnly && takeoverPrompt !== null) {
-      const text = takeoverPrompt;
+      const held = takeoverPrompt;
       setTakeoverPrompt(null);
-      send(text);
+      send(held.text, held.attachments);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readOnly]);
@@ -591,10 +606,13 @@ export function SessionChat({
       >
         <PromptInputBody>
           {replyTo !== null && <ReplyPreview quote={replyTo} />}
+          <PromptInputAttachments />
           <PromptInputTextarea placeholder="Prompt the agent…" />
         </PromptInputBody>
         <PromptInputFooter>
-          <PromptInputTools />
+          <PromptInputTools>
+            <PromptInputAttachButton />
+          </PromptInputTools>
           <div className="ml-auto flex min-w-0 items-center gap-1">
             <ModelSelect sessionId={sessionId} agent={agent} />
             <PromptInputSubmit

@@ -1,5 +1,5 @@
 import type { AgUiEvent } from "./api";
-import type { MessageUsage, ToolCallStatus } from "./types";
+import type { HistoryBlock, MessageUsage, ToolCallStatus } from "./types";
 
 /** A message assembled from live AG-UI stream events (or an optimistic echo). */
 export interface LiveMessage {
@@ -7,6 +7,8 @@ export interface LiveMessage {
   readonly createdAt?: number;
   readonly role: "user" | "assistant" | "reasoning" | "tool" | "status";
   readonly content: string;
+  /** Attachment blocks on the optimistic user row (sent files render before history flushes). */
+  readonly blocks?: ReadonlyArray<HistoryBlock>;
   /** Tool-call input JSON, kept apart from `content` (the result) so each can render on its own. */
   readonly args?: string;
   readonly toolName?: string;

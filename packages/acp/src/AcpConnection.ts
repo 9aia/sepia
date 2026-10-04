@@ -150,7 +150,9 @@ export const createAcpConnection = (
       await track(() =>
         conn.agent.request(acp.methods.agent.session.prompt, {
           sessionId,
-          prompt: parts.map((part) => ({ type: "text" as const, text: part.text })),
+          // `PromptPart` is a structural subset of ACP `ContentBlock` —
+          // the copy forwards parts verbatim (and keeps that check live).
+          prompt: parts.slice(),
         }),
       );
     },

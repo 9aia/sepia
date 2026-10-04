@@ -53,7 +53,9 @@ GET    /api/sessions/:id/export       { session } — the complete session IR:
                                         usage, toolCallId links and the
                                         parent-linked tree; 404 on older nodes
 POST   /api/sessions/:id/attach       attach live control { model?, takeover? }
-POST   /api/sessions/:id/prompt       send { text }
+POST   /api/sessions/:id/prompt       send { text?, attachments? } — attachments
+                                        is an ACP content-block array (image,
+                                        audio, resource, resource_link)
 POST   /api/sessions/:id/cancel       stop the run
 POST   /api/sessions/:id/permission   reply to a pending permission
 PATCH  /api/sessions/:id              meta overlay { title?, pinned?, archived?, projectIds?, model? }

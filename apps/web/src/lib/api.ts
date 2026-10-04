@@ -8,6 +8,7 @@ import type {
   SessionSummary,
   UserInfo,
 } from "./types";
+import type { PromptPart } from "./attachments";
 import { localTarget, type ApiTarget } from "./targets";
 
 export { getToken, setToken } from "./token";
@@ -415,9 +416,14 @@ export async function deleteSession(
   return true;
 }
 
+/**
+ * `POST /api/sessions/:id/prompt` — `text` is the prompt body; `attachments`
+ * is the ACP content-block array (`image`, `audio`, `resource`,
+ * `resource_link` — built by `attachmentToPart` in lib/attachments.ts).
+ */
 export async function sendPrompt(
   id: string,
-  text: string,
+  input: { readonly text: string; readonly attachments?: ReadonlyArray<PromptPart> },
   agent?: string,
   target?: ApiTarget,
 ): Promise<boolean> {
@@ -425,7 +431,11 @@ export async function sendPrompt(
     `/api/sessions/${encodeURIComponent(id)}/prompt${agentQuery(agent)}`,
     {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(
+        input.attachments === undefined || input.attachments.length === 0
+          ? { text: input.text }
+          : { text: input.text, attachments: input.attachments },
+      ),
     },
     target,
   );

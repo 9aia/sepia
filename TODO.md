@@ -22,8 +22,8 @@
       tool-call file diffs
 - [ ] Sub-agent children in session details (we have `parentSessionId`;
       list "Sub-agents" rows in the drawer)
-- [ ] Prompt attachments — `POST /prompt` is text-only today; widening
-      PromptPart needs the ACP call shape
+- [x] Prompt attachments — `POST /prompt` takes `{text, attachments}` (ACP
+      content blocks); composer has paste/drop/picker chips
 
 ## New adapters (docs/session-formats.md has the layouts)
 

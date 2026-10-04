@@ -75,7 +75,34 @@ export interface PermissionRequest {
   readonly options: ReadonlyArray<PermissionOption>;
 }
 
-export type PromptPart = { readonly type: "text"; readonly text: string };
+/**
+ * A content block of an ACP `session/prompt` request — the subset of the
+ * schema's `ContentBlock` union Sepia sends. `resource` embeds a payload
+ * (text or base64 `blob`), `resource_link` references one by URI; `data`
+ * on image/audio is base64.
+ */
+export type PromptPart =
+  | { readonly type: "text"; readonly text: string }
+  | {
+      readonly type: "image";
+      readonly data: string;
+      readonly mimeType: string;
+      readonly uri?: string;
+    }
+  | { readonly type: "audio"; readonly data: string; readonly mimeType: string }
+  | {
+      readonly type: "resource";
+      readonly resource:
+        | { readonly uri: string; readonly mimeType?: string; readonly text: string }
+        | { readonly uri: string; readonly mimeType?: string; readonly blob: string };
+    }
+  | {
+      readonly type: "resource_link";
+      readonly uri: string;
+      readonly name: string;
+      readonly mimeType?: string;
+      readonly size?: number;
+    };
 
 export type Unsubscribe = () => void;
 

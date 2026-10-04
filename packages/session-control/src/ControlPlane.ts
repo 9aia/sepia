@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 import { Effect, Either, Layer, Metric, Option, Runtime } from "effect";
-import type { AcpConnection, AcpSessionInfo } from "sepia-acp";
+import type { AcpConnection, AcpSessionInfo, PromptPart } from "sepia-acp";
 import { createTranslator, type Event, type Translator } from "sepia-agui";
 import { SessionRepository } from "sepia-core";
 import type { Session } from "sepia-core";
@@ -541,7 +541,7 @@ export const make = (
 
     const prompt = (
       id: string,
-      text: string,
+      parts: ReadonlyArray<PromptPart>,
       agentId?: string,
     ): Effect.Effect<void, ControlError> =>
       Effect.gen(function* () {
@@ -552,9 +552,7 @@ export const make = (
         live.busy = true;
         live.idleSince = null;
         emit(live, live.translator.startRun());
-        yield* tryAcp("Failed to send prompt", () =>
-          live.conn.prompt(id, [{ type: "text", text }]),
-        ).pipe(
+        yield* tryAcp("Failed to send prompt", () => live.conn.prompt(id, parts)).pipe(
           Effect.ensuring(
             Effect.sync(() => {
               live.busy = false;
