@@ -189,7 +189,7 @@ function SessionItemRow({
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  className="absolute top-2 right-2 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                  className="absolute top-2 right-2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
                   aria-label={`Actions for session ${session.title}`}
                   title="More actions"
                 />
