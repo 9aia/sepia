@@ -118,7 +118,7 @@ export function SessionActions({
         <Sub>
           <SubTrigger>
             <HugeiconsIcon icon={ArrowReloadHorizontalIcon} strokeWidth={2} />
-            Convert
+            Convert to…
           </SubTrigger>
           <SubContent className="w-48">
             {convertTargets.map((agent) => (
@@ -126,7 +126,7 @@ export function SessionActions({
                 key={agent.id}
                 onClick={() => convert.mutate({ id: session.id, agent: agent.id })}
               >
-                To {agent.label}
+                {agent.label}
               </Item>
             ))}
           </SubContent>
