@@ -159,7 +159,7 @@ function ChatRows({
 
   return (
     <MessageScrollerViewport ref={viewportRef}>
-      <MessageScrollerContent className="px-4">
+      <MessageScrollerContent className="mx-auto w-full max-w-3xl px-4">
         {hasNextPage && (
           <div ref={sentinelRef} className="flex justify-center py-2" aria-hidden={!fetchingNext}>
             {fetchingNext && (
@@ -269,7 +269,7 @@ export function SessionChat({
             />
           ) : (
             <MessageScrollerViewport>
-              <p className="p-4 text-muted-foreground">
+              <p className="mx-auto w-full max-w-3xl p-4 text-muted-foreground">
                 {historyQuery.isLoading ? "Loading history…" : "No messages yet."}
               </p>
             </MessageScrollerViewport>
