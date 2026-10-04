@@ -24,15 +24,18 @@ import {
 } from "../ui/dropdown-menu";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
+  Add01Icon,
   Copy01Icon,
   Delete02Icon,
   Edit02Icon,
+  FolderDetailsIcon,
   FolderOpenIcon,
   InformationCircleIcon,
   MoreVerticalIcon,
 } from "@hugeicons/core-free-icons";
 import { ScrollBar } from "../ui/scroll-area";
 import { Tree, TreeItem, TreeItemLabel } from "../reui/tree";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -67,22 +70,133 @@ const projectName = (cwd: string): string => {
   return last === undefined || last === "" ? cwd : last;
 };
 
+/** Shared action items for a directory row (context menu + ⋯ dropdown). */
+function DirActions({
+  Item,
+  data,
+  onShowDetails,
+  onNewSession,
+}: {
+  readonly Item: typeof ContextMenuItem;
+  readonly data: TreeData & { kind: "dir" };
+  onShowDetails: () => void;
+  onNewSession: (cwd: string) => void;
+}) {
+  const copy = (): void => {
+    void navigator.clipboard.writeText(data.cwd).then(
+      () => {},
+      () => undefined,
+    );
+  };
+  return (
+    <>
+      <Item onClick={() => onNewSession(data.cwd)}>
+        <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+        New session here
+      </Item>
+      <Item onClick={onShowDetails}>
+        <HugeiconsIcon icon={FolderDetailsIcon} strokeWidth={2} />
+        Folder details
+      </Item>
+      <Item onClick={copy}>
+        <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
+        Copy path
+      </Item>
+    </>
+  );
+}
+
+function DirDetailsDialog({
+  data,
+  open,
+  onOpenChange,
+}: {
+  readonly data: TreeData & { kind: "dir" };
+  readonly open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Folder details</DialogTitle>
+          <DialogDescription>Sessions are grouped under this directory.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2 text-sm">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-muted-foreground">Path</span>
+            <span className="min-w-0 text-right font-mono text-xs break-all" title={data.cwd}>
+              {data.cwd}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-muted-foreground">Sessions</span>
+            <span>{data.count}</span>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function GroupRow({
   item,
   data,
+  onNewSession,
 }: {
   item: ItemInstance<TreeData>;
   data: TreeData & { kind: "dir" };
+  onNewSession: (cwd: string) => void;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   return (
-    <TreeItem item={item} className="w-full">
-      <TreeItemLabel className="rounded-none bg-transparent hover:bg-accent/60">
-        <span className="flex-1 truncate font-semibold" title={data.cwd}>
-          {data.label}
-        </span>
-        <Badge variant="secondary">{data.count}</Badge>
-      </TreeItemLabel>
-    </TreeItem>
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger className="relative block">
+          <TreeItem item={item} className="w-full">
+            <TreeItemLabel className="rounded-none bg-transparent hover:bg-accent/60">
+              <span className="flex-1 truncate font-semibold" title={data.cwd}>
+                {data.label}
+              </span>
+              <span className="text-xs text-muted-foreground">{data.count}</span>
+            </TreeItemLabel>
+          </TreeItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                  aria-label={`Actions for folder ${data.label}`}
+                  title="More actions"
+                />
+              }
+              onClick={(event) => event.stopPropagation()}
+            >
+              <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DirActions
+                Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
+                data={data}
+                onShowDetails={() => setDetailsOpen(true)}
+                onNewSession={onNewSession}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <DirActions
+            Item={ContextMenuItem}
+            data={data}
+            onShowDetails={() => setDetailsOpen(true)}
+            onNewSession={onNewSession}
+          />
+        </ContextMenuContent>
+      </ContextMenu>
+      <DirDetailsDialog data={data} open={detailsOpen} onOpenChange={setDetailsOpen} />
+    </>
   );
 }
 
@@ -254,6 +368,7 @@ interface SessionTreeProps {
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
   onDelete: (id: string) => void;
+  onNewSession: (cwd: string) => void;
 }
 
 export function SessionTree({
@@ -263,6 +378,7 @@ export function SessionTree({
   onSelect,
   onDetails,
   onDelete,
+  onNewSession,
 }: SessionTreeProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -487,7 +603,7 @@ export function SessionTree({
                   }}
                 >
                   {data?.kind === "dir" ? (
-                    <GroupRow item={item} data={data} />
+                    <GroupRow item={item} data={data} onNewSession={onNewSession} />
                   ) : data?.kind === "session" ? (
                     <SessionItemRow
                       item={item}

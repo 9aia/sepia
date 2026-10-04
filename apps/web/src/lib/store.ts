@@ -7,14 +7,17 @@ import { Store } from "@tanstack/react-store";
 export interface SepiaState {
   selectedId: string | null;
   keybindsOpen: boolean;
-  /** Session shown in the details drawer; rename focuses the title field. */
+  /** Session shown in the details drawer; rename opens its dialog. */
   detailsFor: { id: string; rename: boolean } | null;
+  /** Pending cwd for "New session here" — consumed by the create form. */
+  createCwd: string | null;
 }
 
 export const sepiaStore = new Store<SepiaState>({
   selectedId: null,
   keybindsOpen: false,
   detailsFor: null,
+  createCwd: null,
 });
 
 export const setSelectedId = (id: string | null): void => {
@@ -27,4 +30,8 @@ export const setKeybindsOpen = (open: boolean): void => {
 
 export const setDetailsFor = (details: SepiaState["detailsFor"]): void => {
   sepiaStore.setState((prev) => ({ ...prev, detailsFor: details }));
+};
+
+export const setCreateCwd = (cwd: string | null): void => {
+  sepiaStore.setState((prev) => ({ ...prev, createCwd: cwd }));
 };

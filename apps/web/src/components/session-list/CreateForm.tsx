@@ -13,6 +13,7 @@ import type { AgentInfo } from "../../lib/types";
 import { useCreateSession } from "../../hooks/query/useCreateSession";
 import { useDirs } from "../../hooks/query/useDirs";
 import { useUserInfo } from "../../hooks/query/useUserInfo";
+import { sepiaStore, setCreateCwd } from "../../lib/store";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -73,6 +74,15 @@ export function CreateForm({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultCwd]);
+  // "New session here" — dir-menu prefills cwd explicitly, overwriting any
+  // earlier default; the pending value is consumed once.
+  const createCwd = useStore(sepiaStore, (state) => state.createCwd);
+  useEffect(() => {
+    if (createCwd === null) return;
+    form.setFieldValue("cwd", createCwd);
+    setCreateCwd(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createCwd]);
   useEffect(() => {
     const next = defaultAgent ?? agents[0]?.id;
     if (next !== undefined && form.getFieldValue("agent") === "") {

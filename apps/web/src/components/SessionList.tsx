@@ -3,7 +3,7 @@ import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
 import { AlertCircleIcon, FolderOpenIcon, SearchAreaIcon } from "@hugeicons/core-free-icons";
-import { sepiaStore, setDetailsFor, setSelectedId } from "../lib/store";
+import { sepiaStore, setCreateCwd, setDetailsFor, setSelectedId } from "../lib/store";
 import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
@@ -61,9 +61,15 @@ export function SessionList() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const details = useStore(sepiaStore, (state) => state.detailsFor);
   const [modKey, setModKey] = useState("Ctrl");
+  const createCwd = useStore(sepiaStore, (state) => state.createCwd);
   useEffect(() => {
     if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
   }, []);
+  // "New session here" from a dir row → reveal the advanced section (where
+  // cwd lives). CreateForm consumes the pending cwd itself.
+  useEffect(() => {
+    if (createCwd !== null) setAdvancedOpen(true);
+  }, [createCwd]);
   const [debouncedFilter] = useDebouncedValue(filter, { wait: 200 });
   const asideRef = useRef<HTMLDivElement | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
@@ -173,6 +179,7 @@ export function SessionList() {
           onSelect={setSelectedId}
           onDetails={(id, rename) => setDetailsFor({ id, rename })}
           onDelete={(id) => deleteMutation.mutate(id)}
+          onNewSession={setCreateCwd}
         />
       </div>
 
