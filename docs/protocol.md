@@ -90,7 +90,7 @@ means a slightly stale row until the next refetch.
 
 ## Projects
 
-Node-local: `{ id, name, cwd }` where `cwd` is a path on *that* node. The
+Node-local: `{ id, name, cwd }` where `cwd` is a path on _that_ node. The
 aggregated UI shows `name @ node` (or a machine badge). Cross-machine
 grouping of like-named projects is a UI concern — no sync.
 
@@ -111,7 +111,7 @@ registered peer origins.
 
 ## Safety boundary
 
-The API mutates *sessions*, not the machine: create/attach/prompt/cancel/
+The API mutates _sessions_, not the machine: create/attach/prompt/cancel/
 patch/delete on agent stores, plus meta overlay and projects. No shell, no
 filesystem writes outside the stores, no arbitrary process control — that
 contract is part of the protocol.

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
-import { BubbleChatIcon } from "@hugeicons/core-free-icons";
+import { AlertCircleIcon, BubbleChatIcon } from "@hugeicons/core-free-icons";
 import { EmptyScreen } from "./EmptyScreen";
 import type { PermissionRequest } from "../lib/types";
 import { subscribeSessionStream } from "../lib/api";
@@ -208,27 +208,47 @@ export function ChatPanel() {
       <ChatHeader session={session} running={running} />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {attachError !== null && <ErrorBanner>{attachError}</ErrorBanner>}
-        {historyError !== null && <ErrorBanner>{historyError}</ErrorBanner>}
-        {attachError === null && (
-          <SessionChat
-            sessionId={session.id}
-            agent={session.agent}
-            readOnly={readOnly}
-            running={running || session.busy}
-            liveMessages={liveMessages}
-            streamStatus={streamStatus}
-            onUserMessage={addUserMessage}
-            onRemoveLiveMessage={removeLiveMessage}
-            onTakeover={() =>
-              attach({
-                id: session.id,
-                agent: session.agent,
-                takeover: true,
-                ...modelArgsFor(session.agent, session.model, settings),
-              })
-            }
-          />
+        {attachError !== null ? (
+          <EmptyScreen
+            icon={AlertCircleIcon}
+            title="Couldn't load the session"
+            description={attachError}
+          >
+            <Button
+              variant="secondary"
+              onClick={() => {
+                attachMutation.reset();
+                attach({ id: sessionId!, agent: session?.agent, ...modelArgs });
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.history(sessionId!, session?.agent),
+                });
+              }}
+            >
+              Try again
+            </Button>
+          </EmptyScreen>
+        ) : (
+          <>
+            {historyError !== null && <ErrorBanner>{historyError}</ErrorBanner>}
+            <SessionChat
+              sessionId={session.id}
+              agent={session.agent}
+              readOnly={readOnly}
+              running={running || session.busy}
+              liveMessages={liveMessages}
+              streamStatus={streamStatus}
+              onUserMessage={addUserMessage}
+              onRemoveLiveMessage={removeLiveMessage}
+              onTakeover={() =>
+                attach({
+                  id: session.id,
+                  agent: session.agent,
+                  takeover: true,
+                  ...modelArgsFor(session.agent, session.model, settings),
+                })
+              }
+            />
+          </>
         )}
       </div>
 
