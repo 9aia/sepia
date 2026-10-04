@@ -103,7 +103,7 @@ function ChatRows({ rows }: { readonly rows: ReadonlyArray<Row> }) {
 
   return (
     <MessageScrollerViewport ref={viewportRef}>
-      <MessageScrollerContent>
+      <MessageScrollerContent className="px-4">
         <div className="relative mt-2.5" style={{ height: `${virtualizer.getTotalSize()}px` }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index];
@@ -193,7 +193,7 @@ export function SessionChat({
   return (
     <>
       {historyQuery.hasNextPage && (
-        <div className="flex justify-center">
+        <div className="flex justify-center py-2">
           <Button
             variant="outline"
             size="sm"
@@ -212,7 +212,7 @@ export function SessionChat({
             <ChatRows rows={rows} />
           ) : (
             <MessageScrollerViewport>
-              <p className="text-muted-foreground">
+              <p className="p-4 text-muted-foreground">
                 {historyQuery.isLoading ? "Loading history…" : "No messages yet."}
               </p>
             </MessageScrollerViewport>
@@ -231,7 +231,7 @@ export function SessionChat({
           </Button>
         </div>
       ) : (
-        <PromptInput onSubmit={onSubmit} className="shrink-0 border-t border-border pt-2.5">
+        <PromptInput onSubmit={onSubmit} className="shrink-0 border-t border-border px-4 pb-4 pt-3">
           <PromptInputBody>
             <PromptInputTextarea placeholder="Prompt the agent…" />
           </PromptInputBody>

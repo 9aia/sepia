@@ -177,7 +177,7 @@ export function ChatPanel() {
         streamStatus={streamStatus}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {attachError !== null && <ErrorBanner>{attachError}</ErrorBanner>}
         {historyError !== null && <ErrorBanner>{historyError}</ErrorBanner>}
         {attachError === null && (
