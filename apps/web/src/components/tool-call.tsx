@@ -14,6 +14,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
+import { ScrollArea } from "./ui/scroll-area";
 import { Badge } from "./ui/badge";
 import { Spinner } from "./ui/spinner";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
@@ -66,9 +67,11 @@ function ToolSegmentView({ segment }: { readonly segment: ToolSegment }) {
       );
     case "code":
       return (
-        <pre className="max-h-72 overflow-auto rounded-md bg-muted/50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">
-          {segment.text}
-        </pre>
+        <ScrollArea className="max-h-72 rounded-md bg-muted/50">
+          <pre className="p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">
+            {segment.text}
+          </pre>
+        </ScrollArea>
       );
     case "diff":
       return <DiffBlock text={segment.text} />;

@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { SearchIcon, Tick02Icon } from "@hugeicons/core-free-icons";
 
@@ -84,14 +85,12 @@ function CommandInput({
 
 function CommandList({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.List>) {
   return (
-    <CommandPrimitive.List
-      data-slot="command-list"
-      className={cn(
-        "no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto",
-        className,
-      )}
-      {...props}
-    />
+    // The ScrollArea is the scroller; cmdk still scrolls items into view since
+    // scrollIntoView walks to the nearest scrollable ancestor. `scroll-py-1`
+    // stays on the viewport so scroll-padding keeps working.
+    <ScrollArea className="max-h-72" viewportClassName="scroll-py-1">
+      <CommandPrimitive.List data-slot="command-list" className={cn(className)} {...props} />
+    </ScrollArea>
   );
 }
 

@@ -8,6 +8,7 @@ import { cn } from "cn";
 import { memo, type ComponentProps } from "react";
 import { Streamdown } from "streamdown";
 import { StreamdownCodeBlock } from "./code-block";
+import { ScrollArea } from "./ui/scroll-area";
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
@@ -19,9 +20,9 @@ function StreamdownTable({
   ...props
 }: ComponentProps<"table"> & { readonly node?: unknown }) {
   return (
-    <div className="overflow-x-auto">
+    <ScrollArea>
       <table {...props}>{children}</table>
-    </div>
+    </ScrollArea>
   );
 }
 

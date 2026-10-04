@@ -315,26 +315,28 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <DialogDescription>Browser-local preferences for this Sepia instance.</DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 flex-1 gap-4 max-md:flex-col">
-          <nav
-            className="flex w-36 shrink-0 flex-col gap-0.5 max-md:w-auto max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:pb-1"
-            aria-label="Settings sections"
-          >
-            {SECTIONS.filter((s) => s.id !== "keyboard" || hasKeyboard).map((section) => (
-              <button
-                key={section.id}
-                type="button"
-                onClick={() => scrollTo(section.id)}
-                aria-current={active === section.id ? "true" : undefined}
-                className={`rounded-md px-3 py-1.5 text-left text-sm font-medium whitespace-nowrap transition-colors ${
-                  active === section.id
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                }`}
-              >
-                {section.label}
-              </button>
-            ))}
-          </nav>
+          <ScrollArea className="w-36 shrink-0 max-md:w-auto">
+            <nav
+              className="flex flex-col gap-0.5 max-md:w-max max-md:min-w-full max-md:flex-row max-md:gap-1 max-md:pb-1"
+              aria-label="Settings sections"
+            >
+              {SECTIONS.filter((s) => s.id !== "keyboard" || hasKeyboard).map((section) => (
+                <button
+                  key={section.id}
+                  type="button"
+                  onClick={() => scrollTo(section.id)}
+                  aria-current={active === section.id ? "true" : undefined}
+                  className={`rounded-md px-3 py-1.5 text-left text-sm font-medium whitespace-nowrap transition-colors ${
+                    active === section.id
+                      ? "bg-accent text-foreground"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  }`}
+                >
+                  {section.label}
+                </button>
+              ))}
+            </nav>
+          </ScrollArea>
           <ScrollArea className="min-h-0 flex-1">
             <div ref={contentRef} className="flex flex-col gap-8 pr-3">
               <section data-spy="general" className="flex scroll-mt-2 flex-col gap-4">

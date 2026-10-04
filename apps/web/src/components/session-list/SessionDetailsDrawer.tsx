@@ -48,6 +48,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
+import { ScrollArea } from "../ui/scroll-area";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -199,7 +200,8 @@ export function SessionDetailsDrawer({
   const patch = usePatchSessionMeta();
   const convert = useConvertSession();
   const resume = useResumeSession();
-  const resumeNodes = useResumeTargets();
+  // Already filtered for this session's own pair; empty in single-node mode.
+  const resumeNodes = useResumeTargets(session);
   const { data: projects } = useProjects();
   const { data: agents = [] } = useAgents();
   const { data: sessions = [] } = useSessions();
@@ -251,7 +253,10 @@ export function SessionDetailsDrawer({
               </DrawerClose>
             </DrawerHeader>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-4 py-3">
+            <ScrollArea
+              className="min-h-0 flex-1"
+              viewportClassName="flex flex-col gap-1 px-4 py-3"
+            >
               <div className="mt-2 divide-y divide-border/50">
                 <Detail label="Last active">{new Date(session.updatedAt).toLocaleString()}</Detail>
                 <Detail label="Status">
@@ -372,7 +377,7 @@ export function SessionDetailsDrawer({
               </Collapsible>
               {/* Remount per session so the active tab doesn't leak across rows. */}
               <SessionContextTabs key={sessionKey(session)} session={session} />
-            </div>
+            </ScrollArea>
 
             <DrawerFooter className="flex-col gap-2">
               <Button
@@ -472,35 +477,31 @@ export function SessionDetailsDrawer({
                     ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      variant="outline"
-                      className="w-full justify-start"
-                      disabled={resume.isPending}
-                    >
-                      <HugeiconsIcon icon={Globe02Icon} strokeWidth={2} />
-                      Resume on…
-                    </Button>
-                  }
-                />
-                <DropdownMenuContent align="start" className="w-(--anchor-width)">
-                  {resumeNodes.map((entry) => {
-                    const targets = entry.agents.filter(
-                      (id) =>
-                        !(nodeKey(entry.node) === nodeKey(session.node) && id === session.agent),
-                    );
-                    return (
+              {resumeNodes.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="outline"
+                        className="w-full justify-start"
+                        disabled={resume.isPending}
+                      >
+                        <HugeiconsIcon icon={Globe02Icon} strokeWidth={2} />
+                        Resume on…
+                      </Button>
+                    }
+                  />
+                  <DropdownMenuContent align="start" className="w-(--anchor-width)">
+                    {resumeNodes.map((entry) => (
                       <DropdownMenuSub key={entry.node ?? "local"}>
                         <DropdownMenuSubTrigger>{entry.label}</DropdownMenuSubTrigger>
                         <DropdownMenuSubContent className="w-40">
-                          {targets.length === 0 && (
+                          {entry.agents.length === 0 && (
                             <DropdownMenuItem disabled>
                               <span className="text-muted-foreground">No other agents</span>
                             </DropdownMenuItem>
                           )}
-                          {targets.map((agentId) => (
+                          {entry.agents.map((agentId) => (
                             <DropdownMenuItem
                               key={agentId}
                               disabled={resume.isPending}
@@ -517,10 +518,10 @@ export function SessionDetailsDrawer({
                           ))}
                         </DropdownMenuSubContent>
                       </DropdownMenuSub>
-                    );
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
               <Button
                 variant="outline"
                 className="w-full justify-start"
@@ -584,7 +585,7 @@ export function SessionDetailsDrawer({
                     it are overwritten.
                   </DialogDescription>
                 </DialogHeader>
-                <div className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+                <ScrollArea className="max-h-72" viewportClassName="flex flex-col gap-1">
                   {checkpoints.isLoading && (
                     <p className="py-2 text-xs text-muted-foreground">Loading checkpoints…</p>
                   )}
@@ -632,7 +633,7 @@ export function SessionDetailsDrawer({
                       </Button>
                     </div>
                   ))}
-                </div>
+                </ScrollArea>
                 <DialogFooter>
                   <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
                 </DialogFooter>

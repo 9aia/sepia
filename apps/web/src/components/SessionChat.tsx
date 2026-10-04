@@ -72,6 +72,7 @@ import { restoreSummary, useRestoreSession } from "../hooks/query/useRestore";
 import { rewindSummary, useRewindSession } from "../hooks/query/useRewind";
 import { toastError, toastSuccess } from "../lib/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
+import { ScrollArea } from "./ui/scroll-area";
 import { ErrorBanner } from "./ErrorBanner";
 import { Button } from "./ui/button";
 import { InputGroupButton } from "./ui/input-group";
@@ -445,9 +446,11 @@ function SystemContextRow({ context }: { readonly context: SystemContext }) {
                         )}
                       </div>
                     )}
-                    <pre className="max-h-64 overflow-y-auto p-2 text-muted-foreground whitespace-pre-wrap">
-                      {report.body}
-                    </pre>
+                    <ScrollArea className="max-h-64">
+                      <pre className="p-2 text-muted-foreground whitespace-pre-wrap">
+                        {report.body}
+                      </pre>
+                    </ScrollArea>
                   </div>
                 ))}
               </div>
@@ -458,9 +461,11 @@ function SystemContextRow({ context }: { readonly context: SystemContext }) {
               <summary className="cursor-pointer select-none">
                 <ContextSectionLabel icon={File01Icon}>System prompt</ContextSectionLabel>
               </summary>
-              <pre className="mt-1.5 max-h-64 overflow-y-auto rounded-md bg-muted/40 p-2 text-muted-foreground whitespace-pre-wrap">
-                {context.promptText}
-              </pre>
+              <ScrollArea className="mt-1.5 max-h-64 rounded-md bg-muted/40">
+                <pre className="p-2 text-muted-foreground whitespace-pre-wrap">
+                  {context.promptText}
+                </pre>
+              </ScrollArea>
             </details>
           )}
         </div>

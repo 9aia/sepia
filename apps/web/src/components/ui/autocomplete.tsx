@@ -12,6 +12,7 @@ import type {
 } from "@base-ui/react/autocomplete";
 import { cn } from "@/lib/utils";
 import { Input } from "./input";
+import { ScrollArea } from "./scroll-area";
 
 const Autocomplete = AutocompletePrimitive.Root;
 
@@ -37,15 +38,19 @@ function AutocompletePositioner({ className, ...props }: AutocompletePositionerP
   );
 }
 
-function AutocompletePopup({ className, ...props }: AutocompletePopupProps) {
+function AutocompletePopup({ className, children, ...props }: AutocompletePopupProps) {
   return (
     <AutocompletePrimitive.Popup
       className={cn(
-        "max-h-64 overflow-y-auto rounded-xl border border-border bg-popover p-1 text-sm text-popover-foreground shadow-lg data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        "max-h-64 overflow-hidden rounded-xl border border-border bg-popover text-sm text-popover-foreground shadow-lg data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
         className,
       )}
       {...props}
-    />
+    >
+      <ScrollArea className="max-h-64" viewportClassName="p-1">
+        {children}
+      </ScrollArea>
+    </AutocompletePrimitive.Popup>
   );
 }
 

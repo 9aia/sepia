@@ -73,7 +73,7 @@ export function FilterBar({
         >
           <HugeiconsIcon icon={Search01Icon} strokeWidth={2} />
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-72 p-1.5">
+        <PopoverContent align="start" className="w-72">
           <div className="relative">
             <Input
               type="search"

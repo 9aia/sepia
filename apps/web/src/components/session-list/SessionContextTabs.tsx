@@ -5,6 +5,7 @@ import { flattenHistory, useHistory } from "../../hooks/query/useHistory";
 import { parseSystemContext } from "../../lib/systemContext";
 import type { SessionSummary } from "../../lib/types";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { ScrollArea } from "../ui/scroll-area";
 import { Spinner } from "../ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { MessageResponse } from "../streamdown";
@@ -163,14 +164,17 @@ function EntryCard({ entry }: { readonly entry: ContextEntry }) {
         <Chevron />
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="max-h-64 overflow-y-auto border-t border-border/60 px-2.5 py-2 text-xs">
+        <ScrollArea
+          className="max-h-64 border-t border-border/60"
+          viewportClassName="px-2.5 py-2 text-xs"
+        >
           {entry.description !== undefined && (
             <p className="text-muted-foreground">{entry.description}</p>
           )}
           {entry.content !== undefined && (
             <MessageResponse className="text-foreground/80">{entry.content}</MessageResponse>
           )}
-        </div>
+        </ScrollArea>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -189,9 +193,12 @@ function ReportCard({ report }: { readonly report: Report }) {
         <Chevron />
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="max-h-64 overflow-y-auto border-t border-border/60 px-2.5 py-2 text-xs">
+        <ScrollArea
+          className="max-h-64 border-t border-border/60"
+          viewportClassName="px-2.5 py-2 text-xs"
+        >
           <MessageResponse className="text-foreground/80">{report.body}</MessageResponse>
-        </div>
+        </ScrollArea>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -210,9 +217,11 @@ function PromptSectionCard({ section }: { readonly section: PromptSection }) {
         <Chevron />
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <pre className="max-h-64 overflow-y-auto border-t border-border/60 px-2.5 py-2 text-xs whitespace-pre-wrap text-muted-foreground">
-          {section.body}
-        </pre>
+        <ScrollArea className="max-h-64 border-t border-border/60">
+          <pre className="px-2.5 py-2 text-xs whitespace-pre-wrap text-muted-foreground">
+            {section.body}
+          </pre>
+        </ScrollArea>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -281,30 +290,32 @@ export function SessionContextTabs({ session }: { readonly session: SessionSumma
 
   return (
     <Tabs defaultValue={visible[0]?.id} className="mt-3">
-      <TabsList className="w-full justify-start gap-0.5 overflow-x-auto">
-        {visible.map((tab) => (
-          <TabsTrigger key={tab.id} value={tab.id} className="shrink-0 px-2.5 py-1 text-xs">
-            {tab.label}
-            {tab.count !== undefined && tab.count > 0 && (
-              <span className="text-muted-foreground/70">{tab.count}</span>
-            )}
-          </TabsTrigger>
-        ))}
-      </TabsList>
+      <ScrollArea className="w-full">
+        <TabsList className="w-full min-w-max justify-start gap-0.5">
+          {visible.map((tab) => (
+            <TabsTrigger key={tab.id} value={tab.id} className="shrink-0 px-2.5 py-1 text-xs">
+              {tab.label}
+              {tab.count !== undefined && tab.count > 0 && (
+                <span className="text-muted-foreground/70">{tab.count}</span>
+              )}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </ScrollArea>
 
       {visible.some((t) => t.id === "reports") && (
         <TabsContent value="reports" className="mt-2">
-          <div className="flex max-h-80 flex-col gap-1.5 overflow-y-auto">
+          <ScrollArea className="max-h-80" viewportClassName="flex flex-col gap-1.5">
             {reports.map((report, i) => (
               <ReportCard key={`${report.title}-${i}`} report={report} />
             ))}
-          </div>
+          </ScrollArea>
         </TabsContent>
       )}
 
       {visible.some((t) => t.id === "prompt") && (
         <TabsContent value="prompt" className="mt-2">
-          <div className="flex max-h-80 flex-col gap-1.5 overflow-y-auto">
+          <ScrollArea className="max-h-80" viewportClassName="flex flex-col gap-1.5">
             {sections.map((section, i) => (
               <PromptSectionCard key={`${section.title}-${i}`} section={section} />
             ))}
@@ -316,27 +327,27 @@ export function SessionContextTabs({ session }: { readonly session: SessionSumma
                   {context.promptText}
                 </pre>
               ))}
-          </div>
+          </ScrollArea>
         </TabsContent>
       )}
 
       {visible.some((t) => t.id === "rules") && (
         <TabsContent value="rules" className="mt-2">
-          <div className="flex max-h-80 flex-col gap-1.5 overflow-y-auto">
+          <ScrollArea className="max-h-80" viewportClassName="flex flex-col gap-1.5">
             {rules.map((rule, i) => (
               <EntryCard key={`${rule.title}-${i}`} entry={rule} />
             ))}
-          </div>
+          </ScrollArea>
         </TabsContent>
       )}
 
       {visible.some((t) => t.id === "skills") && (
         <TabsContent value="skills" className="mt-2">
-          <div className="flex max-h-80 flex-col gap-1.5 overflow-y-auto">
+          <ScrollArea className="max-h-80" viewportClassName="flex flex-col gap-1.5">
             {skills.map((skill, i) => (
               <EntryCard key={`${skill.title}-${i}`} entry={skill} />
             ))}
-          </div>
+          </ScrollArea>
         </TabsContent>
       )}
     </Tabs>

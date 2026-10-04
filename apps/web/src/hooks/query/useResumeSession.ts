@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { resumeSession } from "../../lib/api";
 import { LOCAL_NODE_ID, sessionKey } from "../../lib/format";
 import { isMultiNode, nodeName, nodeTarget } from "../../lib/nodes";
+import { resumeTargets, type ResumeTargetNode } from "../../lib/resume";
 import { setSelectedId } from "../../lib/store";
 import { toastError, toastLoading, toastSuccess } from "../../lib/toast";
 import type { SessionSummary } from "../../lib/types";
@@ -9,32 +10,33 @@ import { useAgents } from "./useAgents";
 import { useNodes, usePeerDescriptors } from "./useNodes";
 import { queryKeys } from "./keys";
 
-export interface ResumeTargetNode {
-  /** Registered node id; `undefined` is the machine serving this UI. */
-  readonly node?: string;
-  readonly label: string;
-  /** Agent ids the node reports (falls back to the merged roster). */
-  readonly agents: ReadonlyArray<string>;
-}
+export type { ResumeTargetNode } from "../../lib/resume";
 
 /**
  * "This machine" plus every registered peer, with each node's agent roster —
- * the rows of the "Resume on…" submenu. A peer whose descriptor hasn't landed
- * yet falls back to the merged roster; a dead peer then just fails the call.
+ * the rows of the "Resume on…" submenu, filtered for `session` (its own
+ * node+agent pair drops out). A peer whose descriptor hasn't landed yet
+ * falls back to the merged roster; a dead peer then just fails the call.
+ * Empty when no peers are registered — the menu hides.
  */
-export const useResumeTargets = (): ReadonlyArray<ResumeTargetNode> => {
+export const useResumeTargets = (
+  session: Pick<SessionSummary, "agent" | "node"> | undefined,
+): ReadonlyArray<ResumeTargetNode> => {
   const { peers, self } = useNodes();
   const { data: agents = [] } = useAgents();
   const descriptors = usePeerDescriptors(peers);
   const fallbackIds = agents.map((agent) => agent.id);
-  return [
-    { label: "This machine", agents: self?.agents ?? fallbackIds },
-    ...peers.map((peer, index) => ({
-      node: peer.id,
-      label: peer.name,
-      agents: descriptors[index]?.agents ?? fallbackIds,
-    })),
-  ];
+  return resumeTargets(
+    [
+      { label: "This machine", agents: self?.agents ?? fallbackIds },
+      ...peers.map((peer, index) => ({
+        node: peer.id,
+        label: peer.name,
+        agents: descriptors[index]?.agents ?? fallbackIds,
+      })),
+    ],
+    session,
+  );
 };
 
 /** The `node` tag a session resumed onto `node` carries in merged lists. */
