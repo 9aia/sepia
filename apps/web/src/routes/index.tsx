@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAppHotkey } from "../lib/keybinds";
 import { useStore } from "@tanstack/react-store";
@@ -35,14 +35,20 @@ function Home() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
 
-  // URL → store: deep links and back/forward navigation.
+  // URL → store: deep links and back/forward navigation. The sync flag
+  // holds the store→URL effect back until the first commit — otherwise it
+  // strips ?session= with the initial null selectedId before this effect's
+  // setState lands.
+  const [urlSynced, setUrlSynced] = useState(false);
   useEffect(() => {
     if ((search.session ?? null) !== selectedId) setSelectedId(search.session ?? null);
+    setUrlSynced(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.session]);
 
   // Store → URL: keep ?session= in sync so the view is shareable.
   useEffect(() => {
+    if (!urlSynced) return;
     if (selectedId === (search.session ?? null)) return;
     void navigate({
       to: "/",
@@ -50,14 +56,18 @@ function Home() {
       replace: true,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  }, [selectedId, urlSynced]);
 
   // Auto-select the first session once the list lands, only when the user
   // hasn't picked one.
   useEffect(() => {
     const first = sessions?.[0];
-    if (selectedId === null && first !== undefined) setSelectedId(sessionKey(first));
-  }, [sessions, selectedId]);
+    // search.session in the guard too — a deep link must not be overwritten
+    // by the auto-select before the URL→store effect commits.
+    if (selectedId === null && search.session === undefined && first !== undefined) {
+      setSelectedId(sessionKey(first));
+    }
+  }, [sessions, selectedId, search.session]);
 
   useAppHotkey("app.keybinds", () => setKeybindsOpen(true));
 
