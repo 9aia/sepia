@@ -107,6 +107,61 @@ describe("applyAguiEvent", () => {
     expect(m[0]?.diffs).toEqual([{ path: "/b", newText: "created" }]);
   });
 
+  it("folds contents — terminal refs and embedded blocks — into the live row", () => {
+    let m = applyAguiEvent(
+      [],
+      ev("TOOL_CALL_START", {
+        toolCallId: "t1",
+        toolCallName: "exec",
+        contents: [{ type: "terminal", terminalId: "term-1" }],
+      }),
+    );
+    expect(m[0]?.contents).toEqual([{ type: "terminal", terminalId: "term-1" }]);
+
+    // The mid-call custom event carries a fresh snapshot too.
+    m = applyAguiEvent(
+      m,
+      ev("CUSTOM", {
+        name: "acp:tool_call_update",
+        value: { toolCallId: "t1", contents: [{ type: "text", text: "partial" }] },
+      }),
+    );
+    expect(m[0]?.contents).toEqual([{ type: "text", text: "partial" }]);
+
+    m = applyAguiEvent(
+      m,
+      ev("TOOL_CALL_END", {
+        toolCallId: "t1",
+        status: "completed",
+        contents: [
+          { type: "terminal", terminalId: "term-1", output: "done" },
+          { type: "image", data: "aGk=", mimeType: "image/png" },
+        ],
+      }),
+    );
+    expect(m[0]?.contents).toEqual([
+      { type: "terminal", terminalId: "term-1", output: "done" },
+      { type: "image", data: "aGk=", mimeType: "image/png" },
+    ]);
+  });
+
+  it("drops malformed content entries", () => {
+    const m = applyAguiEvent(
+      [],
+      ev("TOOL_CALL_START", {
+        toolCallId: "t1",
+        contents: [
+          { type: "terminal" },
+          { type: "text" },
+          { type: "image" },
+          { type: "weird", x: 1 },
+          "nope",
+        ],
+      }),
+    );
+    expect(m[0]?.contents).toBeUndefined();
+  });
+
   it("content for a missing messageId is a no-op", () => {
     const m = applyAguiEvent([], ev("TEXT_MESSAGE_CONTENT", { messageId: "ghost", delta: "x" }));
     expect(m).toHaveLength(0);

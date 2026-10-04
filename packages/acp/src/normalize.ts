@@ -2,6 +2,7 @@ import type {
   AcpSessionUpdate,
   PermissionOption,
   PermissionRequest,
+  ToolCallContent,
   ToolCallDiff,
   ToolCallLocation,
 } from "./types.js";
@@ -33,8 +34,8 @@ const locationOf = (value: unknown): ToolCallLocation => {
 
 /**
  * `diff` entries of a tool call's `content` — `{type:"diff", path, oldText?,
- * newText?}`. Other content kinds (terminal output, wrapped content blocks)
- * are not file changes and stay out.
+ * newText?}`. Other content kinds (terminal refs, wrapped content blocks)
+ * are not file changes — `contentsOf` picks those up instead.
  */
 const diffOf = (value: unknown): ToolCallDiff | null => {
   const c = asRecord(value);
@@ -54,6 +55,55 @@ const diffsOf = (content: unknown): ReadonlyArray<ToolCallDiff> =>
   asArray(content).flatMap((item) => {
     const diff = diffOf(item);
     return diff === null ? [] : [diff];
+  });
+
+/**
+ * Non-diff entries of a tool call's `content` — `{type:"terminal",
+ * terminalId}` refs (an inline `output`/`data`/`text` string is kept as
+ * `output`) and wrapped `ContentBlock`s (`{type:"content", content}` — text
+ * and image blocks, the rest of the block union is dropped).
+ */
+const toolCallContentOf = (value: unknown): ToolCallContent | null => {
+  const c = asRecord(value);
+  switch (asString(c.type)) {
+    case "terminal": {
+      const terminalId = asString(c.terminalId) ?? asString(c.id);
+      if (terminalId === undefined) return null;
+      const output = asString(c.output) ?? asString(c.data) ?? asString(c.text);
+      return { type: "terminal", terminalId, ...(output === undefined ? {} : { output }) };
+    }
+    case "content": {
+      const block = asRecord(c.content);
+      switch (asString(block.type)) {
+        case "text": {
+          const text = asString(block.text);
+          return text === undefined ? null : { type: "text", text };
+        }
+        case "image": {
+          const data = asString(block.data);
+          const uri = asString(block.uri);
+          if (data === undefined && uri === undefined) return null;
+          const mimeType = asString(block.mimeType);
+          return {
+            type: "image",
+            ...(data === undefined ? {} : { data }),
+            ...(uri === undefined ? {} : { uri }),
+            ...(mimeType === undefined ? {} : { mimeType }),
+          };
+        }
+        default:
+          return null;
+      }
+    }
+    default:
+      return null;
+  }
+};
+
+const contentsOf = (content: unknown): ReadonlyArray<ToolCallContent> =>
+  asArray(content).flatMap((item) => {
+    const entry = toolCallContentOf(item);
+    return entry === null ? [] : [entry];
   });
 
 const optionOf = (value: unknown): PermissionOption => {
@@ -76,7 +126,8 @@ export const normalizeUpdate = (update: unknown): AcpSessionUpdate => {
       return { kind: "agent_message_chunk", text: textOf(u.content) };
     case "agent_thought_chunk":
       return { kind: "agent_thought_chunk", text: textOf(u.content) };
-    case "tool_call":
+    case "tool_call": {
+      const contents = contentsOf(u.content);
       return {
         kind: "tool_call",
         toolCallId: asString(u.toolCallId) ?? "",
@@ -86,11 +137,14 @@ export const normalizeUpdate = (update: unknown): AcpSessionUpdate => {
         rawInput: u.rawInput,
         locations: asArray(u.locations).map(locationOf),
         diffs: diffsOf(u.content),
+        ...(contents.length === 0 ? {} : { contents }),
       };
+    }
     case "tool_call_update": {
       const title = asString(u.title);
       const locations = asArray(u.locations).map(locationOf);
       const diffs = diffsOf(u.content);
+      const contents = contentsOf(u.content);
       return {
         kind: "tool_call_update",
         toolCallId: asString(u.toolCallId) ?? "",
@@ -100,6 +154,7 @@ export const normalizeUpdate = (update: unknown): AcpSessionUpdate => {
         rawOutput: u.rawOutput,
         ...(locations.length === 0 ? {} : { locations }),
         ...(diffs.length === 0 ? {} : { diffs }),
+        ...(contents.length === 0 ? {} : { contents }),
       };
     }
     case "plan":

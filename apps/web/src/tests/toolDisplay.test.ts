@@ -4,6 +4,7 @@ import {
   fileDiffView,
   splitLeadingJson,
   stripAnsi,
+  toolContentSegments,
   toolSummary,
 } from "../lib/toolDisplay";
 
@@ -348,5 +349,40 @@ describe("diffFence", () => {
     const fenced = diffFence(text);
     expect(fenced.startsWith("````diff\n")).toBe(true);
     expect(fenced.endsWith("\n````")).toBe(true);
+  });
+});
+
+describe("toolContentSegments", () => {
+  it("renders a terminal ref as a muted note, plus its inline output", () => {
+    expect(
+      toolContentSegments([
+        { type: "terminal", terminalId: "term-1" },
+        { type: "terminal", terminalId: "term-2", output: "build ok" },
+      ]),
+    ).toEqual([
+      { kind: "note", text: "Terminal term-1" },
+      { kind: "note", text: "Terminal term-2" },
+      { kind: "code", text: "build ok" },
+    ]);
+  });
+
+  it("renders embedded text blocks as code and images as markdown", () => {
+    expect(
+      toolContentSegments([
+        { type: "text", text: "result text" },
+        { type: "text", text: "   " },
+        { type: "image", uri: "file:///shot.png" },
+        { type: "image", data: "aGk=", mimeType: "image/png" },
+      ]),
+    ).toEqual([
+      { kind: "code", text: "result text" },
+      { kind: "markdown", text: "![tool output](file:///shot.png)" },
+      { kind: "markdown", text: "![tool output](data:image/png;base64,aGk=)" },
+    ]);
+  });
+
+  it("is empty when the call carries no contents", () => {
+    expect(toolContentSegments(undefined)).toEqual([]);
+    expect(toolContentSegments([])).toEqual([]);
   });
 });

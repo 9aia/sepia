@@ -14,6 +14,8 @@ export interface CursorStoreDb {
     sql: string,
     params?: ReadonlyArray<unknown>,
   ) => ReadonlyArray<Record<string, unknown>>;
+  /** Present only when the store was opened writable — INSERT/CREATE. */
+  readonly run?: (sql: string, params?: ReadonlyArray<unknown>) => void;
   readonly close: () => void;
 }
 
@@ -22,8 +24,15 @@ export type OpenStoreDb = (path: string) => Effect.Effect<CursorStoreDb, Storage
 export interface CursorRepositoryOptions {
   /** Cursor data dir, usually `~/.cursor`. */
   readonly cursorDir: string;
-  /** Opens a `store.db`; defaults to `bun:sqlite` loaded lazily. */
+  /** Opens a `store.db` read-only; defaults to `bun:sqlite` loaded lazily. */
   readonly openStoreDb?: OpenStoreDb;
+  /**
+   * Opens a `store.db` for writing; defaults to `bun:sqlite` read-write.
+   * When only `openStoreDb` is injected it doubles as the writable opener
+   * (a test fake that implements `run` is writable); `save` then fails
+   * cleanly when the injected store has no `run`.
+   */
+  readonly openWritableStoreDb?: OpenStoreDb;
 }
 
 const fsLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
@@ -52,6 +61,7 @@ interface BunSqliteModule {
     readonly query: (sql: string) => {
       readonly all: (...params: ReadonlyArray<unknown>) => unknown[];
     };
+    readonly run: (sql: string, params?: ReadonlyArray<unknown>) => unknown;
     readonly close: () => void;
   };
 }
@@ -79,6 +89,31 @@ const defaultOpenStoreDb: OpenStoreDb = (dbPath) =>
     catch: (cause) =>
       new StorageError({
         message: `Failed to open cursor store ${dbPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
+  });
+
+/**
+ * Read-write open for `save` — `new Database(path)` creates the file when
+ * the chat dir exists but the store was never written (a 0-byte file is a
+ * fresh database either way).
+ */
+const defaultOpenWritableStoreDb: OpenStoreDb = (dbPath) =>
+  Effect.tryPromise({
+    try: async () => {
+      const { Database } = (await import(BUN_SQLITE_MODULE)) as BunSqliteModule;
+      const sqlite = new Database(dbPath);
+      return {
+        all: (sql, params = []) =>
+          sqlite.query(sql).all(...params) as ReadonlyArray<Record<string, unknown>>,
+        run: (sql, params = []) => {
+          sqlite.run(sql, [...params]);
+        },
+        close: () => sqlite.close(),
+      };
+    },
+    catch: (cause) =>
+      new StorageError({
+        message: `Failed to open cursor store ${dbPath} for writing: ${cause instanceof Error ? cause.message : String(cause)}`,
       }),
   });
 
@@ -117,18 +152,25 @@ const JSONL = ".jsonl";
  * Both trees degrade to empty when the dir is missing, matching the other
  * overlay repositories.
  *
- * `save` writes only the transcript projection — the `store.db` checkpoint
- * blob format is binary and unsafe to synthesise, so a saved session is
- * readable through the projection (sepia `list`/`getById`, Cursor's
- * transcript view) but not resumable by Cursor itself. `save` refuses to
- * shadow an id already backed by a `chats/` store, since the projection
- * would diverge from the canonical record. `delete` removes both the chat
- * store dir and the transcript dir for the id.
+ * `save` writes a top-level session canonically: the chat dir resolves to
+ * `chats/<md5(cwd)>/<id>` (an existing chats dir for the id, under any
+ * workspace hash, is updated in place), `store.db` gets the session's
+ * message blobs plus a fresh checkpoint and meta root — blob inserts are
+ * additive, so rewriting keeps the store's older DAG entries — and the
+ * `meta.json`/`prompt_history.json` sidecars follow. The transcript
+ * projection is written alongside, matching Cursor's own dual write.
+ * Subagent sessions have no chats-store concept and stay transcript-only.
+ * `delete` removes both the chat store dir and the transcript dir for the
+ * id.
  */
 export const makeCursorSessionRepository = (
   options: CursorRepositoryOptions,
 ): SessionRepositoryService => {
   const openStoreDb = options.openStoreDb ?? defaultOpenStoreDb;
+  // An injected read-only opener doubles as the writable one in tests; with
+  // nothing injected the real writable `bun:sqlite` path is used.
+  const openWritableStoreDb =
+    options.openWritableStoreDb ?? options.openStoreDb ?? defaultOpenWritableStoreDb;
   const chatsDir = () => `${options.cursorDir}/chats`;
   const projectsDir = () => `${options.cursorDir}/projects`;
 
@@ -224,6 +266,25 @@ export const makeCursorSessionRepository = (
         Option.getOrUndefined,
       );
     });
+
+  /**
+   * The prior `meta['0']` row for a `save` rewrite — `undefined` whenever
+   * the store is missing, empty or unopenable (a fresh chat dir has no
+   * meta row yet).
+   */
+  const storeMetaRow = (storePath: string) =>
+    openStoreDb(storePath).pipe(
+      Effect.map((db) => {
+        try {
+          return Cursor.parseStoreMeta(
+            db.all("select value from meta where key = '0'")[0]?.value,
+          );
+        } finally {
+          db.close();
+        }
+      }),
+      Effect.catchAll(() => Effect.succeed(undefined)),
+    );
 
   /** meta['0'] plus the root checkpoint's workspace, from an open store. */
   const storeSummary = (chatDir: string) =>
@@ -434,17 +495,78 @@ export const makeCursorSessionRepository = (
           }
         }
 
-        // A chats/ store.db is the canonical record for its id — a
-        // divergent transcript projection must never shadow it.
-        for (const wsHash of yield* listDir(chatsDir())) {
-          const chatDir = path.join(chatsDir(), wsHash, session.id);
-          if (yield* existsOrFalse(chatDir)) {
+        if (parentId === undefined) {
+          // Canonical write — the chats store.db. An existing chats dir
+          // for the id (under any workspace hash) is updated in place;
+          // otherwise the dir is `chats/<md5(cwd)>/<id>`, the same mapping
+          // Cursor itself uses.
+          let chatDir: string | undefined;
+          for (const wsHash of yield* listDir(chatsDir())) {
+            const candidate = path.join(chatsDir(), wsHash, session.id);
+            const info = yield* fs.stat(candidate).pipe(Effect.option);
+            if (Option.isSome(info) && info.value.type === "Directory") {
+              chatDir = candidate;
+              break;
+            }
+          }
+          chatDir ??= path.join(
+            chatsDir(),
+            Cursor.workspaceHashFromCwd(session.workingDirectory),
+            session.id,
+          );
+          yield* fs.makeDirectory(chatDir, { recursive: true });
+
+          const storePath = path.join(chatDir, "store.db");
+          // A rewrite keeps the chat's original creation stamp — the
+          // meta.json sidecar records it, the meta row when the sidecar
+          // was never written.
+          const priorMeta = Cursor.parseMetaJson(
+            yield* readFileOrEmpty(path.join(chatDir, "meta.json")),
+          );
+          const priorStore = yield* storeMetaRow(storePath);
+          const plan = Cursor.storeWritePlan(session, {
+            createdAtMs: priorMeta?.createdAtMs ?? priorStore?.createdAt,
+          });
+
+          const db = yield* openWritableStoreDb(storePath);
+          if (db.run === undefined) {
+            db.close();
             return yield* Effect.fail(
               new StorageError({
-                message:
-                  `Cursor session ${session.id} is backed by a chats store.db ` +
-                  `at ${chatDir}; refusing to shadow it with a transcript`,
+                message: `Cursor store ${storePath} was opened without a write surface`,
               }),
+            );
+          }
+          const run = db.run;
+          yield* Effect.try({
+            try: () => {
+              try {
+                run("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+                run("CREATE TABLE IF NOT EXISTS blobs (id TEXT PRIMARY KEY, data BLOB)");
+                for (const blob of plan.blobs) {
+                  run("INSERT OR IGNORE INTO blobs (id, data) VALUES (?, ?)", [
+                    blob.id,
+                    blob.data,
+                  ]);
+                }
+                run("INSERT OR REPLACE INTO meta (key, value) VALUES ('0', ?)", [
+                  plan.metaRow,
+                ]);
+              } finally {
+                db.close();
+              }
+            },
+            catch: (cause) =>
+              new StorageError({
+                message: `Failed to write cursor store ${storePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+              }),
+          });
+
+          yield* fs.writeFileString(path.join(chatDir, "meta.json"), plan.metaJson);
+          if (plan.promptHistoryJson !== undefined) {
+            yield* fs.writeFileString(
+              path.join(chatDir, "prompt_history.json"),
+              plan.promptHistoryJson,
             );
           }
         }

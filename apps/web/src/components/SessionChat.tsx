@@ -146,6 +146,7 @@ function RowContent({
         durationMs={message.durationMs}
         diffs={message.diffs}
         locations={message.locations}
+        contents={message.contents}
         onRestoreDiff={onRestoreDiff}
       />
     );

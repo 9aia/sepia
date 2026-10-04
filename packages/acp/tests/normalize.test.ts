@@ -69,6 +69,7 @@ test("normalizes diff content on tool_call and tool_call_update", () => {
       { path: "/a", oldText: "x", newText: "y" },
       { path: "/b", newText: "new file" },
     ],
+    contents: [{ type: "text", text: "done" }],
   });
   expect(
     normalizeUpdate({
@@ -89,6 +90,46 @@ test("normalizes diff content on tool_call and tool_call_update", () => {
     diffs: [
       { path: "/a", oldText: "x", newText: "y" },
       { path: "/b", newText: "new file" },
+    ],
+    contents: [{ type: "text", text: "done" }],
+  });
+});
+
+test("normalizes terminal and embedded content entries of a tool call", () => {
+  const content = [
+    { type: "terminal", terminalId: "term-1" },
+    { type: "terminal", terminalId: "term-2", output: "build ok" },
+    { type: "content", content: { type: "text", text: "result text" } },
+    { type: "content", content: { type: "image", data: "aGk=", mimeType: "image/png" } },
+    // Unsupported block kinds and malformed entries drop out.
+    { type: "content", content: { type: "resource_link", uri: "file:///a" } },
+    { type: "terminal" },
+    { type: "diff", path: "/a", newText: "y" },
+  ];
+  expect(
+    normalizeUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t1",
+      title: "exec",
+      status: "in_progress",
+      kind: "execute",
+      rawInput: {},
+      content,
+    }),
+  ).toEqual({
+    kind: "tool_call",
+    toolCallId: "t1",
+    title: "exec",
+    status: "in_progress",
+    toolKind: "execute",
+    rawInput: {},
+    locations: [],
+    diffs: [{ path: "/a", newText: "y" }],
+    contents: [
+      { type: "terminal", terminalId: "term-1" },
+      { type: "terminal", terminalId: "term-2", output: "build ok" },
+      { type: "text", text: "result text" },
+      { type: "image", data: "aGk=", mimeType: "image/png" },
     ],
   });
 });

@@ -23,9 +23,9 @@ export const formatCost = (cost: number): string => {
   return `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)}`;
 };
 
-/** Compact footer form — "↑1.2k ↓340", plus " · $0.02" when priced. */
+/** Compact footer form — "↑ 1.2k · ↓ 340 tok", plus " · $0.02" when priced. */
 export const usageLabel = (usage: MessageUsage): string => {
-  const base = `↑${compactNumber.format(usage.input)} ↓${compactNumber.format(usage.output)}`;
+  const base = `↑ ${compactNumber.format(usage.input)} · ↓ ${compactNumber.format(usage.output)} tok`;
   const cost = usage.cost === undefined ? "" : formatCost(usage.cost);
   return cost === "" ? base : `${base} · ${cost}`;
 };

@@ -19,10 +19,11 @@ import { Spinner } from "./ui/spinner";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
 import { MessageResponse } from "./streamdown";
 import { formatDuration } from "../lib/format";
-import type { ToolCallStatus, ToolFileDiff, ToolLocation } from "../lib/types";
+import type { ToolCallContent, ToolCallStatus, ToolFileDiff, ToolLocation } from "../lib/types";
 import {
   diffFence,
   fileDiffView,
+  toolContentSegments,
   toolSummary,
   type ToolCategory,
   type ToolSegment,
@@ -103,6 +104,7 @@ export function ToolCall({
   durationMs,
   diffs,
   locations,
+  contents,
   toolCallId,
   onRestoreDiff,
 }: {
@@ -125,6 +127,12 @@ export function ToolCall({
   /** Files the call touched when no diff was recorded (refs only). */
   readonly locations?: ReadonlyArray<ToolLocation>;
   /**
+   * Supplemental `content` entries a live stream forwarded — terminal refs
+   * and embedded text/image blocks. Absent on history rows (stores don't
+   * record them).
+   */
+  readonly contents?: ReadonlyArray<ToolCallContent>;
+  /**
    * The call's id in the store — a per-file restore reverts exactly this
    * call's recorded change. Absent on live rows that haven't flushed.
    */
@@ -137,6 +145,7 @@ export function ToolCall({
 }) {
   const display = toolSummary(toolName, args, content, { exitCode });
   const fileViews = useMemo(() => (diffs ?? []).map(fileDiffView), [diffs]);
+  const contentSegments = useMemo(() => toolContentSegments(contents), [contents]);
   const running = status === "pending" || !done;
   // The marker detail is `$ cmd`-style only when a command was actually
   // extracted — a shell-id fallback (get_output) stays plain.
@@ -210,7 +219,10 @@ export function ToolCall({
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="ml-6 flex flex-col gap-1.5 border-l-2 border-border/50 py-1 pl-3 text-xs text-muted-foreground">
-          {display.segments.length === 0 && fileViews.length === 0 && locationOnly.length === 0 ? (
+          {display.segments.length === 0 &&
+          fileViews.length === 0 &&
+          locationOnly.length === 0 &&
+          contentSegments.length === 0 ? (
             <span className="text-muted-foreground/70 italic">
               {done ? "No output" : "Waiting for input…"}
             </span>
@@ -218,6 +230,9 @@ export function ToolCall({
             <>
               {display.segments.map((segment, i) => (
                 <ToolSegmentView key={i} segment={segment} />
+              ))}
+              {contentSegments.map((segment, i) => (
+                <ToolSegmentView key={`content-${i}`} segment={segment} />
               ))}
               {fileViews.map((file) => (
                 <div key={file.path} className="flex flex-col gap-1">

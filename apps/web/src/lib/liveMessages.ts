@@ -2,6 +2,7 @@ import type { AgUiEvent } from "./api";
 import type {
   HistoryBlock,
   MessageUsage,
+  ToolCallContent,
   ToolCallStatus,
   ToolFileDiff,
   ToolLocation,
@@ -21,6 +22,8 @@ export interface LiveMessage {
   /** Files the call touched / changed — the ACP `locations`/`diffs` payload. */
   readonly locations?: ReadonlyArray<ToolLocation>;
   readonly diffs?: ReadonlyArray<ToolFileDiff>;
+  /** Non-diff `content` entries — terminal refs and embedded text/image blocks. */
+  readonly contents?: ReadonlyArray<ToolCallContent>;
   /** Outcome of the tool call once the stream settles it (IR v2 fields ride along). */
   readonly toolStatus?: ToolCallStatus;
   readonly exitCode?: number;
@@ -91,16 +94,55 @@ const diffsOf = (v: unknown): ReadonlyArray<ToolFileDiff> | undefined => {
 };
 
 /**
- * File fields arriving on a tool event (or the `acp:tool_call_update`
- * custom event). A present snapshot replaces the row's — the agent sends
- * the call's current footprint, not a delta to append.
+ * Non-diff `content` entries off a live event — `{type:"terminal",
+ * terminalId, output?}` refs and embedded `{type:"text"|"image"}` blocks.
  */
-const fileFields = (event: AgUiEvent | Record<string, unknown>) => {
+const contentsOf = (v: unknown): ReadonlyArray<ToolCallContent> | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  const out: ToolCallContent[] = [];
+  for (const item of v) {
+    const c = record(item);
+    if (c === undefined) continue;
+    const type = c["type"];
+    if (type === "terminal") {
+      const terminalId = nonEmpty(c["terminalId"]);
+      if (terminalId === undefined) continue;
+      const output = typeof c["output"] === "string" ? (c["output"] as string) : undefined;
+      out.push({ type: "terminal", terminalId, ...(output === undefined ? {} : { output }) });
+    } else if (type === "text") {
+      const text = typeof c["text"] === "string" ? (c["text"] as string) : undefined;
+      if (text === undefined) continue;
+      out.push({ type: "text", text });
+    } else if (type === "image") {
+      const data = typeof c["data"] === "string" ? (c["data"] as string) : undefined;
+      const uri = typeof c["uri"] === "string" ? (c["uri"] as string) : undefined;
+      if (data === undefined && uri === undefined) continue;
+      const mimeType = typeof c["mimeType"] === "string" ? (c["mimeType"] as string) : undefined;
+      out.push({
+        type: "image",
+        ...(data === undefined ? {} : { data }),
+        ...(uri === undefined ? {} : { uri }),
+        ...(mimeType === undefined ? {} : { mimeType }),
+      });
+    }
+  }
+  return out.length === 0 ? undefined : out;
+};
+
+/**
+ * File/content fields arriving on a tool event (or the
+ * `acp:tool_call_update` custom event). A present snapshot replaces the
+ * row's — the agent sends the call's current footprint, not a delta to
+ * append.
+ */
+const snapshotFields = (event: AgUiEvent | Record<string, unknown>) => {
   const locations = locationsOf(event["locations"]);
   const diffs = diffsOf(event["diffs"]);
+  const contents = contentsOf(event["contents"]);
   return {
     ...(locations === undefined ? {} : { locations }),
     ...(diffs === undefined ? {} : { diffs }),
+    ...(contents === undefined ? {} : { contents }),
   };
 };
 
@@ -193,7 +235,7 @@ export function applyAguiEvent(
         toolName: typeof event.toolCallName === "string" ? event.toolCallName : undefined,
         content: "",
         done: false,
-        ...fileFields(event),
+        ...snapshotFields(event),
       });
     case "TOOL_CALL_ARGS":
       return update(messages, toolCallId, (m) => ({ ...m, args: (m.args ?? "") + delta }));
@@ -212,17 +254,18 @@ export function applyAguiEvent(
         ...(toolStatus !== undefined ? { toolStatus } : {}),
         ...(exitCode !== undefined ? { exitCode } : {}),
         ...(durationMs !== undefined ? { durationMs } : {}),
-        ...fileFields(event),
+        ...snapshotFields(event),
       }));
     }
     case "CUSTOM": {
-      // The Translator's mid-call file carrier — `{toolCallId, locations?,
-      // diffs?}` — lands while the tool event stream is still open.
+      // The Translator's mid-call file/content carrier — `{toolCallId,
+      // locations?, diffs?, contents?}` — lands while the tool event stream
+      // is still open.
       if (event.name !== "acp:tool_call_update") return messages.slice();
       const value = record(event.value);
       const id = nonEmpty(value?.["toolCallId"]);
       if (value === undefined || id === undefined) return messages.slice();
-      return update(messages, id, (m) => ({ ...m, ...fileFields(value) }));
+      return update(messages, id, (m) => ({ ...m, ...snapshotFields(value) }));
     }
     default:
       return messages.slice();

@@ -41,6 +41,22 @@ export interface ToolCallDiff {
   readonly newText?: string;
 }
 
+/**
+ * A non-diff `content` entry of a tool call — the ACP
+ * `{type:"terminal", terminalId}` refs (with `output` when the agent inlines
+ * the terminal text) and wrapped `ContentBlock`s (`{type:"content", content}`
+ * — text and image blocks are kept, other block kinds dropped).
+ */
+export type ToolCallContent =
+  | { readonly type: "terminal"; readonly terminalId: string; readonly output?: string }
+  | { readonly type: "text"; readonly text: string }
+  | {
+      readonly type: "image";
+      readonly data?: string;
+      readonly uri?: string;
+      readonly mimeType?: string;
+    };
+
 /** Normalized subset of ACP `session/update` notifications that we render. */
 export type AcpSessionUpdate =
   | { readonly kind: "agent_message_chunk"; readonly text: string }
@@ -55,6 +71,8 @@ export type AcpSessionUpdate =
       readonly rawInput: unknown;
       readonly locations: ReadonlyArray<ToolCallLocation>;
       readonly diffs: ReadonlyArray<ToolCallDiff>;
+      /** Non-diff `content` entries — present only when the call carries some. */
+      readonly contents?: ReadonlyArray<ToolCallContent>;
     }
   | {
       readonly kind: "tool_call_update";
@@ -65,6 +83,7 @@ export type AcpSessionUpdate =
       readonly rawOutput?: unknown;
       readonly locations?: ReadonlyArray<ToolCallLocation>;
       readonly diffs?: ReadonlyArray<ToolCallDiff>;
+      readonly contents?: ReadonlyArray<ToolCallContent>;
     }
   | {
       readonly kind: "plan";

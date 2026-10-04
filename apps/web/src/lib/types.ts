@@ -102,6 +102,16 @@ export interface ToolFileDiff {
 }
 
 /**
+ * A non-diff `content` entry of a live tool call — the ACP `ToolCallContent`
+ * kinds beyond `diff`: a terminal ref (`terminalId`, `output` only when the
+ * agent inlined the text) or an embedded content block (text/image).
+ */
+export type ToolCallContent =
+  | { type: "terminal"; terminalId: string; output?: string }
+  | { type: "text"; text: string }
+  | { type: "image"; data?: string; uri?: string; mimeType?: string };
+
+/**
  * One content block of a history message — the wire form of the IR `Block`
  * union (sepia-core Domain.ts). Present only when the agent's store recorded
  * non-text content; `content` remains the joined text projection.

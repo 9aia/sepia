@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Option } from "effect";
 import {
   MessageNode,
@@ -31,10 +32,16 @@ import * as Devin from "./Devin.js";
  * opaque and the transcript projects them as `[REDACTED]`; both map to the
  * `[redacted]` thinking marker. There is no ACP runtime.
  *
- * Writes (`toTranscriptJsonl`) target only the transcript projection —
- * `store.db`'s checkpoint blob format is binary and unsafe to synthesise, so
- * a saved session is readable through the projection but not resumable by
- * Cursor itself.
+ * Writes target both stores. The canonical `store.db` path is fully
+ * synthesised (`storeWritePlan`): blob ids are the sha256 of their bytes,
+ * the checkpoint protobuf carries the ordered field-1 message refs plus
+ * the field-9 workspace URI, field-10 flag and field-22 `"cli"` tag, and
+ * `meta['0']` is the hex-encoded JSON row pointing at it. The checkpoint
+ * fields a real Cursor writes for bookkeeping — field-5 token stats and
+ * the field-8 groups of prompt/context/step/tool-detail records — are not
+ * synthesised: nothing on the resume path reads them, and inventing their
+ * semantics risks a malformed DAG. `toTranscriptJsonl` still mirrors the
+ * lossy projection alongside, matching Cursor's own dual write.
  */
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -1114,3 +1121,384 @@ export const toTranscriptJsonl = (session: Session): string =>
       return line === undefined ? [] : [JSON.stringify(line)];
     })
     .join("\n") + "\n";
+
+/* ------------------------------------------------------------------ */
+/* IR → store.db (canonical write side)                               */
+/* ------------------------------------------------------------------ */
+
+const encode = (text: string): Uint8Array => new TextEncoder().encode(text);
+
+const hashHex = (algorithm: string, data: Uint8Array | string): string =>
+  createHash(algorithm).update(data).digest("hex");
+
+/**
+ * A blob's `blobs.id` is the lowercase hex sha256 of its bytes — verified
+ * against real stores, where `e3b0c44…` (sha256 of nothing) is the empty
+ * blob every store keeps and the root of a chat with no messages yet.
+ */
+export const blobIdFor = (data: Uint8Array): string => hashHex("sha256", data);
+
+/**
+ * The `chats/<hash>` directory is md5 of the workspace path verbatim —
+ * `md5("/home/luis")` is a real ws-hash on disk. The hash is over the raw
+ * path, no scheme or trailing slash.
+ */
+export const workspaceHashFromCwd = (cwd: string): string => hashHex("md5", cwd);
+
+/** Inverse of `workspaceFromUri`: each path segment is URI-encoded. */
+export const workspaceUriFromCwd = (cwd: string): string =>
+  `file://${cwd
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+
+const writeVarint = (value: number): Uint8Array => {
+  const out: Array<number> = [];
+  let n = value;
+  do {
+    let b = n & 0x7f;
+    n = Math.floor(n / 128);
+    if (n > 0) b |= 0x80;
+    out.push(b);
+  } while (n > 0);
+  return new Uint8Array(out);
+};
+
+const concatBytes = (parts: ReadonlyArray<Uint8Array>): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+};
+
+const lenField = (fieldNum: number, data: Uint8Array): Uint8Array =>
+  concatBytes([writeVarint(fieldNum * 8 + 2), writeVarint(data.length), data]);
+
+const intField = (fieldNum: number, value: number): Uint8Array =>
+  concatBytes([writeVarint(fieldNum * 8), writeVarint(value)]);
+
+export interface CheckpointWriteInput {
+  /** Ordered sha256 blob ids of the message list — field-1 entries. */
+  readonly messageIds: ReadonlyArray<string>;
+  /** `file://` workspace URI — from `workspaceUriFromCwd`. */
+  readonly workspace?: string;
+  /** Client tag written at field 22; real CLI stores use `"cli"`. */
+  readonly client?: string;
+}
+
+/**
+ * Synthesise a checkpoint blob. Only the load-bearing fields are written:
+ * the ordered field-1 message refs, the field-9 workspace URI, the
+ * field-10 flag and the field-22 client tag. A real checkpoint also
+ * carries field-5 token stats and field-8 refs to ancillary record groups
+ * (prompt/context/step/tool-detail blobs) — UI bookkeeping the resume
+ * path never reads, deliberately omitted rather than guessed at.
+ * `decodeCheckpoint` round-trips everything written here.
+ */
+export const encodeCheckpoint = (input: CheckpointWriteInput): Uint8Array => {
+  const parts: Array<Uint8Array> = [];
+  for (const id of input.messageIds) {
+    const bytes = fromHex(id);
+    if (bytes !== undefined && bytes.length === 32) parts.push(lenField(1, bytes));
+  }
+  if (input.workspace !== undefined) parts.push(lenField(9, encode(input.workspace)));
+  parts.push(intField(10, 1));
+  parts.push(lenField(22, encode(input.client ?? "cli")));
+  return concatBytes(parts);
+};
+
+export interface StoreMetaWriteInput {
+  readonly agentId: string;
+  readonly latestRootBlobId: string;
+  readonly name?: string;
+  readonly mode?: string;
+  readonly isRunEverything?: boolean;
+  /** Epoch milliseconds. */
+  readonly createdAt?: number;
+  readonly lastUsedModel?: string;
+}
+
+/** The `meta['0']` row — hex of the UTF-8 JSON, matching `parseStoreMeta`. */
+export const encodeStoreMeta = (meta: StoreMetaWriteInput): string =>
+  toHex(
+    encode(
+      JSON.stringify({
+        agentId: meta.agentId,
+        latestRootBlobId: meta.latestRootBlobId,
+        ...(meta.name === undefined ? {} : { name: meta.name }),
+        ...(meta.mode === undefined ? {} : { mode: meta.mode }),
+        ...(meta.isRunEverything === undefined
+          ? {}
+          : { isRunEverything: meta.isRunEverything }),
+        ...(meta.createdAt === undefined ? {} : { createdAt: meta.createdAt }),
+        ...(meta.lastUsedModel === undefined ? {} : { lastUsedModel: meta.lastUsedModel }),
+      }),
+    ),
+  );
+
+export interface MetaJsonWriteInput {
+  readonly createdAtMs: number;
+  readonly updatedAtMs: number;
+  readonly title?: string;
+  readonly hasConversation: boolean;
+  readonly cwd?: string;
+}
+
+/** The `meta.json` sidecar — schemaVersion 1, key order matching real files. */
+export const encodeMetaJson = (meta: MetaJsonWriteInput): string =>
+  JSON.stringify({
+    schemaVersion: 1,
+    createdAtMs: meta.createdAtMs,
+    hasConversation: meta.hasConversation,
+    ...(meta.title === undefined || meta.title === "" ? {} : { title: meta.title }),
+    updatedAtMs: meta.updatedAtMs,
+    ...(meta.cwd === undefined ? {} : { cwd: meta.cwd }),
+  });
+
+const nodeContext = (node: MessageNode): string | undefined =>
+  isObject(node.metadata) && typeof node.metadata.context === "string"
+    ? node.metadata.context
+    : undefined;
+
+const nodeBlobId = (node: MessageNode): string | undefined =>
+  isObject(node.metadata) && typeof node.metadata.blobId === "string"
+    ? node.metadata.blobId
+    : undefined;
+
+/**
+ * A deterministic `providerOptions.cursor.requestId` — real stores mint a
+ * random uuid per user turn, but deriving one from session+node keeps a
+ * repeated `save` byte-identical: a random id would orphan a fresh message
+ * and checkpoint blob on every write.
+ */
+const derivedRequestId = (sessionId: string, nodeId: number): string => {
+  const hex = hashHex("sha256", `cursor-request:${sessionId}:${nodeId}`);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+
+const toolResultJson = (node: MessageNode): Record<string, unknown> => ({
+  type: "tool-result",
+  ...(Option.isSome(node.toolCallId) ? { toolCallId: node.toolCallId.value } : {}),
+  ...(Option.isSome(node.toolName) ? { toolName: node.toolName.value } : {}),
+  result: node.content,
+});
+
+/** `highLevelToolCallResult.output` rebuilt from the IR's status + duration. */
+const toolResultOutput = (node: MessageNode): Record<string, unknown> => {
+  const info = Option.getOrUndefined(node.toolResult);
+  return {
+    isError: info?.status === "error",
+    ...(info?.durationMs === undefined ? {} : { success: { executionTime: info.durationMs } }),
+  };
+};
+
+/**
+ * One IR node → the AI-SDK JSON it serialises to; `undefined` when the
+ * node carries nothing a message blob can hold (empty text, an assistant
+ * turn with no content, calls or thinking). Shapes mirror what the reader
+ * decodes: `user` context nodes keep the raw string `content` form while
+ * queries use `[{type:"text"}]` + a requestId; `assistant` packs
+ * `redacted-reasoning`/`text`/`tool-call` items and records `id: "1"` like
+ * every observed assistant blob; `tool` results lift the call id to the
+ * top-level `id` and re-encode `toolResult` under
+ * `providerOptions.cursor.highLevelToolCallResult`.
+ */
+const messageJson = (
+  sessionId: string,
+  node: MessageNode,
+): Record<string, unknown> | undefined => {
+  if (node.role === "system") {
+    return node.content === "" ? undefined : { role: "system", content: node.content };
+  }
+  if (node.role === "user") {
+    if (node.content === "") return undefined;
+    // `<user_info>` plumbing is a raw string in real stores, not a parts list.
+    if (nodeContext(node) === "user_info") {
+      return { role: "user", content: node.content };
+    }
+    return {
+      role: "user",
+      content: [{ type: "text", text: node.content }],
+      providerOptions: {
+        cursor: {
+          requestId:
+            Option.getOrUndefined(node.requestId) ??
+            derivedRequestId(sessionId, node.nodeId),
+        },
+      },
+    };
+  }
+  if (node.role === "assistant") {
+    const content: Array<Record<string, unknown>> = [];
+    if (Option.isSome(node.thinking)) {
+      content.push({
+        type: "redacted-reasoning",
+        ...(Option.isSome(node.thinkingSignature)
+          ? { data: node.thinkingSignature.value }
+          : {}),
+      });
+    }
+    if (node.content !== "") content.push({ type: "text", text: node.content });
+    for (const call of node.toolCalls) {
+      content.push({
+        type: "tool-call",
+        toolCallId: call.id,
+        toolName: call.name,
+        args: call.arguments ?? {},
+      });
+    }
+    if (content.length === 0) return undefined;
+    return { role: "assistant", id: "1", content };
+  }
+  if (node.role === "tool") {
+    return {
+      role: "tool",
+      ...(Option.isSome(node.toolCallId) ? { id: node.toolCallId.value } : {}),
+      content: [toolResultJson(node)],
+      providerOptions: {
+        cursor: { highLevelToolCallResult: { output: toolResultOutput(node) } },
+      },
+    };
+  }
+  return undefined;
+};
+
+export interface StoreBlobWrite {
+  /** `blobs.id` — the sha256 hex of `data`. */
+  readonly id: string;
+  readonly data: Uint8Array;
+}
+
+/**
+ * The ordered message-blob plan: entry `i` is checkpoint field-1 ref `i`.
+ * Consecutive `tool` nodes that a real store grouped under one blob id
+ * (recorded on `metadata.blobId`) re-group into a single blob; every other
+ * node is one blob each. `result` strings are the node's content verbatim.
+ */
+export const messageBlobsFromSession = (session: Session): ReadonlyArray<StoreBlobWrite> => {
+  const blobs: Array<StoreBlobWrite> = [];
+  const push = (json: Record<string, unknown>): void => {
+    const data = encode(JSON.stringify(json));
+    blobs.push({ id: blobIdFor(data), data });
+  };
+
+  let group: { blobId: string; results: Array<Record<string, unknown>>; node: MessageNode } | undefined;
+  const flushGroup = (): void => {
+    if (group === undefined) return;
+    push({
+      role: "tool",
+      ...(Option.isSome(group.node.toolCallId) ? { id: group.node.toolCallId.value } : {}),
+      content: group.results,
+      providerOptions: {
+        cursor: { highLevelToolCallResult: { output: toolResultOutput(group.node) } },
+      },
+    });
+    group = undefined;
+  };
+
+  for (const node of session.nodes) {
+    if (node.role !== "tool") {
+      flushGroup();
+      const json = messageJson(session.id, node);
+      if (json !== undefined) push(json);
+      continue;
+    }
+    const shared = nodeBlobId(node);
+    if (shared !== undefined && group?.blobId === shared) {
+      group.results.push(toolResultJson(node));
+      continue;
+    }
+    flushGroup();
+    if (shared !== undefined) {
+      group = { blobId: shared, results: [toolResultJson(node)], node };
+    } else {
+      const json = messageJson(session.id, node);
+      if (json !== undefined) push(json);
+    }
+  }
+  flushGroup();
+  return blobs;
+};
+
+export interface StoreWritePlan {
+  /** Every row `save` inserts into `blobs` — message blobs then the root. */
+  readonly blobs: ReadonlyArray<StoreBlobWrite>;
+  /** sha256 of the checkpoint — `meta['0'].latestRootBlobId`. */
+  readonly rootBlobId: string;
+  /** Hex-encoded `meta['0']` JSON row. */
+  readonly metaRow: string;
+  /** `meta.json` sidecar content. */
+  readonly metaJson: string;
+  /** `prompt_history.json` content — undefined when nothing is provable. */
+  readonly promptHistoryJson?: string;
+}
+
+/**
+ * Everything a `store.db` + sidecar write needs for one session. An empty
+ * session gets the empty blob as its root — exactly what a fresh real
+ * chat's store records (`latestRootBlobId` = sha256 of nothing).
+ * `createdAtMs` lets a rewrite keep the chat's original creation time.
+ */
+export const storeWritePlan = (
+  session: Session,
+  options: { readonly createdAtMs?: number } = {},
+): StoreWritePlan => {
+  const emptyData = new Uint8Array(0);
+  const messages = messageBlobsFromSession(session);
+  const checkpoint =
+    messages.length === 0
+      ? emptyData
+      : encodeCheckpoint({
+          messageIds: messages.map((blob) => blob.id),
+          workspace: workspaceUriFromCwd(session.workingDirectory),
+          client: "cli",
+        });
+  const rootBlobId = blobIdFor(checkpoint);
+  const metadata = isObject(session.metadata) ? session.metadata : {};
+  const createdAtMs = options.createdAtMs ?? session.createdAt * 1000;
+
+  const prompts =
+    session.promptHistory.length > 0
+      ? session.promptHistory.map((entry) => entry.content)
+      : session.nodes.flatMap((node) => {
+          if (node.role !== "user" || nodeContext(node) === "user_info") return [];
+          const query = extractUserQuery(node.content);
+          return query === undefined ? [] : [query];
+        });
+
+  return {
+    blobs: [
+      { id: blobIdFor(emptyData), data: emptyData },
+      ...messages,
+      { id: rootBlobId, data: checkpoint },
+    ],
+    rootBlobId,
+    metaRow: encodeStoreMeta({
+      agentId: session.id,
+      latestRootBlobId: rootBlobId,
+      name: session.title === "" ? undefined : session.title,
+      mode:
+        typeof metadata.mode === "string"
+          ? metadata.mode
+          : session.agentMode === ""
+            ? undefined
+            : session.agentMode,
+      isRunEverything:
+        typeof metadata.isRunEverything === "boolean" ? metadata.isRunEverything : undefined,
+      createdAt: createdAtMs,
+      lastUsedModel:
+        session.model === "" || session.model === "unknown" ? "default" : session.model,
+    }),
+    metaJson: encodeMetaJson({
+      createdAtMs,
+      updatedAtMs: Math.max(session.lastActivityAt * 1000, createdAtMs),
+      title: session.title,
+      hasConversation: session.nodes.length > 0,
+      cwd: session.workingDirectory,
+    }),
+    promptHistoryJson: prompts.length === 0 ? undefined : JSON.stringify(prompts),
+  };
+};

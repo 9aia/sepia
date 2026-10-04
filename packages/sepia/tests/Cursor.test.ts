@@ -594,15 +594,26 @@ test("empty and malformed transcripts yield a bare session", () => {
 /* ------------------------------------------------------------- */
 
 interface FakeStore {
-  readonly meta: string | undefined;
+  meta: string | undefined;
   readonly blobs: Map<string, Uint8Array>;
 }
 
-const fakeStoreDb = (stores: Map<string, FakeStore>): CursorRepository.OpenStoreDb => {
+const fakeStoreDb = (
+  stores: Map<string, FakeStore>,
+  create = false,
+): CursorRepository.OpenStoreDb => {
   return (path) => {
-    const store = stores.get(path);
+    let store = stores.get(path);
     if (store === undefined) {
-      return Effect.fail(new StorageError({ message: `no store at ${path}` }));
+      if (!create) {
+        return Effect.fail(new StorageError({ message: `no store at ${path}` }));
+      }
+      // sqlite creates the file on a writable open — mirror that so the
+      // chat scan sees `store.db` in the dir listing.
+      store = { meta: undefined, blobs: new Map() };
+      stores.set(path, store);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, "");
     }
     return Effect.succeed({
       all: (sql, params = []) => {
@@ -614,6 +625,18 @@ const fakeStoreDb = (stores: Map<string, FakeStore>): CursorRepository.OpenStore
           return data === undefined ? [] : [{ data }];
         }
         return [...store.blobs.entries()].map(([id, data]) => ({ id, data }));
+      },
+      run: (sql, params = []) => {
+        const lower = sql.toLowerCase();
+        if (lower.includes("into blobs")) {
+          const [id, data] = params as [string, Uint8Array];
+          if (lower.includes("or ignore") && store.blobs.has(id)) return;
+          store.blobs.set(id, data);
+          return;
+        }
+        if (lower.includes("into meta")) {
+          store.meta = params[0] as string;
+        }
       },
       close: () => {},
     });
@@ -962,25 +985,46 @@ const writableSession = (
     promptHistory: [],
   });
 
-const writableRepo = (root: string) =>
-  CursorRepository.makeCursorSessionRepository({
+const writableRepo = (
+  root: string,
+  stores: Map<string, FakeStore> = new Map(),
+): { readonly repo: ReturnType<typeof CursorRepository.makeCursorSessionRepository> } => ({
+  repo: CursorRepository.makeCursorSessionRepository({
     cursorDir: root,
-    openStoreDb: fakeStoreDb(new Map()),
-  });
+    openStoreDb: fakeStoreDb(stores),
+    openWritableStoreDb: fakeStoreDb(stores, true),
+  }),
+});
 
-test("save writes the transcript layout and getById round-trips it", async () => {
+test("save writes a canonical store plus the transcript and round-trips", async () => {
   const root = makeTree({});
-  const repo = writableRepo(root);
+  const { repo } = writableRepo(root);
   const session = writableSession("new-chat", "/home/luis/Desktop/cheloni");
 
   await Effect.runPromise(repo.save(session));
 
+  // the canonical store: chats/<md5(cwd)>/<id>/ + sidecars
+  const wsHash = Cursor.workspaceHashFromCwd("/home/luis/Desktop/cheloni");
+  const chatDir = join(root, "chats", wsHash, "new-chat");
+  expect(existsSync(join(chatDir, "store.db"))).toBe(true);
+  expect(JSON.parse(readFileSync(join(chatDir, "meta.json"), "utf8"))).toEqual({
+    schemaVersion: 1,
+    createdAtMs: 1_700_000_000_000,
+    hasConversation: true,
+    title: "unused title",
+    updatedAtMs: 1_700_000_300_000,
+    cwd: "/home/luis/Desktop/cheloni",
+  });
+  expect(JSON.parse(readFileSync(join(chatDir, "prompt_history.json"), "utf8"))).toEqual([
+    "explore the repo",
+  ]);
+
+  // the transcript projection lands alongside, like Cursor's own write
   const filePath = join(
     root,
     "projects/home-luis-Desktop-cheloni/agent-transcripts/new-chat/new-chat.jsonl",
   );
   expect(existsSync(filePath)).toBe(true);
-  // the on-disk line shape matches a real Cursor transcript
   const lines = readFileSync(filePath, "utf8").trim().split("\n");
   expect(JSON.parse(lines[1]).message.content[1]).toEqual({
     type: "tool_use",
@@ -992,9 +1036,10 @@ test("save writes the transcript layout and getById round-trips it", async () =>
   expect(await Effect.runPromise(repo.hasSession("new-chat"))).toBe(true);
   const found = await Effect.runPromise(repo.getById("new-chat"));
   const read = Option.getOrThrow(found);
-  expect(read.title).toBe("explore the repo");
+  // the chat store wins over the projection and carries the richer meta
+  expect(read.title).toBe("unused title");
+  expect((read.metadata as Record<string, unknown>).store).toBe("chats");
   expect(read.workingDirectory).toBe("/home/luis/Desktop/cheloni");
-  // the mtime stamp is the only timestamp the projection keeps
   expect(read.lastActivityAt).toBe(1_700_000_300);
   expect(read.promptHistory.map((p) => p.content)).toEqual(["explore the repo"]);
 
@@ -1011,9 +1056,25 @@ test("save writes the transcript layout and getById round-trips it", async () =>
   });
 });
 
+test("save fails cleanly when the store has no write surface", async () => {
+  const root = makeTree({});
+  const repo = CursorRepository.makeCursorSessionRepository({
+    cursorDir: root,
+    // a read-only store — `run` is absent, so save must refuse cleanly
+    openStoreDb: () =>
+      Effect.succeed({
+        all: () => [],
+        close: () => {},
+      }),
+  });
+  await expect(Effect.runPromise(repo.save(writableSession("c1", "/w")))).rejects.toThrow(
+    /write surface/,
+  );
+});
+
 test("save reuses the recorded project slug and overwrites cleanly", async () => {
   const root = makeTree({});
-  const repo = writableRepo(root);
+  const { repo } = writableRepo(root);
   const session = writableSession("chat-x", "/unrelated/cwd", {
     metadata: { source: "cursor", store: "transcript", project: "home-luis-Desktop" },
   });
@@ -1051,7 +1112,7 @@ test("save reuses the recorded project slug and overwrites cleanly", async () =>
 
 test("save writes subagents under the parent's transcript dir", async () => {
   const root = makeTree({});
-  const repo = writableRepo(root);
+  const { repo } = writableRepo(root);
   // the parent lives in a different project than the child's cwd slug
   await Effect.runPromise(repo.save(writableSession("parent-1", "/elsewhere/proj")));
 
@@ -1073,7 +1134,7 @@ test("save writes subagents under the parent's transcript dir", async () => {
 
 test("save a subagent without a parent on disk still lands under it", async () => {
   const root = makeTree({});
-  const repo = writableRepo(root);
+  const { repo } = writableRepo(root);
   const child = writableSession("sub-1", "/w/proj", {
     parentSessionId: Option.some("ghost-parent"),
   });
@@ -1085,13 +1146,298 @@ test("save a subagent without a parent on disk still lands under it", async () =
   expect(Option.getOrUndefined(read.parentSessionId)).toBe("ghost-parent");
 });
 
-test("save refuses to shadow a chats store.db", async () => {
-  const { repo } = fixture();
-  await expect(Effect.runPromise(repo.save(writableSession("chat-1", "/w")))).rejects.toThrow(
-    /backed by a chats store\.db/,
+test("save updates an existing chats store.db in place", async () => {
+  const { root } = fixture();
+  // a writable opener over the fixture's real store map — save must land
+  // in the existing chats/wsHASH/chat-1 dir, not a fresh md5(cwd) one
+  const stores = layout(root);
+  const repo = CursorRepository.makeCursorSessionRepository({
+    cursorDir: root,
+    openStoreDb: fakeStoreDb(stores),
+    openWritableStoreDb: fakeStoreDb(stores, true),
+  });
+  await Effect.runPromise(repo.save(writableSession("chat-1", "/different/cwd")));
+
+  const store = stores.get(join(root, "chats/wsHASH/chat-1/store.db"))!;
+  const meta = Cursor.parseStoreMeta(store.meta);
+  expect(meta?.agentId).toBe("chat-1");
+  expect(meta?.latestRootBlobId).not.toBe(blobId(0));
+  // the original creation stamp survives the rewrite
+  expect(meta?.createdAt).toBe(1_700_000_000_000);
+
+  // the new root checkpoint lists the session's two message blobs
+  const checkpointData = store.blobs.get(meta!.latestRootBlobId!);
+  const decoded = Cursor.decodeCheckpoint(checkpointData!);
+  expect(decoded?.messageIds).toHaveLength(2);
+  // additive write — the store's earlier DAG entries are kept
+  expect(store.blobs.has(blobId(1))).toBe(true);
+  expect(store.blobs.has(blobId(0))).toBe(true);
+
+  // and the whole record reads back through the store path
+  const read = Option.getOrThrow(await Effect.runPromise(repo.getById("chat-1")));
+  expect((read.metadata as Record<string, unknown>).store).toBe("chats");
+  expect(read.nodes.map((n) => n.role)).toEqual(["user", "assistant"]);
+});
+
+/* ------------------------------------------------------------- */
+/* write path — store.db encoders                                  */
+/* ------------------------------------------------------------- */
+
+test("blob ids and workspace hashes match the real content addressing", () => {
+  // sha256("") is the empty blob every real store keeps
+  expect(Cursor.blobIdFor(new Uint8Array(0))).toBe(
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   );
-  // transcript-only ids save fine even alongside populated chats dirs
-  await Effect.runPromise(repo.save(writableSession("brand-new", "/w")));
+  // md5 of the raw path — both values observed on a live ~/.cursor/chats
+  expect(Cursor.workspaceHashFromCwd("/home/luis")).toBe("bd2ea8ea8fb4de9e940176cfdc5cd7bd");
+  expect(Cursor.workspaceHashFromCwd("/home/luis/Desktop")).toBe(
+    "e4f40720b3eb141b3f86d6db5f82b915",
+  );
+  // the file:// uri encodes each segment and decodes back to the path
+  const uri = Cursor.workspaceUriFromCwd("/home/luis/My Proj");
+  expect(uri).toBe("file:///home/luis/My%20Proj");
+  expect(Cursor.workspaceFromUri(uri)).toBe("/home/luis/My Proj");
+  expect(Cursor.workspaceUriFromCwd("/home/luis/Desktop")).toBe("file:///home/luis/Desktop");
+});
+
+test("encodeCheckpoint round-trips through decodeCheckpoint", () => {
+  const blob = Cursor.encodeCheckpoint({
+    messageIds: [blobId(1), blobId(2)],
+    workspace: "file:///home/luis/proj",
+  });
+  expect(Cursor.decodeCheckpoint(blob)).toEqual({
+    messageIds: [blobId(1), blobId(2)],
+    workspace: "file:///home/luis/proj",
+    client: "cli",
+  });
+  // malformed refs are skipped; a bare checkpoint still records the client
+  const bare = Cursor.encodeCheckpoint({ messageIds: ["not-hex", blobId(3)], client: "x" });
+  expect(Cursor.decodeCheckpoint(bare)).toEqual({
+    messageIds: [blobId(3)],
+    workspace: undefined,
+    client: "x",
+  });
+});
+
+test("encodeStoreMeta and encodeMetaJson round-trip through their parsers", () => {
+  const meta = Cursor.parseStoreMeta(
+    Cursor.encodeStoreMeta({
+      agentId: "chat-1",
+      latestRootBlobId: blobId(7),
+      name: "T",
+      mode: "default",
+      isRunEverything: false,
+      createdAt: 1_700_000_000_000,
+      lastUsedModel: "default",
+    }),
+  );
+  expect(meta).toEqual({
+    agentId: "chat-1",
+    latestRootBlobId: blobId(7),
+    name: "T",
+    mode: "default",
+    isRunEverything: false,
+    createdAt: 1_700_000_000_000,
+    lastUsedModel: "default",
+  });
+
+  const sidecar = Cursor.parseMetaJson(
+    Cursor.encodeMetaJson({
+      createdAtMs: 1_700_000_000_000,
+      updatedAtMs: 1_700_000_300_000,
+      title: "T",
+      hasConversation: true,
+      cwd: "/w",
+    }),
+  );
+  expect(sidecar).toEqual({
+    schemaVersion: 1,
+    createdAtMs: 1_700_000_000_000,
+    updatedAtMs: 1_700_000_300_000,
+    title: "T",
+    hasConversation: true,
+    cwd: "/w",
+  });
+  // optional fields stay absent rather than serialising as nulls
+  expect(Cursor.parseMetaJson(Cursor.encodeMetaJson({
+    createdAtMs: 1,
+    updatedAtMs: 2,
+    hasConversation: false,
+  }))).toEqual({
+    schemaVersion: 1,
+    createdAtMs: 1,
+    updatedAtMs: 2,
+    title: undefined,
+    hasConversation: false,
+    cwd: undefined,
+  });
+});
+
+test("messageBlobsFromSession emits the shapes the reader decodes", () => {
+  const session = Session.make({
+    id: "s1",
+    title: "t",
+    workingDirectory: "/w",
+    model: "m",
+    createdAt: 1,
+    lastActivityAt: 1,
+    mainChainId: 5,
+    metadata: null,
+    nodes: [
+      MessageNode.make({ nodeId: 0, role: "system", content: "sys", createdAt: 1, metadata: null }),
+      MessageNode.make({
+        nodeId: 1,
+        role: "user",
+        content: "<user_info>\nOS: linux\n</user_info>",
+        createdAt: 1,
+        metadata: { context: "user_info" },
+      }),
+      MessageNode.make({
+        nodeId: 2,
+        role: "user",
+        content: "<user_query>\ndo it\n</user_query>",
+        requestId: Option.some("req-9"),
+        createdAt: 1,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 3,
+        role: "assistant",
+        content: "on it",
+        thinking: Option.some(Cursor.REDACTED_THINKING),
+        thinkingSignature: Option.some("sealed-data"),
+        toolCalls: [ToolCall.make({ id: "t1", name: "Shell", arguments: { command: "ls" } })],
+        createdAt: 1,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 4,
+        role: "tool",
+        content: "ok",
+        toolCallId: Option.some("t1"),
+        toolName: Option.some("Shell"),
+        toolResult: Option.some({ status: "success" as const, durationMs: 42 }),
+        createdAt: 1,
+        metadata: null,
+      }),
+      // nodes with nothing a blob can hold are skipped
+      MessageNode.make({ nodeId: 5, role: "user", content: "", createdAt: 1, metadata: null }),
+      MessageNode.make({ nodeId: 6, role: "assistant", content: "", createdAt: 1, metadata: null }),
+    ],
+  });
+
+  const blobs = Cursor.messageBlobsFromSession(session);
+  expect(blobs).toHaveLength(5);
+  for (const blob of blobs) {
+    expect(Cursor.blobIdFor(blob.data)).toBe(blob.id);
+  }
+  const parsed = blobs.map((b) => JSON.parse(new TextDecoder().decode(b.data)));
+
+  expect(parsed[0]).toEqual({ role: "system", content: "sys" });
+  // user_info context stays the raw string form
+  expect(parsed[1]).toEqual({ role: "user", content: "<user_info>\nOS: linux\n</user_info>" });
+  // a query keeps its recorded requestId
+  expect(parsed[2]).toEqual({
+    role: "user",
+    content: [{ type: "text", text: "<user_query>\ndo it\n</user_query>" }],
+    providerOptions: { cursor: { requestId: "req-9" } },
+  });
+  expect(parsed[3]).toEqual({
+    role: "assistant",
+    id: "1",
+    content: [
+      { type: "redacted-reasoning", data: "sealed-data" },
+      { type: "text", text: "on it" },
+      { type: "tool-call", toolCallId: "t1", toolName: "Shell", args: { command: "ls" } },
+    ],
+  });
+  expect(parsed[4]).toEqual({
+    role: "tool",
+    id: "t1",
+    content: [{ type: "tool-result", toolCallId: "t1", toolName: "Shell", result: "ok" }],
+    providerOptions: {
+      cursor: { highLevelToolCallResult: { output: { isError: false, success: { executionTime: 42 } } } },
+    },
+  });
+});
+
+test("messageBlobsFromSession regroups tool results by their blobId", () => {
+  const shared = blobId(99);
+  const toolNode = (nodeId: number, callId: string, result: string, blobId?: string) =>
+    MessageNode.make({
+      nodeId,
+      role: "tool",
+      content: result,
+      toolCallId: Option.some(callId),
+      toolName: Option.some("Shell"),
+      createdAt: 1,
+      metadata: blobId === undefined ? null : { blobId },
+    });
+  const session = Session.make({
+    id: "s",
+    title: "t",
+    workingDirectory: "/w",
+    model: "m",
+    createdAt: 1,
+    lastActivityAt: 1,
+    mainChainId: 3,
+    metadata: null,
+    nodes: [
+      toolNode(0, "t1", "first", shared),
+      toolNode(1, "t2", "second", shared),
+      toolNode(2, "t3", "ungrouped"),
+      toolNode(3, "t4", "other", blobId(77)),
+    ],
+  });
+  const blobs = Cursor.messageBlobsFromSession(session);
+  expect(blobs).toHaveLength(3);
+  const grouped = JSON.parse(new TextDecoder().decode(blobs[0].data));
+  expect(grouped.content).toHaveLength(2);
+  expect(grouped.id).toBe("t1");
+  // the unrecorded node gets its own blob
+  expect(JSON.parse(new TextDecoder().decode(blobs[1].data)).content).toHaveLength(1);
+});
+
+test("storeWritePlan roots an empty session at the empty blob", () => {
+  const empty = Session.make({
+    id: "fresh",
+    title: "",
+    workingDirectory: "/w",
+    model: "unknown",
+    createdAt: 1_700_000_000,
+    lastActivityAt: 1_700_000_000,
+    mainChainId: 0,
+    agentMode: "",
+    metadata: null,
+    nodes: [],
+  });
+  const plan = Cursor.storeWritePlan(empty);
+  expect(plan.rootBlobId).toBe(Cursor.blobIdFor(new Uint8Array(0)));
+  const meta = Cursor.parseStoreMeta(plan.metaRow);
+  expect(meta?.latestRootBlobId).toBe(plan.rootBlobId);
+  expect(meta?.lastUsedModel).toBe("default");
+  expect(meta?.name).toBeUndefined();
+  expect(plan.promptHistoryJson).toBeUndefined();
+});
+
+test("storeWritePlan preserves a prior createdAt and records cursor meta", () => {
+  const session = writableSession("chat-z", "/w", {
+    metadata: { mode: "ask", isRunEverything: true },
+  });
+  const plan = Cursor.storeWritePlan(session, { createdAtMs: 1_600_000_000_000 });
+  const meta = Cursor.parseStoreMeta(plan.metaRow);
+  expect(meta?.createdAt).toBe(1_600_000_000_000);
+  expect(meta?.mode).toBe("ask");
+  expect(meta?.isRunEverything).toBe(true);
+  expect(meta?.lastUsedModel).toBe("composer-1");
+  // checkpoint ids all resolve to real blobs in the plan
+  const checkpoint = plan.blobs[plan.blobs.length - 1];
+  expect(checkpoint.id).toBe(plan.rootBlobId);
+  const decoded = Cursor.decodeCheckpoint(checkpoint.data);
+  expect(decoded?.workspace).toBe("file:///w");
+  for (const id of decoded?.messageIds ?? []) {
+    expect(plan.blobs.some((b) => b.id === id)).toBe(true);
+  }
 });
 
 test("delete removes transcript dirs, subagent files and chat stores", async () => {

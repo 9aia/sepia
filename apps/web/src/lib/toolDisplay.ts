@@ -14,6 +14,8 @@
  * generic label + markdown body so nothing renders worse than before.
  */
 
+import type { ToolCallContent } from "./types";
+
 export type ToolCategory = "exec" | "edit" | "read" | "search" | "fetch" | "todo" | "other";
 
 export type ToolSegment =
@@ -671,3 +673,35 @@ export const toolSummary = (
   if (exitCode === undefined || !Number.isFinite(exitCode)) return display;
   return withExitCode(display, exitCode);
 };
+
+/**
+ * Supplemental `content` entries of a live tool call (the ACP
+ * `ToolCallContent` kinds beyond `diff`) as body segments: a terminal ref
+ * renders as a muted "Terminal <id>" note — plus a `code` block when the
+ * agent inlined the terminal's text — an embedded text block as a `code`
+ * block, and an image block as markdown that streamdown renders inline.
+ */
+export const toolContentSegments = (
+  contents: ReadonlyArray<ToolCallContent> | undefined,
+): ReadonlyArray<ToolSegment> =>
+  (contents ?? []).flatMap((entry): ToolSegment[] => {
+    switch (entry.type) {
+      case "terminal": {
+        const segments: ToolSegment[] = [{ kind: "note", text: `Terminal ${entry.terminalId}` }];
+        if (entry.output !== undefined && entry.output.trim() !== "") {
+          segments.push({ kind: "code", text: capLines(entry.output, 200) });
+        }
+        return segments;
+      }
+      case "text":
+        return entry.text.trim() === "" ? [] : [{ kind: "code", text: capLines(entry.text, 200) }];
+      case "image": {
+        const src =
+          entry.uri ??
+          (entry.data === undefined
+            ? undefined
+            : `data:${entry.mimeType ?? "image/png"};base64,${entry.data}`);
+        return src === undefined ? [] : [{ kind: "markdown", text: `![tool output](${src})` }];
+      }
+    }
+  });

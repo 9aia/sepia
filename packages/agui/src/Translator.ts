@@ -102,14 +102,17 @@ export function createTranslator(options?: {
         const events: Event[] = [];
         closeText(events);
         closeReasoning(events);
-        // `locations`/`diffs` are non-standard fields — the AG-UI schemas are
-        // passthrough, so they ride the event to the client verbatim.
+        // `locations`/`diffs`/`contents` are non-standard fields — the AG-UI
+        // schemas are passthrough, so they ride the event to the client verbatim.
         events.push({
           type: EventType.TOOL_CALL_START,
           toolCallId: update.toolCallId,
           toolCallName: update.title,
           ...(update.locations.length === 0 ? {} : { locations: update.locations }),
           ...(update.diffs.length === 0 ? {} : { diffs: update.diffs }),
+          ...(update.contents === undefined || update.contents.length === 0
+            ? {}
+            : { contents: update.contents }),
         } as Event);
         events.push({
           type: EventType.TOOL_CALL_ARGS,
@@ -128,7 +131,7 @@ export function createTranslator(options?: {
             delta: toJson(update.rawInput),
           });
         }
-        const { locations, diffs } = update;
+        const { locations, diffs, contents } = update;
         if (
           (update.status === "completed" || update.status === "failed") &&
           openToolCalls.has(update.toolCallId)
@@ -147,19 +150,21 @@ export function createTranslator(options?: {
             status: update.status,
             ...(locations === undefined ? {} : { locations }),
             ...(diffs === undefined ? {} : { diffs }),
+            ...(contents === undefined ? {} : { contents }),
           } as Event);
           openToolCalls.delete(update.toolCallId);
         } else if (
-          (locations !== undefined || diffs !== undefined) &&
+          (locations !== undefined || diffs !== undefined || contents !== undefined) &&
           openToolCalls.has(update.toolCallId)
         ) {
-          // A mid-call file update has no AG-UI tool event to ride — a named
-          // custom event carries it so the live row can fold it in.
+          // A mid-call file/content update has no AG-UI tool event to ride — a
+          // named custom event carries it so the live row can fold it in.
           events.push(
             custom("acp:tool_call_update", {
               toolCallId: update.toolCallId,
               ...(locations === undefined ? {} : { locations }),
               ...(diffs === undefined ? {} : { diffs }),
+              ...(contents === undefined ? {} : { contents }),
             }),
           );
         }

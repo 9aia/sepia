@@ -132,6 +132,52 @@ test("forwards locations and diffs on the tool events", () => {
   });
 });
 
+test("forwards contents on the tool events and the mid-call custom event", () => {
+  const translator = createTranslator({ threadId: "t", runId: "r", messageId: "m" });
+  const start = translator.translate({
+    kind: "tool_call",
+    toolCallId: "call-1",
+    title: "exec",
+    status: "in_progress",
+    toolKind: "execute",
+    rawInput: {},
+    locations: [],
+    diffs: [],
+    contents: [{ type: "terminal", terminalId: "term-1" }],
+  });
+  expect(start[0]).toMatchObject({
+    type: EventType.TOOL_CALL_START,
+    contents: [{ type: "terminal", terminalId: "term-1" }],
+  });
+
+  expect(
+    translator.translate({
+      kind: "tool_call_update",
+      toolCallId: "call-1",
+      status: "in_progress",
+      contents: [{ type: "text", text: "partial output" }],
+    }),
+  ).toEqual([
+    {
+      type: EventType.CUSTOM,
+      name: "acp:tool_call_update",
+      value: { toolCallId: "call-1", contents: [{ type: "text", text: "partial output" }] },
+    },
+  ]);
+
+  const end = translator.translate({
+    kind: "tool_call_update",
+    toolCallId: "call-1",
+    status: "completed",
+    contents: [{ type: "terminal", terminalId: "term-1", output: "done" }],
+  });
+  expect(end.at(-1)).toMatchObject({
+    type: EventType.TOOL_CALL_END,
+    status: "completed",
+    contents: [{ type: "terminal", terminalId: "term-1", output: "done" }],
+  });
+});
+
 test("a mid-call file update rides a custom event", () => {
   const translator = createTranslator({ threadId: "t", runId: "r", messageId: "m" });
   translator.translate({
