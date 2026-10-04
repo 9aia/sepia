@@ -1,0 +1,90 @@
+"use client";
+
+import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
+import type {
+  AutocompleteEmptyProps,
+  AutocompleteInputProps,
+  AutocompleteItemProps,
+  AutocompleteListProps,
+  AutocompletePopupProps,
+  AutocompletePortalProps,
+  AutocompletePositionerProps,
+} from "@base-ui/react/autocomplete";
+import { cn } from "@/lib/utils";
+import { Input } from "./input";
+
+const Autocomplete = AutocompletePrimitive.Root;
+
+function AutocompleteInput({ className, ...props }: AutocompleteInputProps) {
+  // className stays on the primitive — Base UI mergeProps combines it with
+  // the render element's, so a state-function className still works.
+  return (
+    <AutocompletePrimitive.Input
+      className={className}
+      render={<Input className="h-8 rounded-3xl text-xs" />}
+      {...props}
+    />
+  );
+}
+
+function AutocompletePortal(props: AutocompletePortalProps) {
+  return <AutocompletePrimitive.Portal {...props} />;
+}
+
+function AutocompletePositioner({ className, ...props }: AutocompletePositionerProps) {
+  return (
+    <AutocompletePrimitive.Positioner
+      sideOffset={4}
+      className={cn("z-50 outline-none", className)}
+      {...props}
+    />
+  );
+}
+
+function AutocompletePopup({ className, ...props }: AutocompletePopupProps) {
+  return (
+    <AutocompletePrimitive.Popup
+      className={cn(
+        "max-h-64 overflow-y-auto rounded-xl border border-border bg-popover p-1 text-sm text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+function AutocompleteEmpty({ className, ...props }: AutocompleteEmptyProps) {
+  return (
+    <AutocompletePrimitive.Empty
+      className={cn("px-3 py-2 text-xs text-muted-foreground", className)}
+      {...props}
+    />
+  );
+}
+
+function AutocompleteList(props: AutocompleteListProps) {
+  return <AutocompletePrimitive.List {...props} />;
+}
+
+function AutocompleteItem({ className, ...props }: AutocompleteItemProps) {
+  return (
+    <AutocompletePrimitive.Item
+      className={cn(
+        "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export {
+  Autocomplete,
+  AutocompleteInput,
+  AutocompletePortal,
+  AutocompletePositioner,
+  AutocompletePopup,
+  AutocompleteEmpty,
+  AutocompleteList,
+  AutocompleteItem,
+};

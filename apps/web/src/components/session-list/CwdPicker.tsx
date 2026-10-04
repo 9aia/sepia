@@ -1,12 +1,18 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { FolderOpenIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useDirs } from "../../hooks/query/useDirs";
 import { useUserInfo } from "../../hooks/query/useUserInfo";
-import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Input } from "../ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "../ui/select";
+import {
+  Autocomplete,
+  AutocompleteEmpty,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+  AutocompletePopup,
+  AutocompletePortal,
+  AutocompletePositioner,
+} from "../ui/autocomplete";
 
 /** Last two path segments (`9aia/sepia`) — disambiguates same-named dirs. */
 const shortName = (path: string): string => {
@@ -31,88 +37,67 @@ interface CwdPickerProps {
 
 /**
  * The sidebar's working-directory context — the dir new sessions spawn in.
- * Pick from session dirs or type a custom absolute path.
+ * Type to filter known session dirs and live subdirs of the typed parent;
+ * press Enter on a free-form absolute path to use it.
  */
 export function CwdPicker({ value, dirs, onChange }: CwdPickerProps) {
-  const [customOpen, setCustomOpen] = useState(false);
-  const [custom, setCustom] = useState(value);
-  const { data: suggestions = [] } = useDirs(parentOf(custom));
+  const [input, setInput] = useState(value);
+  const { data: suggested = [] } = useDirs(parentOf(input));
   const { data: user } = useUserInfo();
-  const customDirs = [
-    ...new Set([user?.homedir, ...suggestions].filter((d): d is string => d !== undefined)),
-  ];
+
+  const items = useMemo(
+    () => [
+      ...new Set(
+        [...dirs, ...suggested, user?.homedir].filter((d): d is string => d !== undefined),
+      ),
+    ],
+    [dirs, suggested, user?.homedir],
+  );
+
+  const commit = (next: string): void => {
+    const trimmed = next.trim();
+    if (trimmed !== "") onChange(trimmed);
+  };
 
   return (
-    <>
-      <Select
-        value={value}
-        onValueChange={(v) => {
-          if (v === "__custom__") {
-            setCustom(value);
-            setCustomOpen(true);
-            return;
-          }
-          if (v !== null) onChange(v);
+    <Autocomplete
+      items={items}
+      value={input}
+      onValueChange={(next) => {
+        setInput(next);
+        // An item press fills the input with the item's path — commit it.
+        if (items.includes(next)) commit(next);
+      }}
+    >
+      <AutocompleteInput
+        aria-label="Working directory"
+        title={`New sessions spawn in ${value}`}
+        placeholder="/home/you/projects/app"
+        className="h-8 w-full rounded-3xl pl-9 text-xs"
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit(input);
         }}
-      >
-        <SelectTrigger
-          aria-label="Working directory"
-          title={`New sessions spawn in ${value}`}
-          className="h-8 w-full gap-1.5 text-xs"
-        >
-          <HugeiconsIcon
-            icon={FolderOpenIcon}
-            strokeWidth={2}
-            className="shrink-0 text-muted-foreground"
-          />
-          <span className="min-w-0 flex-1 truncate text-left">{shortName(value)}</span>
-        </SelectTrigger>
-        <SelectContent>
-          {dirs.map((dir) => (
-            <SelectItem key={dir} value={dir} title={dir}>
-              {shortName(dir)}
-            </SelectItem>
-          ))}
-          <SelectItem value="__custom__">Custom directory…</SelectItem>
-        </SelectContent>
-      </Select>
-      <Dialog open={customOpen} onOpenChange={setCustomOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Working directory</DialogTitle>
-            <DialogDescription>
-              Absolute path new sessions spawn in — subdirs appear as you type.
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            autoFocus
-            value={custom}
-            onChange={(event) => setCustom(event.target.value)}
-            list="custom-cwd-dirs"
-            placeholder="/home/you/projects/app"
-          />
-          <datalist id="custom-cwd-dirs">
-            {customDirs.map((dir) => (
-              <option key={dir} value={dir} />
-            ))}
-          </datalist>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setCustomOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                const trimmed = custom.trim();
-                if (trimmed === "") return;
-                onChange(trimmed);
-                setCustomOpen(false);
-              }}
-            >
-              Set directory
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+      />
+      <HugeiconsIcon
+        icon={FolderOpenIcon}
+        strokeWidth={2}
+        className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
+      />
+      <AutocompletePortal>
+        <AutocompletePositioner>
+          <AutocompletePopup>
+            <AutocompleteEmpty>No matching directories.</AutocompleteEmpty>
+            <AutocompleteList>
+              {(dir: string) => (
+                <AutocompleteItem key={dir} value={dir}>
+                  <span className="min-w-0 flex-1 truncate">{shortName(dir)}</span>
+                  <span className="shrink-0 truncate text-muted-foreground/60">{dir}</span>
+                </AutocompleteItem>
+              )}
+            </AutocompleteList>
+          </AutocompletePopup>
+        </AutocompletePositioner>
+      </AutocompletePortal>
+    </Autocomplete>
   );
 }
