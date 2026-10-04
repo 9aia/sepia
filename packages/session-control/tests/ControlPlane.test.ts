@@ -399,6 +399,29 @@ test("returns an empty history page for a live session not yet in the store", as
   if (Either.isLeft(missing)) expect(missing.left.code).toBe("not_found");
 });
 
+test("getSession returns the complete IR, scoped by agent, and 404s on unknown ids", async () => {
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([
+      session("s1", "/work", [node(1, "user", "hi", 10)]),
+      session("s2", "/work", [], "cline"),
+    ]),
+  );
+
+  const fetched = await Effect.runPromise(cp.getSession("s1"));
+  expect(fetched.id).toBe("s1");
+  expect(fetched.nodes).toHaveLength(1);
+  expect(fetched.nodes[0]?.content).toBe("hi");
+
+  // The agentId scope is forwarded to the repository lookup.
+  const cline = await Effect.runPromise(cp.getSession("s2", { agentId: "cline" }));
+  expect(cline.backendType).toBe("cline");
+
+  const missing = await runEither(cp.getSession("ghost"));
+  expect(Either.isLeft(missing)).toBe(true);
+  if (Either.isLeft(missing)) expect(missing.left.code).toBe("not_found");
+});
+
 test("attaches by spawning the agent and loading the session", async () => {
   const conn = new FakeConnection();
   const { runtime, spawns } = fakeAgent(conn);

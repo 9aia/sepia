@@ -4,8 +4,7 @@ import { hostname, userInfo } from "node:os";
 import { join } from "node:path";
 import { Effect, Either } from "effect";
 import { encodeSse, sseHeaders, type Event } from "sepia-agui";
-import { Conversion, ClineStore, openSessionsDb, SqliteStorage } from "sepia-core";
-import type { Session } from "sepia-core";
+import { Conversion, ClineStore, openSessionsDb, Session, SqliteStorage } from "sepia-core";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Layer } from "effect";
@@ -578,6 +577,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
             "projects",
             "push",
             "events",
+            "export",
             ...(options.pairing !== undefined ? ["pairing"] : []),
           ],
         },
@@ -734,9 +734,10 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       });
     }
 
-    // Convert-with-explicit-IR: replays the flattened history of a session —
-    // possibly fetched from a peer node — into one of this node's agent
-    // stores (docs/protocol.md "Resume on…").
+    // Convert-with-explicit-IR: writes a session fetched from a peer node
+    // into one of this node's agent stores (docs/protocol.md "Resume on…").
+    // `{session}` carries the full IR verbatim (GET .../export); `{history}`
+    // is the flat compat form for sources too old to serve it.
     if (method === "POST" && segmentsEqual(segments, ["api", "sessions", "import"])) {
       const conv = options.convert;
       if (conv === undefined) {
@@ -767,65 +768,109 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       if (model !== undefined && typeof model !== "string") {
         return jsonResponse({ error: "model must be a string" }, 400, cors);
       }
-      const history = body.history;
-      if (!Array.isArray(history) || history.length === 0) {
-        return jsonResponse({ error: "history must be a non-empty array of messages" }, 400, cors);
-      }
-      const messages: Conversion.ImportedHistoryMessage[] = [];
-      for (const item of history) {
-        if (
-          !isRecord(item) ||
-          typeof item.role !== "string" ||
-          !HISTORY_ROLES.has(item.role) ||
-          typeof item.content !== "string" ||
-          typeof item.createdAt !== "number" ||
-          !Number.isFinite(item.createdAt) ||
-          (item.toolName !== undefined && typeof item.toolName !== "string")
-        ) {
+      let session: Session;
+      if (body.session !== undefined) {
+        // Full-IR form: the `session` payload of GET /api/sessions/:id/export,
+        // decoded verbatim — tool-call ids/args, thinking, per-node usage and
+        // the parent-linked tree all survive, where the flat history form
+        // below drops them. A fresh id keeps import semantics: every call
+        // lands as a new copy in the target store.
+        let decoded: Session;
+        try {
+          decoded = Conversion.sessionFromJson(body.session);
+        } catch {
           return jsonResponse(
-            { error: "history items must be { role, content, createdAt, toolName? } messages" },
+            { error: "session must be a session IR object (GET /api/sessions/:id/export)" },
             400,
             cors,
           );
         }
-        messages.push({
-          role: item.role as Conversion.ImportedHistoryMessage["role"],
-          content: item.content,
-          createdAt: item.createdAt,
-          ...(typeof item.toolName === "string" ? { toolName: item.toolName } : {}),
-          // IR v2 fields ride through when present so a converted session
-          // keeps its metrics; anything malformed is dropped, not rejected.
-          ...(isRecord(item.usage) &&
-          typeof item.usage.input === "number" &&
-          typeof item.usage.output === "number"
-            ? { usage: item.usage as Conversion.ImportedHistoryMessage["usage"] }
-            : {}),
-          ...(typeof item.model === "string" ? { model: item.model } : {}),
-          ...(typeof item.requestId === "string" ? { requestId: item.requestId } : {}),
-          ...(typeof item.finishReason === "string" ? { finishReason: item.finishReason } : {}),
-          ...(item.toolStatus === "pending" ||
-          item.toolStatus === "success" ||
-          item.toolStatus === "error"
-            ? { toolStatus: item.toolStatus }
-            : {}),
-          ...(typeof item.exitCode === "number" && Number.isFinite(item.exitCode)
-            ? { exitCode: item.exitCode }
-            : {}),
-          ...(typeof item.durationMs === "number" && Number.isFinite(item.durationMs)
-            ? { durationMs: item.durationMs }
-            : {}),
+        session = Session.make({
+          id: randomUUID(),
+          title: title ?? decoded.title,
+          workingDirectory: typeof cwd === "string" ? cwd.trim() : decoded.workingDirectory,
+          backendType: decoded.backendType,
+          agentMode: decoded.agentMode,
+          model: model ?? decoded.model,
+          createdAt: decoded.createdAt,
+          lastActivityAt: decoded.lastActivityAt,
+          mainChainId: decoded.mainChainId,
+          shellLastSeenIndex: decoded.shellLastSeenIndex,
+          cogsJson: decoded.cogsJson,
+          workspaceDirs: decoded.workspaceDirs,
+          hidden: decoded.hidden,
+          parentSessionId: decoded.parentSessionId,
+          agentId: decoded.agentId,
+          metadata: decoded.metadata,
+          nodes: decoded.nodes,
+          promptHistory: decoded.promptHistory,
+        });
+      } else {
+        const history = body.history;
+        if (!Array.isArray(history) || history.length === 0) {
+          return jsonResponse(
+            { error: "import requires a session IR object or a non-empty history array" },
+            400,
+            cors,
+          );
+        }
+        const messages: Conversion.ImportedHistoryMessage[] = [];
+        for (const item of history) {
+          if (
+            !isRecord(item) ||
+            typeof item.role !== "string" ||
+            !HISTORY_ROLES.has(item.role) ||
+            typeof item.content !== "string" ||
+            typeof item.createdAt !== "number" ||
+            !Number.isFinite(item.createdAt) ||
+            (item.toolName !== undefined && typeof item.toolName !== "string")
+          ) {
+            return jsonResponse(
+              { error: "history items must be { role, content, createdAt, toolName? } messages" },
+              400,
+              cors,
+            );
+          }
+          messages.push({
+            role: item.role as Conversion.ImportedHistoryMessage["role"],
+            content: item.content,
+            createdAt: item.createdAt,
+            ...(typeof item.toolName === "string" ? { toolName: item.toolName } : {}),
+            // IR v2 fields ride through when present so a converted session
+            // keeps its metrics; anything malformed is dropped, not rejected.
+            ...(isRecord(item.usage) &&
+            typeof item.usage.input === "number" &&
+            typeof item.usage.output === "number"
+              ? { usage: item.usage as Conversion.ImportedHistoryMessage["usage"] }
+              : {}),
+            ...(typeof item.model === "string" ? { model: item.model } : {}),
+            ...(typeof item.requestId === "string" ? { requestId: item.requestId } : {}),
+            ...(typeof item.finishReason === "string" ? { finishReason: item.finishReason } : {}),
+            ...(item.toolStatus === "pending" ||
+            item.toolStatus === "success" ||
+            item.toolStatus === "error"
+              ? { toolStatus: item.toolStatus }
+              : {}),
+            ...(typeof item.exitCode === "number" && Number.isFinite(item.exitCode)
+              ? { exitCode: item.exitCode }
+              : {}),
+            ...(typeof item.durationMs === "number" && Number.isFinite(item.durationMs)
+              ? { durationMs: item.durationMs }
+              : {}),
+          });
+        }
+
+        const firstUser = messages.find((message) => message.role === "user");
+        session = Conversion.sessionFromHistory({
+          id: randomUUID(),
+          title:
+            title ??
+            (firstUser !== undefined ? firstUser.content.slice(0, 80) : "Imported session"),
+          cwd: typeof cwd === "string" ? cwd.trim() : process.cwd(),
+          model: model ?? "sepia-import",
+          history: messages,
         });
       }
-
-      const firstUser = messages.find((message) => message.role === "user");
-      const session = Conversion.sessionFromHistory({
-        id: randomUUID(),
-        title:
-          title ?? (firstUser !== undefined ? firstUser.content.slice(0, 80) : "Imported session"),
-        cwd: typeof cwd === "string" ? cwd.trim() : process.cwd(),
-        model: model ?? "sepia-import",
-        history: messages,
-      });
 
       const executor = options.importSession ?? defaultImportSession(conv);
       const importedAt = Date.now();
@@ -1150,6 +1195,18 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
             : { limit, before, agentId: agentParam };
         return respond(run, plane.getHistory(id, historyOptions), cors, {
           span: "http.get /api/sessions/:id/history",
+        });
+      }
+
+      if (method === "GET" && action === "export") {
+        // The unprojected sibling of /history: the complete session IR —
+        // nodes with toolCalls ids/args, thinking, usage and parent links —
+        // that a peer node's /import consumes for a lossless cross-node
+        // resume. Older nodes 404 here, which is exactly the client's cue to
+        // fall back to paged /history.
+        return respond(run, plane.getSession(id, { agentId: agentParam }), cors, {
+          shape: (session) => ({ session: Conversion.sessionToJson(session) }),
+          span: "http.get /api/sessions/:id/export",
         });
       }
 

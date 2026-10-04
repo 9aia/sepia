@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { ControlPlaneService, HistoryMessage } from "sepia-session-control";
+import { ControlError } from "sepia-session-control";
 import type { Event } from "sepia-agui";
 import { EventType } from "sepia-agui";
 import { createAguiAgentHandler } from "../src/agui-agent";
@@ -37,6 +38,8 @@ const makePlane = (over: Partial<ControlPlaneService> = {}): FakePlane => {
       calls.history.push({ id, agentId: options?.agentId });
       return Effect.succeed({ messages: HISTORY, total: HISTORY.length, start: 0 });
     },
+    getSession: () =>
+      Effect.fail(new ControlError({ code: "not_found", message: "missing", cause: undefined })),
     createSession: () => Effect.succeed({ id: "new", agentId: "devin" }),
     attach: (id, options) => {
       calls.attach.push({ id, agentId: options?.agentId });

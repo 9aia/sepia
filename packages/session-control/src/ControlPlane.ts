@@ -251,6 +251,26 @@ export const make = (
         }),
       );
 
+    const getSession = (
+      id: string,
+      getOptions?: { readonly agentId?: string },
+    ): Effect.Effect<Session, ControlError> =>
+      Effect.gen(function* () {
+        const maybe = yield* repo
+          .getById(id, getOptions?.agentId)
+          .pipe(Effect.mapError(storageFail("Failed to read session")));
+        if (Option.isNone(maybe)) {
+          // A live, unflushed session has no durable IR yet; not_found sends
+          // resume clients down the history path, which pages it as empty.
+          return yield* Effect.fail(controlError("not_found", `Unknown session: ${id}`, undefined));
+        }
+        return maybe.value;
+      }).pipe(
+        Effect.withSpan("sepia.control.get_session", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
+
     const agentForSession = (backendType: string): AgentRuntime | undefined =>
       options.agents.find((agent) => agent.id === agentForBackend(backendType)) ??
       pickAgent(options.agents, options.defaultAgentId);
@@ -664,6 +684,7 @@ export const make = (
     return {
       listSessions,
       getHistory,
+      getSession,
       createSession,
       attach,
       detach,

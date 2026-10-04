@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { AcpConnection } from "sepia-acp";
-import { SessionRepository } from "sepia-core";
+import {
+  Conversion,
+  MessageNode,
+  PromptHistoryEntry,
+  Session,
+  SessionRepository,
+  ToolCall,
+} from "sepia-core";
 import { ControlPlane, layer as controlPlaneLayer } from "sepia-session-control";
 import type {
   AgentRuntime,
@@ -47,6 +54,69 @@ const HISTORY: ReadonlyArray<HistoryMessage> = [
   { role: "user", content: "hello", createdAt: 1 },
   { role: "assistant", content: "hi", createdAt: 2 },
 ];
+
+/**
+ * A session IR carrying everything the flat history projection drops:
+ * tool-call ids/args/status, thinking, per-node usage, toolCallId links,
+ * parentNodeId structure and session-level sub-agent lineage. It backs the
+ * /export fake and the export → import round-trip assertions.
+ */
+const IR_SESSION = Session.make({
+  id: "sess-ir",
+  title: "Full IR session",
+  workingDirectory: "/work/ir",
+  model: "test-model",
+  createdAt: 1_700_000_000,
+  lastActivityAt: 1_700_000_100,
+  mainChainId: 2,
+  parentSessionId: Option.some("parent-1"),
+  agentId: Option.some("agent-7"),
+  metadata: { source: "test" },
+  nodes: [
+    MessageNode.make({
+      nodeId: 0,
+      role: "user",
+      content: "list files",
+      createdAt: 1_700_000_000,
+      metadata: null,
+    }),
+    MessageNode.make({
+      nodeId: 1,
+      parentNodeId: Option.some(0),
+      role: "assistant",
+      content: "",
+      thinking: Option.some("run ls"),
+      usage: Option.some({ input: 12, output: 34, thinking: 5 }),
+      model: Option.some("test-model"),
+      requestId: Option.some("req-9"),
+      finishReason: Option.some("tool_use"),
+      toolCalls: [
+        ToolCall.make({
+          id: "call-1",
+          name: "exec",
+          arguments: { cmd: "ls", args: ["-la"] },
+          status: Option.some("success" as const),
+          exitCode: Option.some(0),
+          durationMs: Option.some(42),
+        }),
+      ],
+      createdAt: 1_700_000_050,
+      metadata: null,
+    }),
+    MessageNode.make({
+      nodeId: 2,
+      parentNodeId: Option.some(1),
+      role: "tool",
+      content: "file.txt",
+      toolCallId: Option.some("call-1"),
+      toolName: Option.some("exec"),
+      toolResult: Option.some({ status: "success" as const, exitCode: 0, durationMs: 42 }),
+      createdAt: 1_700_000_100,
+      metadata: null,
+    }),
+  ],
+  promptHistory: [PromptHistoryEntry.make({ content: "list files", timestamp: 1_700_000_000_000 })],
+});
 
 // The real ControlError is a tagged error whose only fields the HTTP layer reads
 // are `message` and `code`; a structural stand-in is enough for error mapping.
@@ -92,6 +162,10 @@ const makeFakePlane = (): FakePlane => {
       id === "missing"
         ? failure("session not found: missing", "not_found")
         : Effect.succeed({ messages: HISTORY, total: HISTORY.length, start: 0 }),
+    getSession: (id) =>
+      id === "missing"
+        ? failure("session not found: missing", "not_found")
+        : Effect.succeed(IR_SESSION),
     createSession: (options) =>
       options.agentId === "bad"
         ? failure("Unknown agent: bad", "unknown_agent")
@@ -360,6 +434,61 @@ describe("createApp", () => {
   it("maps a missing session to 404 with a code", async () => {
     const { plane } = makeFakePlane();
     const response = await createApp(plane)(get("/api/sessions/missing/history"));
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "session not found: missing",
+      code: "not_found",
+    });
+  });
+
+  it("GET /api/sessions/:id/export serves the complete session IR", async () => {
+    const { plane } = makeFakePlane();
+    const response = await createApp(plane)(get("/api/sessions/sess-ir/export?agent=devin"));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      session: {
+        id: string;
+        parentSessionId?: string;
+        agentId?: string;
+        nodes: Array<{
+          thinking?: string;
+          usage?: Record<string, number>;
+          toolCallId?: string;
+          parentNodeId?: number;
+          toolCalls?: Array<Record<string, unknown>>;
+          toolResult?: Record<string, unknown>;
+        }>;
+      };
+    };
+    expect(body.session.id).toBe("sess-ir");
+    expect(body.session.parentSessionId).toBe("parent-1");
+    expect(body.session.agentId).toBe("agent-7");
+
+    // Option fields ride as plain values — never {_tag} envelopes — and the
+    // fields the history projection drops are all here.
+    const assistant = body.session.nodes[1];
+    expect(assistant?.thinking).toBe("run ls");
+    expect(assistant?.usage).toEqual({ input: 12, output: 34, thinking: 5 });
+    expect(assistant?.toolCalls?.[0]).toMatchObject({
+      id: "call-1",
+      name: "exec",
+      arguments: { cmd: "ls", args: ["-la"] },
+      status: "success",
+      exitCode: 0,
+      durationMs: 42,
+    });
+
+    const tool = body.session.nodes[2];
+    expect(tool?.toolCallId).toBe("call-1");
+    expect(tool?.parentNodeId).toBe(1);
+    expect(tool?.toolResult).toEqual({ status: "success", exitCode: 0, durationMs: 42 });
+  });
+
+  it("GET /api/sessions/:id/export maps a missing session to 404", async () => {
+    const { plane } = makeFakePlane();
+    const response = await createApp(plane)(get("/api/sessions/missing/export"));
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({
@@ -1154,6 +1283,75 @@ describe("createApp", () => {
     expect(response.status).toBe(500);
     const body = (await response.json()) as { error: string; code?: string };
     expect(body.code).toBe("internal");
+  });
+
+  it("export → import round-trips the full IR (toolCalls, thinking, usage)", async () => {
+    const { plane } = makeFakePlane();
+    const captured: Session[] = [];
+    const app = createApp(plane, {
+      convert: { dbPath: "/unused", clineDir: "/unused" },
+      importSession: (session) =>
+        Effect.sync(() => {
+          captured.push(session);
+          return "ir-copy-1";
+        }),
+    });
+
+    // What GET /export serves on the source node is exactly what a peer
+    // posts as {session} — the client never reads inside the envelope.
+    const exported = await app(get("/api/sessions/sess-ir/export"));
+    expect(exported.status).toBe(200);
+    const { session } = (await exported.json()) as {
+      session: { nodes: unknown[]; promptHistory: unknown[] };
+    };
+
+    const imported = await app(post("/api/sessions/import", { agent: "devin", session }));
+    expect(imported.status).toBe(201);
+    await expect(imported.json()).resolves.toMatchObject({ id: "ir-copy-1", agent: "devin" });
+
+    expect(captured).toHaveLength(1);
+    const copy = captured[0]!;
+    // Every import lands as a fresh copy…
+    expect(copy.id).not.toBe("sess-ir");
+    // …but the node tree and prompt history re-encode to the exact payload —
+    // nothing the flat history projection drops is lost.
+    const reencoded = Conversion.sessionToJson(copy);
+    expect(reencoded.nodes).toEqual(session.nodes);
+    expect(reencoded.promptHistory).toEqual(session.promptHistory);
+    expect(reencoded.parentSessionId).toBe("parent-1");
+    expect(reencoded.agentId).toBe("agent-7");
+
+    // Explicit overrides still win over the imported fields.
+    await app(
+      post("/api/sessions/import", {
+        agent: "cline",
+        session,
+        title: "Renamed copy",
+        cwd: "/elsewhere",
+      }),
+    );
+    expect(captured[1]?.title).toBe("Renamed copy");
+    expect(captured[1]?.workingDirectory).toBe("/elsewhere");
+    expect(Conversion.sessionToJson(captured[1]!).nodes).toEqual(session.nodes);
+  });
+
+  it("POST /api/sessions/import rejects a malformed session IR with 400", async () => {
+    const { plane } = makeFakePlane();
+    const app = createApp(plane, {
+      convert: { dbPath: "/unused", clineDir: "/unused" },
+      importSession: () => Effect.succeed("never"),
+    });
+
+    const notObject = await app(post("/api/sessions/import", { agent: "devin", session: 42 }));
+    expect(notObject.status).toBe(400);
+
+    const wrongShape = await app(
+      post("/api/sessions/import", { agent: "devin", session: { id: 42 } }),
+    );
+    expect(wrongShape.status).toBe(400);
+    await expect(wrongShape.json()).resolves.toEqual({
+      error: "session must be a session IR object (GET /api/sessions/:id/export)",
+    });
   });
 });
 

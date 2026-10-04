@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { ControlPlaneService } from "sepia-session-control";
+import { ControlError } from "sepia-session-control";
 import { createApp } from "../src/app";
 import { busyFromEvents, createEventFeed, instrumentMeta } from "../src/events";
 import { createMetaStore } from "../src/meta";
@@ -11,6 +12,8 @@ import { createMetaStore } from "../src/meta";
 const plane: ControlPlaneService = {
   listSessions: () => Effect.succeed([]),
   getHistory: () => Effect.succeed({ messages: [], total: 0, start: 0 }),
+  getSession: () =>
+    Effect.fail(new ControlError({ code: "not_found", message: "missing", cause: undefined })),
   createSession: () => Effect.succeed({ id: "sess-new", agentId: "devin" }),
   attach: () => Effect.succeed({ attached: true, readOnly: false, agentId: "devin" }),
   detach: () => Effect.void,

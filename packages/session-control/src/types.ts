@@ -7,7 +7,7 @@
 import { Context, Schema, type Effect } from "effect";
 import type { AcpConnection } from "sepia-acp";
 import type { Event } from "sepia-agui";
-import type { TokenUsage, ToolCallStatus } from "sepia-core";
+import type { Session, TokenUsage, ToolCallStatus } from "sepia-core";
 
 /**
  * One run span of a session: which agent on which Sepia node continued it.
@@ -128,6 +128,16 @@ export interface ControlPlaneService {
     id: string,
     options?: HistoryOptions,
   ) => Effect.Effect<HistoryPage, ControlError>;
+
+  /**
+   * The complete session IR — nodes with toolCalls ids/args, thinking, usage
+   * and parent links — served by `GET /api/sessions/:id/export` so a peer
+   * node's `/import` can resume without the history projection's losses.
+   */
+  readonly getSession: (
+    id: string,
+    options?: { readonly agentId?: string },
+  ) => Effect.Effect<Session, ControlError>;
 
   /** Spawns an agent, creates a fresh session, and registers it live so it can be prompted immediately. */
   readonly createSession: (options: {

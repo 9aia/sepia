@@ -48,6 +48,10 @@ GET    /api/node                        node metadata
 GET    /api/sessions                  session list (with meta overlay)
 POST   /api/sessions                  create { cwd, title?, agent? }
 GET    /api/sessions/:id/history      paginated { messages, start, hasMore }
+GET    /api/sessions/:id/export       { session } — the complete session IR:
+                                        nodes with toolCalls ids/args, thinking,
+                                        usage, toolCallId links and the
+                                        parent-linked tree; 404 on older nodes
 POST   /api/sessions/:id/attach       attach live control { model?, takeover? }
 POST   /api/sessions/:id/prompt       send { text }
 POST   /api/sessions/:id/cancel       stop the run
@@ -55,9 +59,12 @@ POST   /api/sessions/:id/permission   reply to a pending permission
 PATCH  /api/sessions/:id              meta overlay { title?, pinned?, archived?, projectIds?, model? }
 DELETE /api/sessions/:id
 POST   /api/sessions/:id/convert      { agent } → new session in another agent's store
-POST   /api/sessions/import           { agent, cwd?, title?, history } → session summary
-                                        (IR messages from GET .../history; the
-                                        "Resume on…" write — convert with explicit IR)
+POST   /api/sessions/import           { agent, cwd?, title?, session | history } → session summary
+                                        (the "Resume on…" write — convert with
+                                        explicit IR. {session} is the /export
+                                        payload verbatim — full fidelity;
+                                        {history} is the flat compat form for
+                                        older source nodes)
 GET    /api/sessions/:id/stream       AG-UI SSE (live run)
 GET    /api/events                    node event feed (see below)
 POST   /api/pair                      { code } → { token } — unauthenticated

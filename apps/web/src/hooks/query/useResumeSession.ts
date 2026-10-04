@@ -42,8 +42,9 @@ const resumedNodeTag = (node: string | undefined): string | undefined =>
   node !== undefined && node !== LOCAL_NODE_ID ? node : isMultiNode() ? LOCAL_NODE_ID : undefined;
 
 /**
- * "Resume on…" — copies the session's full IR history from its owning node
- * into `agent`'s store on `node` (`undefined`/`"local"` = this machine), then
+ * "Resume on…" — copies the session's full IR from its owning node
+ * (`/export`, falling back to paged `/history` on older nodes) into
+ * `agent`'s store on `node` (`undefined`/`"local"` = this machine), then
  * selects the new session. Long moves get a loading toast that resolves in
  * place.
  */

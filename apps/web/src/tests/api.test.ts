@@ -392,8 +392,74 @@ describe("resumeSession", () => {
     spans: [],
   };
 
-  it("pages backwards through history and posts the full IR to the target node", async () => {
+  it("prefers the full IR from /export and posts it verbatim to the target", async () => {
+    const IR = {
+      id: "s 1",
+      title: "Resumed",
+      workingDirectory: "/work",
+      model: "m1",
+      createdAt: 1,
+      lastActivityAt: 2,
+      mainChainId: 0,
+      metadata: null,
+      nodes: [
+        { nodeId: 0, role: "user", content: "hi", createdAt: 1, metadata: null },
+        {
+          nodeId: 1,
+          parentNodeId: 0,
+          role: "assistant",
+          content: "",
+          thinking: "run ls",
+          usage: { input: 1, output: 2 },
+          toolCalls: [{ id: "call-1", name: "exec", arguments: { cmd: "ls" } }],
+          createdAt: 2,
+          metadata: null,
+        },
+      ],
+      promptHistory: [],
+    };
     stubFetch((url, init) => {
+      if (url.includes("/export")) {
+        return Response.json({ session: IR });
+      }
+      if (url.endsWith("/api/sessions/import") && init?.method === "POST") {
+        return Response.json(RESUMED, { status: 201 });
+      }
+      return new Response("nope", { status: 404 });
+    });
+
+    const source: ApiTarget = { baseUrl: "https://src.example", token: "s-tok" };
+    const target: ApiTarget = { baseUrl: "https://dst.example", token: "d-tok" };
+    const result = await resumeSession(source, "s 1", "cline", target, {
+      fromAgent: "devin",
+      cwd: "/work",
+      title: "Resumed",
+    });
+
+    expect(result).toEqual(RESUMED);
+    // One export fetch, one import post — no history paging at all.
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.url).toBe("https://src.example/api/sessions/s%201/export?agent=devin");
+    expect(calls[0]?.init?.headers).toMatchObject({ authorization: "Bearer s-tok" });
+
+    const post = calls[1];
+    expect(post?.url).toBe("https://dst.example/api/sessions/import");
+    expect(post?.init?.headers).toMatchObject({ authorization: "Bearer d-tok" });
+    const body = JSON.parse(post?.init?.body as string) as {
+      agent: string;
+      session: unknown;
+      history?: unknown;
+    };
+    expect(body.agent).toBe("cline");
+    expect(body.session).toEqual(IR);
+    expect(body.history).toBeUndefined();
+  });
+
+  it("falls back to paged history when the source node predates /export (404)", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/export")) {
+        return new Response("no such route", { status: 404 });
+      }
       if (url.includes("/history")) {
         const before = new URL(url, "http://x").searchParams.get("before");
         return before === null
@@ -416,16 +482,17 @@ describe("resumeSession", () => {
 
     expect(result).toEqual(RESUMED);
 
-    // Two history pages: latest window first, then before=start until 0.
-    expect(calls[0]?.url).toBe(
+    // Export probe first, then two history pages (newest window, then before=start).
+    expect(calls[0]?.url).toBe("https://src.example/api/sessions/s%201/export?agent=devin");
+    expect(calls[1]?.url).toBe(
       "https://src.example/api/sessions/s%201/history?limit=500&agent=devin",
     );
-    expect(calls[1]?.url).toBe(
+    expect(calls[2]?.url).toBe(
       "https://src.example/api/sessions/s%201/history?limit=500&before=3&agent=devin",
     );
 
     // The import lands on the target node, with every message in order.
-    const post = calls[2];
+    const post = calls[3];
     expect(post?.url).toBe("https://dst.example/api/sessions/import");
     expect(post?.init?.method).toBe("POST");
     expect(post?.init?.headers).toMatchObject({ authorization: "Bearer d-tok" });
@@ -434,10 +501,12 @@ describe("resumeSession", () => {
       cwd: string;
       title: string;
       history: Array<{ content: string }>;
+      session?: unknown;
     };
     expect(body.agent).toBe("cline");
     expect(body.cwd).toBe("/work");
     expect(body.title).toBe("Resumed");
+    expect(body.session).toBeUndefined();
     expect(body.history.map((m) => m.content)).toEqual(["m0", "m1", "m2", "m3", "m4"]);
   });
 
@@ -445,14 +514,17 @@ describe("resumeSession", () => {
     stubFetch((url, _init) =>
       url.includes("/history")
         ? Response.json({ messages: messages([0]), total: 1, start: 0 })
-        : Response.json(RESUMED, { status: 201 }),
+        : url.includes("/export")
+          ? new Response("nope", { status: 404 })
+          : Response.json(RESUMED, { status: 201 }),
     );
 
     const result = await resumeSession(undefined, "s1", "devin", undefined);
     expect(result).toEqual(RESUMED);
-    expect(calls[0]?.url).toBe("/api/sessions/s1/history?limit=500");
-    expect(calls[1]?.url).toBe("/api/sessions/import");
-    const body = JSON.parse(calls[1]?.init?.body as string) as { history: unknown[] };
+    expect(calls[0]?.url).toBe("/api/sessions/s1/export");
+    expect(calls[1]?.url).toBe("/api/sessions/s1/history?limit=500");
+    expect(calls[2]?.url).toBe("/api/sessions/import");
+    const body = JSON.parse(calls[2]?.init?.body as string) as { history: unknown[] };
     expect(body.history).toHaveLength(1);
   });
 });

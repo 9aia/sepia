@@ -1,4 +1,4 @@
-import { Console, Effect, Option } from "effect";
+import { Console, Effect, Option, Schema } from "effect";
 import * as Cline from "./Cline.js";
 import { ClineStore } from "./ClineStore.js";
 import * as Devin from "./Devin.js";
@@ -6,9 +6,12 @@ import {
   ConversionError,
   MessageNode,
   PromptHistoryEntry,
+  Role,
   Session,
-  type TokenUsage,
-  type ToolCallStatus,
+  ToolCall,
+  ToolResultInfo,
+  TokenUsage,
+  ToolCallStatus,
 } from "./Domain.js";
 import { SessionRepository } from "./Storage.js";
 
@@ -316,5 +319,95 @@ export const sessionFromHistory = (input: {
     metadata: Devin.defaultSessionMetadata(),
     nodes,
     promptHistory,
+  });
+};
+
+/**
+ * JSON wire shape of the full session IR — the `session` payload served by
+ * `GET /api/sessions/:id/export` and accepted by `POST /api/sessions/import`.
+ * `Option` fields ride as `field?: value` (absent means none) so the payload
+ * is plain JSON; unlike the flattened history projection this keeps
+ * tool-call ids/args, thinking, per-node usage and the parent-linked tree.
+ */
+const ToolCallJson = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  arguments: Schema.Unknown,
+  index: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+  kind: Schema.optionalWith(Schema.String, { default: () => "function" }),
+  status: Schema.OptionFromUndefinedOr(ToolCallStatus),
+  exitCode: Schema.OptionFromUndefinedOr(Schema.Number),
+  durationMs: Schema.OptionFromUndefinedOr(Schema.Number),
+});
+
+const MessageNodeJson = Schema.Struct({
+  nodeId: Schema.Number,
+  parentNodeId: Schema.OptionFromUndefinedOr(Schema.Number),
+  role: Role,
+  content: Schema.String,
+  toolCalls: Schema.optionalWith(Schema.Array(ToolCallJson), { default: () => [] }),
+  toolCallId: Schema.OptionFromUndefinedOr(Schema.String),
+  toolName: Schema.OptionFromUndefinedOr(Schema.String),
+  thinking: Schema.OptionFromUndefinedOr(Schema.String),
+  usage: Schema.OptionFromUndefinedOr(TokenUsage),
+  model: Schema.OptionFromUndefinedOr(Schema.String),
+  requestId: Schema.OptionFromUndefinedOr(Schema.String),
+  finishReason: Schema.OptionFromUndefinedOr(Schema.String),
+  toolResult: Schema.OptionFromUndefinedOr(ToolResultInfo),
+  createdAt: Schema.Number,
+  metadata: Schema.Unknown,
+});
+
+const PromptHistoryJson = Schema.Struct({
+  content: Schema.String,
+  timestamp: Schema.Number,
+  isShell: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+});
+
+export const SessionJson = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  workingDirectory: Schema.String,
+  backendType: Schema.optionalWith(Schema.String, { default: () => "windsurf" }),
+  agentMode: Schema.optionalWith(Schema.String, { default: () => "accept-edits" }),
+  model: Schema.String,
+  createdAt: Schema.Number,
+  lastActivityAt: Schema.Number,
+  mainChainId: Schema.Number,
+  shellLastSeenIndex: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+  cogsJson: Schema.optionalWith(Schema.String, { default: () => "[]" }),
+  workspaceDirs: Schema.optionalWith(Schema.String, { default: () => "[]" }),
+  hidden: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+  parentSessionId: Schema.OptionFromUndefinedOr(Schema.String),
+  agentId: Schema.OptionFromUndefinedOr(Schema.String),
+  metadata: Schema.Unknown,
+  nodes: Schema.optionalWith(Schema.Array(MessageNodeJson), { default: () => [] }),
+  promptHistory: Schema.optionalWith(Schema.Array(PromptHistoryJson), { default: () => [] }),
+});
+
+export type SessionJson = Schema.Schema.Encoded<typeof SessionJson>;
+
+/** Encode a full Session IR into the `session` wire payload of `/export`. */
+export const sessionToJson = (session: Session): SessionJson =>
+  Schema.encodeSync(SessionJson)(session);
+
+/**
+ * Decode a `/export` wire payload back into a `Session` — the faithful
+ * counterpart of `sessionFromHistory`, preserving toolCalls ids/args,
+ * thinking, usage, toolCallId links and `parentNodeId` structure. Throws a
+ * `ParseError` when the payload is not a session IR; callers map that to a
+ * client error.
+ */
+export const sessionFromJson = (input: unknown): Session => {
+  const decoded = Schema.decodeUnknownSync(SessionJson)(input);
+  return Session.make({
+    ...decoded,
+    nodes: decoded.nodes.map((node) =>
+      MessageNode.make({
+        ...node,
+        toolCalls: node.toolCalls.map((call) => ToolCall.make(call)),
+      }),
+    ),
+    promptHistory: decoded.promptHistory.map((entry) => PromptHistoryEntry.make(entry)),
   });
 };

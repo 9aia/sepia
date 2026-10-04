@@ -64,6 +64,9 @@ async function request<T>(path: string, init?: RequestInit, target?: ApiTarget):
   return (await res.json()) as T;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 // Session ids collide across agents; `?agent=` scopes the server's lookup.
 const agentQuery = (agent?: string): string =>
   agent === undefined || agent === "" ? "" : `?agent=${encodeURIComponent(agent)}`;
@@ -260,14 +263,46 @@ export async function convertSession(
   );
 }
 
+/**
+ * GET /api/sessions/:id/export — the complete session IR (`{session}` —
+ * nodes with toolCalls, thinking, usage and parent links). `null` when the
+ * node predates the endpoint (404) so callers can fall back to paged
+ * history. The payload stays opaque here: it round-trips untouched into
+ * `POST /api/sessions/import` on the target node.
+ */
+export async function getSessionExport(
+  id: string,
+  options?: { agent?: string },
+  target?: ApiTarget,
+): Promise<Record<string, unknown> | null> {
+  const res = await sepiaFetch(
+    `/api/sessions/${encodeURIComponent(id)}/export${agentQuery(options?.agent)}`,
+    undefined,
+    target,
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(friendlyHttpError(res.status));
+  }
+  const body = (await res.json()) as { session?: unknown };
+  return isRecord(body.session) ? body.session : null;
+}
+
 export interface ImportSessionInput {
   readonly agent: string;
   readonly cwd?: string;
   readonly title?: string;
-  readonly history: ReadonlyArray<HistoryMessage>;
+  /** Full IR from GET /api/sessions/:id/export — the preferred form. */
+  readonly session?: unknown;
+  /** Flat history form — the compat path for older source nodes. */
+  readonly history?: ReadonlyArray<HistoryMessage>;
 }
 
-/** POST /api/sessions/import — write explicit IR history into an agent's store. */
+/**
+ * POST /api/sessions/import — write explicit IR into an agent's store.
+ * `session` (the /export payload) is full fidelity; `history` is the flat
+ * compat form — the server prefers `session` when both arrive.
+ */
 export async function importSession(
   input: ImportSessionInput,
   target?: ApiTarget,
@@ -316,10 +351,13 @@ export interface ResumeOptions {
 }
 
 /**
- * "Resume on…": pull the full IR history off the source node, then replay it
- * into `agent`'s store on the target node via POST /api/sessions/import.
- * Same node + different agent is the same-machine agent switch; a peer
- * target moves the session to another machine.
+ * "Resume on…": pull the session off the source node and replay it into
+ * `agent`'s store on the target node via POST /api/sessions/import.
+ * Prefers the full IR from GET .../export (tool-call ids/args, thinking,
+ * usage, tree links survive); a source node too old to serve it 404s and
+ * falls back to paging the flat /history projection — the compat path every
+ * node understands. Same node + different agent is the same-machine agent
+ * switch; a peer target moves the session to another machine.
  */
 export async function resumeSession(
   source: ApiTarget | undefined,
@@ -328,11 +366,14 @@ export async function resumeSession(
   target: ApiTarget | undefined,
   options?: ResumeOptions,
 ): Promise<SessionSummary> {
-  const history = await fetchAllHistory(id, { agent: options?.fromAgent }, source);
+  const session = await getSessionExport(id, { agent: options?.fromAgent }, source);
+  const history =
+    session === null ? await fetchAllHistory(id, { agent: options?.fromAgent }, source) : undefined;
   return importSession(
     {
       agent,
-      history,
+      ...(session !== null ? { session } : {}),
+      ...(history !== undefined ? { history } : {}),
       ...(options?.cwd !== undefined ? { cwd: options.cwd } : {}),
       ...(options?.title !== undefined ? { title: options.title } : {}),
     },
