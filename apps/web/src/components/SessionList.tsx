@@ -16,6 +16,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Kbd, KbdGroup } from "./ui/kbd";
 import { Spinner } from "./ui/spinner";
 import { EmptyScreen } from "./EmptyScreen";
 import { Tree, TreeItem, TreeItemLabel } from "./reui/tree";
@@ -89,6 +90,10 @@ export function SessionList() {
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<SortKey>("newest");
+  const [modKey, setModKey] = useState("Ctrl");
+  useEffect(() => {
+    if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
+  }, []);
   const [debouncedFilter] = useDebouncedValue(filter, { wait: 200 });
   const asideRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -309,15 +314,21 @@ export function SessionList() {
         )}
       </form>
 
-      <Input
-        type="search"
-        className="session-list__search"
-        placeholder="Filter sessions… (Ctrl/⌘+K)"
-        aria-label="Filter sessions"
-        ref={filterRef}
-        value={filter}
-        onChange={(event) => setFilter(event.target.value)}
-      />
+      <div className="session-list__search">
+        <Input
+          type="search"
+          className="pr-16"
+          placeholder="Filter sessions…"
+          aria-label="Filter sessions"
+          ref={filterRef}
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+        />
+        <KbdGroup className="session-list__search-kbd" aria-hidden="true">
+          <Kbd>{modKey}</Kbd>
+          <Kbd>K</Kbd>
+        </KbdGroup>
+      </div>
 
       <div className="session-list__filters">
         <Select
@@ -502,6 +513,19 @@ export function SessionList() {
           </div>
         </Tree>
       </div>
+
+      <footer className="session-list__shortcuts">
+        <span>
+          <Kbd>↑</Kbd>
+          <Kbd>↓</Kbd> navigate
+        </span>
+        <span>
+          <Kbd>N</Kbd> new session
+        </span>
+        <span>
+          <Kbd>Esc</Kbd> clear filter
+        </span>
+      </footer>
     </aside>
   );
 }

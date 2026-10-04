@@ -124,8 +124,32 @@ body {
 }
 
 .session-list__search {
+  position: relative;
   margin: 0 8px 8px;
-  width: auto;
+}
+
+.session-list__search-kbd {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.session-list__shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.session-list__shortcuts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .session-list__filters {
