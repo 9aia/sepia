@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { applyAguiEvent } from "../lib/liveMessages";
+import { toolSummary } from "../lib/toolDisplay";
 import type { AgUiEvent } from "../lib/api";
 
 const ev = (type: string, extra: Record<string, unknown> = {}): AgUiEvent =>
@@ -40,6 +41,40 @@ describe("applyAguiEvent", () => {
     expect(m[0]?.args).toBe("{}");
     expect(m[0]?.content).toBe("ok");
     expect(m[0]?.done).toBe(true);
+  });
+
+  it("feeds the live args stream into toolSummary — the command lands on the row", () => {
+    let m = applyAguiEvent(
+      [],
+      ev("TOOL_CALL_START", { toolCallId: "t1", toolCallName: "execute" }),
+    );
+    // Partial JSON deltas accumulate into `args` until the object closes.
+    m = applyAguiEvent(m, ev("TOOL_CALL_ARGS", { toolCallId: "t1", delta: '{"command":"git' }));
+    m = applyAguiEvent(m, ev("TOOL_CALL_ARGS", { toolCallId: "t1", delta: ' status"}' }));
+    m = applyAguiEvent(m, ev("TOOL_CALL_END", { toolCallId: "t1", status: "completed" }));
+
+    const row = m[0];
+    expect(row?.args).toBe('{"command":"git status"}');
+    const display = toolSummary(row?.toolName ?? "tool", row?.args, row?.content ?? "");
+    expect(display.label).toBe("Ran command");
+    expect(display.detail).toBe("git status");
+    expect(display.segments[0]).toEqual({ kind: "command", text: "git status" });
+  });
+
+  it("repeated rawInput snapshots concatenate — the last complete object wins", () => {
+    let m = applyAguiEvent([], ev("TOOL_CALL_START", { toolCallId: "t1", toolCallName: "bash" }));
+    // The Translator emits the full rawInput on tool_call and again on each
+    // tool_call_update that carries it — snapshots, not deltas.
+    m = applyAguiEvent(m, ev("TOOL_CALL_ARGS", { toolCallId: "t1", delta: '{"command":"ls"}' }));
+    m = applyAguiEvent(
+      m,
+      ev("TOOL_CALL_ARGS", { toolCallId: "t1", delta: '{"command":"ls -la","timeout":40000}' }),
+    );
+    m = applyAguiEvent(m, ev("TOOL_CALL_END", { toolCallId: "t1" }));
+
+    const row = m[0];
+    const display = toolSummary(row?.toolName ?? "tool", row?.args, row?.content ?? "");
+    expect(display.detail).toBe("ls -la");
   });
 
   it("folds locations/diffs from tool events into the live row", () => {
