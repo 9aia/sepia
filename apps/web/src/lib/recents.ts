@@ -1,6 +1,12 @@
 /**
  * Most-recently-opened session ids (MRU first). Client-local — recents are a
  * browsing convenience, not shared app data.
+ *
+ * Deliberately not a TanStack DB collection: `getRecents()` is read
+ * synchronously during render and `pushRecent()` runs inside a synchronous
+ * store setter, so a collection's async preload/lifecycle would add
+ * complexity for no benefit. The stored JSON array also predates the DB
+ * migration — a collection would need its own format migration.
  */
 const KEY = "sepia:recents";
 const MAX = 30;

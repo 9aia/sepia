@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useLiveQuery } from "@tanstack/react-db";
+import { eq } from "@tanstack/db";
 import {
   Add01Icon,
   ChevronRightIcon,
@@ -20,13 +22,14 @@ import { useAgents } from "../../hooks/query/useAgents";
 import { settingsStore } from "../../lib/settings";
 import { modelArgsFor } from "../../lib/models";
 import { useStore } from "@tanstack/react-store";
+import { sessionsCollection } from "../../lib/db";
+import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
 import {
   useCreateProject,
   useDeleteProject,
-  usePatchSessionMeta,
   useProjects,
   useRenameProject,
-} from "../../hooks/query/useSessionMeta";
+} from "../../hooks/query/useProjects";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -349,6 +352,20 @@ function ProjectsSection({
   const { data: agents = [] } = useAgents();
   const settings = useStore(settingsStore);
 
+  // Bucket members per project in one pass instead of filtering `sessions`
+  // once per project row on every render.
+  const membersByProject = useMemo(() => {
+    const map = new Map<string, SessionSummary[]>();
+    for (const session of sessions) {
+      for (const projectId of session.projectIds) {
+        const members = map.get(projectId);
+        if (members === undefined) map.set(projectId, [session]);
+        else members.push(session);
+      }
+    }
+    return map;
+  }, [sessions]);
+
   const newSessionIn = (project: Project, members: ReadonlyArray<SessionSummary>): void => {
     // Spawn in the newest member's cwd — or the resolved fallback when the
     // project is still empty — then enroll the session in the project.
@@ -395,7 +412,7 @@ function ProjectsSection({
       )}
       {open &&
         projects.map((project) => {
-          const members = sessions.filter((s) => s.projectIds.includes(project.id));
+          const members = membersByProject.get(project.id) ?? [];
           const open = !collapsed[project.id];
           return (
             <div key={project.id} className="group/row">
@@ -497,7 +514,7 @@ function ProjectsSection({
       {detailsFor !== null && (
         <ProjectDetailsDialog
           project={detailsFor}
-          members={sessions.filter((s) => s.projectIds.includes(detailsFor.id))}
+          members={membersByProject.get(detailsFor.id) ?? []}
           onClose={() => setDetailsFor(null)}
           onSelectSession={(id) => {
             handlers.onSelect(id);
@@ -549,11 +566,23 @@ export function SessionSections({
   resolvedCwd,
   ...handlers
 }: SessionSectionsProps) {
-  const { data: projects = [] } = useProjects();
+  const { data: projects } = useProjects();
   const { data: agents = [] } = useAgents();
   const createSession = useCreateSession();
   const settings = useStore(settingsStore);
-  const pinned = sessions.filter((s) => s.pinned === true);
+  // Membership comes from a live-query view the engine maintains
+  // incrementally — it only re-derives when a session's `pinned` actually
+  // flips. The `sessions` prop still supplies ordering + UI filters.
+  const { data: pinnedRows } = useLiveQuery((q) =>
+    q
+      .from({ s: sessionsCollection })
+      .where(({ s }) => eq(s.pinned, true))
+      .select(({ s }) => ({ id: s.id, agent: s.agent })),
+  );
+  const pinned = useMemo(() => {
+    const keys = new Set(pinnedRows.map(sessionKey));
+    return sessions.filter((session) => keys.has(sessionKey(session)));
+  }, [sessions, pinnedRows]);
   if (pinned.length === 0 && recentSessions.length === 0 && projects.length === 0) return null;
   return (
     <div className="shrink-0 border-t border-border pb-2">

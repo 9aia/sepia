@@ -1,70 +1,51 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  convertSession,
-  createProject,
-  deleteProject,
-  listProjects,
-  patchSessionMeta,
-  renameProject,
-  type SessionMetaPatch,
-} from "../../lib/api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { patchSessionMeta, type SessionMetaPatch } from "../../lib/api";
+import { sessionsCollection } from "../../lib/db";
+import { resolveSession, sessionKey } from "../../lib/format";
 import { queryKeys } from "./keys";
 
+const findRow = (id: string, agent?: string) => {
+  const scoped = agent === undefined || agent === "" ? id : `${agent}:${id}`;
+  return resolveSession([...sessionsCollection.state.values()], scoped);
+};
+
+/**
+ * Optimistic session-meta writes: the draft applies to the collection
+ * instantly, the collection's `onUpdate` handler PATCHes the server and
+ * converges the query cache, and a failure rolls the row back to its last
+ * synced state. Rows not yet in the collection fall back to a direct PATCH.
+ */
 export const usePatchSessionMeta = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, agent, patch }: { id: string; agent?: string; patch: SessionMetaPatch }) =>
-      patchSessionMeta(id, patch, agent),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-    },
-  });
-};
-
-export const useProjects = () =>
-  useQuery({
-    queryKey: queryKeys.projects,
-    queryFn: async () => (await listProjects()).projects,
-  });
-
-export const useCreateProject = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (name: string) => createProject(name),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
-    },
-  });
-};
-
-export const useRenameProject = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, name }: { id: string; name: string }) => renameProject(id, name),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
-    },
-  });
-};
-
-export const useDeleteProject = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteProject(id),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-    },
-  });
-};
-
-export const useConvertSession = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, agent, fromAgent }: { id: string; agent: string; fromAgent?: string }) =>
-      convertSession(id, agent, fromAgent),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+    mutationFn: async ({
+      id,
+      agent,
+      patch,
+    }: {
+      id: string;
+      agent?: string;
+      patch: SessionMetaPatch;
+    }) => {
+      const row = findRow(id, agent);
+      if (row === undefined) {
+        // Not in the collection yet — e.g. a just-created session that only
+        // exists as a server-side pending row until the next fetch. The API
+        // can already patch it; the row syncs in on the refetch.
+        if (!(await patchSessionMeta(id, patch, agent))) {
+          throw new Error("The server rejected the session update");
+        }
+        await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+        return;
+      }
+      const tx = sessionsCollection.update(sessionKey(row), (draft) => {
+        // undefined entries aren't sent by JSON.stringify either — mirror
+        // that so the optimistic row matches what the PATCH applies.
+        for (const [key, value] of Object.entries(patch)) {
+          if (value !== undefined) (draft as Record<string, unknown>)[key] = value;
+        }
+      });
+      await tx.when("settled");
     },
   });
 };

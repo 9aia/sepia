@@ -13,11 +13,8 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
 import { sessionKey } from "../../lib/format";
 import { setNewProjectFor } from "../../lib/store";
-import {
-  useConvertSession,
-  usePatchSessionMeta,
-  useProjects,
-} from "../../hooks/query/useSessionMeta";
+import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
+import { useConvertSession, useProjects } from "../../hooks/query/useProjects";
 import { useAgents } from "../../hooks/query/useAgents";
 import type {
   ContextMenuItem,
@@ -58,7 +55,7 @@ export function SessionActions({
 }) {
   const patch = usePatchSessionMeta();
   const convert = useConvertSession();
-  const { data: projects = [] } = useProjects();
+  const { data: projects } = useProjects();
   const { data: agents = [] } = useAgents();
   const convertTargets = agents.filter((a) => a.id !== session.agent);
   const copy = (value: string) =>

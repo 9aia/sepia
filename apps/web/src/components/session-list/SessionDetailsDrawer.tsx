@@ -15,11 +15,8 @@ import type { SessionSummary } from "../../lib/types";
 import { sessionKey } from "../../lib/format";
 import { useRenameSession } from "../../hooks/query/useRenameSession";
 import { useAgents } from "../../hooks/query/useAgents";
-import {
-  useConvertSession,
-  usePatchSessionMeta,
-  useProjects,
-} from "../../hooks/query/useSessionMeta";
+import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
+import { useConvertSession, useProjects } from "../../hooks/query/useProjects";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -187,7 +184,7 @@ export function SessionDetailsDrawer({
 }: SessionDetailsDrawerProps) {
   const patch = usePatchSessionMeta();
   const convert = useConvertSession();
-  const { data: projects = [] } = useProjects();
+  const { data: projects } = useProjects();
   const { data: agents = [] } = useAgents();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
