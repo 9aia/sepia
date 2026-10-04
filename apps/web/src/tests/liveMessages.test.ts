@@ -45,10 +45,18 @@ describe("applyAguiEvent", () => {
     expect(m).toHaveLength(0);
   });
 
+  it("run end produces a status row so the turn boundary shows", () => {
+    const done = applyAguiEvent([], ev("RUN_FINISHED"));
+    expect(done[0]?.role).toBe("status");
+    expect(done[0]?.content).toBe("Run finished");
+    const failed = applyAguiEvent([], ev("RUN_ERROR"));
+    expect(failed[0]?.content).toBe("Run failed");
+  });
+
   it("ignores lifecycle/unknown events without mutating", () => {
     const before = applyAguiEvent([], ev("TEXT_MESSAGE_START", { messageId: "m" }));
     expect(applyAguiEvent(before, ev("RUN_STARTED"))).toHaveLength(1);
-    expect(applyAguiEvent(before, ev("RUN_FINISHED"))).toHaveLength(1);
+    expect(applyAguiEvent(before, ev("RUN_CANCELLED"))).toHaveLength(1);
     expect(applyAguiEvent(before, ev("CUSTOM", { name: "x" }))).toHaveLength(1);
   });
 });

@@ -25,6 +25,7 @@ import { buildRows, type ChatRow } from "../lib/historyRows";
 import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
+import { Marker, MarkerContent, MarkerIcon } from "./marker";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { parseSystemContext, type SystemContext } from "../lib/systemContext";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -101,6 +102,13 @@ function RowContent({ row }: { readonly row: ChatRow }) {
           <MessageResponse>{message.content}</MessageResponse>
         </ToolContent>
       </Tool>
+    );
+  }
+  if (message.role === "status") {
+    return (
+      <Marker variant="separator">
+        <MarkerContent>{message.content}</MarkerContent>
+      </Marker>
     );
   }
   if (message.role === "reasoning") {
@@ -237,12 +245,23 @@ function ChatRows({
   return (
     <MessageScrollerViewport ref={viewportRef}>
       <MessageScrollerContent className="mx-auto w-full max-w-3xl px-4">
-        {hasNextPage && (
-          <div ref={sentinelRef} className="flex justify-center py-2" aria-hidden={!fetchingNext}>
+        {hasNextPage ? (
+          <Marker ref={sentinelRef} role={fetchingNext ? "status" : undefined}>
             {fetchingNext && (
-              <span className="text-xs text-muted-foreground">Loading earlier…</span>
+              <>
+                <MarkerIcon>
+                  <HugeiconsIcon icon={Loading03Icon} className="animate-spin" />
+                </MarkerIcon>
+                <MarkerContent>Loading earlier…</MarkerContent>
+              </>
             )}
-          </div>
+          </Marker>
+        ) : (
+          rows.length > 0 && (
+            <Marker variant="separator">
+              <MarkerContent>Start of session</MarkerContent>
+            </Marker>
+          )
         )}
         <div className="relative mt-2.5" style={{ height: `${virtualizer.getTotalSize()}px` }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {

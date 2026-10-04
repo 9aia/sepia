@@ -3,7 +3,7 @@ import type { AgUiEvent } from "./api";
 /** A message assembled from live AG-UI stream events (or an optimistic echo). */
 export interface LiveMessage {
   readonly id: string;
-  readonly role: "user" | "assistant" | "reasoning" | "tool";
+  readonly role: "user" | "assistant" | "reasoning" | "tool" | "status";
   readonly content: string;
   readonly toolName?: string;
   readonly done: boolean;
@@ -39,6 +39,16 @@ export function applyAguiEvent(
   const delta = typeof event.delta === "string" ? event.delta : "";
 
   switch (event.type) {
+    case "RUN_FINISHED":
+      return [
+        ...messages,
+        { id: `status-${Date.now()}`, role: "status", content: "Run finished", done: true },
+      ];
+    case "RUN_ERROR":
+      return [
+        ...messages,
+        { id: `status-${Date.now()}`, role: "status", content: "Run failed", done: true },
+      ];
     case "TEXT_MESSAGE_START":
       return append(messages, {
         id: messageId ?? `text-${messages.length}`,
