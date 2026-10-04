@@ -83,6 +83,7 @@ const server = Bun.serve({
     allowedOrigins: env.origins,
     run: (effect) => runtime.runPromise(effect),
     meta: createMetaStore(env.metaPath),
+    convert: { dbPath: env.dbPath, clineDir },
   }),
 });
 console.log(`sepia-server listening on ${server.url.href}`);

@@ -1,8 +1,40 @@
+import { useState } from "react";
+import { MoreVerticalIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../lib/types";
 import type { StreamStatus } from "../lib/api";
-import { setDetailsFor } from "../lib/store";
+import { setDetailsFor, setSelectedId } from "../lib/store";
+import { useDeleteSession } from "../hooks/query/useDeleteSession";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import type {
+  ContextMenuItem,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+} from "./ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { SidebarTrigger } from "./ui/sidebar";
+import { SessionActions } from "./session-list/SessionActions";
 
 interface ChatHeaderProps {
   readonly session: SessionSummary;
@@ -12,6 +44,8 @@ interface ChatHeaderProps {
 }
 
 export function ChatHeader({ session, readOnly, running, streamStatus }: ChatHeaderProps) {
+  const deleteMutation = useDeleteSession();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   return (
     <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
       <SidebarTrigger />
@@ -34,6 +68,52 @@ export function ChatHeader({ session, readOnly, running, streamStatus }: ChatHea
             reconnecting…
           </Badge>
         )}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Session actions"
+                title="Session actions"
+              />
+            }
+          >
+            <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <SessionActions
+              Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
+              Separator={DropdownMenuSeparator}
+              Sub={DropdownMenuSub as unknown as typeof ContextMenuSub}
+              SubTrigger={DropdownMenuSubTrigger as unknown as typeof ContextMenuSubTrigger}
+              SubContent={DropdownMenuSubContent as unknown as typeof ContextMenuSubContent}
+              session={session}
+              onSelect={setSelectedId}
+              onDetails={(id, rename) => setDetailsFor({ id, rename })}
+              onRequestDelete={() => setConfirmOpen(true)}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete session?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {`"${session.title}" will be permanently removed from the agent's session store. This can't be undone.`}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() => deleteMutation.mutate(session.id)}
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </header>
   );

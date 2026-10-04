@@ -1,4 +1,5 @@
 import {
+  ArrowReloadHorizontalIcon,
   Copy01Icon,
   Delete02Icon,
   Edit02Icon,
@@ -9,7 +10,12 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
-import { usePatchSessionMeta, useProjects } from "../../hooks/query/useSessionMeta";
+import {
+  useConvertSession,
+  usePatchSessionMeta,
+  useProjects,
+} from "../../hooks/query/useSessionMeta";
+import { useAgents } from "../../hooks/query/useAgents";
 import type {
   ContextMenuItem,
   ContextMenuSeparator,
@@ -45,7 +51,10 @@ export function SessionActions({
   onRequestDelete: (id: string) => void;
 }) {
   const patch = usePatchSessionMeta();
+  const convert = useConvertSession();
   const { data: projects = [] } = useProjects();
+  const { data: agents = [] } = useAgents();
+  const convertTargets = agents.filter((a) => a.id !== session.agent);
   const copy = (value: string) =>
     void navigator.clipboard.writeText(value).then(
       () => {},
@@ -96,6 +105,24 @@ export function SessionActions({
           {inProject && <Item onClick={() => setProject(null)}>Remove from project</Item>}
         </SubContent>
       </Sub>
+      {convertTargets.length > 0 && (
+        <Sub>
+          <SubTrigger>
+            <HugeiconsIcon icon={ArrowReloadHorizontalIcon} strokeWidth={2} />
+            Convert
+          </SubTrigger>
+          <SubContent className="w-48">
+            {convertTargets.map((agent) => (
+              <Item
+                key={agent.id}
+                onClick={() => convert.mutate({ id: session.id, agent: agent.id })}
+              >
+                To {agent.label}
+              </Item>
+            ))}
+          </SubContent>
+        </Sub>
+      )}
       <Item onClick={() => copy(session.id)}>
         <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
         Copy session ID

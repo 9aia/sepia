@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  convertSession,
   createProject,
   deleteProject,
   listProjects,
@@ -52,6 +53,16 @@ export const useDeleteProject = () => {
     mutationFn: (id: string) => deleteProject(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+  });
+};
+
+export const useConvertSession = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, agent }: { id: string; agent: string }) => convertSession(id, agent),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     },
   });

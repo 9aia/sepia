@@ -4,8 +4,12 @@ import { hostname, userInfo } from "node:os";
 import { join } from "node:path";
 import { Effect, Either } from "effect";
 import { encodeSse, sseHeaders, type Event } from "sepia-agui";
+import { Conversion, ClineStore, openSessionsDb, SqliteStorage } from "sepia-core";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Layer } from "effect";
+import { ControlError } from "sepia-session-control";
 import type {
-  ControlError,
   ControlErrorCode,
   ControlPlaneService,
   SessionEventListener,
@@ -28,6 +32,8 @@ export interface AppOptions {
   readonly keepAliveMs?: number;
   /** Session-title overlay; absent → `PATCH /api/sessions/:id` returns 501. */
   readonly meta?: MetaStore;
+  /** Enables `POST /api/sessions/:id/convert` — needs the stores it converts between. */
+  readonly convert?: { readonly dbPath: string; readonly clineDir: string };
 }
 
 const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([
@@ -456,6 +462,62 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       }
       meta.deleteProject(decodeURIComponent(segments[2] ?? ""));
       return jsonResponse({ ok: true }, 200, cors);
+    }
+
+    if (
+      method === "POST" &&
+      segments[0] === "api" &&
+      segments[1] === "sessions" &&
+      segments[3] === "convert" &&
+      segments.length === 4
+    ) {
+      const conv = options.convert;
+      if (conv === undefined) {
+        return jsonResponse({ error: "Convert is not configured on this server" }, 501, cors);
+      }
+      const id = decodeURIComponent(segments[2] ?? "");
+      let body: unknown;
+      try {
+        body = await readJsonBody(request);
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+      }
+      const target = isRecord(body) ? body.agent : undefined;
+      const fsLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
+      let effect: Effect.Effect<string, unknown>;
+      if (target === "cline") {
+        effect = Conversion.installCline(id, conv.clineDir).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.provideMerge(
+                ClineStore.layer(openSessionsDb, conv.clineDir),
+                SqliteStorage.layerReadonly(conv.dbPath),
+              ),
+              fsLayer,
+            ),
+          ),
+        );
+      } else if (target === "devin") {
+        effect = Conversion.importCline(join(conv.clineDir, "sessions", id)).pipe(
+          Effect.provide(Layer.mergeAll(SqliteStorage.layer(conv.dbPath), fsLayer)),
+        );
+      } else {
+        return jsonResponse({ error: "agent must be 'cline' or 'devin'" }, 400, cors);
+      }
+      const asControl = effect.pipe(
+        Effect.mapError(
+          (error) =>
+            new ControlError({
+              code: "internal",
+              message: errorMessage(error),
+              cause: error,
+            }),
+        ),
+      );
+      return respond(run, asControl, cors, {
+        shape: (sessionId) => ({ sessionId }),
+        span: "http.post /api/sessions/:id/convert",
+      });
     }
 
     if (

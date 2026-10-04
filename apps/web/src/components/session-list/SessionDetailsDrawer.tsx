@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ArrowReloadHorizontalIcon,
   Copy01Icon,
   Delete02Icon,
   Edit02Icon,
+  FolderLibraryIcon,
   FolderOpenIcon,
+  PinIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
 import { useRenameSession } from "../../hooks/query/useRenameSession";
+import { useAgents } from "../../hooks/query/useAgents";
+import {
+  useConvertSession,
+  usePatchSessionMeta,
+  useProjects,
+} from "../../hooks/query/useSessionMeta";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,6 +39,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import {
   Drawer,
   DrawerClose,
@@ -166,6 +181,10 @@ export function SessionDetailsDrawer({
   onOpen,
   onDelete,
 }: SessionDetailsDrawerProps) {
+  const patch = usePatchSessionMeta();
+  const convert = useConvertSession();
+  const { data: projects = [] } = useProjects();
+  const { data: agents = [] } = useAgents();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
 
@@ -234,6 +253,73 @@ export function SessionDetailsDrawer({
                 <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} />
                 Open session
               </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => patch.mutate({ id: session.id, patch: { pinned: !session.pinned } })}
+              >
+                <HugeiconsIcon icon={PinIcon} strokeWidth={2} />
+                {session.pinned === true ? "Unpin" : "Pin"}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button variant="outline" className="w-full justify-start">
+                      <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} />
+                      Move to project
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="start" className="w-(--anchor-width)">
+                  {projects.length === 0 && (
+                    <DropdownMenuItem disabled>
+                      <span className="text-muted-foreground">No projects yet</span>
+                    </DropdownMenuItem>
+                  )}
+                  {projects.map((project) => (
+                    <DropdownMenuItem
+                      key={project.id}
+                      onClick={() =>
+                        patch.mutate({ id: session.id, patch: { projectId: project.id } })
+                      }
+                    >
+                      {project.name}
+                      {session.projectId === project.id && (
+                        <span className="ml-auto text-xs text-primary">✓</span>
+                      )}
+                    </DropdownMenuItem>
+                  ))}
+                  {session.projectId !== null && session.projectId !== undefined && (
+                    <DropdownMenuItem
+                      onClick={() => patch.mutate({ id: session.id, patch: { projectId: null } })}
+                    >
+                      Remove from project
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button variant="outline" className="w-full justify-start">
+                      <HugeiconsIcon icon={ArrowReloadHorizontalIcon} strokeWidth={2} />
+                      Convert
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="start" className="w-(--anchor-width)">
+                  {agents
+                    .filter((a) => a.id !== session.agent)
+                    .map((agent) => (
+                      <DropdownMenuItem
+                        key={agent.id}
+                        onClick={() => convert.mutate({ id: session.id, agent: agent.id })}
+                      >
+                        To {agent.label}
+                      </DropdownMenuItem>
+                    ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 variant="outline"
                 className="w-full justify-start"

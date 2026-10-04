@@ -148,6 +148,13 @@ export async function deleteProject(id: string): Promise<boolean> {
   return res.ok;
 }
 
+export async function convertSession(id: string, agent: string): Promise<{ sessionId: string }> {
+  return request(`/api/sessions/${encodeURIComponent(id)}/convert`, {
+    method: "POST",
+    body: JSON.stringify({ agent }),
+  });
+}
+
 export async function renameSession(id: string, title: string): Promise<boolean> {
   const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, {
     method: "PATCH",
