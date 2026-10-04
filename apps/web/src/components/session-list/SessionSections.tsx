@@ -177,9 +177,10 @@ export function SectionHeader({
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-1 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        className="flex items-center gap-1 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
         aria-expanded={open}
       >
+        {label}
         <HugeiconsIcon
           icon={ChevronRightIcon}
           strokeWidth={2}
@@ -187,7 +188,6 @@ export function SectionHeader({
             open ? "rotate-90 opacity-0 group-hover/section:opacity-100" : ""
           }`}
         />
-        {label}
       </button>
       {action}
     </div>
