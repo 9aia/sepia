@@ -8,6 +8,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../../hooks/query/useUserInfo";
+import { useHealth } from "../../hooks/query/useHealth";
 import { useAppHotkey } from "../../lib/keybinds";
 import { sepiaStore, setSettingsOpen } from "../../lib/store";
 import { ProfileDialog } from "../ProfileDialog";
@@ -25,6 +26,7 @@ import {
 
 export function UserProfile() {
   const { data: user, isLoading, isError } = useUserInfo();
+  const health = useHealth();
   const [dialog, setDialog] = useState<"profile" | null>(null);
   const settingsOpen = useStore(sepiaStore, (state) => state.settingsOpen);
   useAppHotkey("app.settings", () => setSettingsOpen(!settingsOpen));
@@ -47,12 +49,22 @@ export function UserProfile() {
           {isLoading ? (
             <Skeleton className="size-8 shrink-0 rounded-full" />
           ) : (
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground">
-              {initial !== undefined ? (
-                initial
-              ) : (
-                <HugeiconsIcon icon={ProfileIcon} strokeWidth={2} />
-              )}
+            <span className="relative shrink-0">
+              <span className="flex size-8 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground">
+                {initial !== undefined ? (
+                  initial
+                ) : (
+                  <HugeiconsIcon icon={ProfileIcon} strokeWidth={2} />
+                )}
+              </span>
+              <span
+                role="status"
+                aria-label={health.isError ? "Server unreachable" : "Server online"}
+                title={health.isError ? "Server unreachable" : "Server online"}
+                className={`absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-sidebar ${
+                  health.isError ? "animate-pulse bg-destructive" : "bg-emerald-500"
+                }`}
+              />
             </span>
           )}
           <span className="min-w-0 flex-1 text-left">

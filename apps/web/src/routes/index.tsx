@@ -7,6 +7,11 @@ import { SessionList } from "../components/SessionList";
 import { TokenGate } from "../components/TokenGate";
 import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";
 import { useSessions } from "../hooks/query/useSessions";
+import { useHealth } from "../hooks/query/useHealth";
+import { useQueryClient } from "@tanstack/react-query";
+import { EmptyScreen } from "../components/EmptyScreen";
+import { Button } from "../components/ui/button";
+import { CloudOffIcon } from "@hugeicons/core-free-icons";
 import { AuthError } from "../lib/api";
 import { sepiaStore, setSettingsOpen, setSelectedId } from "../lib/store";
 import { sessionKey } from "../lib/format";
@@ -30,6 +35,8 @@ export const Route = createFileRoute("/")({
 
 function Home() {
   const { data: sessions, error } = useSessions();
+  const health = useHealth();
+  const queryClient = useQueryClient();
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -71,6 +78,30 @@ function Home() {
   useAppHotkey("app.keybinds", () => setSettingsOpen(true, "keyboard"));
 
   if (error instanceof AuthError) return <TokenGate />;
+
+  // The PWA shell still loads when the API is down — say so instead of an
+  // empty app. Only when sessions also failed: a transient health blip
+  // shouldn't wipe the UI (the footer dot stays the transient indicator).
+  if (health.isError && sessions === undefined && error !== undefined) {
+    return (
+      <main className="flex min-h-svh">
+        <EmptyScreen
+          className="m-auto max-w-xl"
+          icon={CloudOffIcon}
+          title="Server unreachable"
+          description="The Sepia server isn't responding — make sure `sepia serve` is running, then retry."
+        >
+          <Button
+            variant="secondary"
+            onClick={() => void queryClient.invalidateQueries()}
+            disabled={health.isFetching}
+          >
+            {health.isFetching ? "Retrying…" : "Retry"}
+          </Button>
+        </EmptyScreen>
+      </main>
+    );
+  }
 
   return (
     <SidebarProvider style={{ "--sidebar-width": "24rem" } as CSSProperties}>
