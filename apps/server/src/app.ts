@@ -49,7 +49,7 @@ const corsHeaders = (
   if (origin !== null && allowed.has(origin)) {
     headers["access-control-allow-origin"] = origin;
     headers["access-control-allow-methods"] = "GET,POST,OPTIONS";
-    headers["access-control-allow-headers"] = "content-type";
+    headers["access-control-allow-headers"] = "content-type,authorization";
   }
   return headers;
 };
@@ -71,8 +71,12 @@ const tokenMatches = (provided: string, expected: string): boolean =>
 const isAuthorized = (request: Request, token: string | undefined): boolean => {
   if (token === undefined || token === "") return true;
   const header = request.headers.get("authorization");
-  if (header === null || !header.startsWith("Bearer ")) return false;
-  return tokenMatches(header.slice("Bearer ".length), token);
+  // EventSource cannot set headers, so /stream clients authenticate via query.
+  // The access log only records url.pathname, never query params.
+  const provided = header?.startsWith("Bearer ")
+    ? header.slice("Bearer ".length)
+    : new URL(request.url).searchParams.get("access_token");
+  return provided !== null && provided !== undefined && tokenMatches(provided, token);
 };
 
 const unauthorizedResponse = (cors: Record<string, string>): Response =>
@@ -315,12 +319,20 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           }
           limit = value;
         }
-        return respond(
-          run,
-          plane.getHistory(id, limit === undefined ? undefined : { limit }),
-          cors,
-          { span: "http.get /api/sessions/:id/history" },
-        );
+        const rawBefore = url.searchParams.get("before");
+        let before: number | undefined;
+        if (rawBefore !== null && rawBefore !== "") {
+          const value = Number(rawBefore);
+          if (!Number.isInteger(value) || value < 0) {
+            return jsonResponse({ error: "before must be a non-negative integer" }, 400, cors);
+          }
+          before = value;
+        }
+        const historyOptions =
+          limit === undefined && before === undefined ? undefined : { limit, before };
+        return respond(run, plane.getHistory(id, historyOptions), cors, {
+          span: "http.get /api/sessions/:id/history",
+        });
       }
 
       if (method === "GET" && action === "stream") {

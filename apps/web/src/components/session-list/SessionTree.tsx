@@ -246,6 +246,29 @@ export function SessionTree({
     { target: hotkeyTarget, preventDefault: true, ignoreInputs: false },
   );
 
+  // Left/right collapse and expand the selected session's project group.
+  const selectedGroup = (): ItemInstance<TreeData> | undefined => {
+    const session = sessions.find((s) => s.id === selectedId);
+    if (session === undefined) return undefined;
+    return tree.getItemInstance(`group:${session.cwd}`);
+  };
+  useHotkey(
+    "ArrowLeft",
+    () => {
+      const group = selectedGroup();
+      if (group !== undefined && group.isExpanded()) group.collapse();
+    },
+    { target: hotkeyTarget, preventDefault: true, ignoreInputs: false },
+  );
+  useHotkey(
+    "ArrowRight",
+    () => {
+      const group = selectedGroup();
+      if (group !== undefined && !group.isExpanded()) group.expand();
+    },
+    { target: hotkeyTarget, preventDefault: true, ignoreInputs: false },
+  );
+
   return (
     <ScrollAreaPrimitive.Root className="flex min-h-0 flex-1 flex-col">
       <ScrollAreaPrimitive.Viewport className="h-full p-2" ref={listRef}>

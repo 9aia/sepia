@@ -35,6 +35,7 @@ export interface HistoryMessage {
 export interface HistoryPage {
   messages: HistoryMessage[];
   total: number;
+  start: number;
 }
 
 export interface AttachResult {

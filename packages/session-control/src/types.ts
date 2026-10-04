@@ -35,11 +35,16 @@ export interface AttachResult {
 export interface HistoryPage {
   readonly messages: ReadonlyArray<HistoryMessage>;
   readonly total: number;
+  /** Absolute index of `messages[0]` within the full backlog; `> 0` means more
+   * history exists earlier — pass it as `before` to fetch the previous page. */
+  readonly start: number;
 }
 
 export interface HistoryOptions {
   /** Number of trailing messages to return; defaults to `SEPIA_HISTORY_LIMIT`. */
   readonly limit?: number;
+  /** Exclusive end index for the slice; defaults to the backlog end. */
+  readonly before?: number;
 }
 
 export interface AgentInfo {

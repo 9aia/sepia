@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import { BubbleChatIcon } from "@hugeicons/core-free-icons";
@@ -10,7 +10,7 @@ import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
 import { sepiaStore } from "../lib/store";
 import { queryKeys } from "../hooks/query/keys";
 import { useAttachSession } from "../hooks/query/useAttachSession";
-import { useHistory } from "../hooks/query/useHistory";
+import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { useRespondToPermission } from "../hooks/query/useRespondToPermission";
 import { useSessions } from "../hooks/query/useSessions";
 import { ApprovalDialog } from "./ApprovalDialog";
@@ -80,12 +80,23 @@ export function ChatPanel() {
     if (sessionId !== null) attach({ id: sessionId });
   }, [sessionId, attach]);
 
-  // Live rows are optimistic: once the run ends and the refetched IR backlog
-  // covers them, they would duplicate — clear whenever fresh history lands
-  // while no run is active.
+  // Live rows are optimistic: once the run ends, the refetched IR backlog
+  // duplicates them. Clear them only once every live user/assistant text is
+  // actually present in fresh history — clearing earlier causes flicker.
+  const historyMessages = useMemo(() => flattenHistory(historyQuery.data), [historyQuery.data]);
   useEffect(() => {
-    if (!running && historyQuery.data !== undefined) setLiveMessages([]);
-  }, [running, historyQuery.data]);
+    if (running || historyMessages.length === 0) return;
+    const historyTexts = new Set(historyMessages.map((m) => `${m.role}:${m.content}`));
+    setLiveMessages((live) => {
+      if (live.length === 0) return live;
+      const covered = live.every(
+        (m) =>
+          (m.role !== "user" && m.role !== "assistant") ||
+          historyTexts.has(`${m.role}:${m.content}`),
+      );
+      return covered ? [] : live;
+    });
+  }, [running, historyMessages]);
 
   useEffect(() => {
     setPermissions([]);

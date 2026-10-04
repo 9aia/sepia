@@ -13,6 +13,10 @@ export function ShortcutsFooter({ modKey }: ShortcutsFooterProps) {
         <Kbd>↓</Kbd> navigate
       </span>
       <span className={item}>
+        <Kbd>←</Kbd>
+        <Kbd>→</Kbd> fold
+      </span>
+      <span className={item}>
         <Kbd>N</Kbd> new session
       </span>
       <span className={item}>

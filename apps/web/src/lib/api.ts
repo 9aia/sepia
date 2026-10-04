@@ -6,11 +6,47 @@ import type {
   SessionSummary,
 } from "./types";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+const TOKEN_KEY = "sepia:token";
+
+export const getToken = (): string | null => {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+};
+
+export const setToken = (token: string | null): void => {
+  try {
+    if (token === null || token === "") localStorage.removeItem(TOKEN_KEY);
+    else localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // Storage unavailable (private mode); the gate keeps asking.
+  }
+};
+
+export class AuthError extends Error {
+  constructor() {
+    super("Unauthorized");
+    this.name = "AuthError";
+  }
+}
+
+async function sepiaFetch(path: string, init?: RequestInit): Promise<Response> {
+  const token = getToken();
   const res = await fetch(path, {
-    headers: init?.body ? { "content-type": "application/json" } : undefined,
     ...init,
+    headers: {
+      ...(init?.body !== undefined ? { "content-type": "application/json" } : undefined),
+      ...(token !== null ? { authorization: `Bearer ${token}` } : undefined),
+    },
   });
+  if (res.status === 401) throw new AuthError();
+  return res;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await sepiaFetch(path, init);
   if (!res.ok) {
     throw new Error(`${init?.method ?? "GET"} ${path} failed: ${res.status}`);
   }
@@ -29,8 +65,14 @@ export async function createSession(input: CreateSessionInput): Promise<{ id: st
   });
 }
 
-export async function getHistory(id: string, limit?: number): Promise<HistoryPage> {
-  const query = limit === undefined ? "" : `?limit=${encodeURIComponent(String(limit))}`;
+export async function getHistory(
+  id: string,
+  options?: { limit?: number; before?: number },
+): Promise<HistoryPage> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set("limit", String(options.limit));
+  if (options?.before !== undefined) params.set("before", String(options.before));
+  const query = params.size === 0 ? "" : `?${params.toString()}`;
   return request<HistoryPage>(`/api/sessions/${encodeURIComponent(id)}/history${query}`);
 }
 
@@ -47,7 +89,7 @@ export async function listAgents(): Promise<AgentInfo[]> {
 }
 
 export async function deleteSession(id: string): Promise<boolean> {
-  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`DELETE /api/sessions/${id} failed: ${res.status}`);
   return true;
 }
@@ -94,7 +136,9 @@ export function subscribeSessionStream(
   onStatus?: (status: StreamStatus) => void,
 ): () => void {
   if (typeof EventSource === "undefined") return () => {};
-  const source = new EventSource(`/api/sessions/${encodeURIComponent(id)}/stream`);
+  const token = getToken();
+  const query = token !== null ? `?access_token=${encodeURIComponent(token)}` : "";
+  const source = new EventSource(`/api/sessions/${encodeURIComponent(id)}/stream${query}`);
   onStatus?.("connecting");
   source.onopen = () => onStatus?.("live");
   // EventSource retries automatically; surface the gap instead of stalling silently.

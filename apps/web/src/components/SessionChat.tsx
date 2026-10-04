@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { HistoryMessage } from "../lib/types";
 import type { LiveMessage } from "../lib/liveMessages";
 import { cancel, sendPrompt } from "../lib/api";
-import { useHistory } from "../hooks/query/useHistory";
+import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { Button } from "./ui/button";
 import { ErrorBanner } from "./ErrorBanner";
 import {
@@ -92,13 +92,7 @@ function RowContent({ row }: { readonly row: Row }) {
 }
 
 /** Virtualized rows inside the message-scroller viewport. */
-function ChatRows({
-  rows,
-  truncated,
-}: {
-  readonly rows: ReadonlyArray<Row>;
-  readonly truncated: { readonly shown: number; readonly total: number };
-}) {
+function ChatRows({ rows }: { readonly rows: ReadonlyArray<Row> }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -110,11 +104,6 @@ function ChatRows({
   return (
     <MessageScrollerViewport ref={viewportRef}>
       <MessageScrollerContent>
-        {truncated.shown < truncated.total && (
-          <div className="text-center text-xs text-muted-foreground">
-            showing last {truncated.shown} of {truncated.total}
-          </div>
-        )}
         <div className="relative mt-2.5" style={{ height: `${virtualizer.getTotalSize()}px` }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index];
@@ -172,7 +161,8 @@ export function SessionChat({
   onTakeover,
 }: SessionChatProps) {
   const historyQuery = useHistory(sessionId);
-  const history = historyQuery.data?.messages ?? [];
+  const historyPages = historyQuery.data?.pages ?? [];
+  const history = useMemo(() => flattenHistory(historyQuery.data), [historyQuery.data]);
   const [submitting, setSubmitting] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
 
@@ -202,13 +192,24 @@ export function SessionChat({
 
   return (
     <>
+      {historyQuery.hasNextPage && (
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void historyQuery.fetchNextPage()}
+            disabled={historyQuery.isFetchingNextPage}
+          >
+            {historyQuery.isFetchingNextPage
+              ? "Loading…"
+              : `Load earlier messages (${historyPages.at(-1)?.start ?? 0} more)`}
+          </Button>
+        </div>
+      )}
       <MessageScrollerProvider autoScroll defaultScrollPosition="end">
         <MessageScroller className="relative flex min-h-0 flex-1 flex-col">
           {rows.length > 0 ? (
-            <ChatRows
-              rows={rows}
-              truncated={{ shown: history.length, total: historyQuery.data?.total ?? 0 }}
-            />
+            <ChatRows rows={rows} />
           ) : (
             <MessageScrollerViewport>
               <p className="text-muted-foreground">

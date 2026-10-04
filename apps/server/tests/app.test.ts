@@ -71,7 +71,7 @@ const makeFakePlane = (): FakePlane => {
     getHistory: (id) =>
       id === "missing"
         ? failure("session not found: missing", "not_found")
-        : Effect.succeed({ messages: HISTORY, total: HISTORY.length }),
+        : Effect.succeed({ messages: HISTORY, total: HISTORY.length, start: 0 }),
     createSession: (options) =>
       options.agentId === "bad"
         ? failure("Unknown agent: bad", "unknown_agent")
@@ -152,7 +152,7 @@ describe("createApp", () => {
     expect(response.status).toBe(204);
     expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
     expect(response.headers.get("access-control-allow-methods")).toBe("GET,POST,OPTIONS");
-    expect(response.headers.get("access-control-allow-headers")).toBe("content-type");
+    expect(response.headers.get("access-control-allow-headers")).toBe("content-type,authorization");
   });
 
   it("honors a custom origin allowlist", async () => {
@@ -226,7 +226,11 @@ describe("createApp", () => {
     const response = await createApp(plane)(get("/api/sessions/sess-1/history"));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ messages: HISTORY, total: HISTORY.length });
+    await expect(response.json()).resolves.toEqual({
+      messages: HISTORY,
+      total: HISTORY.length,
+      start: 0,
+    });
   });
 
   it("forwards ?limit to getHistory", async () => {
@@ -236,13 +240,13 @@ describe("createApp", () => {
       ...plane,
       getHistory: (_id, options) => {
         seen.push(options?.limit);
-        return Effect.succeed({ messages: HISTORY, total: 1500 });
+        return Effect.succeed({ messages: HISTORY, total: 1500, start: 0 });
       },
     };
     const response = await createApp(tracking)(get("/api/sessions/sess-1/history?limit=5"));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ messages: HISTORY, total: 1500 });
+    await expect(response.json()).resolves.toEqual({ messages: HISTORY, total: 1500, start: 0 });
     expect(seen).toEqual([5]);
   });
 

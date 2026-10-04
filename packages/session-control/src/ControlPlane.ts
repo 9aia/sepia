@@ -207,7 +207,12 @@ export const make = (
         const nodes = maybe.value.nodes;
         const total = nodes.length;
         const limit = historyLimit(historyOptions);
-        const slice = limit >= total ? nodes : nodes.slice(total - limit);
+        const before =
+          historyOptions?.before !== undefined && Number.isFinite(historyOptions.before)
+            ? Math.min(Math.max(0, Math.floor(historyOptions.before)), total)
+            : total;
+        const start = Math.max(0, before - limit);
+        const slice = nodes.slice(start, before);
         return {
           messages: slice.map((node): HistoryMessage => ({
             role: node.role,
@@ -216,6 +221,7 @@ export const make = (
             toolName: Option.getOrUndefined(node.toolName),
           })),
           total,
+          start,
         };
       }).pipe(
         Effect.withSpan("sepia.control.get_history", {

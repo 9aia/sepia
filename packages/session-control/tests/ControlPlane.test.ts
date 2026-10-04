@@ -318,6 +318,7 @@ test("returns history in node order with millisecond timestamps", async () => {
       { role: "tool", content: "out", createdAt: 12_000, toolName: "read_file" },
     ],
     total: 3,
+    start: 0,
   });
 });
 
