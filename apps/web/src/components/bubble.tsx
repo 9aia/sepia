@@ -49,7 +49,7 @@ function Bubble({ align = "start", variant = "default", className, ...props }: B
       className={cn(
         "w-fit max-w-[80%] min-w-0 flex-col gap-2 self-start rounded-2xl text-sm",
         variant === "ghost" && "max-w-full self-stretch",
-        align === "end" && "self-end",
+        align === "end" && "ml-auto",
         className,
       )}
       {...props}
@@ -68,7 +68,7 @@ function BubbleContent({
       className={cn(
         "w-fit max-w-full min-w-0 overflow-hidden rounded-2xl px-4 py-3",
         variantClass[variant],
-        variant === "ghost" && "max-w-none px-0 py-0",
+        variant === "ghost" && "max-w-none overflow-visible rounded-none px-0 py-0",
         className,
       )}
       {...props}
