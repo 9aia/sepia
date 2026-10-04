@@ -26,6 +26,7 @@ import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
+import { Bubble, BubbleContent } from "./bubble";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { parseSystemContext, type SystemContext } from "../lib/systemContext";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -38,7 +39,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "./ui/message-scroller";
-import { Message, MessageContent, MessageResponse } from "./ai-elements/message";
+import { MessageResponse } from "./ai-elements/message";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./ai-elements/reasoning";
 import { Tool, ToolContent, ToolHeader } from "./ai-elements/tool";
 import {
@@ -73,18 +74,18 @@ function RowContent({ row }: { readonly row: ChatRow }) {
     const role = message.role === "user" ? "user" : "assistant";
     const error = parseErrorPayload(message.content);
     return (
-      <Message from={role}>
+      <Bubble variant={role === "user" ? "default" : "ghost"}>
         <div className={`flex flex-col gap-1.5 ${role === "user" ? "items-end" : "items-start"}`}>
           <RowAvatar role={role} />
-          <MessageContent>
+          <BubbleContent variant={role === "user" ? "default" : "ghost"}>
             {error !== null ? (
               <ErrorMessage error={error} />
             ) : (
               <MessageResponse>{message.content}</MessageResponse>
             )}
-          </MessageContent>
+          </BubbleContent>
         </div>
-      </Message>
+      </Bubble>
     );
   }
 
@@ -124,18 +125,18 @@ function RowContent({ row }: { readonly row: ChatRow }) {
   // same JSON should still render as text.
   const error = role === "assistant" ? parseErrorPayload(message.content) : null;
   return (
-    <Message from={role}>
+    <Bubble variant={role === "user" ? "default" : "ghost"}>
       <div className={`flex flex-col gap-1.5 ${role === "user" ? "items-end" : "items-start"}`}>
         <RowAvatar role={role} />
-        <MessageContent>
+        <BubbleContent variant={role === "user" ? "default" : "ghost"}>
           {error !== null ? (
             <ErrorMessage error={error} />
           ) : (
             <MessageResponse>{message.content}</MessageResponse>
           )}
-        </MessageContent>
+        </BubbleContent>
       </div>
-    </Message>
+    </Bubble>
   );
 }
 
