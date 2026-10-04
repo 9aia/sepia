@@ -15,6 +15,22 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "../ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  Copy01Icon,
+  Delete02Icon,
+  Edit02Icon,
+  FolderOpenIcon,
+  InformationCircleIcon,
+  MoreVerticalIcon,
+} from "@hugeicons/core-free-icons";
 import { ScrollBar } from "../ui/scroll-area";
 import { Tree, TreeItem, TreeItemLabel } from "../reui/tree";
 
@@ -60,6 +76,62 @@ function GroupRow({
   );
 }
 
+/** Shared action items used by both the context menu and the ⋯ dropdown. */
+function SessionActions({
+  Item,
+  Separator,
+  session,
+  onSelect,
+  onDetails,
+  onDelete,
+}: {
+  readonly Item: typeof ContextMenuItem;
+  readonly Separator: typeof ContextMenuSeparator;
+  readonly session: SessionSummary;
+  onSelect: (id: string) => void;
+  onDetails: (id: string, rename: boolean) => void;
+  onDelete: (id: string) => void;
+}) {
+  const confirmDelete = () => {
+    if (window.confirm(`Delete session "${session.title}"?`)) onDelete(session.id);
+  };
+  const copy = (value: string) =>
+    void navigator.clipboard.writeText(value).then(
+      () => {},
+      () => undefined,
+    );
+  return (
+    <>
+      <Item onClick={() => onSelect(session.id)}>
+        <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} />
+        Open
+      </Item>
+      <Item onClick={() => onDetails(session.id, true)}>
+        <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
+        Rename…
+      </Item>
+      <Item onClick={() => onDetails(session.id, false)}>
+        <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
+        Details
+      </Item>
+      <Separator />
+      <Item onClick={() => copy(session.id)}>
+        <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
+        Copy session ID
+      </Item>
+      <Item onClick={() => copy(session.cwd)}>
+        <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
+        Copy path
+      </Item>
+      <Separator />
+      <Item variant="destructive" onClick={confirmDelete}>
+        <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+        Delete
+      </Item>
+    </>
+  );
+}
+
 function SessionItemRow({
   item,
   session,
@@ -75,14 +147,6 @@ function SessionItemRow({
   onDetails: (id: string, rename: boolean) => void;
   onDelete: (id: string) => void;
 }) {
-  const confirmDelete = () => {
-    if (window.confirm(`Delete session "${session.title}"?`)) onDelete(session.id);
-  };
-  const copy = (value: string) =>
-    void navigator.clipboard.writeText(value).then(
-      () => {},
-      () => undefined,
-    );
   return (
     <ContextMenu>
       <ContextMenuTrigger className="relative block">
@@ -113,31 +177,42 @@ function SessionItemRow({
             </div>
           </TreeItemLabel>
         </TreeItem>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          className="absolute top-2 right-2 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-secondary hover:text-destructive focus-visible:opacity-100"
-          aria-label={`Delete session ${session.title}`}
-          title="Delete session"
-          onClick={(event) => {
-            event.stopPropagation();
-            confirmDelete();
-          }}
-        >
-          ×
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="absolute top-2 right-2 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                aria-label={`Actions for session ${session.title}`}
+                title="More actions"
+              />
+            }
+            onClick={(event) => event.stopPropagation()}
+          >
+            <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <SessionActions
+              Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
+              Separator={DropdownMenuSeparator}
+              session={session}
+              onSelect={onSelect}
+              onDetails={onDetails}
+              onDelete={onDelete}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem onClick={() => onSelect(session.id)}>Open</ContextMenuItem>
-        <ContextMenuItem onClick={() => onDetails(session.id, true)}>Rename…</ContextMenuItem>
-        <ContextMenuItem onClick={() => onDetails(session.id, false)}>Details</ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onClick={() => copy(session.id)}>Copy session ID</ContextMenuItem>
-        <ContextMenuItem onClick={() => copy(session.cwd)}>Copy path</ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" onClick={confirmDelete}>
-          Delete
-        </ContextMenuItem>
+        <SessionActions
+          Item={ContextMenuItem}
+          Separator={ContextMenuSeparator}
+          session={session}
+          onSelect={onSelect}
+          onDetails={onDetails}
+          onDelete={onDelete}
+        />
       </ContextMenuContent>
     </ContextMenu>
   );
