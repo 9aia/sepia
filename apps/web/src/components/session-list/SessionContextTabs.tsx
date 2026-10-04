@@ -59,7 +59,7 @@ const toEntry = (value: unknown, index: number): ContextEntry | null => {
     return title === "" ? null : { title };
   }
   if (!isRecord(value)) return null;
-  const path = pick(value, "path", "file", "uri");
+  const path = pick(value, "path", "file", "uri", "source");
   const title =
     pick(value, "name", "title", "label") ?? (path ? basename(path) : `Entry ${index + 1}`);
   return {

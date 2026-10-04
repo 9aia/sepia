@@ -381,12 +381,35 @@ function SystemContextRow({ context }: { readonly context: SystemContext }) {
               </summary>
               <div className="mt-1.5 flex flex-col gap-2">
                 {context.reports.map((report, i) => (
-                  <pre
-                    key={i}
-                    className="max-h-64 overflow-y-auto rounded-md bg-muted/40 p-2 text-muted-foreground whitespace-pre-wrap"
-                  >
-                    {report}
-                  </pre>
+                  <div key={i} className="rounded-md bg-muted/40">
+                    {(report.title !== undefined ||
+                      report.agentId !== undefined ||
+                      report.at !== undefined) && (
+                      <div className="flex min-w-0 items-center gap-2 px-2 pt-1.5 text-[11px]">
+                        {report.title !== undefined && (
+                          <span
+                            className="min-w-0 flex-1 truncate font-medium text-foreground/70"
+                            title={report.title}
+                          >
+                            {report.title}
+                          </span>
+                        )}
+                        {report.agentId !== undefined && (
+                          <code className="shrink-0 text-muted-foreground/80">
+                            {`agent ${report.agentId}`}
+                          </code>
+                        )}
+                        {report.at !== undefined && (
+                          <span className="shrink-0 text-muted-foreground/80">
+                            {formatMessageTime(report.at)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <pre className="max-h-64 overflow-y-auto p-2 text-muted-foreground whitespace-pre-wrap">
+                      {report.body}
+                    </pre>
+                  </div>
                 ))}
               </div>
             </details>
