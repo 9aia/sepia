@@ -6,6 +6,7 @@ import type { ItemInstance } from "@headless-tree/core";
 import type { SessionSummary } from "../../lib/types";
 import { formatUpdated, projectName, resolveSession, sessionKey } from "../../lib/format";
 import { useCreateProject, usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
+import { useUiState } from "../../hooks/query/useConfig";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -435,7 +436,7 @@ export function SessionTree({
   // Controlled expandedItems: headless-tree's internal state and useTree's
   // injected React state drift apart (identical-object bail + stale merges
   // undo collapses). Owning expansion in React keeps them consistent.
-  const [expanded, setExpanded] = useState<string[]>([]);
+  const [expanded, setExpanded] = useUiState<string[]>("ui.expandedDirs", []);
   const [, bumpRender] = useState(0);
   const tree = useTree<TreeData>({
     rootItemId: ROOT_ID,

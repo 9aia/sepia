@@ -21,6 +21,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
 import { useCreateSession } from "../hooks/query/useCreateSession";
+import { useUiState } from "../hooks/query/useConfig";
 import { useCreateProject, usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
@@ -89,7 +90,7 @@ export function SessionList() {
   const createMutation = useCreateSession();
   const details = useStore(sepiaStore, (state) => state.detailsFor);
   const [modKey, setModKey] = useState("Ctrl");
-  const [foldersOpen, setFoldersOpen] = useState(true);
+  const [foldersOpen, setFoldersOpen] = useUiState("ui.section.folders", true);
   const newProjectFor = useStore(sepiaStore, (state) => state.newProjectFor);
   const createProject = useCreateProject();
   const patch = usePatchSessionMeta();

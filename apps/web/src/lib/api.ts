@@ -130,6 +130,17 @@ export interface SessionMetaPatch {
   model?: string | null;
 }
 
+export async function getConfig(): Promise<{ config: Record<string, unknown> }> {
+  return request("/api/config");
+}
+
+export async function setConfigKey(key: string, value: unknown): Promise<void> {
+  await request(`/api/config/${encodeURIComponent(key)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ value }),
+  });
+}
+
 export async function patchSessionMeta(id: string, patch: SessionMetaPatch): Promise<boolean> {
   const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, {
     method: "PATCH",

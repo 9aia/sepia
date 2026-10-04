@@ -15,6 +15,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { Project, SessionSummary } from "../../lib/types";
 import { formatUpdated, sessionKey } from "../../lib/format";
 import { useCreateSession } from "../../hooks/query/useCreateSession";
+import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
 import { settingsStore } from "../../lib/settings";
 import { modelArgsFor } from "../../lib/models";
@@ -217,18 +218,20 @@ export function SectionHeader({
 
 function FlatSection({
   label,
+  sectionKey,
   limit,
   sessions,
   selectedId,
   ...handlers
 }: {
   readonly label: string;
+  readonly sectionKey: string;
   readonly limit: number;
   readonly sessions: ReadonlyArray<SessionSummary>;
   readonly selectedId: string | null;
 } & RowHandlers) {
   const [showAll, setShowAll] = useState(false);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useUiState(`ui.section.${sectionKey}`, true);
   if (sessions.length === 0) return null;
   const shown = showAll ? sessions : sessions.slice(0, limit);
   return (
@@ -319,7 +322,7 @@ function ProjectsSection({
   readonly sessions: ReadonlyArray<SessionSummary>;
   readonly selectedId: string | null;
 } & RowHandlers) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useUiState<Record<string, boolean>>("ui.collapsedProjects", {});
   const [dialog, setDialog] = useState<ProjectDialogState | null>(null);
   const [deleteFor, setDeleteFor] = useState<Project | null>(null);
   const [detailsFor, setDetailsFor] = useState<Project | null>(null);
@@ -348,7 +351,7 @@ function ProjectsSection({
     setDialog(null);
   };
 
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useUiState("ui.section.projects", true);
   return (
     <section className="group/section">
       <SectionHeader
@@ -532,6 +535,7 @@ export function SessionSections({
     <div className="shrink-0 border-t border-border pb-2">
       <FlatSection
         label="Pinned"
+        sectionKey="pinned"
         limit={5}
         sessions={pinned}
         selectedId={selectedId}
@@ -539,6 +543,7 @@ export function SessionSections({
       />
       <FlatSection
         label="Recents"
+        sectionKey="recents"
         limit={8}
         sessions={recentSessions}
         selectedId={selectedId}

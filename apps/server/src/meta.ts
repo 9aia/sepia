@@ -24,6 +24,8 @@ export interface Project {
 interface MetaFile {
   sessions: Record<string, SessionMeta>;
   projects: Record<string, { name: string }>;
+  /** Server-persisted app/UI config (collapse state, prefs). */
+  config: Record<string, unknown>;
 }
 
 export interface MetaStore {
@@ -34,10 +36,12 @@ export interface MetaStore {
   readonly createProject: (name: string) => Project;
   readonly renameProject: (id: string, name: string) => boolean;
   readonly deleteProject: (id: string) => void;
+  readonly config: () => Record<string, unknown>;
+  readonly setConfig: (key: string, value: unknown) => void;
 }
 
 export const createMetaStore = (path: string): MetaStore => {
-  let data: MetaFile = { sessions: {}, projects: {} };
+  let data: MetaFile = { sessions: {}, projects: {}, config: {} };
 
   const flush = (): void => {
     mkdirSync(dirname(path), { recursive: true });
@@ -80,7 +84,14 @@ export const createMetaStore = (path: string): MetaStore => {
         for (const [id, value] of Object.entries(rawSessions)) {
           sessions[id] = normalizeSession(value);
         }
-        data = { sessions, projects: rawProjects };
+        data = {
+          sessions,
+          projects: rawProjects,
+          config:
+            typeof record.config === "object" && record.config !== null
+              ? (record.config as Record<string, unknown>)
+              : {},
+        };
       }
     } catch {
       // A corrupt or half-written file degrades to empty rather than failing.
@@ -103,6 +114,11 @@ export const createMetaStore = (path: string): MetaStore => {
       const next = { ...data.sessions };
       delete next[id];
       data = { ...data, sessions: next };
+      flush();
+    },
+    config: () => data.config,
+    setConfig: (key, value) => {
+      data = { ...data, config: { ...data.config, [key]: value } };
       flush();
     },
     listProjects: () => Object.entries(data.projects).map(([id, p]) => ({ id, name: p.name })),
@@ -130,7 +146,7 @@ export const createMetaStore = (path: string): MetaStore => {
             : meta,
         ]),
       );
-      data = { sessions, projects };
+      data = { ...data, sessions, projects };
       flush();
     },
   };
