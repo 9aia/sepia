@@ -14,6 +14,11 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { Project, SessionSummary } from "../../lib/types";
 import { formatUpdated, sessionKey } from "../../lib/format";
+import { useCreateSession } from "../../hooks/query/useCreateSession";
+import { useAgents } from "../../hooks/query/useAgents";
+import { settingsStore } from "../../lib/settings";
+import { modelArgsFor } from "../../lib/models";
+import { useStore } from "@tanstack/react-store";
 import {
   useCreateProject,
   useDeleteProject,
@@ -322,6 +327,20 @@ function ProjectsSection({
   const createProject = useCreateProject();
   const renameProject = useRenameProject();
   const deleteProject = useDeleteProject();
+  const createSession = useCreateSession();
+  const patchSession = usePatchSessionMeta();
+  const { data: agents = [] } = useAgents();
+  const settings = useStore(settingsStore);
+
+  const newSessionIn = (project: Project, members: ReadonlyArray<SessionSummary>): void => {
+    // Spawn in the newest member's cwd, then enroll the session in the project.
+    const cwd = members[0]?.cwd;
+    if (cwd === undefined) return;
+    const agent = settings.defaultAgent ?? agents[0]?.id;
+    void createSession
+      .mutateAsync({ cwd, agent, ...modelArgsFor(agent ?? "", null, settings) })
+      .then(({ id }) => patchSession.mutate({ id, patch: { projectIds: [project.id] } }));
+  };
 
   const submitName = (state: ProjectDialogState, name: string): void => {
     if (state.id === undefined) createProject.mutate(name);
@@ -379,6 +398,21 @@ function ProjectsSection({
                     {project.name}
                   </span>
                 </button>
+                {members.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="absolute top-1/2 right-8 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                    aria-label={`New session in project ${project.name}`}
+                    title="New session here"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      newSessionIn(project, members);
+                    }}
+                  >
+                    <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                  </Button>
+                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
