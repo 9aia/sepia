@@ -22,10 +22,10 @@ import {
 } from "../ui/dropdown-menu";
 
 export function UserProfile() {
-  const { data: user, isLoading } = useUserInfo();
+  const { data: user, isLoading, isError } = useUserInfo();
   const [dialog, setDialog] = useState<"profile" | "settings" | null>(null);
-  const username = user?.username ?? "…";
-  const initial = username === "…" ? "?" : username.charAt(0).toUpperCase();
+  const username = user?.username ?? (isError ? "Unavailable" : "");
+  const initial = user?.username.charAt(0).toUpperCase();
 
   return (
     <div className="border-t border-border p-2">
@@ -40,7 +40,7 @@ export function UserProfile() {
           }
         >
           <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground">
-            {initial}
+            {initial !== undefined ? initial : <HugeiconsIcon icon={ProfileIcon} strokeWidth={2} />}
           </span>
           <span className="min-w-0 flex-1 text-left">
             {isLoading ? (
@@ -52,7 +52,7 @@ export function UserProfile() {
               <>
                 <span className="block truncate text-sm font-medium">{username}</span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  {user?.hostname ?? ""}
+                  {isError ? "Couldn't load profile" : (user?.hostname ?? "")}
                 </span>
               </>
             )}
