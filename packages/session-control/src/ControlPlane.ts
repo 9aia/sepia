@@ -202,6 +202,9 @@ export const make = (
           .getById(id)
           .pipe(Effect.mapError(storageFail("Failed to read session")));
         if (Option.isNone(maybe)) {
+          // A live (attached) session may not exist in the store yet — the
+          // agent only flushes it after the first prompt. Treat as empty.
+          if (liveSessions.has(id)) return { messages: [], total: 0, start: 0 };
           return yield* Effect.fail(controlError("not_found", `Unknown session: ${id}`, undefined));
         }
         const nodes = maybe.value.nodes;
