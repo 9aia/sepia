@@ -215,7 +215,7 @@ export function SectionHeader({
           }`}
         />
       </button>
-      {action}
+      <span className="opacity-0 transition-opacity group-hover/section:opacity-100">{action}</span>
     </div>
   );
 }
@@ -226,6 +226,7 @@ function FlatSection({
   limit,
   sessions,
   selectedId,
+  action,
   ...handlers
 }: {
   readonly label: string;
@@ -233,6 +234,7 @@ function FlatSection({
   readonly limit: number;
   readonly sessions: ReadonlyArray<SessionSummary>;
   readonly selectedId: string | null;
+  readonly action?: React.ReactNode;
 } & RowHandlers) {
   const [showAll, setShowAll] = useState(false);
   const [open, setOpen] = useUiState(`ui.section.${sectionKey}`, true);
@@ -240,7 +242,12 @@ function FlatSection({
   const shown = showAll ? sessions : sessions.slice(0, limit);
   return (
     <section className="group/section">
-      <SectionHeader label={label} open={open} onToggle={() => setOpen((v) => !v)} />
+      <SectionHeader
+        label={label}
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+        action={action}
+      />
       {open && (
         <>
           <div className="flex flex-col gap-1 px-1.5">
@@ -543,6 +550,9 @@ export function SessionSections({
   ...handlers
 }: SessionSectionsProps) {
   const { data: projects = [] } = useProjects();
+  const { data: agents = [] } = useAgents();
+  const createSession = useCreateSession();
+  const settings = useStore(settingsStore);
   const pinned = sessions.filter((s) => s.pinned === true);
   if (pinned.length === 0 && recentSessions.length === 0 && projects.length === 0) return null;
   return (
@@ -568,6 +578,24 @@ export function SessionSections({
         limit={8}
         sessions={recentSessions}
         selectedId={selectedId}
+        action={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="New session"
+            title="New session"
+            onClick={() => {
+              const agent = settings.defaultAgent ?? agents[0]?.id;
+              createSession.mutate({
+                cwd: resolvedCwd,
+                agent,
+                ...modelArgsFor(agent ?? "", null, settings),
+              });
+            }}
+          >
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+          </Button>
+        }
         {...handlers}
       />
     </div>
