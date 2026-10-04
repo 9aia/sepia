@@ -10,6 +10,7 @@ import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
 import { sepiaStore } from "../lib/store";
 import { settingsStore } from "../lib/settings";
 import { modelArgsFor } from "../lib/models";
+import { resolveSession } from "../lib/format";
 import { queryKeys } from "../hooks/query/keys";
 import { useAttachSession } from "../hooks/query/useAttachSession";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
@@ -52,7 +53,7 @@ const messageOf = (err: unknown, fallback: string): string =>
 export function ChatPanel() {
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
   const { data: sessions = [], isLoading: sessionsLoading } = useSessions();
-  const session = sessions.find((s) => s.id === selectedId) ?? null;
+  const session = resolveSession(sessions, selectedId) ?? null;
   const sessionId = session?.id ?? null;
 
   const queryClient = useQueryClient();

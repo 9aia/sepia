@@ -6,7 +6,7 @@ import { syncDataLoaderFeature } from "@headless-tree/core";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import type { ItemInstance } from "@headless-tree/core";
 import type { SessionSummary } from "../../lib/types";
-import { formatUpdated, projectName } from "../../lib/format";
+import { formatUpdated, projectName, resolveSession, sessionKey } from "../../lib/format";
 import { useCreateProject, usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -474,7 +474,7 @@ export function SessionTree({
     onPrimaryAction: (item) => {
       const data = item.getItemData();
       if (data?.kind === "session") {
-        onSelect(data.session.id);
+        onSelect(sessionKey(data.session));
       }
     },
     indent: 14,
@@ -519,7 +519,8 @@ export function SessionTree({
 
   const sessionRows = items.filter((item) => item.getItemData()?.kind === "session");
   const selectedIndex = sessionRows.findIndex(
-    (item) => (item.getItemData() as { session: SessionSummary }).session.id === selectedId,
+    (item) =>
+      sessionKey((item.getItemData() as { session: SessionSummary }).session) === selectedId,
   );
 
   const selectByIndex = (index: number): void => {
@@ -528,7 +529,7 @@ export function SessionTree({
     if (data?.kind !== "session") return;
     const flatIndex = items.findIndex((item) => item.getId() === row.getId());
     if (flatIndex !== -1) virtualizer.scrollToIndex(flatIndex, { align: "auto" });
-    onSelect(data.session.id);
+    onSelect(sessionKey(data.session));
   };
 
   // ignoreInputs: false so arrows still navigate while the filter input is focused.
@@ -551,7 +552,7 @@ export function SessionTree({
 
   // Left/right collapse and expand the selected session's project group.
   const selectedGroup = (): ItemInstance<TreeData> | undefined => {
-    const session = sessions.find((s) => s.id === selectedId);
+    const session = resolveSession(sessions, selectedId);
     if (session === undefined) return undefined;
     return tree.getItemInstance(`dir:${session.cwd}`);
   };
@@ -606,7 +607,7 @@ export function SessionTree({
                     <SessionItemRow
                       item={item}
                       session={data.session}
-                      selected={data.session.id === selectedId}
+                      selected={sessionKey(data.session) === selectedId}
                       onSelect={onSelect}
                       onDetails={onDetails}
                       onDelete={onDelete}

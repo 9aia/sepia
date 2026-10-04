@@ -12,6 +12,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
+import { sessionKey } from "../../lib/format";
 import { useRenameSession } from "../../hooks/query/useRenameSession";
 import { useAgents } from "../../hooks/query/useAgents";
 import {
@@ -256,7 +257,7 @@ export function SessionDetailsDrawer({
               <Button
                 className="w-full justify-start"
                 onClick={() => {
-                  onOpen(session.id);
+                  onOpen(sessionKey(session));
                   onClose();
                 }}
               >

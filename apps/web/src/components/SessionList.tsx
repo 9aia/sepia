@@ -17,6 +17,7 @@ import { useCreateSession } from "../hooks/query/useCreateSession";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { modelArgsFor } from "../lib/models";
+import { resolveSession } from "../lib/format";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
 import { Sidebar } from "./ui/sidebar";
@@ -129,9 +130,8 @@ export function SessionList() {
   }, [sessions, debouncedFilter, agentFilter, dateFilter, statusFilter, sort]);
 
   const recentSessions = useMemo(() => {
-    const byId = new Map(filtered.map((s) => [s.id, s]));
     return getRecents()
-      .map((id) => byId.get(id))
+      .map((key) => resolveSession(filtered, key))
       .filter((s): s is NonNullable<typeof s> => s !== undefined);
     // selectedId change refreshes the MRU
     // eslint-disable-next-line react-hooks/exhaustive-deps

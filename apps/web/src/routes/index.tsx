@@ -10,6 +10,7 @@ import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";
 import { useSessions } from "../hooks/query/useSessions";
 import { AuthError } from "../lib/api";
 import { sepiaStore, setKeybindsOpen, setSelectedId } from "../lib/store";
+import { sessionKey } from "../lib/format";
 
 const DATES = new Set(["day", "week", "month"]);
 const STATUSES = new Set(["free", "locked"]);
@@ -55,7 +56,7 @@ function Home() {
   // hasn't picked one.
   useEffect(() => {
     const first = sessions?.[0];
-    if (selectedId === null && first !== undefined) setSelectedId(first.id);
+    if (selectedId === null && first !== undefined) setSelectedId(sessionKey(first));
   }, [sessions, selectedId]);
 
   useHotkey("Shift+[Slash]", () => setKeybindsOpen(true));

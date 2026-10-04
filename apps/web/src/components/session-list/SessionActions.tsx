@@ -10,6 +10,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
+import { sessionKey } from "../../lib/format";
 import {
   useConvertSession,
   usePatchSessionMeta,
@@ -68,7 +69,7 @@ export function SessionActions({
   };
   return (
     <>
-      <Item onClick={() => onSelect(session.id)}>
+      <Item onClick={() => onSelect(sessionKey(session))}>
         <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} />
         Open
       </Item>

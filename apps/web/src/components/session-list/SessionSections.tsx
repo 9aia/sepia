@@ -13,7 +13,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { Project, SessionSummary } from "../../lib/types";
-import { formatUpdated } from "../../lib/format";
+import { formatUpdated, sessionKey } from "../../lib/format";
 import {
   useCreateProject,
   useDeleteProject,
@@ -89,7 +89,7 @@ function SectionSessionRow({
             className={`group/row flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent/60 focus-visible:ring-1 focus-visible:ring-primary/50 ${
               selected ? "bg-accent/80" : ""
             }`}
-            onClick={() => onSelect(session.id)}
+            onClick={() => onSelect(sessionKey(session))}
           >
             <span className="min-w-0 flex-1 truncate font-medium" title={session.title}>
               {session.title}
@@ -190,7 +190,7 @@ function FlatSection({
           <SectionSessionRow
             key={session.id}
             session={session}
-            selected={session.id === selectedId}
+            selected={sessionKey(session) === selectedId}
             {...handlers}
           />
         ))}
@@ -370,7 +370,7 @@ function ProjectsSection({
                   <SectionSessionRow
                     key={session.id}
                     session={session}
-                    selected={session.id === selectedId}
+                    selected={sessionKey(session) === selectedId}
                     {...handlers}
                   />
                 ))}
