@@ -573,7 +573,7 @@ export function SessionSections({
         {...handlers}
       />
       <FlatSection
-        label="Recents"
+        label="Sessions"
         sectionKey="recents"
         limit={8}
         sessions={recentSessions}
