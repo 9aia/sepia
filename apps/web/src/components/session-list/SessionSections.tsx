@@ -96,7 +96,7 @@ function SectionSessionRow({
         <ContextMenuTrigger className="group/row relative block">
           <button
             type="button"
-            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
+            className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
               selected ? "bg-accent/80" : ""
             }`}
             onClick={() => onSelect(sessionKey(session))}
@@ -204,7 +204,7 @@ export function SectionHeader({
   return (
     <ContextMenu>
       <ContextMenuTrigger className="block">
-        <div className="flex items-center justify-between px-3 pt-5 pb-1">
+        <div className="flex items-center justify-between px-3 pt-6 pb-1.5">
           <button
             type="button"
             onClick={onToggle}
@@ -265,7 +265,7 @@ export function FlatSection({
       />
       {open && (
         <>
-          <div className="flex flex-col gap-1 px-1.5">
+          <div className="flex flex-col gap-1.5 px-2">
             {shown.map((session) => (
               <SectionSessionRow
                 key={session.id}
@@ -473,7 +473,7 @@ function ProjectsSection({
                 <div className="relative px-1.5">
                   <button
                     type="button"
-                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/60"
                     onClick={() =>
                       setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
                     }
@@ -714,7 +714,7 @@ function ProjectDetailsDialog({
             {members.length} session{members.length === 1 ? "" : "s"}
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-1 px-1.5">
+        <div className="flex flex-col gap-1.5 px-2">
           {members.length === 0 && (
             <p className="text-sm text-muted-foreground">No sessions in this project.</p>
           )}
@@ -722,7 +722,7 @@ function ProjectDetailsDialog({
             <button
               key={session.id}
               type="button"
-              className="rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+              className="rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/60"
               onClick={() => onSelectSession(sessionKey(session))}
             >
               <span className="block truncate font-medium">{session.title}</span>
@@ -777,7 +777,7 @@ function AddSessionDialog({
           autoFocus
         />
         <ScrollArea className="max-h-64">
-          <div className="flex flex-col gap-1 px-1.5">
+          <div className="flex flex-col gap-1.5 px-2">
             {candidates.length === 0 && (
               <p className="px-1 py-2 text-sm text-muted-foreground">
                 {filter.trim() === "" ? "All sessions are already in this project." : "No matches."}
@@ -787,7 +787,7 @@ function AddSessionDialog({
               <button
                 key={session.id}
                 type="button"
-                className="rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+                className="rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/60"
                 onClick={() => add(session)}
               >
                 <span className="block truncate font-medium">{session.title}</span>

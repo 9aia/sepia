@@ -510,7 +510,7 @@ export function SessionChat({
 
       {promptError !== null && <ErrorBanner>{promptError}</ErrorBanner>}
 
-      <PromptInput onSubmit={onSubmit} className="shrink-0 border-t border-border px-4 pb-4 pt-3">
+      <PromptInput onSubmit={onSubmit} className="shrink-0 px-4 pb-4 pt-3">
         <PromptInputBody>
           {replyTo !== null && <ReplyPreview quote={replyTo} />}
           <PromptInputTextarea placeholder="Prompt the agent…" />

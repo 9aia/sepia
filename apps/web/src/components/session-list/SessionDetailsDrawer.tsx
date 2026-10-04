@@ -348,7 +348,7 @@ export function SessionDetailsDrawer({
                           })
                         }
                       >
-                        To {agent.label}
+                        {agent.label}
                       </DropdownMenuItem>
                     ))}
                 </DropdownMenuContent>
