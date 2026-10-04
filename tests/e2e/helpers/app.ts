@@ -60,15 +60,18 @@ const waitForRows = async (page: Page): Promise<void> => {
 export const gotoApp = async (page: Page, session?: string): Promise<void> => {
   const url = session === undefined ? `${WEB}/` : `${WEB}/?session=${encodeURIComponent(session)}`;
   await page.goto(url, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector('[data-slot="sidebar"]', { timeout: 30_000 });
   // Rows render as .truncate spans; the empty state covers genuinely-empty
   // lists. One reload if the first load stalls — the dev server can flake
   // under several pages' worth of transforms at once.
-  try {
+  const boot = async (): Promise<void> => {
+    await page.waitForSelector('[data-slot="sidebar"]', { timeout: 30_000 });
     await waitForRows(page);
+  };
+  try {
+    await boot();
   } catch {
     await page.reload({ waitUntil: "domcontentloaded" });
-    await waitForRows(page);
+    await boot();
   }
 };
 

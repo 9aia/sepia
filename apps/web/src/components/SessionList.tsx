@@ -4,6 +4,7 @@ import { useAppHotkey } from "../lib/keybinds";
 import { useStore } from "@tanstack/react-store";
 import {
   AlertCircleIcon,
+  ChevronDownIcon,
   FolderOpenIcon,
   PlusSignIcon,
   SearchAreaIcon,
@@ -31,6 +32,8 @@ import { modelArgsFor } from "../lib/models";
 import { resolveSession, sessionKey } from "../lib/format";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
+import { ButtonGroup } from "./ui/button-group";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { ScrollArea } from "./ui/scroll-area";
 import { Sidebar, useSidebar } from "./ui/sidebar";
 import { EmptyScreen } from "./EmptyScreen";
@@ -203,7 +206,7 @@ export function SessionList() {
 
   return (
     <Sidebar collapsible="offcanvas" ref={asideRef}>
-      <div className="flex flex-row items-center gap-2.5 border-b border-border px-4 py-3">
+      <div className="flex flex-row items-center gap-2.5 px-4 py-3">
         <h1 className="m-0 text-base font-medium tracking-wide">Sepia</h1>
         <div className="ml-auto flex items-center gap-1">
           <FilterBar
@@ -241,19 +244,43 @@ export function SessionList() {
           </>
         ) : (
           <>
-            <Button
-              variant="secondary"
-              onClick={() => create(resolvedCwd)}
-              disabled={createMutation.isPending}
-            >
-              <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} />
-              {createMutation.isPending ? "Creating…" : "New session"}
-            </Button>
-            <CwdPicker
-              value={resolvedCwd}
-              dirs={[...new Set(sessions.map((s) => s.cwd))]}
-              onChange={setCwd}
-            />
+            <ButtonGroup className="w-full">
+              <Button
+                variant="secondary"
+                className="flex-1"
+                onClick={() => create(resolvedCwd)}
+                disabled={createMutation.isPending}
+              >
+                <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} />
+                {createMutation.isPending ? "Creating…" : "New session"}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      aria-label="New session options"
+                      title="New session options"
+                    />
+                  }
+                >
+                  <HugeiconsIcon icon={ChevronDownIcon} strokeWidth={2} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72">
+                  <div className="flex flex-col gap-1.5 px-3 py-2.5">
+                    <span className="px-1 text-xs font-medium text-muted-foreground">
+                      Working directory
+                    </span>
+                    <CwdPicker
+                      value={resolvedCwd}
+                      dirs={[...new Set(sessions.map((s) => s.cwd))]}
+                      onChange={setCwd}
+                    />
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </ButtonGroup>
           </>
         )}
       </div>

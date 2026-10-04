@@ -548,13 +548,13 @@ function ProjectsSection({
                   {members.length === 0 && (
                     <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
                       Empty.
-                      <button
-                        type="button"
-                        className="rounded-md px-1 py-0.5 font-medium text-foreground/80 transition-colors hover:bg-accent/60 hover:text-foreground"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => newSessionIn(project, members)}
                       >
                         New session
-                      </button>
+                      </Button>
                     </div>
                   )}
                   {members.map((session) => (

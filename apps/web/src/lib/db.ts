@@ -13,6 +13,7 @@ import { queryClient } from "../hooks/query/queryClient";
 const metaPatchFrom = (changes: Partial<SessionSummary>): SessionMetaPatch => ({
   ...(changes.title !== undefined ? { title: changes.title } : {}),
   ...(changes.pinned !== undefined ? { pinned: changes.pinned } : {}),
+  ...(changes.archived !== undefined ? { archived: changes.archived } : {}),
   ...(changes.projectIds !== undefined ? { projectIds: changes.projectIds } : {}),
   ...(changes.model !== undefined ? { model: changes.model } : {}),
 });

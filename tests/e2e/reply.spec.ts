@@ -44,6 +44,17 @@ describe("replying to a message", () => {
     await page.locator("main textarea").first().fill(marker);
     await page.keyboard.press("Enter");
 
+    // Another client may already hold the session (a stale attach from an
+    // earlier run) — submitting then asks to take over; confirming sends the
+    // held message once the attach resolves writable.
+    const takeover = page.getByRole("button", { name: "Take over", exact: true });
+    try {
+      await takeover.waitFor({ state: "visible", timeout: 3000 });
+      await takeover.click();
+    } catch {
+      // Writable attach — the message was sent directly.
+    }
+
     // The optimistic user row embeds the quote as a markdown blockquote.
     const sent = page
       .locator('[data-slot="message"][data-align="end"]', { hasText: marker })
