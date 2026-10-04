@@ -40,7 +40,7 @@ export function FilterBar({
   onSortChange,
 }: FilterBarProps) {
   return (
-    <div className="flex items-center gap-1.5 px-2 pb-2">
+    <div className="flex items-center gap-1.5 px-2 pt-3 pb-2">
       <div className="relative min-w-0 flex-1">
         <Input
           type="search"
