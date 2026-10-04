@@ -187,7 +187,7 @@ function ErrorMessage({ error }: { readonly error: ParsedError }) {
 function RowAvatar({ role }: { readonly role: string }) {
   const { data: user } = useUserInfo();
   return (
-    <Avatar className="size-6 shrink-0 self-end">
+    <Avatar className="size-6 shrink-0">
       <AvatarFallback className="text-[10px]">
         {role === "user" ? (
           (user?.username.charAt(0).toUpperCase() ?? "?")
