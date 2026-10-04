@@ -5,6 +5,8 @@ import { settingsStore, setSettings, type AgentModelPref } from "../lib/settings
 import { KEYBINDS, formatKey, resolveKey } from "../lib/keybinds";
 import { Kbd } from "./ui/kbd";
 import { Button } from "./ui/button";
+import { Switch } from "./ui/switch";
+import { isPushSupported, subscribePush, unsubscribePush, updatePushPrefs } from "../lib/push";
 import { useAgents } from "../hooks/query/useAgents";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -103,10 +105,98 @@ function KeyboardSection() {
   );
 }
 
+/** Push notifications — master subscribe toggle + per-event prefs. */
+function NotificationsSection() {
+  const settings = useStore(settingsStore);
+  const n = settings.notifications;
+  const [busy, setBusy] = useState<string | null>(null);
+  const supported = isPushSupported();
+  const denied = supported && Notification.permission === "denied";
+
+  const setNotif = (patch: Partial<typeof n>): void => {
+    const next = { ...n, ...patch };
+    setSettings({ notifications: next });
+    if (next.enabled) void updatePushPrefs({ done: next.done, permission: next.permission });
+  };
+
+  const toggleMaster = (enabled: boolean): void => {
+    if (busy !== null) return;
+    setBusy("master");
+    void (async () => {
+      if (enabled) {
+        const permission =
+          Notification.permission === "granted"
+            ? "granted"
+            : await Notification.requestPermission();
+        if (permission === "granted") {
+          const ok = await subscribePush({ done: n.done, permission: n.permission });
+          if (ok) setSettings({ notifications: { ...n, enabled: true } });
+        }
+      } else {
+        await unsubscribePush();
+        setSettings({ notifications: { ...n, enabled: false } });
+      }
+      setBusy(null);
+    })();
+  };
+
+  const rows = [
+    { key: "done" as const, label: "Session finished", hint: "When an agent run ends or errors." },
+    {
+      key: "permission" as const,
+      label: "Approval needed",
+      hint: "When an agent waits on a permission decision.",
+    },
+  ];
+
+  return (
+    <section data-spy="notifications" className="flex scroll-mt-2 flex-col gap-2">
+      <h3 className="text-sm font-medium">Notifications</h3>
+      {!supported ? (
+        <p className="text-xs text-muted-foreground">Push isn&apos;t supported in this browser.</p>
+      ) : denied ? (
+        <p className="text-xs text-muted-foreground">
+          Notifications are blocked — allow them in your browser&apos;s site settings.
+        </p>
+      ) : (
+        <div className="divide-y divide-border/50 rounded-lg border border-border">
+          <div className="flex items-center gap-3 px-3 py-2.5">
+            <div className="flex-1">
+              <span className="block text-sm font-medium">Push notifications</span>
+              <span className="block text-xs text-muted-foreground">
+                Notify this browser even when the tab isn&apos;t focused.
+              </span>
+            </div>
+            <Switch
+              checked={n.enabled}
+              onCheckedChange={toggleMaster}
+              disabled={busy === "master"}
+            />
+          </div>
+          {n.enabled &&
+            rows.map((row) => (
+              <div key={row.key} className="flex items-center gap-3 px-3 py-2.5">
+                <div className="flex-1">
+                  <span className="block text-sm">{row.label}</span>
+                  <span className="block text-xs text-muted-foreground">{row.hint}</span>
+                </div>
+                <Switch
+                  checked={n[row.key]}
+                  onCheckedChange={(value) => setNotif({ [row.key]: value })}
+                />
+              </div>
+            ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 const SECTIONS = [
   { id: "general", label: "General" },
   { id: "models", label: "Models" },
   { id: "keyboard", label: "Keyboard" },
+  { id: "notifications", label: "Notifications" },
 ] as const;
 
 const MOD_KEY = navigator.platform.toUpperCase().includes("MAC") ? "⌘" : "Ctrl";
@@ -276,6 +366,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 })}
               </section>
               <KeyboardSection />
+              <NotificationsSection />
             </div>
           </ScrollArea>
         </div>

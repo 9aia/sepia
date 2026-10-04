@@ -956,3 +956,59 @@ describe("createApp", () => {
   // once a fixture store pair exists.
   it.todo("POST /api/sessions/:id/convert returns { sessionId } for a real store pair");
 });
+
+describe("push endpoints", () => {
+  it("GET /api/push/vapid returns a stable public key", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-push-"));
+    const app = createApp(plane, { meta: createMetaStore(join(dir, "meta.json")) });
+    const first = await app(get("/api/push/vapid"));
+    expect(first.status).toBe(200);
+    const key = (await first.json()) as { publicKey: string };
+    expect(typeof key.publicKey).toBe("string");
+    expect(key.publicKey.length).toBeGreaterThan(20);
+    // A second app over the same file reuses the generated key.
+    const again = await createApp(plane, { meta: createMetaStore(join(dir, "meta.json")) })(
+      get("/api/push/vapid"),
+    );
+    await expect(again.json()).resolves.toEqual(key);
+  });
+
+  it("POST/DELETE /api/push/subscribe stores and removes subscriptions", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-push-"));
+    const meta = createMetaStore(join(dir, "meta.json"));
+    const app = createApp(plane, { meta });
+    const sub = {
+      endpoint: "https://push.example/sub1",
+      keys: { auth: "a", p256dh: "b" },
+      prefs: { done: true, permission: false },
+    };
+    const post = await app(
+      new Request("http://localhost/api/push/subscribe", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(sub),
+      }),
+    );
+    expect(post.status).toBe(200);
+    const stored = meta.config() as { pushSubscriptions?: unknown[] };
+    expect(stored.pushSubscriptions).toHaveLength(1);
+    const del = await app(
+      new Request("http://localhost/api/push/subscribe", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: sub.endpoint }),
+      }),
+    );
+    expect(del.status).toBe(200);
+    expect((meta.config() as { pushSubscriptions?: unknown[] }).pushSubscriptions).toHaveLength(0);
+  });
+
+  it("returns 501 when no meta store is configured", async () => {
+    const { plane } = makeFakePlane();
+    const app = createApp(plane);
+    const res = await app(get("/api/push/vapid"));
+    expect(res.status).toBe(501);
+  });
+});

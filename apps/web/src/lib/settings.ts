@@ -24,6 +24,8 @@ export interface SepiaSettings {
   models: Record<string, AgentModelPref>;
   /** Keybind overrides by action id — string = custom key, null = disabled. */
   keybinds: Record<string, string | null>;
+  /** Browser push toggles — enabled = subscribed on this device. */
+  notifications: { enabled: boolean; done: boolean; permission: boolean };
 }
 
 const KEY = "sepia:settings";
@@ -31,7 +33,14 @@ const KEY = "sepia:settings";
 const load = (): SepiaSettings => {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw === null) return { defaultAgent: null, defaultCwd: null, models: {}, keybinds: {} };
+    if (raw === null)
+      return {
+        defaultAgent: null,
+        defaultCwd: null,
+        models: {},
+        keybinds: {},
+        notifications: { enabled: false, done: true, permission: true },
+      };
     const parsed = JSON.parse(raw) as Partial<SepiaSettings>;
     return {
       defaultAgent: typeof parsed.defaultAgent === "string" ? parsed.defaultAgent : null,
@@ -44,9 +53,23 @@ const load = (): SepiaSettings => {
         typeof parsed.keybinds === "object" && parsed.keybinds !== null
           ? (parsed.keybinds as Record<string, string | null>)
           : {},
+      notifications:
+        typeof parsed.notifications === "object" && parsed.notifications !== null
+          ? {
+              enabled: parsed.notifications.enabled === true,
+              done: parsed.notifications.done !== false,
+              permission: parsed.notifications.permission !== false,
+            }
+          : { enabled: false, done: true, permission: true },
     };
   } catch {
-    return { defaultAgent: null, defaultCwd: null, models: {}, keybinds: {} };
+    return {
+      defaultAgent: null,
+      defaultCwd: null,
+      models: {},
+      keybinds: {},
+      notifications: { enabled: false, done: true, permission: true },
+    };
   }
 };
 

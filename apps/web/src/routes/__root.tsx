@@ -32,7 +32,9 @@ export const Route = createRootRoute({
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "sepia" },
+      { name: "theme-color", content: "#0a0a0a" },
     ],
+    links: [{ rel: "manifest", href: "/manifest.webmanifest" }],
   }),
   component: RootComponent,
   errorComponent: (props) => <RouteError {...props} />,
@@ -51,6 +53,12 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
+  useEffect(() => {
+    // PWA service worker — delivers push notifications.
+    if ("serviceWorker" in navigator) {
+      void navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  }, []);
   return (
     <RootDocument>
       <QueryClientProvider client={queryClient}>

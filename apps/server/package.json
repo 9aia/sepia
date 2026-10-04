@@ -23,11 +23,13 @@
     "sepia-acp": "workspace:*",
     "sepia-agui": "workspace:*",
     "sepia-core": "workspace:*",
-    "sepia-session-control": "workspace:*"
+    "sepia-session-control": "workspace:*",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/bun": "1.1.0",
     "@types/node": "^26.1.1",
+    "@types/web-push": "^3.6.4",
     "typescript": "^7.0.2"
   }
 }

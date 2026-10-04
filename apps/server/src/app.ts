@@ -18,6 +18,7 @@ import type {
 import { createAguiAgentHandler } from "./agui-agent";
 import type { MetaStore } from "./meta";
 import { keepAliveMsFromEnv, SseChannel } from "./sse-channel";
+import { makePushStore, notifyForEvents } from "./push";
 
 export interface AppOptions {
   /** Runs effects; pass `runtime.runPromise` so spans/metrics reach the OTLP runtime. */
@@ -247,10 +248,78 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       return new Response(null, { status: 204, headers: cors });
     }
 
+    // Push subscriptions + a per-session listener that turns live events into
+    // notifications even when no client has the session open.
+    const push = options.meta !== undefined ? makePushStore(options.meta) : null;
+    const pushUnsubs = new Map<string, () => void>();
+    const sessionTitles = new Map<string, string>();
+    const registerPushListener = (id: string, agentId?: string): void => {
+      if (push === null || pushUnsubs.has(id)) return;
+      void run(
+        Effect.either(
+          plane.subscribe(
+            id,
+            (events) => {
+              notifyForEvents(push, id, agentId, sessionTitles.get(id) ?? id, events);
+            },
+            agentId,
+          ),
+        ),
+      ).then((result) => {
+        if (Either.isRight(result)) pushUnsubs.set(id, result.right);
+      });
+    };
+
     const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
     // Session ids collide across agents (devin and cline mint their own), so
     // session-scoped routes accept `?agent=<id>` to scope the store lookup.
     const agentParam = url.searchParams.get("agent") ?? undefined;
+
+    if (method === "GET" && segmentsEqual(segments, ["api", "push", "vapid"])) {
+      return push === null
+        ? jsonResponse({ error: "Meta store unavailable" }, 501, cors)
+        : jsonResponse({ publicKey: push.publicKey }, 200, cors);
+    }
+
+    if (method === "POST" && segmentsEqual(segments, ["api", "push", "subscribe"])) {
+      if (push === null) return jsonResponse({ error: "Meta store unavailable" }, 501, cors);
+      try {
+        const body = await readJsonBody(request);
+        if (
+          !isRecord(body) ||
+          typeof body.endpoint !== "string" ||
+          !isRecord(body.keys) ||
+          typeof body.keys.auth !== "string" ||
+          typeof body.keys.p256dh !== "string"
+        ) {
+          return jsonResponse({ error: "Invalid push subscription" }, 400, cors);
+        }
+        const prefs = isRecord(body.prefs)
+          ? { done: body.prefs.done !== false, permission: body.prefs.permission !== false }
+          : { done: true, permission: true };
+        push.upsert({
+          endpoint: body.endpoint,
+          keys: { auth: body.keys.auth, p256dh: body.keys.p256dh },
+          prefs,
+        });
+        return jsonResponse({ ok: true }, 200, cors);
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+      }
+    }
+
+    if (method === "DELETE" && segmentsEqual(segments, ["api", "push", "subscribe"])) {
+      if (push === null) return jsonResponse({ error: "Meta store unavailable" }, 501, cors);
+      try {
+        const body = await readJsonBody(request);
+        if (isRecord(body) && typeof body.endpoint === "string") {
+          push.remove(body.endpoint);
+        }
+        return jsonResponse({ ok: true }, 200, cors);
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+      }
+    }
 
     if (method === "GET" && segmentsEqual(segments, ["api", "health"])) {
       return healthResponse(run, plane, cors);
@@ -312,6 +381,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       return respond(run, plane.listSessions({ withLocks }), cors, {
         shape: (sessions) => {
           const overlaid = sessions.map((session) => {
+            sessionTitles.set(session.id, session.title);
             const meta = options.meta?.of(session.id);
             return {
               ...session,
@@ -397,6 +467,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
             Effect.sync(() => {
               // The agent may not flush the session to its store until the
               // first prompt; keep enough meta to identify it after a restart.
+              registerPushListener(id, createdAgent);
               options.meta?.patch(id, {
                 agent: createdAgent,
                 cwd,
@@ -468,12 +539,19 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       return jsonResponse({ ok: true }, 200, cors);
     }
 
+    // Keys with secrets/blobs the API must not expose (VAPID pair, push subs).
+    const INTERNAL_CONFIG = new Set(["vapid", "pushSubscriptions"]);
+    const publicConfig = (): Record<string, unknown> =>
+      Object.fromEntries(
+        Object.entries(options.meta?.config() ?? {}).filter(([key]) => !INTERNAL_CONFIG.has(key)),
+      );
+
     if (method === "GET" && segmentsEqual(segments, ["api", "config"])) {
       const meta = options.meta;
       if (meta === undefined) {
         return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
       }
-      return jsonResponse({ config: meta.config() }, 200, cors);
+      return jsonResponse({ config: publicConfig() }, 200, cors);
     }
 
     if (
@@ -493,6 +571,9 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
       }
       const key = decodeURIComponent(segments[2] ?? "");
+      if (INTERNAL_CONFIG.has(key)) {
+        return jsonResponse({ error: "Config key is internal" }, 400, cors);
+      }
       meta.setConfig(key, isRecord(body) ? body.value : undefined);
       return jsonResponse({ key, value: isRecord(body) ? body.value : undefined }, 200, cors);
     }
@@ -702,7 +783,9 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         }
         return respond(
           run,
-          plane.attach(id, { takeover, model, fallbacks, agentId: agentParam }),
+          plane
+            .attach(id, { takeover, model, fallbacks, agentId: agentParam })
+            .pipe(Effect.tap(() => Effect.sync(() => registerPushListener(id, agentParam)))),
           cors,
           {
             span: "http.post /api/sessions/:id/attach",
