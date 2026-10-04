@@ -43,7 +43,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "./ui/message-scroller";
-import { MessageResponse } from "./ai-elements/message";
+import { MessageResponse } from "./streamdown";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./ai-elements/reasoning";
 import { Tool, ToolContent, ToolHeader } from "./ai-elements/tool";
 import {

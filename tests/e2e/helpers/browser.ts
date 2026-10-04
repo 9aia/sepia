@@ -1,4 +1,10 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type BrowserContextOptions,
+  type Page,
+} from "playwright";
 
 let browser: Browser | null = null;
 
@@ -14,8 +20,8 @@ export const closeBrowser = async (): Promise<void> => {
 };
 
 /** A clean incognito page — isolated storage, no cookies carried over. */
-export const newPage = async (): Promise<Page> => {
+export const newPage = async (options?: BrowserContextOptions): Promise<Page> => {
   const b = await getBrowser();
-  const ctx: BrowserContext = await b.newContext();
+  const ctx: BrowserContext = await b.newContext(options);
   return ctx.newPage();
 };
