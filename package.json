@@ -11,10 +11,12 @@
   "scripts": {
     "ready": "vp check && vp run -r test && vp run -r build",
     "dev": "vp run sepia-web#dev",
-    "prepare": "vp config"
+    "prepare": "vp config",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "4.1.10",
+    "playwright": "1.63.0",
     "vite": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "4.1.10"

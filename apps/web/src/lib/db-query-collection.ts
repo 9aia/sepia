@@ -102,7 +102,18 @@ export function createQueryCollection<TItem extends object, TKey extends string 
           if (Array.isArray(data)) apply(data as TItem[]);
         });
 
-        void queryClient.fetchQuery({ queryKey, queryFn, staleTime }).then(apply).catch(markError);
+        void queryClient
+          .fetchQuery({
+            queryKey,
+            queryFn,
+            staleTime,
+            // One failed fetch would wedge the collection in error state with
+            // no recovery path — keep retrying instead of trusting the default.
+            retry: 3,
+            retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+          })
+          .then(apply)
+          .catch(markError);
 
         return () => unsubscribe();
       },
