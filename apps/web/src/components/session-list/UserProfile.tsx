@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useStore } from "@tanstack/react-store";
+import { useHasKeyboard } from "../../lib/keyboard";
 import {
   ArrowUp01Icon,
   KeyboardIcon,
@@ -25,6 +26,7 @@ import {
 } from "../ui/dropdown-menu";
 
 export function UserProfile() {
+  const hasKeyboard = useHasKeyboard();
   const { data: user, isLoading, isError } = useUserInfo();
   const health = useHealth();
   const [dialog, setDialog] = useState<"profile" | null>(null);
@@ -94,11 +96,13 @@ export function UserProfile() {
             Settings
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setSettingsOpen(true, "keyboard")}>
-            <HugeiconsIcon icon={KeyboardIcon} strokeWidth={2} />
-            Keyboard shortcuts
-            <DropdownMenuShortcut>?</DropdownMenuShortcut>
-          </DropdownMenuItem>
+          {hasKeyboard && (
+            <DropdownMenuItem onClick={() => setSettingsOpen(true, "keyboard")}>
+              <HugeiconsIcon icon={KeyboardIcon} strokeWidth={2} />
+              Keyboard shortcuts
+              <DropdownMenuShortcut>?</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

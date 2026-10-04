@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useHotkeyRecorder } from "@tanstack/react-hotkeys";
+import { useHasKeyboard } from "../lib/keyboard";
 import { useStore } from "@tanstack/react-store";
 import {
   settingsStore,
@@ -208,6 +209,7 @@ const SECTIONS = [
 const MOD_KEY = navigator.platform.toUpperCase().includes("MAC") ? "⌘" : "Ctrl";
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
+  const hasKeyboard = useHasKeyboard();
   const { data: agents = [] } = useAgents();
   const settings = useStore(settingsStore);
   const settingsSection = useStore(sepiaStore, (state) => state.settingsSection);
@@ -266,7 +268,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </DialogHeader>
         <div className="flex min-h-0 flex-1 gap-4">
           <nav className="flex w-36 shrink-0 flex-col gap-0.5" aria-label="Settings sections">
-            {SECTIONS.map((section) => (
+            {SECTIONS.filter((s) => s.id !== "keyboard" || hasKeyboard).map((section) => (
               <button
                 key={section.id}
                 type="button"
@@ -407,7 +409,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   );
                 })}
               </section>
-              <KeyboardSection />
+              {hasKeyboard && <KeyboardSection />}
               <NotificationsSection />
             </div>
           </ScrollArea>

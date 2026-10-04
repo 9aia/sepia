@@ -7,6 +7,7 @@ import { Button } from "../ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Input } from "../ui/input";
 import { Kbd, KbdGroup } from "../ui/kbd";
+import { useHasKeyboard } from "../../lib/keyboard";
 import { useSidebar } from "../ui/sidebar";
 import { FilterMenu } from "./FilterMenu";
 import { SortMenu } from "./SortMenu";
@@ -47,6 +48,7 @@ export function FilterBar({
   onSortChange,
 }: FilterBarProps) {
   const { toggleSidebar } = useSidebar();
+  const hasKeyboard = useHasKeyboard();
   const [searchOpen, setSearchOpen] = useState(false);
   useAppHotkey("filter.focus", () => setSearchOpen(true), { preventDefault: true });
   return (
@@ -86,13 +88,15 @@ export function FilterBar({
                 if (event.key === "Escape") setSearchOpen(false);
               }}
             />
-            <KbdGroup
-              className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2"
-              aria-hidden="true"
-            >
-              <Kbd>{modKey}</Kbd>
-              <Kbd>K</Kbd>
-            </KbdGroup>
+            {hasKeyboard && (
+              <KbdGroup
+                className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2"
+                aria-hidden="true"
+              >
+                <Kbd>{modKey}</Kbd>
+                <Kbd>K</Kbd>
+              </KbdGroup>
+            )}
           </div>
         </PopoverContent>
       </Popover>
