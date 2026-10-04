@@ -1,6 +1,15 @@
-import { useEffect, useRef } from "react";
-import { useHotkey } from "@tanstack/react-hotkeys";
 import type { PermissionRequest } from "../lib/types";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 
 interface ApprovalDialogProps {
   request: PermissionRequest | null;
@@ -8,38 +17,35 @@ interface ApprovalDialogProps {
 }
 
 export function ApprovalDialog({ request, onResolve }: ApprovalDialogProps) {
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-
-  useHotkey("Escape", () => onResolve(null), { enabled: request !== null });
-
-  useEffect(() => {
-    if (request) dialogRef.current?.querySelector("button")?.focus();
-  }, [request]);
-
-  if (!request) return null;
-
   return (
-    <div className="approval-overlay" role="dialog" aria-modal="true">
-      <div className="approval-dialog" ref={dialogRef}>
-        <h2 className="approval-dialog__title">{request.title}</h2>
-        <p className="approval-dialog__hint">The agent is waiting for your decision.</p>
-        <div className="approval-dialog__options">
-          {request.options.map((option) => (
-            <button
+    <Dialog
+      open={request !== null}
+      onOpenChange={(open) => {
+        if (!open) onResolve(null);
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{request?.title ?? "Permission requested"}</DialogTitle>
+          <DialogDescription>The agent is waiting for your decision.</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-2">
+          {request?.options.map((option) => (
+            <Button
               key={option.optionId}
-              type="button"
-              className="approval-dialog__option"
+              variant="outline"
+              className="justify-between"
               onClick={() => onResolve(option.optionId)}
             >
               <span>{option.label}</span>
-              {option.kind && <span className="approval-dialog__kind">{option.kind}</span>}
-            </button>
+              {option.kind && <Badge variant="secondary">{option.kind}</Badge>}
+            </Button>
           ))}
         </div>
-        <button type="button" className="approval-dialog__cancel" onClick={() => onResolve(null)}>
-          Cancel
-        </button>
-      </div>
-    </div>
+        <DialogFooter>
+          <DialogClose render={<Button variant="ghost" />}>Cancel</DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

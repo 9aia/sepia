@@ -19,6 +19,8 @@ import { useHistory } from "../hooks/query/useHistory";
 import { useRespondToPermission } from "../hooks/query/useRespondToPermission";
 import { useSessions } from "../hooks/query/useSessions";
 import { ApprovalDialog } from "./ApprovalDialog";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 
 const PERMISSION_EVENT = "acp:permission_request";
 
@@ -164,12 +166,12 @@ export function ChatPanel() {
             {session.cwd}
           </span>
         </div>
-        {readOnly && <span className="badge badge--readonly">read-only</span>}
-        {(session.busy || running) && <span className="badge badge--busy">busy</span>}
+        {readOnly && <Badge variant="secondary">read-only</Badge>}
+        {(session.busy || running) && <Badge variant="destructive">busy</Badge>}
         {streamStatus === "reconnecting" && (
-          <span className="badge badge--reconnecting" role="status">
+          <Badge variant="outline" role="status">
             reconnecting…
-          </span>
+          </Badge>
         )}
       </header>
 
@@ -240,13 +242,9 @@ export function ChatPanel() {
         {attachError !== null ? null : readOnly ? (
           <div className="chat-panel__readonly">
             This session is held by another process.
-            <button
-              type="button"
-              className="chat-panel__takeover"
-              onClick={() => attach({ id: session.id, takeover: true })}
-            >
+            <Button size="sm" onClick={() => attach({ id: session.id, takeover: true })}>
               Take over
-            </button>
+            </Button>
           </div>
         ) : mounted ? (
           <CopilotKit

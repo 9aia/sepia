@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig } from "vite-plus";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
@@ -6,6 +7,9 @@ import viteReact from "@vitejs/plugin-react";
 const token = process.env.SEPIA_TOKEN;
 
 export default defineConfig({
+  resolve: {
+    alias: { "@": path.resolve(__dirname, "src") },
+  },
   server: {
     port: 3000,
     proxy: {

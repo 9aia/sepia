@@ -8,6 +8,10 @@ import { useAgents } from "../hooks/query/useAgents";
 import { useCreateSession } from "../hooks/query/useCreateSession";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useSessions } from "../hooks/query/useSessions";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 function formatUpdated(iso: string): string {
   const then = new Date(iso).getTime();
@@ -131,8 +135,7 @@ export function SessionList() {
       </header>
 
       <form className="session-list__new" onSubmit={submit}>
-        <input
-          className="session-list__input"
+        <Input
           type="text"
           placeholder="Working directory (absolute)"
           aria-label="Working directory"
@@ -140,8 +143,7 @@ export function SessionList() {
           value={cwd}
           onChange={(event) => setCwd(event.target.value)}
         />
-        <input
-          className="session-list__input"
+        <Input
           type="text"
           placeholder="Title (optional)"
           aria-label="Session title"
@@ -149,33 +151,33 @@ export function SessionList() {
           onChange={(event) => setTitle(event.target.value)}
         />
         {agents.length > 1 && (
-          <select
-            className="session-list__input"
-            aria-label="Agent"
+          <Select
             value={agent}
-            onChange={(event) => setAgent(event.target.value)}
+            onValueChange={(value) => {
+              if (value !== null) setAgent(value);
+            }}
           >
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger aria-label="Agent">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {agents.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
-        <button
-          className="session-list__create"
-          type="submit"
-          disabled={creating || cwd.trim() === ""}
-        >
+        <Button type="submit" disabled={creating || cwd.trim() === ""}>
           {creating ? "Creating…" : "New session"}
-        </button>
+        </Button>
         {createError && (
           <p className="session-list__status session-list__status--error">{createError}</p>
         )}
       </form>
 
-      <input
-        className="session-list__filter"
+      <Input
         type="search"
         placeholder="Filter sessions… (Ctrl/⌘+K)"
         aria-label="Filter sessions"
@@ -232,7 +234,9 @@ export function SessionList() {
                 >
                   <div className="session-item__top">
                     <span className="session-item__title">{session.title}</span>
-                    <span className={`badge badge--${session.agent}`}>{session.agent}</span>
+                    <Badge variant={session.agent === "cline" ? "outline" : "secondary"}>
+                      {session.agent}
+                    </Badge>
                   </div>
                   <div className="session-item__cwd" title={session.cwd}>
                     {session.cwd}
@@ -240,17 +244,18 @@ export function SessionList() {
                   <div className="session-item__meta">
                     <span>{formatUpdated(session.updatedAt)}</span>
                     {session.locked && (
-                      <span
-                        className="badge badge--locked"
+                      <Badge
+                        variant="destructive"
                         title={`Locked by pid ${session.lockHolderPid ?? "unknown"}`}
                       >
                         locked
-                      </span>
+                      </Badge>
                     )}
                   </div>
                 </button>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   className="session-item__delete"
                   aria-label={`Delete session ${session.title}`}
                   title="Delete session"
@@ -262,7 +267,7 @@ export function SessionList() {
                   }}
                 >
                   ×
-                </button>
+                </Button>
               </div>
             );
           })}
