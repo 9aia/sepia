@@ -18,6 +18,7 @@ import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { useRespondToPermission } from "../hooks/query/useRespondToPermission";
 import { useSessions } from "../hooks/query/useSessions";
 import { ApprovalDialog } from "./ApprovalDialog";
+import { Button } from "./ui/button";
 import { ChatHeader } from "./ChatHeader";
 import { ErrorBanner } from "./ErrorBanner";
 import { SessionChat } from "./SessionChat";

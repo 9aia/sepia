@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AlertCircleIcon, BotIcon, Loading03Icon } from "@hugeicons/core-free-icons";
 import { ArrowDown01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
@@ -42,6 +42,7 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 } from "./ui/message-scroller";
 import { MessageResponse } from "./streamdown";
 import { ReasoningBlock } from "./reasoning-block";
@@ -338,6 +339,21 @@ function SystemContextRow({ context }: { readonly context: SystemContext }) {
   );
 }
 
+/**
+ * `useMessageScroller` only works under the Provider, but the send path lives
+ * in SessionChat — this bridge hands `scrollToEnd` out through a ref.
+ */
+function ScrollerApiBridge({ apiRef }: { readonly apiRef: RefObject<(() => void) | null> }) {
+  const { scrollToEnd } = useMessageScroller();
+  useEffect(() => {
+    apiRef.current = () => scrollToEnd({ behavior: "auto" });
+    return () => {
+      apiRef.current = null;
+    };
+  }, [apiRef, scrollToEnd]);
+  return null;
+}
+
 interface SessionChatProps {
   readonly sessionId: string;
   readonly agent: string;
@@ -372,6 +388,9 @@ export function SessionChat({
   const replyTo = useStore(sepiaStore, (state) => state.replyTo);
   // Held by another process → the send asks to take over first.
   const [takeoverPrompt, setTakeoverPrompt] = useState<string | null>(null);
+  // Populated by ScrollerApiBridge — lets `send` reveal the row it appended.
+  const scrollToEnd = useRef<(() => void) | null>(null);
+  const scrollOnSent = useRef(false);
 
   const rows = useMemo<ChatRow[]>(() => {
     const context = parseSystemContext(history.filter((m) => m.role === "system"));
@@ -387,6 +406,10 @@ export function SessionChat({
     setPromptError(null);
     // Optimistic — the row shows instantly; rolled back if the send fails.
     const liveId = onUserMessage(prompt);
+    // The scroller only trails the bottom while it's already pinned — a send
+    // while scrolled up would leave the row appended below the fold (and
+    // unmounted by the virtualizer). Flag a scroll for when it commits.
+    scrollOnSent.current = true;
     sendPrompt(sessionId, prompt, agent)
       .then((ok) => {
         if (!ok) {
@@ -410,6 +433,16 @@ export function SessionChat({
     }
     send(text);
   };
+
+  // Reveal the just-sent row once it's committed — a second pass after a
+  // frame covers the virtualizer measuring it taller than the estimate.
+  useEffect(() => {
+    if (!scrollOnSent.current) return;
+    scrollOnSent.current = false;
+    scrollToEnd.current?.();
+    const frame = requestAnimationFrame(() => scrollToEnd.current?.());
+    return () => cancelAnimationFrame(frame);
+  }, [liveMessages]);
 
   // Takeover confirmed → attach resolved readOnly off → send the held text.
   useEffect(() => {
@@ -435,6 +468,7 @@ export function SessionChat({
   return (
     <>
       <MessageScrollerProvider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={8}>
+        <ScrollerApiBridge apiRef={scrollToEnd} />
         <MessageScroller className="relative flex min-h-0 flex-1 flex-col">
           {streamStatus === "reconnecting" && (
             <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
