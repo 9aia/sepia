@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { ArrowUp01Icon } from "@hugeicons/core-free-icons";
+import {
+  ArrowUp01Icon,
+  KeyboardIcon,
+  ProfileIcon,
+  Settings02Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../../hooks/query/useUserInfo";
 import { setKeybindsOpen } from "../../lib/store";
@@ -45,10 +50,17 @@ export function UserProfile() {
           <HugeiconsIcon icon={ArrowUp01Icon} strokeWidth={2} className="text-muted-foreground" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
-          <DropdownMenuItem onClick={() => setDialog("profile")}>Profile</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setDialog("settings")}>Settings</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setDialog("profile")}>
+            <HugeiconsIcon icon={ProfileIcon} strokeWidth={2} />
+            Profile
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setDialog("settings")}>
+            <HugeiconsIcon icon={Settings02Icon} strokeWidth={2} />
+            Settings
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setKeybindsOpen(true)}>
+            <HugeiconsIcon icon={KeyboardIcon} strokeWidth={2} />
             Keyboard shortcuts
             <DropdownMenuShortcut>?</DropdownMenuShortcut>
           </DropdownMenuItem>
