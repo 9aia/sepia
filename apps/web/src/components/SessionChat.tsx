@@ -447,7 +447,7 @@ export function SessionChat({
 
   return (
     <>
-      <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+      <MessageScrollerProvider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={8}>
         <MessageScroller className="relative flex min-h-0 flex-1 flex-col">
           {streamStatus === "reconnecting" && (
             <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
