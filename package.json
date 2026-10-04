@@ -12,6 +12,7 @@
     "ready": "vp check && vp run -r test && vp run -r build",
     "dev": "vp run sepia-web#dev",
     "prepare": "vp config",
+    "coverage": "vp run -r coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "devDependencies": {

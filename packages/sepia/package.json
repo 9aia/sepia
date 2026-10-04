@@ -15,6 +15,7 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "coverage": "vitest run --coverage",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
   },
