@@ -5,6 +5,7 @@ import { useHotkey } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
 import { useTree } from "@headless-tree/react";
 import { syncDataLoaderFeature } from "@headless-tree/core";
+import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import { sepiaStore, setSelectedId } from "../lib/store";
 import { AlertCircleIcon, FolderOpenIcon, SearchAreaIcon } from "@hugeicons/core-free-icons";
 import type { SessionSummary } from "../lib/types";
@@ -17,6 +18,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Kbd, KbdGroup } from "./ui/kbd";
+import { ScrollBar } from "./ui/scroll-area";
 import { Spinner } from "./ui/spinner";
 import { EmptyScreen } from "./EmptyScreen";
 import { Tree, TreeItem, TreeItemLabel } from "./reui/tree";
@@ -427,92 +429,96 @@ export function SessionList() {
         />
       )}
 
-      <div className="session-list__items" ref={listRef}>
-        <Tree tree={tree} indent={14} className="session-tree">
-          <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
-            {virtualizer.getVirtualItems().map((row) => {
-              const item = items[row.index];
-              if (item === undefined) return null;
-              const data = item.getItemData();
-              return (
-                <div
-                  key={item.getId()}
-                  data-index={row.index}
-                  ref={virtualizer.measureElement}
-                  className="session-row"
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    transform: `translateY(${row.start}px)`,
-                  }}
-                >
-                  {data?.kind === "group" ? (
-                    <TreeItem item={item} className="session-group">
-                      <TreeItemLabel>
-                        <span className="session-group__label" title={data.cwd}>
-                          {data.label}
-                        </span>
-                        <Badge variant="secondary">{data.count}</Badge>
-                      </TreeItemLabel>
-                    </TreeItem>
-                  ) : data?.kind === "session" ? (
-                    <>
-                      <TreeItem
-                        item={item}
-                        className={
-                          "session-item" +
-                          (data.session.id === selectedId ? " session-item--selected" : "")
-                        }
-                      >
-                        <TreeItemLabel className="session-item__label">
-                          <div className="session-item__body">
-                            <div className="session-item__top">
-                              <span className="session-item__title">{data.session.title}</span>
-                              <Badge
-                                variant={data.session.agent === "cline" ? "outline" : "secondary"}
-                              >
-                                {data.session.agent}
-                              </Badge>
-                            </div>
-                            <div className="session-item__meta">
-                              <span>{formatUpdated(data.session.updatedAt)}</span>
-                              {data.session.locked && (
-                                <Badge
-                                  variant="destructive"
-                                  title={`Locked by pid ${data.session.lockHolderPid ?? "unknown"}`}
-                                >
-                                  locked
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
+      <ScrollAreaPrimitive.Root className="session-list__scroll">
+        <ScrollAreaPrimitive.Viewport className="session-list__items" ref={listRef}>
+          <Tree tree={tree} indent={14} className="session-tree">
+            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
+              {virtualizer.getVirtualItems().map((row) => {
+                const item = items[row.index];
+                if (item === undefined) return null;
+                const data = item.getItemData();
+                return (
+                  <div
+                    key={item.getId()}
+                    data-index={row.index}
+                    ref={virtualizer.measureElement}
+                    className="session-row"
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${row.start}px)`,
+                    }}
+                  >
+                    {data?.kind === "group" ? (
+                      <TreeItem item={item} className="session-group">
+                        <TreeItemLabel>
+                          <span className="session-group__label" title={data.cwd}>
+                            {data.label}
+                          </span>
+                          <Badge variant="secondary">{data.count}</Badge>
                         </TreeItemLabel>
                       </TreeItem>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="session-item__delete"
-                        aria-label={`Delete session ${data.session.title}`}
-                        title="Delete session"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (window.confirm(`Delete session "${data.session.title}"?`)) {
-                            deleteMutation.mutate(data.session.id);
+                    ) : data?.kind === "session" ? (
+                      <>
+                        <TreeItem
+                          item={item}
+                          className={
+                            "session-item" +
+                            (data.session.id === selectedId ? " session-item--selected" : "")
                           }
-                        }}
-                      >
-                        ×
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </Tree>
-      </div>
+                        >
+                          <TreeItemLabel className="session-item__label">
+                            <div className="session-item__body">
+                              <div className="session-item__top">
+                                <span className="session-item__title">{data.session.title}</span>
+                                <Badge
+                                  variant={data.session.agent === "cline" ? "outline" : "secondary"}
+                                >
+                                  {data.session.agent}
+                                </Badge>
+                              </div>
+                              <div className="session-item__meta">
+                                <span>{formatUpdated(data.session.updatedAt)}</span>
+                                {data.session.locked && (
+                                  <Badge
+                                    variant="destructive"
+                                    title={`Locked by pid ${data.session.lockHolderPid ?? "unknown"}`}
+                                  >
+                                    locked
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          </TreeItemLabel>
+                        </TreeItem>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="session-item__delete"
+                          aria-label={`Delete session ${data.session.title}`}
+                          title="Delete session"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (window.confirm(`Delete session "${data.session.title}"?`)) {
+                              deleteMutation.mutate(data.session.id);
+                            }
+                          }}
+                        >
+                          ×
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </Tree>
+        </ScrollAreaPrimitive.Viewport>
+        <ScrollBar />
+        <ScrollAreaPrimitive.Corner />
+      </ScrollAreaPrimitive.Root>
 
       <footer className="session-list__shortcuts">
         <span>

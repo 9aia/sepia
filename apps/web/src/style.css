@@ -158,11 +158,17 @@ body {
   padding: 0 8px 8px;
 }
 
+.session-list__scroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .session-list__items {
   margin: 0;
   padding: 8px;
-  overflow-y: auto;
-  flex: 1;
+  height: 100%;
 }
 
 .session-row {
