@@ -50,7 +50,7 @@ export function FilterBar({
   const [searchOpen, setSearchOpen] = useState(false);
   useHotkey("Mod+K", () => setSearchOpen(true), { preventDefault: true });
   return (
-    <div className="flex items-center gap-1 px-2 pt-3 pb-2">
+    <div className="flex items-center gap-1">
       <Popover
         open={searchOpen}
         onOpenChange={(open) => {

@@ -153,14 +153,40 @@ export function SessionList() {
 
   return (
     <Sidebar collapsible="offcanvas" ref={asideRef}>
-      <div className="flex flex-row items-center gap-2.5 border-b border-border p-4">
+      <div className="flex flex-row items-center gap-2.5 border-b border-border px-4 py-3">
         <h1 className="m-0 text-base font-medium tracking-wide">Sepia</h1>
+        <div className="ml-auto flex items-center gap-1">
+          <FilterBar
+            agents={agents}
+            filter={filter}
+            filterRef={filterRef}
+            modKey={modKey}
+            agentFilter={agentFilter}
+            dateFilter={dateFilter}
+            statusFilter={statusFilter}
+            sort={sort}
+            onFilterChange={(q) => patchSearch({ q: q === "" ? undefined : q })}
+            onToggleAgent={(id, checked) => {
+              const next = checked
+                ? [...agentFilter, id]
+                : agentFilter.filter((agent) => agent !== id);
+              patchSearch({ agents: next.length === 0 ? undefined : next.join(",") });
+            }}
+            onDateFilterChange={(value) =>
+              patchSearch({ date: value === "all" ? undefined : value })
+            }
+            onStatusFilterChange={(value) =>
+              patchSearch({ status: value === "all" ? undefined : value })
+            }
+            onSortChange={(value) => patchSearch({ sort: value === "newest" ? undefined : value })}
+          />
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex flex-col gap-1.5 border-b border-border px-4 py-3">
           <Button
-            variant="ghost"
+            variant="secondary"
             onClick={() => create(resolvedCwd)}
             disabled={createMutation.isPending}
           >
@@ -173,28 +199,6 @@ export function SessionList() {
             onChange={setCwd}
           />
         </div>
-        <FilterBar
-          agents={agents}
-          filter={filter}
-          filterRef={filterRef}
-          modKey={modKey}
-          agentFilter={agentFilter}
-          dateFilter={dateFilter}
-          statusFilter={statusFilter}
-          sort={sort}
-          onFilterChange={(q) => patchSearch({ q: q === "" ? undefined : q })}
-          onToggleAgent={(id, checked) => {
-            const next = checked
-              ? [...agentFilter, id]
-              : agentFilter.filter((agent) => agent !== id);
-            patchSearch({ agents: next.length === 0 ? undefined : next.join(",") });
-          }}
-          onDateFilterChange={(value) => patchSearch({ date: value === "all" ? undefined : value })}
-          onStatusFilterChange={(value) =>
-            patchSearch({ status: value === "all" ? undefined : value })
-          }
-          onSortChange={(value) => patchSearch({ sort: value === "newest" ? undefined : value })}
-        />
 
         <SessionSections
           sessions={filtered}
