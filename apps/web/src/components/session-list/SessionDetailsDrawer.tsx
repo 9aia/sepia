@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowReloadHorizontalIcon,
+  Cancel01Icon,
   Copy01Icon,
   Delete02Icon,
   Edit02Icon,
@@ -203,11 +204,18 @@ export function SessionDetailsDrawer({
       <DrawerContent className="[--drawer-content-height:100dvh] [--drawer-content-width:22rem]">
         {session !== undefined && (
           <>
-            <DrawerHeader>
-              <DrawerTitle>Session details</DrawerTitle>
-              <DrawerDescription>
-                Rename lives here as an overlay — the underlying agent store is read-only.
-              </DrawerDescription>
+            <DrawerHeader className="flex-row items-start justify-between">
+              <div>
+                <DrawerTitle>Session details</DrawerTitle>
+                <DrawerDescription>
+                  Rename lives here as an overlay — the underlying agent store is read-only.
+                </DrawerDescription>
+              </div>
+              <DrawerClose
+                render={<Button variant="ghost" size="icon-xs" aria-label="Close details" />}
+              >
+                <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+              </DrawerClose>
             </DrawerHeader>
 
             <div className="flex flex-col gap-1 overflow-y-auto px-4 py-3">
@@ -336,9 +344,6 @@ export function SessionDetailsDrawer({
                 <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
                 Delete
               </Button>
-              <DrawerClose render={<Button variant="ghost" className="w-full justify-start" />}>
-                Close
-              </DrawerClose>
             </DrawerFooter>
             <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
               <AlertDialogContent>
