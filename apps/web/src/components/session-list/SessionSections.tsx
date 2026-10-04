@@ -477,7 +477,7 @@ export function SessionSections({
   const pinned = sessions.filter((s) => s.pinned === true);
   if (pinned.length === 0 && recentSessions.length === 0 && projects.length === 0) return null;
   return (
-    <div className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border pb-1">
+    <div className="shrink-0 border-t border-border pb-1">
       <FlatSection
         label="Pinned"
         limit={5}

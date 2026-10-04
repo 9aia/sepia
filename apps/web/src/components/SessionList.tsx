@@ -183,7 +183,7 @@ export function SessionList() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="flex flex-col gap-1.5 border-b border-border px-4 py-3">
           <Button
             variant="secondary"

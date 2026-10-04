@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useTree } from "@headless-tree/react";
 import { syncDataLoaderFeature } from "@headless-tree/core";
-import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import type { ItemInstance } from "@headless-tree/core";
 import type { SessionSummary } from "../../lib/types";
 import { formatUpdated, projectName, resolveSession, sessionKey } from "../../lib/format";
@@ -38,7 +36,6 @@ import {
   FolderLibraryIcon,
   MoreVerticalIcon,
 } from "@hugeicons/core-free-icons";
-import { ScrollBar } from "../ui/scroll-area";
 import { SessionActions } from "./SessionActions";
 import { Tree, TreeItem, TreeItemLabel } from "../reui/tree";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -502,19 +499,16 @@ export function SessionTree({
 
   const items = tree.getItems();
 
-  const virtualizer = useVirtualizer({
-    count: items.length,
-    getScrollElement: () => listRef.current,
-    estimateSize: () => 76,
-    overscan: 8,
-  });
+  const scrollToIndex = (index: number): void => {
+    listRef.current?.querySelector(`[data-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
+  };
 
   // Keep the selected session's row visible (its group may be collapsed).
   useEffect(() => {
     if (selectedId === null) return;
     const index = items.findIndex((item) => item.getId() === `session:${selectedId}`);
-    if (index !== -1) virtualizer.scrollToIndex(index, { align: "auto" });
-    // items/virtualizer change every render; only re-scroll on selection change.
+    if (index !== -1) scrollToIndex(index);
+    // items change every render; only re-scroll on selection change.
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sessionRows = items.filter((item) => item.getItemData()?.kind === "session");
@@ -528,7 +522,7 @@ export function SessionTree({
     const data = row?.getItemData();
     if (data?.kind !== "session") return;
     const flatIndex = items.findIndex((item) => item.getId() === row.getId());
-    if (flatIndex !== -1) virtualizer.scrollToIndex(flatIndex, { align: "auto" });
+    if (flatIndex !== -1) scrollToIndex(flatIndex);
     onSelect(sessionKey(data.session));
   };
 
@@ -574,53 +568,32 @@ export function SessionTree({
   );
 
   return (
-    <ScrollAreaPrimitive.Root className="flex min-h-0 flex-1 flex-col">
-      <ScrollAreaPrimitive.Viewport className="h-full p-2" ref={listRef}>
-        <Tree tree={tree} indent={14}>
-          <div className="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-            {virtualizer.getVirtualItems().map((row) => {
-              const item = items[row.index];
-              if (item === undefined) return null;
-              const data = item.getItemData();
-              return (
-                <div
-                  key={item.getId()}
-                  data-index={row.index}
-                  ref={virtualizer.measureElement}
-                  className="group/row border-b border-border/50"
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    transform: `translateY(${row.start}px)`,
-                  }}
-                >
-                  {data?.kind === "dir" ? (
-                    <GroupRow
-                      item={item}
-                      data={data}
-                      sessions={sessions}
-                      onNewSession={onNewSession}
-                    />
-                  ) : data?.kind === "session" ? (
-                    <SessionItemRow
-                      item={item}
-                      session={data.session}
-                      selected={sessionKey(data.session) === selectedId}
-                      onSelect={onSelect}
-                      onDetails={onDetails}
-                      onDelete={onDelete}
-                    />
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </Tree>
-      </ScrollAreaPrimitive.Viewport>
-      <ScrollBar />
-      <ScrollAreaPrimitive.Corner />
-    </ScrollAreaPrimitive.Root>
+    <div className="p-2" ref={listRef}>
+      <Tree tree={tree} indent={14}>
+        {items.map((item, index) => {
+          const data = item.getItemData();
+          return (
+            <div
+              key={item.getId()}
+              data-index={index}
+              className="group/row border-b border-border/50"
+            >
+              {data?.kind === "dir" ? (
+                <GroupRow item={item} data={data} sessions={sessions} onNewSession={onNewSession} />
+              ) : data?.kind === "session" ? (
+                <SessionItemRow
+                  item={item}
+                  session={data.session}
+                  selected={sessionKey(data.session) === selectedId}
+                  onSelect={onSelect}
+                  onDetails={onDetails}
+                  onDelete={onDelete}
+                />
+              ) : null}
+            </div>
+          );
+        })}
+      </Tree>
+    </div>
   );
 }
