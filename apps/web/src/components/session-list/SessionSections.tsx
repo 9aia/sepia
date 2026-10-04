@@ -2,13 +2,11 @@ import { useState } from "react";
 import {
   Add01Icon,
   ChevronRightIcon,
-  Clock01Icon,
   Delete02Icon,
   Edit02Icon,
   FolderLibraryIcon,
   InformationCircleIcon,
   MoreVerticalIcon,
-  PinIcon,
   UserAdd01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -162,47 +160,81 @@ function SectionSessionRow({
   );
 }
 
+/** Section header: collapses content; the chevron is visible when closed, else on hover. */
+export function SectionHeader({
+  label,
+  open,
+  onToggle,
+  action,
+}: {
+  readonly label: string;
+  readonly open: boolean;
+  onToggle: () => void;
+  readonly action?: React.ReactNode;
+}) {
+  return (
+    <div className="group/section flex items-center justify-between px-3 pt-3 pb-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex items-center gap-1 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        aria-expanded={open}
+      >
+        <HugeiconsIcon
+          icon={ChevronRightIcon}
+          strokeWidth={2}
+          className={`size-3.5 transition-all ${
+            open ? "rotate-90 opacity-0 group-hover/section:opacity-100" : ""
+          }`}
+        />
+        {label}
+      </button>
+      {action}
+    </div>
+  );
+}
+
 function FlatSection({
   label,
-  icon,
   limit,
   sessions,
   selectedId,
   ...handlers
 }: {
   readonly label: string;
-  readonly icon: typeof PinIcon;
   readonly limit: number;
   readonly sessions: ReadonlyArray<SessionSummary>;
   readonly selectedId: string | null;
 } & RowHandlers) {
   const [showAll, setShowAll] = useState(false);
+  const [open, setOpen] = useState(true);
   if (sessions.length === 0) return null;
   const shown = showAll ? sessions : sessions.slice(0, limit);
   return (
     <section>
-      <h3 className="flex items-center gap-1.5 px-3 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-        <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />
-        {label}
-      </h3>
-      <div className="flex flex-col gap-0.5">
-        {shown.map((session) => (
-          <SectionSessionRow
-            key={session.id}
-            session={session}
-            selected={sessionKey(session) === selectedId}
-            {...handlers}
-          />
-        ))}
-      </div>
-      {sessions.length > limit && (
-        <button
-          type="button"
-          className="mt-0.5 w-full px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
-          onClick={() => setShowAll((v) => !v)}
-        >
-          {showAll ? "Show less" : `Show ${sessions.length - limit} more`}
-        </button>
+      <SectionHeader label={label} open={open} onToggle={() => setOpen((v) => !v)} />
+      {open && (
+        <>
+          <div className="flex flex-col gap-0.5">
+            {shown.map((session) => (
+              <SectionSessionRow
+                key={session.id}
+                session={session}
+                selected={sessionKey(session) === selectedId}
+                {...handlers}
+              />
+            ))}
+          </div>
+          {sessions.length > limit && (
+            <button
+              type="button"
+              className="mt-0.5 w-full px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+              onClick={() => setShowAll((v) => !v)}
+            >
+              {showAll ? "Show less" : `Show ${sessions.length - limit} more`}
+            </button>
+          )}
+        </>
       )}
     </section>
   );
@@ -281,104 +313,111 @@ function ProjectsSection({
     setDialog(null);
   };
 
+  const [open, setOpen] = useState(true);
   return (
     <section>
-      <div className="flex items-center justify-between px-3 pt-3 pb-1">
-        <h3 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} className="size-3.5" />
-          Projects
-        </h3>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="New project"
-          title="New project"
-          onClick={() => setDialog({ name: "" })}
-        >
-          <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-        </Button>
-      </div>
-      {projects.length === 0 && (
+      <SectionHeader
+        label="Projects"
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+        action={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="New project"
+            title="New project"
+            onClick={() => setDialog({ name: "" })}
+          >
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+          </Button>
+        }
+      />
+      {open && projects.length === 0 && (
         <p className="px-3 py-1 text-xs text-muted-foreground">No projects yet.</p>
       )}
-      {projects.map((project) => {
-        const members = sessions.filter((s) => s.projectIds.includes(project.id));
-        const open = !collapsed[project.id];
-        return (
-          <div key={project.id} className="group/row relative">
-            <button
-              type="button"
-              className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
-              onClick={() => setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))}
-            >
-              <HugeiconsIcon
-                icon={ChevronRightIcon}
-                strokeWidth={2}
-                className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
-              />
-              <HugeiconsIcon
-                icon={FolderLibraryIcon}
-                strokeWidth={2}
-                className="size-4 shrink-0 text-muted-foreground"
-              />
-              <span className="min-w-0 flex-1 truncate font-medium" title={project.name}>
-                {project.name}
-              </span>
-            </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
-                    aria-label={`Actions for project ${project.name}`}
-                    title="Project actions"
-                  />
+      {open &&
+        projects.map((project) => {
+          const members = sessions.filter((s) => s.projectIds.includes(project.id));
+          const open = !collapsed[project.id];
+          return (
+            <div key={project.id} className="group/row relative">
+              <button
+                type="button"
+                className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+                onClick={() =>
+                  setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
                 }
-                onClick={(event) => event.stopPropagation()}
               >
-                <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuItem onClick={() => setDetailsFor(project)}>
-                  <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
-                  Project details
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setAddFor(project)}>
-                  <HugeiconsIcon icon={UserAdd01Icon} strokeWidth={2} />
-                  Add session…
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setDialog({ id: project.id, name: project.name })}>
-                  <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-                  Rename project
-                </DropdownMenuItem>
-                <DropdownMenuItem variant="destructive" onClick={() => setDeleteFor(project)}>
-                  <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-                  Delete project
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            {open && (
-              <div className="ml-4 flex flex-col gap-0.5 border-l border-border/50 pl-1.5">
-                {members.length === 0 && (
-                  <p className="px-3 py-1 text-xs text-muted-foreground">
-                    No sessions — use &quot;Projects…&quot; on a session.
-                  </p>
-                )}
-                {members.map((session) => (
-                  <SectionSessionRow
-                    key={session.id}
-                    session={session}
-                    selected={sessionKey(session) === selectedId}
-                    {...handlers}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
+                <HugeiconsIcon
+                  icon={ChevronRightIcon}
+                  strokeWidth={2}
+                  className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+                />
+                <HugeiconsIcon
+                  icon={FolderLibraryIcon}
+                  strokeWidth={2}
+                  className="size-4 shrink-0 text-muted-foreground"
+                />
+                <span className="min-w-0 flex-1 truncate font-medium" title={project.name}>
+                  {project.name}
+                </span>
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                      aria-label={`Actions for project ${project.name}`}
+                      title="Project actions"
+                    />
+                  }
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem onClick={() => setDetailsFor(project)}>
+                    <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
+                    Project details
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setAddFor(project)}>
+                    <HugeiconsIcon icon={UserAdd01Icon} strokeWidth={2} />
+                    Add session…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setDialog({ id: project.id, name: project.name })}
+                  >
+                    <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
+                    Rename project
+                  </DropdownMenuItem>
+                  <DropdownMenuItem variant="destructive" onClick={() => setDeleteFor(project)}>
+                    <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                    Delete project
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {open && (
+                <div className="ml-4 flex flex-col gap-0.5 border-l border-border/50 pl-1.5">
+                  {members.length === 0 && (
+                    <p className="px-3 py-1 text-xs text-muted-foreground">
+                      No sessions — use &quot;Projects…&quot; on a session.
+                    </p>
+                  )}
+                  {members.map((session) => (
+                    <SectionSessionRow
+                      key={session.id}
+                      session={session}
+                      selected={sessionKey(session) === selectedId}
+                      {...handlers}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       {dialog !== null && (
         <ProjectNameDialog state={dialog} onClose={() => setDialog(null)} onSubmit={submitName} />
       )}
@@ -441,7 +480,6 @@ export function SessionSections({
     <div className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border pb-1">
       <FlatSection
         label="Pinned"
-        icon={PinIcon}
         limit={5}
         sessions={pinned}
         selectedId={selectedId}
@@ -449,7 +487,6 @@ export function SessionSections({
       />
       <FlatSection
         label="Recents"
-        icon={Clock01Icon}
         limit={8}
         sessions={recentSessions}
         selectedId={selectedId}

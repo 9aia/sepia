@@ -33,7 +33,7 @@ import { settingsStore } from "../lib/settings";
 import { SessionTree } from "./session-list/SessionTree";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
 import { SessionDetailsDrawer } from "./session-list/SessionDetailsDrawer";
-import { SessionSections } from "./session-list/SessionSections";
+import { SectionHeader, SessionSections } from "./session-list/SessionSections";
 import { getRecents } from "../lib/recents";
 import { UserProfile } from "./session-list/UserProfile";
 
@@ -80,6 +80,7 @@ export function SessionList() {
   const createMutation = useCreateSession();
   const details = useStore(sepiaStore, (state) => state.detailsFor);
   const [modKey, setModKey] = useState("Ctrl");
+  const [foldersOpen, setFoldersOpen] = useState(true);
   const createCwd = useStore(sepiaStore, (state) => state.createCwd);
   const cwd = useStore(sepiaStore, (state) => state.cwd);
   const { data: user } = useUserInfo();
@@ -230,23 +231,26 @@ export function SessionList() {
           />
         )}
 
-        <h3 className="flex items-center gap-1.5 px-3 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} className="size-3.5" />
-          Folders
-        </h3>
-        <SessionTree
-          sessions={filtered}
-          selectedId={selectedId}
-          hotkeyTarget={asideRef}
-          onSelect={setSelectedId}
-          onDetails={(id, rename) => setDetailsFor({ id, rename })}
-          onDelete={(id) => deleteMutation.mutate(id)}
-          onNewSession={setCreateCwd}
+        <SectionHeader
+          label="Folders"
+          open={foldersOpen}
+          onToggle={() => setFoldersOpen((v) => !v)}
         />
+        {foldersOpen && (
+          <SessionTree
+            sessions={filtered}
+            selectedId={selectedId}
+            hotkeyTarget={asideRef}
+            onSelect={setSelectedId}
+            onDetails={(id, rename) => setDetailsFor({ id, rename })}
+            onDelete={(id) => deleteMutation.mutate(id)}
+            onNewSession={setCreateCwd}
+          />
+        )}
       </div>
 
       <SessionDetailsDrawer
-        session={sessions.find((s) => s.id === details?.id)}
+        session={resolveSession(sessions, details?.id)}
         focusRename={details?.rename ?? false}
         onClose={() => setDetailsFor(null)}
         onOpen={setSelectedId}
