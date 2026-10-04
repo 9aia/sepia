@@ -74,7 +74,10 @@ function RowContent({ row }: { readonly row: ChatRow }) {
     const role = message.role === "user" ? "user" : "assistant";
     const error = parseErrorPayload(message.content);
     return (
-      <Bubble variant={role === "user" ? "default" : "ghost"}>
+      <Bubble
+        align={role === "user" ? "end" : "start"}
+        variant={role === "user" ? "default" : "ghost"}
+      >
         <div className={`flex flex-col gap-1.5 ${role === "user" ? "items-end" : "items-start"}`}>
           <RowAvatar role={role} />
           <BubbleContent variant={role === "user" ? "default" : "ghost"}>
@@ -125,7 +128,10 @@ function RowContent({ row }: { readonly row: ChatRow }) {
   // same JSON should still render as text.
   const error = role === "assistant" ? parseErrorPayload(message.content) : null;
   return (
-    <Bubble variant={role === "user" ? "default" : "ghost"}>
+    <Bubble
+      align={role === "user" ? "end" : "start"}
+      variant={role === "user" ? "default" : "ghost"}
+    >
       <div className={`flex flex-col gap-1.5 ${role === "user" ? "items-end" : "items-start"}`}>
         <RowAvatar role={role} />
         <BubbleContent variant={role === "user" ? "default" : "ghost"}>
