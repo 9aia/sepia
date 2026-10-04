@@ -24,6 +24,11 @@ Treat network access to the API as remote code execution.
   reverse proxy that terminates TLS and injects
   `Authorization: Bearer <token>` when forwarding `/api`, so the token never
   reaches the browser (see `docker-compose.yml` + `Caddyfile`).
+- Deployments without a token-injecting proxy still work: the web UI shows a
+  token gate on 401 and stores the token in `localStorage` (`sepia:token`).
+  It is sent as `Authorization: Bearer` on API calls and as `?access_token=`
+  on the SSE stream (EventSource cannot set headers). The access log only
+  records `url.pathname`, so the token never appears in logs.
 - CORS is not the gate — it only affects browsers. Auth applies to every
   `/api/*` route except `GET /api/health`.
 - The server opens the Devin store **read-only**; session writes happen inside
@@ -44,6 +49,7 @@ Treat network access to the API as remote code execution.
 | `SEPIA_SWEEP_MS`              | `30000`                                       | Idle-sweep interval.                                               |
 | `SEPIA_LOCK_TTL_MS`           | `5000`                                        | Lock-probe result cache.                                           |
 | `SEPIA_HISTORY_LIMIT`         | `500`                                         | Default tail limit for `GET .../history`.                          |
+| —                             | —                                             | `GET .../history?before=<index>` pages backwards; response `start` is the next cursor. |
 | `SEPIA_SSE_KEEPALIVE_MS`      | `15000`                                       | SSE keep-alive frame interval; `0` disables.                       |
 | `SEPIA_INHERIT_ENV`           | unset                                         | `1` forwards the whole parent env to agents (allowlist otherwise). |
 | `SEPIA_DEBUG`                 | unset                                         | `1` streams agent stderr into the server log.                      |
