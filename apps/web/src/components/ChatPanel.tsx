@@ -69,7 +69,7 @@ export function ChatPanel() {
     ? messageOf(historyQuery.error, "Failed to load history")
     : null;
 
-  const [permission, setPermission] = useState<PermissionRequest | null>(null);
+  const [permissions, setPermissions] = useState<PermissionRequest[]>([]);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>("connecting");
   const [running, setRunning] = useState(false);
   const [liveMessages, setLiveMessages] = useState<LiveMessage[]>([]);
@@ -87,7 +87,7 @@ export function ChatPanel() {
   }, [running, historyQuery.data]);
 
   useEffect(() => {
-    setPermission(null);
+    setPermissions([]);
     setRunning(false);
     setLiveMessages([]);
     // The stream subscribes to live-session events; it only exists once the
@@ -98,7 +98,11 @@ export function ChatPanel() {
       (event) => {
         if (event.type === "CUSTOM" && event.name === PERMISSION_EVENT) {
           const parsed = parsePermission(event.value);
-          if (parsed) setPermission(parsed);
+          if (parsed) {
+            setPermissions((prev) =>
+              prev.some((p) => p.requestId === parsed.requestId) ? prev : [...prev, parsed],
+            );
+          }
           return;
         }
         setLiveMessages((messages) => applyAguiEvent(messages, event));
@@ -113,15 +117,25 @@ export function ChatPanel() {
     );
   }, [sessionId, attachReady, queryClient]);
 
-  const resolvePermission = useCallback(
-    (optionId: string | null) => {
-      if (!sessionId || !permission) return;
-      const requestId = permission.requestId;
-      setPermission(null);
-      respondMutation.mutate({ sessionId, requestId, optionId });
+  const resolvePermissions = useCallback(
+    (answers: Readonly<Record<string, string>>) => {
+      if (!sessionId || permissions.length === 0) return;
+      const pending = permissions;
+      setPermissions([]);
+      for (const request of pending) {
+        respondMutation.mutate({
+          sessionId,
+          requestId: request.requestId,
+          optionId: answers[request.requestId] ?? null,
+        });
+      }
     },
-    [sessionId, permission, respondMutation],
+    [sessionId, permissions, respondMutation],
   );
+
+  const cancelPermissions = useCallback(() => {
+    resolvePermissions({});
+  }, [resolvePermissions]);
 
   const addUserMessage = useCallback((text: string) => {
     setLiveMessages((messages) => [
@@ -183,7 +197,11 @@ export function ChatPanel() {
         )}
       </div>
 
-      <ApprovalDialog request={permission} onResolve={resolvePermission} />
+      <ApprovalDialog
+        requests={permissions}
+        onResolve={resolvePermissions}
+        onCancel={cancelPermissions}
+      />
     </section>
   );
 }
