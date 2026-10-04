@@ -120,6 +120,17 @@ body {
   color: var(--destructive);
 }
 
+.session-list__search {
+  margin: 0 8px 8px;
+  width: auto;
+}
+
+.session-list__filters {
+  display: flex;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+
 .session-list__items {
   margin: 0;
   padding: 8px;

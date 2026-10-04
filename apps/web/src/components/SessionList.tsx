@@ -4,6 +4,7 @@ import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
 import { sepiaStore, setSelectedId } from "../lib/store";
+import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
 import { useCreateSession } from "../hooks/query/useCreateSession";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
@@ -36,6 +37,22 @@ const inFormField = (): boolean => {
 const messageOf = (err: unknown, fallback: string): string =>
   err instanceof Error ? err.message : fallback;
 
+type DateFilter = "all" | "day" | "week" | "month";
+type StatusFilter = "all" | "free" | "locked";
+type SortKey = "newest" | "oldest" | "title";
+
+const DATE_CUTOFFS: Record<Exclude<DateFilter, "all">, number> = {
+  day: 24 * 60 * 60 * 1000,
+  week: 7 * 24 * 60 * 60 * 1000,
+  month: 30 * 24 * 60 * 60 * 1000,
+};
+
+const sorters: Record<SortKey, (a: SessionSummary, b: SessionSummary) => number> = {
+  newest: (a, b) => b.updatedAt.localeCompare(a.updatedAt),
+  oldest: (a, b) => a.updatedAt.localeCompare(b.updatedAt),
+  title: (a, b) => a.title.localeCompare(b.title),
+};
+
 export function SessionList() {
   const { data: sessions = [], isLoading: loading, error } = useSessions();
   const { data: agents = [] } = useAgents();
@@ -50,6 +67,10 @@ export function SessionList() {
   const [title, setTitle] = useState("");
   const [agent, setAgent] = useState("devin");
   const [filter, setFilter] = useState("");
+  const [agentFilter, setAgentFilter] = useState<string>("all");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [sort, setSort] = useState<SortKey>("newest");
   const [debouncedFilter] = useDebouncedValue(filter, { wait: 200 });
   const asideRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -58,13 +79,23 @@ export function SessionList() {
 
   const filtered = useMemo(() => {
     const needle = debouncedFilter.trim().toLowerCase();
-    if (needle === "") return sessions;
-    return sessions.filter((session) =>
-      [session.title, session.cwd, session.id].some((field) =>
-        field.toLowerCase().includes(needle),
-      ),
-    );
-  }, [sessions, debouncedFilter]);
+    const cutoff = dateFilter === "all" ? null : DATE_CUTOFFS[dateFilter];
+    const now = Date.now();
+    return sessions
+      .filter((session) => {
+        if (agentFilter !== "all" && session.agent !== agentFilter) return false;
+        if (statusFilter === "locked" && !session.locked) return false;
+        if (statusFilter === "free" && session.locked) return false;
+        if (cutoff !== null && now - new Date(session.updatedAt).getTime() > cutoff) return false;
+        return (
+          needle === "" ||
+          [session.title, session.cwd, session.id].some((field) =>
+            field.toLowerCase().includes(needle),
+          )
+        );
+      })
+      .sort(sorters[sort]);
+  }, [sessions, debouncedFilter, agentFilter, dateFilter, statusFilter, sort]);
 
   const virtualizer = useVirtualizer({
     count: filtered.length,
@@ -131,7 +162,7 @@ export function SessionList() {
     <aside className="session-list" ref={asideRef}>
       <header className="session-list__header">
         <h1 className="session-list__title">sepia</h1>
-        <span className="session-list__count">{sessions.length}</span>
+        <span className="session-list__count">{filtered.length}</span>
       </header>
 
       <form className="session-list__new" onSubmit={submit}>
@@ -179,12 +210,80 @@ export function SessionList() {
 
       <Input
         type="search"
+        className="session-list__search"
         placeholder="Filter sessions… (Ctrl/⌘+K)"
         aria-label="Filter sessions"
         ref={filterRef}
         value={filter}
         onChange={(event) => setFilter(event.target.value)}
       />
+
+      <div className="session-list__filters">
+        <Select
+          value={agentFilter}
+          onValueChange={(value) => {
+            if (value !== null) setAgentFilter(value);
+          }}
+        >
+          <SelectTrigger aria-label="Filter by agent" className="h-7 flex-1 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All agents</SelectItem>
+            {agents.map((a) => (
+              <SelectItem key={a.id} value={a.id}>
+                {a.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={dateFilter}
+          onValueChange={(value) => {
+            if (value !== null) setDateFilter(value as DateFilter);
+          }}
+        >
+          <SelectTrigger aria-label="Filter by recency" className="h-7 flex-1 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any time</SelectItem>
+            <SelectItem value="day">Today</SelectItem>
+            <SelectItem value="week">Last 7 days</SelectItem>
+            <SelectItem value="month">Last 30 days</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={statusFilter}
+          onValueChange={(value) => {
+            if (value !== null) setStatusFilter(value as StatusFilter);
+          }}
+        >
+          <SelectTrigger aria-label="Filter by lock status" className="h-7 flex-1 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any status</SelectItem>
+            <SelectItem value="free">Free</SelectItem>
+            <SelectItem value="locked">Locked</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={sort}
+          onValueChange={(value) => {
+            if (value !== null) setSort(value as SortKey);
+          }}
+        >
+          <SelectTrigger aria-label="Sort sessions" className="h-7 flex-1 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">Newest</SelectItem>
+            <SelectItem value="oldest">Oldest</SelectItem>
+            <SelectItem value="title">Title</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       {loading && <p className="session-list__status">Loading sessions…</p>}
       {error !== null && (
