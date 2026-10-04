@@ -546,17 +546,15 @@ function ProjectsSection({
               {open && (
                 <div className="ml-4 flex flex-col gap-1 border-l border-border/50 pl-3">
                   {members.length === 0 && (
-                    <div className="mr-1 flex items-center gap-2 rounded-md border border-dashed border-border/60 px-2.5 py-2 text-xs text-muted-foreground">
-                      <HugeiconsIcon
-                        icon={FolderLibraryIcon}
-                        strokeWidth={2}
-                        className="size-3.5 shrink-0 opacity-60"
-                      />
-                      <span className="min-w-0">
-                        Empty — use <span className="font-medium text-foreground/80">+</span> above,
-                        or move a session in via its{" "}
-                        <span className="font-medium text-foreground/80">Projects…</span> action.
-                      </span>
+                    <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
+                      Empty.
+                      <button
+                        type="button"
+                        className="rounded-md px-1 py-0.5 font-medium text-foreground/80 transition-colors hover:bg-accent/60 hover:text-foreground"
+                        onClick={() => newSessionIn(project, members)}
+                      >
+                        New session
+                      </button>
                     </div>
                   )}
                   {members.map((session) => (
