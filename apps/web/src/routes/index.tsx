@@ -63,7 +63,7 @@ function Home() {
   if (error instanceof AuthError) return <TokenGate />;
 
   return (
-    <SidebarProvider style={{ "--sidebar-width": "20rem" } as CSSProperties}>
+    <SidebarProvider style={{ "--sidebar-width": "24rem" } as CSSProperties}>
       <SessionList />
       <SidebarInset>
         <ChatPanel />
