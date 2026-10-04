@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AlertCircleIcon, BotIcon } from "@hugeicons/core-free-icons";
+import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { useSessions } from "../hooks/query/useSessions";
@@ -23,6 +24,8 @@ import { settingsStore } from "../lib/settings";
 import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
+import { parseSystemContext, type SystemContext } from "../lib/systemContext";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { ErrorBanner } from "./ErrorBanner";
 import {
   MessageScroller,
@@ -47,9 +50,11 @@ import {
 
 type Row =
   | { readonly kind: "history"; readonly message: HistoryMessage }
+  | { readonly kind: "system"; readonly context: SystemContext }
   | { readonly kind: "live"; readonly message: LiveMessage };
 
 function RowContent({ row }: { readonly row: Row }) {
+  if (row.kind === "system") return <SystemContextRow context={row.context} />;
   if (row.kind === "history") {
     const message = row.message;
     if (message.toolName !== undefined) {
@@ -246,11 +251,13 @@ function ChatRows({
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index];
             if (row === undefined) return null;
-            const isTurnStart = row.message.role === "user";
+            const isTurnStart = row.kind !== "system" && row.message.role === "user";
             const key =
               row.kind === "history"
                 ? `h-${row.message.createdAt}-${virtualRow.index}`
-                : `l-${row.message.id}`;
+                : row.kind === "system"
+                  ? `sys-${virtualRow.index}`
+                  : `l-${row.message.id}`;
             return (
               <MessageScrollerItem
                 key={key}
@@ -274,6 +281,80 @@ function ChatRows({
         </div>
       </MessageScrollerContent>
     </MessageScrollerViewport>
+  );
+}
+
+/** The agent's stored system prompt, parsed into a compact context card. */
+function SystemContextRow({ context }: { readonly context: SystemContext }) {
+  const summary = [context.workspaces[0], context.platform, context.osVersion, context.date]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+  return (
+    <Collapsible className="rounded-lg border border-border/60 bg-muted/30">
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:text-foreground">
+        <span className="font-medium text-foreground/80">Session context</span>
+        <span className="min-w-0 flex-1 truncate">
+          {summary !== ""
+            ? summary
+            : context.rules.length > 0
+              ? `${context.rules.length} rule${context.rules.length === 1 ? "" : "s"}`
+              : "System prompt"}
+        </span>
+        <HugeiconsIcon
+          icon={ArrowDown01Icon}
+          strokeWidth={2}
+          className="size-3.5 shrink-0 transition-transform group-data-[panel-open]:rotate-180"
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="flex flex-col gap-3 border-t border-border/60 px-3 py-2.5 text-xs">
+          {context.workspaces.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="font-medium text-foreground/80">Workspace</span>
+              {context.workspaces.map((cwd) => (
+                <code key={cwd} className="truncate text-muted-foreground">
+                  {cwd}
+                </code>
+              ))}
+            </div>
+          )}
+          {(context.platform !== null || context.osVersion !== null || context.date !== null) && (
+            <div className="flex flex-col gap-1">
+              <span className="font-medium text-foreground/80">Environment</span>
+              <span className="text-muted-foreground">
+                {[
+                  context.platform !== null ? `Platform: ${context.platform}` : null,
+                  context.osVersion !== null ? `OS: ${context.osVersion}` : null,
+                  context.date !== null ? `Date: ${context.date}` : null,
+                ]
+                  .filter((line): line is string => line !== null)
+                  .join(" · ")}
+              </span>
+            </div>
+          )}
+          {context.rules.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="font-medium text-foreground/80">Rules</span>
+              {context.rules.map((rule) => (
+                <code key={`${rule.name}:${rule.path}`} className="truncate text-muted-foreground">
+                  {rule.name} — {rule.path}
+                </code>
+              ))}
+            </div>
+          )}
+          {context.promptText !== "" && (
+            <details className="group/prompt">
+              <summary className="cursor-pointer font-medium text-foreground/80 select-none">
+                System prompt
+              </summary>
+              <pre className="mt-1.5 max-h-64 overflow-y-auto text-muted-foreground whitespace-pre-wrap">
+                {context.promptText}
+              </pre>
+            </details>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -307,13 +388,26 @@ export function SessionChat({
   // Held by another process → the send asks to take over first.
   const [takeoverPrompt, setTakeoverPrompt] = useState<string | null>(null);
 
-  const rows = useMemo<Row[]>(
-    () => [
-      ...history.map((message): Row => ({ kind: "history", message })),
+  const rows = useMemo<Row[]>(() => {
+    // All system nodes roll up into one context card at the top — devin emits
+    // them per-turn, so positional runs would scatter the cards.
+    const system: HistoryMessage[] = [];
+    const conversation: HistoryMessage[] = [];
+    for (const message of history) {
+      (message.role === "system" ? system : conversation).push(message);
+    }
+    const context = parseSystemContext(system);
+    const empty =
+      context.workspaces.length === 0 &&
+      context.rules.length === 0 &&
+      context.promptText === "" &&
+      context.platform === null;
+    return [
+      ...(empty ? [] : [{ kind: "system", context } satisfies Row]),
+      ...conversation.map((message): Row => ({ kind: "history", message })),
       ...liveMessages.map((message): Row => ({ kind: "live", message })),
-    ],
-    [history, liveMessages],
-  );
+    ];
+  }, [history, liveMessages]);
 
   const send = (text: string): void => {
     setSubmitting(true);
