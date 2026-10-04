@@ -10,8 +10,10 @@ export interface SepiaState {
   keybindsOpen: boolean;
   /** Session shown in the details drawer; rename opens its dialog. */
   detailsFor: { id: string; rename: boolean } | null;
-  /** Pending cwd for "New session here" — consumed by the create form. */
+  /** Pending cwd for "New session here" — consumed by SessionList. */
   createCwd: string | null;
+  /** Working directory new sessions are created in; null = fall back to defaults. */
+  cwd: string | null;
 }
 
 export const sepiaStore = new Store<SepiaState>({
@@ -19,6 +21,7 @@ export const sepiaStore = new Store<SepiaState>({
   keybindsOpen: false,
   detailsFor: null,
   createCwd: null,
+  cwd: null,
 });
 
 export const setSelectedId = (id: string | null): void => {
@@ -32,6 +35,10 @@ export const setKeybindsOpen = (open: boolean): void => {
 
 export const setDetailsFor = (details: SepiaState["detailsFor"]): void => {
   sepiaStore.setState((prev) => ({ ...prev, detailsFor: details }));
+};
+
+export const setCwd = (cwd: string | null): void => {
+  sepiaStore.setState((prev) => ({ ...prev, cwd }));
 };
 
 export const setCreateCwd = (cwd: string | null): void => {

@@ -3,15 +3,19 @@ import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
 import { AlertCircleIcon, FolderOpenIcon, SearchAreaIcon } from "@hugeicons/core-free-icons";
-import { sepiaStore, setCreateCwd, setDetailsFor, setSelectedId } from "../lib/store";
+import { sepiaStore, setCreateCwd, setCwd, setDetailsFor, setSelectedId } from "../lib/store";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
+import { useCreateSession } from "../hooks/query/useCreateSession";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
+import { useUserInfo } from "../hooks/query/useUserInfo";
+import { modelArgsFor } from "../lib/models";
 import { useSessions } from "../hooks/query/useSessions";
+import { Button } from "./ui/button";
 import { Sidebar } from "./ui/sidebar";
 import { EmptyScreen } from "./EmptyScreen";
-import { CreateForm } from "./session-list/CreateForm";
+import { CwdPicker } from "./session-list/CwdPicker";
 import {
   FilterBar,
   type DateFilter,
@@ -66,22 +70,37 @@ export function SessionList() {
   const dateFilter = (search.date as DateFilter | undefined) ?? "all";
   const statusFilter = (search.status as StatusFilter | undefined) ?? "all";
   const sort = (search.sort as SortKey | undefined) ?? "newest";
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const createMutation = useCreateSession();
   const details = useStore(sepiaStore, (state) => state.detailsFor);
   const [modKey, setModKey] = useState("Ctrl");
   const createCwd = useStore(sepiaStore, (state) => state.createCwd);
+  const cwd = useStore(sepiaStore, (state) => state.cwd);
+  const { data: user } = useUserInfo();
   useEffect(() => {
     if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
   }, []);
-  // "New session here" from a dir row → reveal the advanced section (where
-  // cwd lives). CreateForm consumes the pending cwd itself.
+  // The dir new sessions spawn in: explicit pick > settings default >
+  // most recent session's > home.
+  const resolvedCwd = cwd ?? settings.defaultCwd ?? sessions[0]?.cwd ?? user?.homedir ?? "/";
+  const create = (dir: string): void => {
+    const agent = settings.defaultAgent ?? agents[0]?.id;
+    createMutation.mutate({
+      cwd: dir,
+      agent,
+      ...modelArgsFor(agent ?? "", null, settings),
+    });
+  };
+  // "New session here" from a dir row → set the context dir and create.
   useEffect(() => {
-    if (createCwd !== null) setAdvancedOpen(true);
+    if (createCwd === null) return;
+    setCreateCwd(null);
+    setCwd(createCwd);
+    create(createCwd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createCwd]);
   const [debouncedFilter] = useDebouncedValue(filter, { wait: 200 });
   const asideRef = useRef<HTMLDivElement | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
-  const cwdRef = useRef<HTMLInputElement | null>(null);
 
   const filtered = useMemo(() => {
     const needle = debouncedFilter.trim().toLowerCase();
@@ -114,8 +133,7 @@ export function SessionList() {
 
   useHotkey("N", () => {
     if (inFormField()) return;
-    setAdvancedOpen(true);
-    requestAnimationFrame(() => cwdRef.current?.focus());
+    create(resolvedCwd);
   });
   useHotkey(
     "Escape",
@@ -139,14 +157,16 @@ export function SessionList() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <CreateForm
-          cwdRef={cwdRef}
-          agents={agents}
-          defaultCwd={settings.defaultCwd ?? sessions[0]?.cwd}
-          defaultAgent={settings.defaultAgent}
-          open={advancedOpen}
-          onOpenChange={setAdvancedOpen}
-        />
+        <div className="flex flex-col gap-1.5 border-b border-border px-4 py-3">
+          <Button onClick={() => create(resolvedCwd)} disabled={createMutation.isPending}>
+            {createMutation.isPending ? "Creating…" : "New session"}
+          </Button>
+          <CwdPicker
+            value={resolvedCwd}
+            dirs={[...new Set(sessions.map((s) => s.cwd))]}
+            onChange={setCwd}
+          />
+        </div>
         <FilterBar
           agents={agents}
           filter={filter}
