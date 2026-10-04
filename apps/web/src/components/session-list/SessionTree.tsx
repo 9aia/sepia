@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useHotkey } from "@tanstack/react-hotkeys";
+import { useAppHotkey } from "../../lib/keybinds";
 import { useTree } from "@headless-tree/react";
 import { syncDataLoaderFeature } from "@headless-tree/core";
 import type { ItemInstance } from "@headless-tree/core";
@@ -554,16 +554,16 @@ export function SessionTree({
   };
 
   // ignoreInputs: false so arrows still navigate while the filter input is focused.
-  useHotkey(
-    "ArrowDown",
+  useAppHotkey(
+    "nav.down",
     () => {
       const next = selectedIndex === -1 ? 0 : Math.min(selectedIndex + 1, sessionRows.length - 1);
       selectByIndex(next);
     },
     { target: hotkeyTarget, preventDefault: true, ignoreInputs: false },
   );
-  useHotkey(
-    "ArrowUp",
+  useAppHotkey(
+    "nav.up",
     () => {
       const next = selectedIndex === -1 ? sessionRows.length - 1 : Math.max(selectedIndex - 1, 0);
       selectByIndex(next);
@@ -577,16 +577,16 @@ export function SessionTree({
     if (session === undefined) return undefined;
     return tree.getItemInstance(`dir:${session.cwd}`);
   };
-  useHotkey(
-    "ArrowLeft",
+  useAppHotkey(
+    "nav.collapse",
     () => {
       const group = selectedGroup();
       if (group !== undefined && group.isExpanded()) group.collapse();
     },
     { target: hotkeyTarget, preventDefault: true, ignoreInputs: false },
   );
-  useHotkey(
-    "ArrowRight",
+  useAppHotkey(
+    "nav.expand",
     () => {
       const group = selectedGroup();
       if (group !== undefined && !group.isExpanded()) group.expand();

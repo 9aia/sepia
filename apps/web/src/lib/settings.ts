@@ -22,6 +22,8 @@ export interface SepiaSettings {
   defaultCwd: string | null;
   /** Per-agent model prefs keyed by agent id. */
   models: Record<string, AgentModelPref>;
+  /** Keybind overrides by action id — string = custom key, null = disabled. */
+  keybinds: Record<string, string | null>;
 }
 
 const KEY = "sepia:settings";
@@ -29,7 +31,7 @@ const KEY = "sepia:settings";
 const load = (): SepiaSettings => {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw === null) return { defaultAgent: null, defaultCwd: null, models: {} };
+    if (raw === null) return { defaultAgent: null, defaultCwd: null, models: {}, keybinds: {} };
     const parsed = JSON.parse(raw) as Partial<SepiaSettings>;
     return {
       defaultAgent: typeof parsed.defaultAgent === "string" ? parsed.defaultAgent : null,
@@ -38,9 +40,13 @@ const load = (): SepiaSettings => {
         typeof parsed.models === "object" && parsed.models !== null
           ? (parsed.models as Record<string, AgentModelPref>)
           : {},
+      keybinds:
+        typeof parsed.keybinds === "object" && parsed.keybinds !== null
+          ? (parsed.keybinds as Record<string, string | null>)
+          : {},
     };
   } catch {
-    return { defaultAgent: null, defaultCwd: null, models: {} };
+    return { defaultAgent: null, defaultCwd: null, models: {}, keybinds: {} };
   }
 };
 

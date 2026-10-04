@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { useHotkeyRecorder } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
 import { settingsStore, setSettings, type AgentModelPref } from "../lib/settings";
+import { KEYBINDS, formatKey, resolveKey } from "../lib/keybinds";
+import { Kbd } from "./ui/kbd";
+import { Button } from "./ui/button";
 import { useAgents } from "../hooks/query/useAgents";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -12,10 +16,100 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+/** Keyboard shortcuts — record a new sequence, disable, or restore defaults. */
+function KeyboardSection() {
+  const settings = useStore(settingsStore);
+  const [recordingId, setRecordingId] = useState<string | null>(null);
+  const recorder = useHotkeyRecorder({
+    onRecord: (hotkey) => {
+      if (recordingId !== null) {
+        setSettings({ keybinds: { ...settings.keybinds, [recordingId]: String(hotkey) } });
+      }
+      setRecordingId(null);
+    },
+    onCancel: () => setRecordingId(null),
+  });
+
+  const groups = [...new Set(KEYBINDS.map((keybind) => keybind.group))];
+
+  return (
+    <section data-spy="keyboard" className="flex scroll-mt-2 flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium">Keyboard</h3>
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={() => setSettings({ keybinds: {} })}
+          disabled={Object.keys(settings.keybinds).length === 0}
+        >
+          Restore defaults
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Click a shortcut to rebind it — Escape cancels, Backspace disables.
+      </p>
+      {groups.map((group) => (
+        <div key={group} className="flex flex-col">
+          <span className="py-1 text-xs font-medium text-muted-foreground">{group}</span>
+          <div className="divide-y divide-border/50 rounded-lg border border-border">
+            {KEYBINDS.filter((keybind) => keybind.group === group).map((keybind) => {
+              const key = resolveKey(settings, keybind.id);
+              const recording = recordingId === keybind.id && recorder.isRecording;
+              return (
+                <div key={keybind.id} className="flex items-center gap-3 px-3 py-2">
+                  <span className="flex-1 text-sm">{keybind.label}</span>
+                  {key === null ? (
+                    <span className="text-xs text-muted-foreground">Disabled</span>
+                  ) : (
+                    <span className="flex gap-1">
+                      {formatKey(recording ? (recorder.recordedHotkey ?? key) : key, MOD_KEY).map(
+                        (part) => (
+                          <Kbd key={part}>{part}</Kbd>
+                        ),
+                      )}
+                    </span>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={() => {
+                      setRecordingId(keybind.id);
+                      recorder.startRecording();
+                    }}
+                  >
+                    {recording ? (recorder.recordedHotkey ?? "Press keys…") : "Change"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() =>
+                      setSettings({
+                        keybinds: {
+                          ...settings.keybinds,
+                          [keybind.id]: key === null ? keybind.def : null,
+                        },
+                      })
+                    }
+                  >
+                    {key === null ? "Enable" : "Disable"}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 const SECTIONS = [
   { id: "general", label: "General" },
   { id: "models", label: "Models" },
+  { id: "keyboard", label: "Keyboard" },
 ] as const;
+
+const MOD_KEY = navigator.platform.toUpperCase().includes("MAC") ? "⌘" : "Ctrl";
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { data: agents = [] } = useAgents();
@@ -181,6 +275,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   );
                 })}
               </section>
+              <KeyboardSection />
             </div>
           </ScrollArea>
         </div>

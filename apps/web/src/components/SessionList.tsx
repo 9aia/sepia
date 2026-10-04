@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "@tanstack/react-pacer";
-import { useHotkey } from "@tanstack/react-hotkeys";
+import { useAppHotkey } from "../lib/keybinds";
 import { useStore } from "@tanstack/react-store";
 import {
   AlertCircleIcon,
@@ -158,12 +158,12 @@ export function SessionList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, selectedId]);
 
-  useHotkey("N", () => {
+  useAppHotkey("session.new", () => {
     if (inFormField()) return;
     create(resolvedCwd);
   });
-  useHotkey(
-    "Escape",
+  useAppHotkey(
+    "filter.clear",
     () => {
       patchSearch({ q: undefined });
       filterRef.current?.blur();

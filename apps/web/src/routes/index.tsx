@@ -1,6 +1,6 @@
 import { useEffect, type CSSProperties } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useHotkey } from "@tanstack/react-hotkeys";
+import { useAppHotkey } from "../lib/keybinds";
 import { useStore } from "@tanstack/react-store";
 import { ChatPanel } from "../components/ChatPanel";
 import { KeybindsDialog } from "../components/KeybindsDialog";
@@ -59,7 +59,7 @@ function Home() {
     if (selectedId === null && first !== undefined) setSelectedId(sessionKey(first));
   }, [sessions, selectedId]);
 
-  useHotkey("Shift+[Slash]", () => setKeybindsOpen(true));
+  useAppHotkey("app.keybinds", () => setKeybindsOpen(true));
 
   if (error instanceof AuthError) return <TokenGate />;
 

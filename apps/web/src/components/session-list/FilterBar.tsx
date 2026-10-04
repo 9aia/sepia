@@ -1,5 +1,5 @@
 import { useState, type RefObject } from "react";
-import { useHotkey } from "@tanstack/react-hotkeys";
+import { useAppHotkey } from "../../lib/keybinds";
 import { PanelLeftCloseIcon, Search01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { AgentInfo } from "../../lib/types";
@@ -48,7 +48,7 @@ export function FilterBar({
 }: FilterBarProps) {
   const { toggleSidebar } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
-  useHotkey("Mod+K", () => setSearchOpen(true), { preventDefault: true });
+  useAppHotkey("filter.focus", () => setSearchOpen(true), { preventDefault: true });
   return (
     <div className="flex items-center gap-1">
       <Popover
