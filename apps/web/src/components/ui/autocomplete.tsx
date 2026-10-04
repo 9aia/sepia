@@ -33,11 +33,7 @@ function AutocompletePortal(props: AutocompletePortalProps) {
 
 function AutocompletePositioner({ className, ...props }: AutocompletePositionerProps) {
   return (
-    <AutocompletePrimitive.Positioner
-      sideOffset={4}
-      className={cn("z-50 outline-none", className)}
-      {...props}
-    />
+    <AutocompletePrimitive.Positioner sideOffset={4} className={cn("z-50", className)} {...props} />
   );
 }
 
@@ -45,7 +41,7 @@ function AutocompletePopup({ className, ...props }: AutocompletePopupProps) {
   return (
     <AutocompletePrimitive.Popup
       className={cn(
-        "max-h-64 overflow-y-auto rounded-xl border border-border bg-popover p-1 text-sm text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        "max-h-64 overflow-y-auto rounded-xl border border-border bg-popover p-1 text-sm text-popover-foreground shadow-lg data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
         className,
       )}
       {...props}
@@ -70,7 +66,7 @@ function AutocompleteItem({ className, ...props }: AutocompleteItemProps) {
   return (
     <AutocompletePrimitive.Item
       className={cn(
-        "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground",
+        "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs data-highlighted:bg-accent data-highlighted:text-accent-foreground",
         className,
       )}
       {...props}

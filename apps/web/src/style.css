@@ -90,14 +90,16 @@ html.light {
     border-color: var(--border);
     outline-color: var(--ring);
   }
-  /* Global focus — every focusable element gets the same primary ring with
-   * a 4px offset gap (the ring-offset-4 convention, applied once here). */
+  /* One focus style for everything: a 2px primary outline, offset inside
+   * the element. A positive offset would be clipped by overflow-hidden
+   * ancestors (every scroll area) — negative offset draws inside the border
+   * box, so it can never be clipped and follows border-radius. */
   *:focus {
     outline: none;
-    outline-offset: 4px;
-    box-shadow:
-      0 0 0 4px var(--background),
-      0 0 0 7px var(--primary);
+  }
+  *:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
   }
 }
 
