@@ -63,6 +63,13 @@ spawns an agent in a working directory you choose.
   (the `start` field is the next cursor).
 - **Stream** — `GET /api/sessions/:id/stream` is a raw AG-UI SSE feed.
 
+Session ids collide across agents (devin and cline mint their own), so every
+session-scoped route also accepts `?agent=<id>` to scope resolution —
+`attach`, `history`, `prompt`, `cancel`, `permission`, `stream`, `patch`,
+`convert`, `delete`, and `POST /api/agent`. `POST /api/sessions` returns
+`{ id, agentId }`; a created-but-unflushed session is remembered in the meta
+store so it stays listable and deletable after a restart.
+
 ## Security
 
 **The API spawns coding agents that read and modify files.** Anyone who can

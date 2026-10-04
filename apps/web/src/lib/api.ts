@@ -68,13 +68,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Session ids collide across agents; `?agent=` scopes the server's lookup.
+const agentQuery = (agent?: string): string =>
+  agent === undefined || agent === "" ? "" : `?agent=${encodeURIComponent(agent)}`;
+
 export async function listSessions(): Promise<SessionSummary[]> {
   const data = await request<{ sessions: SessionSummary[] }>("/api/sessions");
   return data.sessions;
 }
 
-export async function createSession(input: CreateSessionInput): Promise<{ id: string }> {
-  return request<{ id: string }>("/api/sessions", {
+export async function createSession(
+  input: CreateSessionInput,
+): Promise<{ id: string; agentId?: string }> {
+  return request<{ id: string; agentId?: string }>("/api/sessions", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -82,11 +88,12 @@ export async function createSession(input: CreateSessionInput): Promise<{ id: st
 
 export async function getHistory(
   id: string,
-  options?: { limit?: number; before?: number },
+  options?: { limit?: number; before?: number; agent?: string },
 ): Promise<HistoryPage> {
   const params = new URLSearchParams();
   if (options?.limit !== undefined) params.set("limit", String(options.limit));
   if (options?.before !== undefined) params.set("before", String(options.before));
+  if (options?.agent !== undefined) params.set("agent", options.agent);
   const query = params.size === 0 ? "" : `?${params.toString()}`;
   return request<HistoryPage>(`/api/sessions/${encodeURIComponent(id)}/history${query}`);
 }
@@ -95,6 +102,7 @@ export interface AttachOptions {
   readonly takeover?: boolean;
   readonly model?: string;
   readonly fallbacks?: ReadonlyArray<string>;
+  readonly agent?: string;
 }
 
 export async function attach(id: string, options?: AttachOptions): Promise<AttachResult> {
@@ -102,10 +110,13 @@ export async function attach(id: string, options?: AttachOptions): Promise<Attac
   if (options?.takeover === true) body.takeover = true;
   if (options?.model !== undefined) body.model = options.model;
   if (options?.fallbacks !== undefined) body.fallbacks = options.fallbacks;
-  return request<AttachResult>(`/api/sessions/${encodeURIComponent(id)}/attach`, {
-    method: "POST",
-    body: Object.keys(body).length === 0 ? undefined : JSON.stringify(body),
-  });
+  return request<AttachResult>(
+    `/api/sessions/${encodeURIComponent(id)}/attach${agentQuery(options?.agent)}`,
+    {
+      method: "POST",
+      body: Object.keys(body).length === 0 ? undefined : JSON.stringify(body),
+    },
+  );
 }
 
 export async function listDirs(path: string): Promise<string[]> {
@@ -141,8 +152,12 @@ export async function setConfigKey(key: string, value: unknown): Promise<void> {
   });
 }
 
-export async function patchSessionMeta(id: string, patch: SessionMetaPatch): Promise<boolean> {
-  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, {
+export async function patchSessionMeta(
+  id: string,
+  patch: SessionMetaPatch,
+  agent?: string,
+): Promise<boolean> {
+  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}${agentQuery(agent)}`, {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
@@ -170,15 +185,19 @@ export async function deleteProject(id: string): Promise<boolean> {
   return res.ok;
 }
 
-export async function convertSession(id: string, agent: string): Promise<{ sessionId: string }> {
-  return request(`/api/sessions/${encodeURIComponent(id)}/convert`, {
+export async function convertSession(
+  id: string,
+  agent: string,
+  fromAgent?: string,
+): Promise<{ sessionId: string }> {
+  return request(`/api/sessions/${encodeURIComponent(id)}/convert${agentQuery(fromAgent)}`, {
     method: "POST",
     body: JSON.stringify({ agent }),
   });
 }
 
-export async function renameSession(id: string, title: string): Promise<boolean> {
-  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, {
+export async function renameSession(id: string, title: string, agent?: string): Promise<boolean> {
+  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}${agentQuery(agent)}`, {
     method: "PATCH",
     body: JSON.stringify({ title }),
   });
@@ -186,24 +205,32 @@ export async function renameSession(id: string, title: string): Promise<boolean>
   return true;
 }
 
-export async function deleteSession(id: string): Promise<boolean> {
-  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+export async function deleteSession(id: string, agent?: string): Promise<boolean> {
+  const res = await sepiaFetch(`/api/sessions/${encodeURIComponent(id)}${agentQuery(agent)}`, {
+    method: "DELETE",
+  });
   if (!res.ok) throw new Error(friendlyHttpError(res.status));
   return true;
 }
 
-export async function sendPrompt(id: string, text: string): Promise<boolean> {
-  const data = await request<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(id)}/prompt`, {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
+export async function sendPrompt(id: string, text: string, agent?: string): Promise<boolean> {
+  const data = await request<{ ok: boolean }>(
+    `/api/sessions/${encodeURIComponent(id)}/prompt${agentQuery(agent)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    },
+  );
   return data.ok;
 }
 
-export async function cancel(id: string): Promise<boolean> {
-  const data = await request<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(id)}/cancel`, {
-    method: "POST",
-  });
+export async function cancel(id: string, agent?: string): Promise<boolean> {
+  const data = await request<{ ok: boolean }>(
+    `/api/sessions/${encodeURIComponent(id)}/cancel${agentQuery(agent)}`,
+    {
+      method: "POST",
+    },
+  );
   return data.ok;
 }
 
@@ -211,9 +238,10 @@ export async function respondToPermission(
   id: string,
   requestId: string,
   optionId: string | null,
+  agent?: string,
 ): Promise<boolean> {
   const data = await request<{ ok: boolean }>(
-    `/api/sessions/${encodeURIComponent(id)}/permission`,
+    `/api/sessions/${encodeURIComponent(id)}/permission${agentQuery(agent)}`,
     { method: "POST", body: JSON.stringify({ requestId, optionId }) },
   );
   return data.ok;
@@ -232,10 +260,14 @@ export function subscribeSessionStream(
   id: string,
   onEvent: (event: AgUiEvent) => void,
   onStatus?: (status: StreamStatus) => void,
+  agent?: string,
 ): () => void {
   if (typeof EventSource === "undefined") return () => {};
+  const params = new URLSearchParams();
   const token = getToken();
-  const query = token !== null ? `?access_token=${encodeURIComponent(token)}` : "";
+  if (token !== null) params.set("access_token", token);
+  if (agent !== undefined) params.set("agent", agent);
+  const query = params.size === 0 ? "" : `?${params.toString()}`;
   const source = new EventSource(`/api/sessions/${encodeURIComponent(id)}/stream${query}`);
   onStatus?.("connecting");
   source.onopen = () => onStatus?.("live");

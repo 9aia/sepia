@@ -84,6 +84,7 @@ function DirActions({
           if (session.projectIds.includes(project.id)) continue;
           patch.mutate({
             id: session.id,
+            agent: session.agent,
             patch: { projectIds: [...session.projectIds, project.id] },
           });
         }
@@ -228,7 +229,7 @@ function SessionItemRow({
   readonly selected: boolean;
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
-  onDelete: (id: string) => void;
+  onDelete: (session: SessionSummary) => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   return (
@@ -316,7 +317,7 @@ function SessionItemRow({
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
-                onDelete(session.id);
+                onDelete(session);
                 setConfirmOpen(false);
               }}
             >
@@ -337,7 +338,7 @@ interface SessionTreeProps {
   readonly hotkeyTarget: RefObject<HTMLElement | null>;
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
-  onDelete: (id: string) => void;
+  onDelete: (session: SessionSummary) => void;
   onNewSession: (cwd: string) => void;
 }
 
@@ -381,7 +382,8 @@ export function SessionTree({
     };
 
     for (const session of sessions) {
-      const id = `session:${session.id}`;
+      // agent:id — bare ids collide across agents and would overwrite rows.
+      const id = `session:${sessionKey(session)}`;
       dataMap.set(id, { kind: "session", session });
       const segments = session.cwd.split("/").filter(Boolean);
       let prefix = "";

@@ -95,6 +95,10 @@ export function SessionList() {
   const createProject = useCreateProject();
   const patch = usePatchSessionMeta();
   const newProjectSession = resolveSession(sessions, newProjectFor);
+  // Ids collide across agents; pass the agent so the delete hits the right store.
+  const onDeleteSession = (session: SessionSummary): void => {
+    deleteMutation.mutate({ id: session.id, agent: session.agent });
+  };
   const createCwd = useStore(sepiaStore, (state) => state.createCwd);
   const cwd = useStore(sepiaStore, (state) => state.cwd);
   const { data: user } = useUserInfo();
@@ -219,9 +223,10 @@ export function SessionList() {
           sessions={filtered}
           recentSessions={recentSessions}
           selectedId={selectedId}
+          resolvedCwd={resolvedCwd}
           onSelect={setSelectedId}
           onDetails={(id, rename) => setDetailsFor({ id, rename })}
-          onDelete={(id) => deleteMutation.mutate(id)}
+          onDelete={onDeleteSession}
         />
 
         {loading && <SessionTreeSkeleton />}
@@ -265,7 +270,7 @@ export function SessionList() {
                 hotkeyTarget={asideRef}
                 onSelect={setSelectedId}
                 onDetails={(id, rename) => setDetailsFor({ id, rename })}
-                onDelete={(id) => deleteMutation.mutate(id)}
+                onDelete={onDeleteSession}
                 onNewSession={setCreateCwd}
               />
             )}
@@ -282,9 +287,11 @@ export function SessionList() {
             createProject.mutate(name, {
               onSuccess: ({ project }) => {
                 const ids = newProjectSession?.projectIds ?? [];
-                if (newProjectFor !== null && !ids.includes(project.id)) {
+                if (newProjectSession !== undefined && !ids.includes(project.id)) {
                   patch.mutate({
-                    id: newProjectFor,
+                    // newProjectFor is the agent:id key — the API needs the bare id.
+                    id: newProjectSession.id,
+                    agent: newProjectSession.agent,
                     patch: { projectIds: [...ids, project.id] },
                   });
                 }
@@ -298,7 +305,7 @@ export function SessionList() {
         focusRename={details?.rename ?? false}
         onClose={() => setDetailsFor(null)}
         onOpen={setSelectedId}
-        onDelete={(id) => deleteMutation.mutate(id)}
+        onDelete={onDeleteSession}
       />
 
       <UserProfile />

@@ -13,8 +13,8 @@ import { queryKeys } from "./keys";
 export const usePatchSessionMeta = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: SessionMetaPatch }) =>
-      patchSessionMeta(id, patch),
+    mutationFn: ({ id, agent, patch }: { id: string; agent?: string; patch: SessionMetaPatch }) =>
+      patchSessionMeta(id, patch, agent),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     },
@@ -61,7 +61,8 @@ export const useDeleteProject = () => {
 export const useConvertSession = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, agent }: { id: string; agent: string }) => convertSession(id, agent),
+    mutationFn: ({ id, agent, fromAgent }: { id: string; agent: string; fromAgent?: string }) =>
+      convertSession(id, agent, fromAgent),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     },

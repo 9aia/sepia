@@ -182,6 +182,7 @@ const streamResponse = async (
   signal: AbortSignal,
   cors: Record<string, string>,
   keepAliveMs: number,
+  agentId?: string,
 ): Promise<Response> => {
   let unsubscribe: Unsubscribe = () => {};
   const channel = new SseChannel({
@@ -192,7 +193,7 @@ const streamResponse = async (
     channel.push(encodeSse(events));
   };
 
-  const subscribed = await run(Effect.either(plane.subscribe(id, listener)));
+  const subscribed = await run(Effect.either(plane.subscribe(id, listener, agentId)));
   if (Either.isLeft(subscribed)) {
     channel.close();
     return errorResponse(subscribed.left, cors);
@@ -247,6 +248,9 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     }
 
     const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
+    // Session ids collide across agents (devin and cline mint their own), so
+    // session-scoped routes accept `?agent=<id>` to scope the store lookup.
+    const agentParam = url.searchParams.get("agent") ?? undefined;
 
     if (method === "GET" && segmentsEqual(segments, ["api", "health"])) {
       return healthResponse(run, plane, cors);
@@ -306,8 +310,8 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     if (method === "GET" && segmentsEqual(segments, ["api", "sessions"])) {
       const withLocks = url.searchParams.get("withLocks") === "1";
       return respond(run, plane.listSessions({ withLocks }), cors, {
-        shape: (sessions) => ({
-          sessions: sessions.map((session) => {
+        shape: (sessions) => {
+          const overlaid = sessions.map((session) => {
             const meta = options.meta?.of(session.id);
             return {
               ...session,
@@ -316,8 +320,33 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
               projectIds: meta?.projectIds ?? [],
               model: meta?.model ?? null,
             };
-          }),
-        }),
+          });
+          // Sessions created via POST /api/sessions but not yet flushed into
+          // the agent's store survive restarts only in the meta file —
+          // surface them so they stay reachable.
+          const known = new Set(sessions.map((session) => session.id));
+          const pending = Object.entries(options.meta?.sessions() ?? {}).flatMap(([id, meta]) =>
+            known.has(id) || typeof meta.agent !== "string" || typeof meta.cwd !== "string"
+              ? []
+              : [
+                  {
+                    id,
+                    title: meta.title ?? "New session",
+                    cwd: meta.cwd,
+                    agent: meta.agent,
+                    updatedAt: meta.createdAt ?? new Date().toISOString(),
+                    locked: false,
+                    lockHolderPid: null,
+                    source: "sepia",
+                    busy: false,
+                    pinned: meta.pinned ?? false,
+                    projectIds: meta.projectIds ?? [],
+                    model: meta.model ?? null,
+                  },
+                ],
+          );
+          return { sessions: [...overlaid, ...pending] };
+        },
         span: "http.get /api/sessions",
       });
     }
@@ -364,10 +393,17 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           fallbacks: fallbacks as string[] | undefined,
         })
         .pipe(
-          Effect.tap(({ id }) =>
+          Effect.tap(({ id, agentId: createdAgent }) =>
             Effect.sync(() => {
-              if (model !== undefined) options.meta?.patch(id, { model });
-              if (title !== undefined) options.meta?.patch(id, { title });
+              // The agent may not flush the session to its store until the
+              // first prompt; keep enough meta to identify it after a restart.
+              options.meta?.patch(id, {
+                agent: createdAgent,
+                cwd,
+                createdAt: new Date().toISOString(),
+                ...(model !== undefined ? { model } : {}),
+                ...(title !== undefined ? { title } : {}),
+              });
             }),
           ),
         );
@@ -591,15 +627,19 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       segments.length === 3
     ) {
       const id = decodeURIComponent(segments[2] ?? "");
-      return respond(
-        run,
-        plane.deleteSession(id).pipe(Effect.tap(() => Effect.sync(() => options.meta?.remove(id)))),
-        cors,
-        {
-          shape: () => ({ ok: true }),
-          span: "http.delete /api/sessions/:id",
-        },
+      const deletion = plane.deleteSession(id, { agentId: agentParam }).pipe(
+        // Created-but-unflushed sessions aren't in the repo — deleting them is
+        // still a success: the meta record below is all that references them.
+        Effect.catchIf(
+          (error) => error.code === "not_found",
+          () => Effect.void,
+        ),
+        Effect.tap(() => Effect.sync(() => options.meta?.remove(id))),
       );
+      return respond(run, deletion, cors, {
+        shape: () => ({ ok: true }),
+        span: "http.delete /api/sessions/:id",
+      });
     }
 
     if (segments[0] === "api" && segments[1] === "sessions" && segments.length === 4) {
@@ -626,14 +666,16 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           before = value;
         }
         const historyOptions =
-          limit === undefined && before === undefined ? undefined : { limit, before };
+          limit === undefined && before === undefined && agentParam === undefined
+            ? undefined
+            : { limit, before, agentId: agentParam };
         return respond(run, plane.getHistory(id, historyOptions), cors, {
           span: "http.get /api/sessions/:id/history",
         });
       }
 
       if (method === "GET" && action === "stream") {
-        return streamResponse(run, plane, id, request.signal, cors, keepAliveMs);
+        return streamResponse(run, plane, id, request.signal, cors, keepAliveMs, agentParam);
       }
 
       if (method === "POST" && action === "attach") {
@@ -658,9 +700,14 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         } catch {
           return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
         }
-        return respond(run, plane.attach(id, { takeover, model, fallbacks }), cors, {
-          span: "http.post /api/sessions/:id/attach",
-        });
+        return respond(
+          run,
+          plane.attach(id, { takeover, model, fallbacks, agentId: agentParam }),
+          cors,
+          {
+            span: "http.post /api/sessions/:id/attach",
+          },
+        );
       }
 
       if (method === "POST" && action === "prompt") {
@@ -673,14 +720,14 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         if (!isRecord(body) || typeof body.text !== "string" || body.text.trim() === "") {
           return jsonResponse({ error: "text is required" }, 400, cors);
         }
-        return respond(run, plane.prompt(id, body.text), cors, {
+        return respond(run, plane.prompt(id, body.text, agentParam), cors, {
           shape: () => ({ ok: true }),
           span: "http.post /api/sessions/:id/prompt",
         });
       }
 
       if (method === "POST" && action === "cancel") {
-        return respond(run, plane.cancel(id), cors, {
+        return respond(run, plane.cancel(id, agentParam), cors, {
           shape: () => ({ ok: true }),
           span: "http.post /api/sessions/:id/cancel",
         });
@@ -700,10 +747,15 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         if (optionId !== null && typeof optionId !== "string") {
           return jsonResponse({ error: "optionId must be a string or null" }, 400, cors);
         }
-        return respond(run, plane.respondToPermission(id, body.requestId, optionId), cors, {
-          span: "http.post /api/sessions/:id/permission",
-          shape: () => ({ ok: true }),
-        });
+        return respond(
+          run,
+          plane.respondToPermission(id, body.requestId, optionId, agentParam),
+          cors,
+          {
+            span: "http.post /api/sessions/:id/permission",
+            shape: () => ({ ok: true }),
+          },
+        );
       }
     }
 

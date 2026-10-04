@@ -3,7 +3,15 @@ import { Session, StorageError } from "./Domain.js";
 
 export interface SessionRepositoryService {
   readonly save: (session: Session) => Effect.Effect<void, StorageError>;
-  readonly getById: (id: string) => Effect.Effect<Option.Option<Session>, StorageError>;
+  /**
+   * Single-store implementations ignore `agentId` — merged repositories use
+   * it to resolve an id that may collide across agents to the requested
+   * agent's copy.
+   */
+  readonly getById: (
+    id: string,
+    agentId?: string,
+  ) => Effect.Effect<Option.Option<Session>, StorageError>;
   readonly list: () => Effect.Effect<ReadonlyArray<Session>, StorageError>;
   readonly delete: (id: string) => Effect.Effect<void, StorageError>;
   readonly hasSession: (id: string) => Effect.Effect<boolean, StorageError>;

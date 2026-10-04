@@ -54,7 +54,7 @@ export function SessionActions({
   readonly hideOpen?: boolean;
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
-  onRequestDelete: (id: string) => void;
+  onRequestDelete: (session: SessionSummary) => void;
 }) {
   const patch = usePatchSessionMeta();
   const convert = useConvertSession();
@@ -70,7 +70,7 @@ export function SessionActions({
     const ids = session.projectIds.includes(projectId)
       ? session.projectIds.filter((p) => p !== projectId)
       : [...session.projectIds, projectId];
-    patch.mutate({ id: session.id, patch: { projectIds: ids } });
+    patch.mutate({ id: session.id, agent: session.agent, patch: { projectIds: ids } });
   };
   return (
     <>
@@ -80,15 +80,19 @@ export function SessionActions({
           Open
         </Item>
       )}
-      <Item onClick={() => patch.mutate({ id: session.id, patch: { pinned: !session.pinned } })}>
+      <Item
+        onClick={() =>
+          patch.mutate({ id: session.id, agent: session.agent, patch: { pinned: !session.pinned } })
+        }
+      >
         <HugeiconsIcon icon={PinIcon} strokeWidth={2} />
         {session.pinned === true ? "Unpin" : "Pin"}
       </Item>
-      <Item onClick={() => onDetails(session.id, true)}>
+      <Item onClick={() => onDetails(sessionKey(session), true)}>
         <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
         Rename…
       </Item>
-      <Item onClick={() => onDetails(session.id, false)}>
+      <Item onClick={() => onDetails(sessionKey(session), false)}>
         <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
         Details
       </Item>
@@ -99,7 +103,7 @@ export function SessionActions({
           Projects…
         </SubTrigger>
         <SubContent className="w-52">
-          <Item onClick={() => setNewProjectFor(session.id)}>
+          <Item onClick={() => setNewProjectFor(sessionKey(session))}>
             <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
             New project…
           </Item>
@@ -129,7 +133,9 @@ export function SessionActions({
             {convertTargets.map((agent) => (
               <Item
                 key={agent.id}
-                onClick={() => convert.mutate({ id: session.id, agent: agent.id })}
+                onClick={() =>
+                  convert.mutate({ id: session.id, agent: agent.id, fromAgent: session.agent })
+                }
               >
                 {agent.label}
               </Item>
@@ -146,7 +152,7 @@ export function SessionActions({
         Copy path
       </Item>
       <Separator />
-      <Item variant="destructive" onClick={() => onRequestDelete(session.id)}>
+      <Item variant="destructive" onClick={() => onRequestDelete(session)}>
         <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
         Delete
       </Item>

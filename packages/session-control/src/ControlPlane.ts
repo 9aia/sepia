@@ -4,6 +4,7 @@ import type { AcpConnection, AcpSessionInfo } from "sepia-acp";
 import { createTranslator, type Event, type Translator } from "sepia-agui";
 import { SessionRepository } from "sepia-core";
 import type { Session } from "sepia-core";
+import { agentForBackend } from "./MergedRepository.js";
 import {
   ControlError,
   ControlPlane,
@@ -71,10 +72,6 @@ const envNumber = (raw: string | undefined, fallback: number): number => {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 };
 
-/** Maps a store backend to the agent that can resume it. */
-const agentForBackend = (backendType: string): string =>
-  backendType === "cline" ? "cline" : "devin";
-
 const toSummary = (session: Session): SessionSummary => {
   const agent = agentForBackend(session.backendType);
   return {
@@ -114,6 +111,15 @@ export const make = (
 
     const storageFail = (message: string) => (cause: unknown) =>
       controlError("internal", message, cause);
+
+    // Live sessions are keyed by bare id; when the caller scopes to an agent,
+    // a live entry for a different agent's colliding id must not match.
+    const liveFor = (id: string, agentId?: string): LiveSession | undefined => {
+      const live = liveSessions.get(id);
+      return live !== undefined && (agentId === undefined || live.agentId === agentId)
+        ? live
+        : undefined;
+    };
 
     // Reuse a live connection when one exists; otherwise spawn a throwaway agent
     // and close it. The result is cached briefly so listing does not spawn per call.
@@ -199,12 +205,13 @@ export const make = (
     ): Effect.Effect<HistoryPage, ControlError> =>
       Effect.gen(function* () {
         const maybe = yield* repo
-          .getById(id)
+          .getById(id, historyOptions?.agentId)
           .pipe(Effect.mapError(storageFail("Failed to read session")));
         if (Option.isNone(maybe)) {
           // A live (attached) session may not exist in the store yet — the
           // agent only flushes it after the first prompt. Treat as empty.
-          if (liveSessions.has(id)) return { messages: [], total: 0, start: 0 };
+          if (liveFor(id, historyOptions?.agentId) !== undefined)
+            return { messages: [], total: 0, start: 0 };
           return yield* Effect.fail(controlError("not_found", `Unknown session: ${id}`, undefined));
         }
         const nodes = maybe.value.nodes;
@@ -243,12 +250,16 @@ export const make = (
     const performAttach = (
       id: string,
       takeover: boolean,
-      attachOptions?: { readonly model?: string; readonly fallbacks?: ReadonlyArray<string> },
+      attachOptions?: {
+        readonly model?: string;
+        readonly fallbacks?: ReadonlyArray<string>;
+        readonly agentId?: string;
+      },
     ): Promise<AttachResult> =>
       Runtime.runPromise(attachRuntime)(
         Effect.gen(function* () {
           const maybe = yield* repo
-            .getById(id)
+            .getById(id, attachOptions?.agentId)
             .pipe(Effect.mapError(storageFail("Failed to read session")));
           if (Option.isNone(maybe)) {
             return yield* Effect.fail(
@@ -338,10 +349,25 @@ export const make = (
         readonly takeover?: boolean;
         readonly model?: string;
         readonly fallbacks?: ReadonlyArray<string>;
+        readonly agentId?: string;
       },
     ): Effect.Effect<AttachResult, ControlError> =>
       Effect.gen(function* () {
-        if (liveSessions.has(id)) return { attached: true, readOnly: false };
+        const existing = liveSessions.get(id);
+        if (existing !== undefined) {
+          if (attachOptions?.agentId === undefined || existing.agentId === attachOptions.agentId) {
+            return { attached: true, readOnly: false };
+          }
+          // The id is held by another agent's live session; liveSessions is
+          // keyed by bare id and cannot host both copies at once.
+          return yield* Effect.fail(
+            controlError(
+              "conflict",
+              `Session is already attached under a different agent: ${id}`,
+              undefined,
+            ),
+          );
+        }
 
         // Captured here (not at make-time): the request fiber's refs carry the
         // OTLP tracer and the parent span, so performAttach's nested runPromise
@@ -377,7 +403,7 @@ export const make = (
       readonly title?: string;
       readonly model?: string;
       readonly fallbacks?: ReadonlyArray<string>;
-    }): Effect.Effect<{ readonly id: string }, ControlError> =>
+    }): Effect.Effect<{ readonly id: string; readonly agentId: string }, ControlError> =>
       Effect.gen(function* () {
         const cwd = createOptions.cwd;
         if (cwd.trim() === "" || !isAbsolute(cwd)) {
@@ -431,7 +457,7 @@ export const make = (
         );
         touchIdle(live);
         liveSessions.set(id, live);
-        return { id };
+        return { id, agentId: agent.id };
       }).pipe(
         Effect.tap(() => Metric.increment(metricCreates)),
         Effect.withSpan("sepia.control.create_session", {
@@ -458,9 +484,9 @@ export const make = (
         }),
       );
 
-    const requireLive = (id: string): Effect.Effect<LiveSession, ControlError> =>
+    const requireLive = (id: string, agentId?: string): Effect.Effect<LiveSession, ControlError> =>
       Effect.gen(function* () {
-        const live = liveSessions.get(id);
+        const live = liveFor(id, agentId);
         if (live === undefined) {
           return yield* Effect.fail(
             controlError("invalid", `Session is not attached: ${id}`, undefined),
@@ -469,9 +495,13 @@ export const make = (
         return live;
       });
 
-    const prompt = (id: string, text: string): Effect.Effect<void, ControlError> =>
+    const prompt = (
+      id: string,
+      text: string,
+      agentId?: string,
+    ): Effect.Effect<void, ControlError> =>
       Effect.gen(function* () {
-        const live = yield* requireLive(id);
+        const live = yield* requireLive(id, agentId);
         if (live.busy) {
           return yield* Effect.fail(controlError("busy", `Session is busy: ${id}`, undefined));
         }
@@ -496,9 +526,9 @@ export const make = (
         }),
       );
 
-    const cancel = (id: string): Effect.Effect<void, ControlError> =>
+    const cancel = (id: string, agentId?: string): Effect.Effect<void, ControlError> =>
       Effect.gen(function* () {
-        const live = yield* requireLive(id);
+        const live = yield* requireLive(id, agentId);
         yield* tryAcp("Failed to cancel prompt", () => live.conn.cancel(id));
       }).pipe(
         Effect.withSpan("sepia.control.cancel", {
@@ -506,18 +536,23 @@ export const make = (
         }),
       );
 
-    const deleteSession = (id: string): Effect.Effect<void, ControlError> =>
+    const deleteSession = (
+      id: string,
+      deleteOptions?: { readonly agentId?: string },
+    ): Effect.Effect<void, ControlError> =>
       Effect.gen(function* () {
         // A live handle keeps the session open inside the agent; drop ours first
-        // so our own lock does not make the delete fail.
-        const live = liveSessions.get(id);
-        yield* detach(id);
+        // so our own lock does not make the delete fail. A live entry for a
+        // different agent's colliding id is left alone.
+        const live = liveFor(id, deleteOptions?.agentId);
+        if (live !== undefined) yield* detach(id);
 
         const maybe = yield* repo
-          .getById(id)
+          .getById(id, deleteOptions?.agentId)
           .pipe(Effect.mapError(storageFail("Failed to read session")));
         const cwd = live?.cwd ?? (Option.isSome(maybe) ? maybe.value.workingDirectory : undefined);
         const agentId =
+          deleteOptions?.agentId ??
           live?.agentId ??
           (Option.isSome(maybe) ? agentForBackend(maybe.value.backendType) : undefined);
         if (cwd === undefined) {
@@ -549,9 +584,10 @@ export const make = (
       id: string,
       requestId: string,
       optionId: string | null,
+      agentId?: string,
     ): Effect.Effect<void, ControlError> =>
       Effect.gen(function* () {
-        const live = yield* requireLive(id);
+        const live = yield* requireLive(id, agentId);
         const settled = yield* Effect.try({
           try: () => live.conn.respondToPermission(requestId, optionId),
           catch: (cause) =>
@@ -571,9 +607,10 @@ export const make = (
     const subscribe = (
       id: string,
       listener: SessionEventListener,
+      agentId?: string,
     ): Effect.Effect<Unsubscribe, ControlError> =>
       Effect.gen(function* () {
-        const live = yield* requireLive(id);
+        const live = yield* requireLive(id, agentId);
         live.listeners.add(listener);
         live.idleSince = null;
         return (): void => {

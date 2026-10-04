@@ -48,6 +48,8 @@ export interface HistoryOptions {
   readonly limit?: number;
   /** Exclusive end index for the slice; defaults to the backlog end. */
   readonly before?: number;
+  /** Resolve the id within this agent's store — ids collide across agents. */
+  readonly agentId?: string;
 }
 
 export interface AgentInfo {
@@ -103,36 +105,50 @@ export interface ControlPlaneService {
     readonly title?: string;
     readonly model?: string;
     readonly fallbacks?: ReadonlyArray<string>;
-  }) => Effect.Effect<{ readonly id: string }, ControlError>;
+  }) => Effect.Effect<{ readonly id: string; readonly agentId: string }, ControlError>;
 
-  /** Spawns the session's agent and loads the session. Locked sessions attach read-only unless `takeover`. */
+  /**
+   * Spawns the session's agent and loads the session. Locked sessions attach
+   * read-only unless `takeover`. `agentId` scopes the store lookup — ids
+   * collide across agents.
+   */
   readonly attach: (
     id: string,
     options?: {
       readonly takeover?: boolean;
       readonly model?: string;
       readonly fallbacks?: ReadonlyArray<string>;
+      readonly agentId?: string;
     },
   ) => Effect.Effect<AttachResult, ControlError>;
 
   readonly detach: (id: string) => Effect.Effect<void, ControlError>;
 
-  readonly prompt: (id: string, text: string) => Effect.Effect<void, ControlError>;
+  readonly prompt: (
+    id: string,
+    text: string,
+    agentId?: string,
+  ) => Effect.Effect<void, ControlError>;
 
-  readonly cancel: (id: string) => Effect.Effect<void, ControlError>;
+  readonly cancel: (id: string, agentId?: string) => Effect.Effect<void, ControlError>;
 
-  /** Detaches if live, then deletes the session through its agent runtime. */
-  readonly deleteSession: (id: string) => Effect.Effect<void, ControlError>;
+  /** Detaches if live, then deletes the session through its agent runtime. `agentId` scopes the store lookup. */
+  readonly deleteSession: (
+    id: string,
+    options?: { readonly agentId?: string },
+  ) => Effect.Effect<void, ControlError>;
 
   readonly respondToPermission: (
     id: string,
     requestId: string,
     optionId: string | null,
+    agentId?: string,
   ) => Effect.Effect<void, ControlError>;
 
   readonly subscribe: (
     id: string,
     listener: SessionEventListener,
+    agentId?: string,
   ) => Effect.Effect<Unsubscribe, ControlError>;
 
   readonly listAgents: () => ReadonlyArray<AgentInfo>;

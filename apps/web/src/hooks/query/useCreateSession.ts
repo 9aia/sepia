@@ -8,9 +8,10 @@ export const useCreateSession = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateSessionInput) => createSession(input),
-    onSuccess: ({ id }) => {
+    onSuccess: ({ id, agentId }) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-      setSelectedId(id);
+      // Selection keys are agent:id — the server echoes which agent spawned it.
+      setSelectedId(agentId === undefined || agentId === "" ? id : `${agentId}:${id}`);
     },
   });
 };

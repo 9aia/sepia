@@ -279,6 +279,7 @@ function ChatRows({
 
 interface SessionChatProps {
   readonly sessionId: string;
+  readonly agent: string;
   readonly readOnly: boolean;
   readonly running: boolean;
   readonly liveMessages: ReadonlyArray<LiveMessage>;
@@ -292,13 +293,14 @@ interface SessionChatProps {
  */
 export function SessionChat({
   sessionId,
+  agent,
   readOnly,
   running,
   liveMessages,
   onUserMessage,
   onTakeover,
 }: SessionChatProps) {
-  const historyQuery = useHistory(sessionId);
+  const historyQuery = useHistory(sessionId, agent);
   const history = useMemo(() => flattenHistory(historyQuery.data), [historyQuery.data]);
   const [submitting, setSubmitting] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
@@ -316,7 +318,7 @@ export function SessionChat({
   const send = (text: string): void => {
     setSubmitting(true);
     setPromptError(null);
-    sendPrompt(sessionId, text)
+    sendPrompt(sessionId, text, agent)
       .then((ok) => {
         if (ok) onUserMessage(text);
         else setPromptError("Prompt failed.");
@@ -382,11 +384,11 @@ export function SessionChat({
         <PromptInputFooter>
           <PromptInputTools />
           <div className="ml-auto flex items-center gap-1">
-            <ModelSelect sessionId={sessionId} />
+            <ModelSelect sessionId={sessionId} agent={agent} />
             <PromptInputSubmit
               status={running ? "streaming" : submitting ? "submitted" : "ready"}
               disabled={submitting}
-              onStop={() => void cancel(sessionId)}
+              onStop={() => void cancel(sessionId, agent)}
             />
           </div>
         </PromptInputFooter>
@@ -415,11 +417,11 @@ export function SessionChat({
 }
 
 /** Per-session model selector — the choice applies on the next agent spawn. */
-function ModelSelect({ sessionId }: { readonly sessionId: string }) {
+function ModelSelect({ sessionId, agent }: { readonly sessionId: string; readonly agent: string }) {
   const patch = usePatchSessionMeta();
   const settings = useStore(settingsStore);
   const { data: sessions = [] } = useSessions();
-  const session = sessions.find((s) => s.id === sessionId);
+  const session = sessions.find((s) => s.id === sessionId && s.agent === agent);
   if (session === undefined) return null;
   const pref = settings.models[session.agent];
   const options = [
@@ -436,7 +438,11 @@ function ModelSelect({ sessionId }: { readonly sessionId: string }) {
     <Select
       value={value}
       onValueChange={(v) =>
-        patch.mutate({ id: session.id, patch: { model: v === "__default__" ? null : v } })
+        patch.mutate({
+          id: session.id,
+          agent: session.agent,
+          patch: { model: v === "__default__" ? null : v },
+        })
       }
     >
       <SelectTrigger

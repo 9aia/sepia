@@ -1,9 +1,13 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vite-plus/test";
+import type { AcpConnection } from "sepia-acp";
+import { SessionRepository } from "sepia-core";
+import { ControlPlane, layer as controlPlaneLayer } from "sepia-session-control";
 import type {
+  AgentRuntime,
   ControlError,
   ControlErrorCode,
   ControlPlaneService,
@@ -28,14 +32,18 @@ const SESSION: SessionSummary = {
   busy: false,
 };
 
+// GET /api/sessions always attaches the meta-overlay fields, meta store or not.
+const SESSION_JSON = { ...SESSION, pinned: false, projectIds: [], model: null };
+
 const HISTORY: ReadonlyArray<HistoryMessage> = [
   { role: "user", content: "hello", createdAt: 1 },
   { role: "assistant", content: "hi", createdAt: 2 },
 ];
 
 // The real ControlError is a tagged error whose only fields the HTTP layer reads
-// are `message` and `code`; a structural stand-in keeps the vitest module graph
-// free of the bun-only sqlite store that `sepia-session-control` pulls in.
+// are `message` and `code`; a structural stand-in is enough for error mapping.
+// sepia-core/session-control are still importable here thanks to the bun:sqlite
+// stubs aliased in vitest.config.ts.
 const failure = (message: string, code?: ControlErrorCode): Effect.Effect<never, ControlError> =>
   Effect.fail(
     Object.assign(new Error(message), {
@@ -81,7 +89,7 @@ const makeFakePlane = (): FakePlane => {
         ? failure("Unknown agent: bad", "unknown_agent")
         : Effect.sync(() => {
             created.push(options);
-            return { id: "sess-new" };
+            return { id: "sess-new", agentId: options.agentId ?? "devin" };
           }),
     attach: (_id, options) =>
       Effect.succeed({ attached: true, readOnly: options?.takeover !== true }),
@@ -143,6 +151,75 @@ const post = (path: string, body?: unknown): Request =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
+const patch = (path: string, body: unknown): Request =>
+  new Request(`http://localhost:8787${path}`, {
+    method: "PATCH",
+    headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+const del = (path: string): Request =>
+  new Request(`http://localhost:8787${path}`, {
+    method: "DELETE",
+    headers: { origin: "http://localhost:3000" },
+  });
+
+// Minimal ACP connection backing a real ControlPlane: enough for a live
+// session that never flushes to the session store.
+class StubConnection implements AcpConnection {
+  readonly capabilities = { loadSession: true, sessionList: true };
+  closed = false;
+  async listSessions() {
+    return [];
+  }
+  async newSession() {
+    return "live-1";
+  }
+  async loadSession() {}
+  async prompt() {}
+  async cancel() {}
+  async deleteSession() {}
+  respondToPermission() {
+    return true;
+  }
+  recentStderr() {
+    return [];
+  }
+  onUpdate() {
+    return () => {};
+  }
+  onPermission() {
+    return () => {};
+  }
+  async close() {
+    this.closed = true;
+  }
+}
+
+const makeLivePlane = async (): Promise<ControlPlaneService> => {
+  const repo = SessionRepository.of({
+    save: () => Effect.void,
+    getById: () => Effect.succeed(Option.none()),
+    list: () => Effect.succeed([]),
+    delete: () => Effect.void,
+    hasSession: () => Effect.succeed(false),
+  });
+  const runtime: AgentRuntime = {
+    id: "devin",
+    label: "Devin",
+    spawn: async () => new StubConnection(),
+  };
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* ControlPlane;
+    }).pipe(
+      // idleTtlMs 0 disables the idle sweeper so no timer outlives the test.
+      Effect.provide(controlPlaneLayer({ agents: [runtime], idleTtlMs: 0 })),
+      Effect.provide(Layer.succeed(SessionRepository, repo)),
+    ),
+  );
+};
+
 describe("createApp", () => {
   it("answers OPTIONS preflight with 204 and CORS headers", async () => {
     const { plane } = makeFakePlane();
@@ -187,10 +264,12 @@ describe("createApp", () => {
 
     const plain = await app(get("/api/sessions"));
     expect(plain.status).toBe(200);
-    await expect(plain.json()).resolves.toEqual({ sessions: [SESSION] });
+    await expect(plain.json()).resolves.toEqual({ sessions: [SESSION_JSON] });
 
     const locked = await app(get("/api/sessions?withLocks=1"));
-    await expect(locked.json()).resolves.toEqual({ sessions: [{ ...SESSION, locked: true }] });
+    await expect(locked.json()).resolves.toEqual({
+      sessions: [{ ...SESSION_JSON, locked: true }],
+    });
   });
 
   it("POST /api/sessions creates a session and returns 201 with the id", async () => {
@@ -200,7 +279,7 @@ describe("createApp", () => {
     );
 
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toEqual({ id: "sess-new" });
+    await expect(response.json()).resolves.toEqual({ id: "sess-new", agentId: "devin" });
     expect(created).toEqual([{ cwd: "/tmp/sepia", title: "New" }]);
   });
 
@@ -351,7 +430,7 @@ describe("createApp", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
-  it("DELETE /api/sessions/:id returns ok and maps missing sessions to 404", async () => {
+  it("DELETE /api/sessions/:id returns ok even when the session is unknown", async () => {
     const { plane } = makeFakePlane();
     const ok = await createApp(plane)(
       new Request("http://localhost/api/sessions/sess-1", { method: "DELETE" }),
@@ -362,7 +441,10 @@ describe("createApp", () => {
 
     expect(ok.status).toBe(200);
     await expect(ok.json()).resolves.toEqual({ ok: true });
-    expect(missing.status).toBe(404);
+    // not_found is swallowed: created-but-unflushed sessions exist only in the
+    // meta overlay, so deleting them must still succeed.
+    expect(missing.status).toBe(200);
+    await expect(missing.json()).resolves.toEqual({ ok: true });
   });
 
   it("PATCH /api/sessions/:id renames via the meta overlay and overlays on list", async () => {
@@ -632,7 +714,7 @@ describe("createApp", () => {
     const response = await createApp(plane, { token: "secret" })(authed("/api/sessions", "secret"));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ sessions: [SESSION] });
+    await expect(response.json()).resolves.toEqual({ sessions: [SESSION_JSON] });
   });
 
   it("serves a healthy GET /api/health without a token", async () => {
@@ -700,4 +782,177 @@ describe("createApp", () => {
     expect(frame).toContain("RUN_ERROR");
     expect(frame).toContain("agent process exited");
   });
+
+  it("PATCH /api/config/:key writes through to the meta file; GET /api/config reads it back", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
+    const metaPath = join(dir, "meta.json");
+    const app = createApp(plane, { meta: createMetaStore(metaPath) });
+
+    const patched = await app(patch("/api/config/ui.section.pinned", { value: false }));
+    expect(patched.status).toBe(200);
+    await expect(patched.json()).resolves.toEqual({
+      key: "ui.section.pinned",
+      value: false,
+    });
+
+    const read = await app(get("/api/config"));
+    expect(read.status).toBe(200);
+    await expect(read.json()).resolves.toEqual({
+      config: { "ui.section.pinned": false },
+    });
+
+    // A fresh store over the same file sees the value — it is on disk, not in memory.
+    const reloaded = await createApp(plane, { meta: createMetaStore(metaPath) })(
+      get("/api/config"),
+    );
+    await expect(reloaded.json()).resolves.toEqual({
+      config: { "ui.section.pinned": false },
+    });
+  });
+
+  it("returns 501 for /api/config and /api/projects without a meta store", async () => {
+    const { plane } = makeFakePlane();
+    const app = createApp(plane);
+
+    expect((await app(get("/api/config"))).status).toBe(501);
+    expect((await app(patch("/api/config/k", { value: 1 }))).status).toBe(501);
+    expect((await app(get("/api/projects"))).status).toBe(501);
+    expect((await app(post("/api/projects", { name: "x" }))).status).toBe(501);
+  });
+
+  it("POST/GET/PATCH/DELETE /api/projects manages the project list", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
+    const app = createApp(plane, { meta: createMetaStore(join(dir, "meta.json")) });
+
+    const created = await app(post("/api/projects", { name: "Alpha" }));
+    expect(created.status).toBe(201);
+    const { project } = (await created.json()) as {
+      project: { id: string; name: string };
+    };
+    expect(project.name).toBe("Alpha");
+    expect(project.id).toMatch(/^proj_/);
+
+    const rejected = await app(post("/api/projects", { name: " " }));
+    expect(rejected.status).toBe(400);
+
+    const renamed = await app(patch(`/api/projects/${project.id}`, { name: "Beta" }));
+    expect(renamed.status).toBe(200);
+
+    const missing = await app(patch("/api/projects/proj-nope", { name: "X" }));
+    expect(missing.status).toBe(404);
+
+    const listed = await app(get("/api/projects"));
+    await expect(listed.json()).resolves.toEqual({
+      projects: [{ id: project.id, name: "Beta" }],
+    });
+
+    const deleted = await app(del(`/api/projects/${project.id}`));
+    expect(deleted.status).toBe(200);
+    await expect((await app(get("/api/projects"))).json()).resolves.toEqual({ projects: [] });
+  });
+
+  it("PATCH /api/sessions/:id stores pinned + projectIds and lands on GET /api/sessions", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
+    const app = createApp(plane, { meta: createMetaStore(join(dir, "meta.json")) });
+
+    const { project } = (await (await app(post("/api/projects", { name: "Work" }))).json()) as {
+      project: { id: string };
+    };
+
+    const patched = await app(
+      patch("/api/sessions/sess-1", { pinned: true, projectIds: [project.id] }),
+    );
+    expect(patched.status).toBe(200);
+
+    const listed = await app(get("/api/sessions"));
+    const { sessions } = (await listed.json()) as {
+      sessions: Array<{ pinned?: boolean; projectIds?: string[] }>;
+    };
+    expect(sessions[0]?.pinned).toBe(true);
+    expect(sessions[0]?.projectIds).toEqual([project.id]);
+
+    // Deleting the project also strips its id from the session overlay.
+    await app(del(`/api/projects/${project.id}`));
+    const after = (await (await app(get("/api/sessions"))).json()) as {
+      sessions: Array<{ projectIds?: string[] }>;
+    };
+    expect(after.sessions[0]?.projectIds).toEqual([]);
+
+    const badIds = await app(patch("/api/sessions/sess-1", { projectIds: "x" }));
+    expect(badIds.status).toBe(400);
+  });
+
+  it("GET /api/sessions/:id/history returns an empty page for a live, unflushed session", async () => {
+    const plane = await makeLivePlane();
+    const app = createApp(plane);
+    try {
+      // The agent keeps a fresh session live but only flushes it to the store
+      // after the first prompt — history must be an empty page, not a 404.
+      const created = await app(post("/api/sessions", { cwd: "/tmp/live" }));
+      expect(created.status).toBe(201);
+      const { id } = (await created.json()) as { id: string };
+      expect(id).toBe("live-1");
+
+      const history = await app(get(`/api/sessions/${id}/history`));
+      expect(history.status).toBe(200);
+      await expect(history.json()).resolves.toEqual({ messages: [], total: 0, start: 0 });
+
+      // A true unknown still 404s.
+      const unknown = await app(get("/api/sessions/ghost/history"));
+      expect(unknown.status).toBe(404);
+      await expect(unknown.json()).resolves.toEqual({
+        error: "Unknown session: ghost",
+        code: "not_found",
+      });
+    } finally {
+      await Effect.runPromise(plane.closeAll());
+    }
+  });
+
+  it("POST /api/sessions/:id/convert returns 501 when conversion is not configured", async () => {
+    const { plane } = makeFakePlane();
+    const response = await createApp(plane)(
+      post("/api/sessions/sess-1/convert", { agent: "cline" }),
+    );
+
+    expect(response.status).toBe(501);
+    await expect(response.json()).resolves.toEqual({
+      error: "Convert is not configured on this server",
+    });
+  });
+
+  it("POST /api/sessions/:id/convert rejects an unknown target agent with 400", async () => {
+    const { plane } = makeFakePlane();
+    const app = createApp(plane, { convert: { dbPath: "/unused", clineDir: "/unused" } });
+
+    const response = await app(post("/api/sessions/sess-1/convert", { agent: "cursor" }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "agent must be 'cline' or 'devin'",
+    });
+  });
+
+  it("POST /api/sessions/:id/convert maps a store failure to 500 internal", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-convert-"));
+    const app = createApp(plane, {
+      convert: { dbPath: join(dir, "sessions.db"), clineDir: join(dir, "cline") },
+    });
+
+    // Under node the bun:sqlite stub makes the store layer fail to build; the
+    // route must surface it as a ControlError, not an unhandled rejection.
+    const response = await app(post("/api/sessions/sess-1/convert", { agent: "cline" }));
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { error: string; code?: string };
+    expect(body.code).toBe("internal");
+  });
+
+  // The conversion happy path needs real bun:sqlite-backed stores (a Devin
+  // sessions.db plus a Cline tasks dir); vitest aliases the driver to a
+  // throwing stub under node. Cover it in tests/e2e.ts (runs under `bun`)
+  // once a fixture store pair exists.
+  it.todo("POST /api/sessions/:id/convert returns { sessionId } for a real store pair");
 });

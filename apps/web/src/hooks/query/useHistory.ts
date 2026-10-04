@@ -19,13 +19,14 @@ export const flattenHistory = (data: InfiniteData<HistoryPage> | undefined): His
  * live SSE feed invalidates this key when a run finishes so the pane re-syncs
  * without polling.
  */
-export const useHistory = (sessionId: string | null) =>
+export const useHistory = (sessionId: string | null, agent?: string) =>
   useInfiniteQuery({
-    queryKey: queryKeys.history(sessionId ?? ""),
+    queryKey: queryKeys.history(sessionId ?? "", agent),
     queryFn: ({ pageParam }) =>
       getHistory(sessionId as string, {
         limit: PAGE_SIZE,
         before: pageParam === 0 ? undefined : pageParam,
+        agent,
       }),
     enabled: sessionId !== null,
     initialPageParam: 0,

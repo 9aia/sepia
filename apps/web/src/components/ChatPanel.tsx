@@ -59,7 +59,7 @@ export function ChatPanel() {
   const queryClient = useQueryClient();
   const attachMutation = useAttachSession();
   const respondMutation = useRespondToPermission();
-  const historyQuery = useHistory(sessionId);
+  const historyQuery = useHistory(sessionId, session?.agent);
 
   // Mutation state is for the last mutate() call; only trust it when it
   // refers to the session currently on screen.
@@ -82,7 +82,11 @@ export function ChatPanel() {
   const settings = useStore(settingsStore);
   useEffect(() => {
     if (sessionId === null) return;
-    attach({ id: sessionId, ...modelArgsFor(session?.agent ?? "", session?.model, settings) });
+    attach({
+      id: sessionId,
+      agent: session?.agent,
+      ...modelArgsFor(session?.agent ?? "", session?.model, settings),
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, attach, session?.model, settings]);
 
@@ -128,12 +132,15 @@ export function ChatPanel() {
         if (event.type === "RUN_STARTED") setRunning(true);
         if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
           setRunning(false);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.history(sessionId) });
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.history(sessionId, session?.agent),
+          });
         }
       },
       setStreamStatus,
+      session?.agent,
     );
-  }, [sessionId, attachReady, queryClient]);
+  }, [sessionId, attachReady, queryClient, session?.agent]);
 
   const resolvePermissions = useCallback(
     (answers: Readonly<Record<string, string>>) => {
@@ -143,12 +150,13 @@ export function ChatPanel() {
       for (const request of pending) {
         respondMutation.mutate({
           sessionId,
+          agent: session?.agent,
           requestId: request.requestId,
           optionId: answers[request.requestId] ?? null,
         });
       }
     },
-    [sessionId, permissions, respondMutation],
+    [sessionId, session?.agent, permissions, respondMutation],
   );
 
   const cancelPermissions = useCallback(() => {
@@ -191,6 +199,7 @@ export function ChatPanel() {
         {attachError === null && (
           <SessionChat
             sessionId={session.id}
+            agent={session.agent}
             readOnly={readOnly}
             running={running || session.busy}
             liveMessages={liveMessages}
@@ -198,6 +207,7 @@ export function ChatPanel() {
             onTakeover={() =>
               attach({
                 id: session.id,
+                agent: session.agent,
                 takeover: true,
                 ...modelArgsFor(session.agent, session.model, settings),
               })

@@ -90,6 +90,8 @@ export const createAguiAgentHandler =
     if (sessionId === null) {
       return json({ error: "sessionId is required (forwardedProps.sessionId)" }, 400);
     }
+    // Optional disambiguator — ids collide across agents.
+    const agentId = new URL(request.url).searchParams.get("agent") ?? undefined;
     const text = lastUserText(input.messages);
     if (text === null) return json({ error: "A user message is required" }, 400);
 
@@ -98,7 +100,7 @@ export const createAguiAgentHandler =
 
     let attached;
     try {
-      attached = await run(plane.attach(sessionId));
+      attached = await run(plane.attach(sessionId, { agentId }));
     } catch (error) {
       return json({ error: messageOf(error) }, 400);
     }
@@ -124,7 +126,7 @@ export const createAguiAgentHandler =
 
     // A disconnected client should not leave the agent working on an abandoned turn.
     const cancelTurn = (): void => {
-      void run(plane.cancel(sessionId)).catch(() => undefined);
+      void run(plane.cancel(sessionId, agentId)).catch(() => undefined);
     };
 
     const emit = (events: ReadonlyArray<Event>): void => {
@@ -149,14 +151,14 @@ export const createAguiAgentHandler =
     };
 
     try {
-      unsubscribe = await run(plane.subscribe(sessionId, listener));
+      unsubscribe = await run(plane.subscribe(sessionId, listener, agentId));
     } catch (error) {
       channel.close();
       return json({ error: messageOf(error) }, 400);
     }
 
     const backlog = await run(
-      Effect.either(plane.getHistory(sessionId, { limit: SNAPSHOT_HISTORY_LIMIT })),
+      Effect.either(plane.getHistory(sessionId, { limit: SNAPSHOT_HISTORY_LIMIT, agentId })),
     );
     if (Either.isRight(backlog) && backlog.right.messages.length > 0) {
       snapshot = [
@@ -169,7 +171,7 @@ export const createAguiAgentHandler =
       ];
     }
 
-    const promptRun = run(Effect.either(plane.prompt(sessionId, text)));
+    const promptRun = run(Effect.either(plane.prompt(sessionId, text, agentId)));
 
     // A busy rejection is synchronous; race one tick so we can answer 409 before
     // committing to a stream instead of surfacing it as a RUN_ERROR event.

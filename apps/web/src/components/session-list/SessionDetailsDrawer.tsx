@@ -128,7 +128,7 @@ function RenameDialog({
   const rename = (): void => {
     if (!dirty) return;
     renameMutation.mutate(
-      { id: session.id, title: title.trim() },
+      { id: session.id, title: title.trim(), agent: session.agent },
       { onSuccess: () => onOpenChange(false) },
     );
   };
@@ -175,7 +175,7 @@ interface SessionDetailsDrawerProps {
   readonly focusRename: boolean;
   onClose: () => void;
   onOpen: (id: string) => void;
-  onDelete: (id: string) => void;
+  onDelete: (session: SessionSummary) => void;
 }
 
 export function SessionDetailsDrawer({
@@ -267,7 +267,13 @@ export function SessionDetailsDrawer({
               <Button
                 variant="outline"
                 className="w-full justify-start"
-                onClick={() => patch.mutate({ id: session.id, patch: { pinned: !session.pinned } })}
+                onClick={() =>
+                  patch.mutate({
+                    id: session.id,
+                    agent: session.agent,
+                    patch: { pinned: !session.pinned },
+                  })
+                }
               >
                 <HugeiconsIcon icon={PinIcon} strokeWidth={2} />
                 {session.pinned === true ? "Unpin" : "Pin"}
@@ -295,7 +301,11 @@ export function SessionDetailsDrawer({
                         const ids = session.projectIds.includes(project.id)
                           ? session.projectIds.filter((p) => p !== project.id)
                           : [...session.projectIds, project.id];
-                        patch.mutate({ id: session.id, patch: { projectIds: ids } });
+                        patch.mutate({
+                          id: session.id,
+                          agent: session.agent,
+                          patch: { projectIds: ids },
+                        });
                       }}
                     >
                       {project.name}
@@ -321,7 +331,13 @@ export function SessionDetailsDrawer({
                     .map((agent) => (
                       <DropdownMenuItem
                         key={agent.id}
-                        onClick={() => convert.mutate({ id: session.id, agent: agent.id })}
+                        onClick={() =>
+                          convert.mutate({
+                            id: session.id,
+                            agent: agent.id,
+                            fromAgent: session.agent,
+                          })
+                        }
                       >
                         To {agent.label}
                       </DropdownMenuItem>
@@ -358,7 +374,7 @@ export function SessionDetailsDrawer({
                   <AlertDialogAction
                     variant="destructive"
                     onClick={() => {
-                      onDelete(session.id);
+                      onDelete(session);
                       setConfirmOpen(false);
                       onClose();
                     }}

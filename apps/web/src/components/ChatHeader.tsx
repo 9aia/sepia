@@ -4,6 +4,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../lib/types";
 import type { StreamStatus } from "../lib/api";
 import { setDetailsFor, setSelectedId } from "../lib/store";
+import { sessionKey } from "../lib/format";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import {
   AlertDialog,
@@ -52,7 +53,7 @@ export function ChatHeader({ session, running, streamStatus }: ChatHeaderProps) 
         type="button"
         className="min-w-0 flex-1 cursor-pointer rounded-md px-1 py-0.5 text-left transition-colors hover:bg-accent/60 focus-visible:ring-1 focus-visible:ring-ring"
         aria-label={`Session details: ${session.title}`}
-        onClick={() => setDetailsFor({ id: session.id, rename: false })}
+        onClick={() => setDetailsFor({ id: sessionKey(session), rename: false })}
       >
         <h2 className="m-0 truncate text-[15px]">{session.title}</h2>
         <span className="block truncate text-xs text-muted-foreground" title={session.cwd}>
@@ -106,7 +107,7 @@ export function ChatHeader({ session, running, streamStatus }: ChatHeaderProps) 
               <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
-                onClick={() => deleteMutation.mutate(session.id)}
+                onClick={() => deleteMutation.mutate({ id: session.id, agent: session.agent })}
               >
                 Delete
               </AlertDialogAction>

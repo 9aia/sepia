@@ -14,6 +14,14 @@ export interface SessionMeta {
   readonly projectIds?: ReadonlyArray<string>;
   /** Preferred spawn model for this session — applied on next attach. */
   readonly model?: string | null;
+  /**
+   * Recorded on `POST /api/sessions`: a created session may not exist in the
+   * agent's store yet (it flushes on first prompt), so the agent/cwd pair is
+   * what lets the server still identify it after a restart.
+   */
+  readonly agent?: string;
+  readonly cwd?: string;
+  readonly createdAt?: string;
 }
 
 export interface Project {
@@ -30,6 +38,8 @@ interface MetaFile {
 
 export interface MetaStore {
   readonly of: (id: string) => SessionMeta | undefined;
+  /** Every recorded session meta, keyed by session id. */
+  readonly sessions: () => Readonly<Record<string, SessionMeta>>;
   readonly patch: (id: string, patch: Partial<SessionMeta>) => void;
   readonly remove: (id: string) => void;
   readonly listProjects: () => ReadonlyArray<Project>;
@@ -63,6 +73,9 @@ export const createMetaStore = (path: string): MetaStore => {
           ? [raw.projectId]
           : [],
       model: raw.model === null || typeof raw.model === "string" ? raw.model : undefined,
+      agent: typeof raw.agent === "string" ? raw.agent : undefined,
+      cwd: typeof raw.cwd === "string" ? raw.cwd : undefined,
+      createdAt: typeof raw.createdAt === "string" ? raw.createdAt : undefined,
     };
   };
 
@@ -108,6 +121,7 @@ export const createMetaStore = (path: string): MetaStore => {
 
   return {
     of: (id) => data.sessions[id],
+    sessions: () => data.sessions,
     patch: patchSession,
     remove: (id) => {
       if (!(id in data.sessions)) return;

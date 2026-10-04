@@ -74,7 +74,7 @@ import { SessionActions } from "./SessionActions";
 interface RowHandlers {
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
-  onDelete: (id: string) => void;
+  onDelete: (session: SessionSummary) => void;
 }
 
 /** A session row outside the tree — same visuals + ⋯/context menus. */
@@ -113,7 +113,11 @@ function SectionSessionRow({
             title={session.pinned === true ? "Unpin" : "Pin"}
             onClick={(event) => {
               event.stopPropagation();
-              patch.mutate({ id: session.id, patch: { pinned: session.pinned !== true } });
+              patch.mutate({
+                id: session.id,
+                agent: session.agent,
+                patch: { pinned: session.pinned !== true },
+              });
             }}
           >
             <HugeiconsIcon icon={session.pinned === true ? PinOffIcon : PinIcon} strokeWidth={2} />
@@ -172,7 +176,7 @@ function SectionSessionRow({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => onDelete(session.id)}>
+            <AlertDialogAction variant="destructive" onClick={() => onDelete(session)}>
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -316,11 +320,14 @@ function ProjectsSection({
   projects,
   sessions,
   selectedId,
+  resolvedCwd,
   ...handlers
 }: {
   readonly projects: ReadonlyArray<Project>;
   readonly sessions: ReadonlyArray<SessionSummary>;
   readonly selectedId: string | null;
+  /** Fallback spawn dir for projects with no member sessions yet. */
+  readonly resolvedCwd: string;
 } & RowHandlers) {
   const [collapsed, setCollapsed] = useUiState<Record<string, boolean>>("ui.collapsedProjects", {});
   const [dialog, setDialog] = useState<ProjectDialogState | null>(null);
@@ -336,13 +343,19 @@ function ProjectsSection({
   const settings = useStore(settingsStore);
 
   const newSessionIn = (project: Project, members: ReadonlyArray<SessionSummary>): void => {
-    // Spawn in the newest member's cwd, then enroll the session in the project.
-    const cwd = members[0]?.cwd;
-    if (cwd === undefined) return;
+    // Spawn in the newest member's cwd — or the resolved fallback when the
+    // project is still empty — then enroll the session in the project.
+    const cwd = members[0]?.cwd ?? resolvedCwd;
     const agent = settings.defaultAgent ?? agents[0]?.id;
     void createSession
       .mutateAsync({ cwd, agent, ...modelArgsFor(agent ?? "", null, settings) })
-      .then(({ id }) => patchSession.mutate({ id, patch: { projectIds: [project.id] } }));
+      .then(({ id, agentId }) =>
+        patchSession.mutate({
+          id,
+          agent: agentId ?? agent,
+          patch: { projectIds: [project.id] },
+        }),
+      );
   };
 
   const submitName = (state: ProjectDialogState, name: string): void => {
@@ -401,21 +414,19 @@ function ProjectsSection({
                     {project.name}
                   </span>
                 </button>
-                {members.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="absolute top-1/2 right-8 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
-                    aria-label={`New session in project ${project.name}`}
-                    title="New session here"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      newSessionIn(project, members);
-                    }}
-                  >
-                    <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-                  </Button>
-                )}
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="absolute top-1/2 right-8 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                  aria-label={`New session in project ${project.name}`}
+                  title="New session here"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    newSessionIn(project, members);
+                  }}
+                >
+                  <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
@@ -457,7 +468,7 @@ function ProjectsSection({
                 <div className="ml-4 flex flex-col gap-1 border-l border-border/50 pl-3">
                   {members.length === 0 && (
                     <p className="px-3 py-1 text-xs text-muted-foreground">
-                      No sessions — use &quot;Projects…&quot; on a session.
+                      No sessions — start one with + or use &quot;Projects…&quot; on a session.
                     </p>
                   )}
                   {members.map((session) => (
@@ -517,15 +528,18 @@ interface SessionSectionsProps {
   readonly sessions: ReadonlyArray<SessionSummary>;
   readonly recentSessions: ReadonlyArray<SessionSummary>;
   readonly selectedId: string | null;
+  /** Fallback spawn dir for "New session here" on empty projects. */
+  readonly resolvedCwd: string;
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
-  onDelete: (id: string) => void;
+  onDelete: (session: SessionSummary) => void;
 }
 
 export function SessionSections({
   sessions,
   recentSessions,
   selectedId,
+  resolvedCwd,
   ...handlers
 }: SessionSectionsProps) {
   const { data: projects = [] } = useProjects();
@@ -545,6 +559,7 @@ export function SessionSections({
         projects={projects}
         sessions={sessions}
         selectedId={selectedId}
+        resolvedCwd={resolvedCwd}
         {...handlers}
       />
       <FlatSection
@@ -589,7 +604,7 @@ function ProjectDetailsDialog({
               key={session.id}
               type="button"
               className="rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
-              onClick={() => onSelectSession(session.id)}
+              onClick={() => onSelectSession(sessionKey(session))}
             >
               <span className="block truncate font-medium">{session.title}</span>
               <span className="block truncate text-xs text-muted-foreground">
@@ -622,7 +637,11 @@ function AddSessionDialog({
   );
   const add = (session: SessionSummary): void =>
     patch.mutate(
-      { id: session.id, patch: { projectIds: [...session.projectIds, project.id] } },
+      {
+        id: session.id,
+        agent: session.agent,
+        patch: { projectIds: [...session.projectIds, project.id] },
+      },
       { onSuccess: onClose },
     );
   return (

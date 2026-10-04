@@ -1,6 +1,10 @@
 import { Effect, Option } from "effect";
 import type { Session, SessionRepositoryService } from "sepia-core";
 
+/** Maps a store backend to the agent that can resume it. */
+export const agentForBackend = (backendType: string): string =>
+  backendType === "cline" ? "cline" : "devin";
+
 /**
  * Overlays one primary repository (Devin's store) with extra read sources
  * (e.g. Cline's session dirs). Extra-repo failures degrade to "empty / not
@@ -29,15 +33,20 @@ export const mergeRepositories = (
       }),
     ),
 
-  getById: (id) =>
+  // `agentId` narrows the lookup to sessions whose backend maps to that
+  // agent — ids collide across stores, so the primary's copy is only
+  // correct when the caller asked for its agent.
+  getById: (id, agentId) =>
     Effect.gen(function* () {
+      const forAgent = (session: Session): boolean =>
+        agentId === undefined || agentForBackend(session.backendType) === agentId;
       const found = yield* primary.getById(id);
-      if (Option.isSome(found)) return found;
+      if (Option.isSome(found) && forAgent(found.value)) return found;
       for (const repo of extras) {
         const hit = yield* repo
           .getById(id)
           .pipe(Effect.catchAll(() => Effect.succeed(Option.none<Session>())));
-        if (Option.isSome(hit)) return hit;
+        if (Option.isSome(hit) && forAgent(hit.value)) return hit;
       }
       return Option.none<Session>();
     }),

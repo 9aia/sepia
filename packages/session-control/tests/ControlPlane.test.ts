@@ -349,6 +349,27 @@ test("fails with ControlError when the session is unknown", async () => {
   if (Either.isLeft(result)) expect(result.left._tag).toBe("ControlError");
 });
 
+test("returns an empty history page for a live session not yet in the store", async () => {
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([]),
+  );
+
+  // The agent only flushes a fresh session to the store after the first
+  // prompt; until then history must be an empty page, not not_found.
+  await Effect.runPromise(cp.createSession({ cwd: "/work" }));
+
+  expect(await Effect.runPromise(cp.getHistory("new"))).toEqual({
+    messages: [],
+    total: 0,
+    start: 0,
+  });
+
+  const missing = await runEither(cp.getHistory("ghost"));
+  expect(Either.isLeft(missing)).toBe(true);
+  if (Either.isLeft(missing)) expect(missing.left.code).toBe("not_found");
+});
+
 test("attaches by spawning the agent and loading the session", async () => {
   const conn = new FakeConnection();
   const { runtime, spawns } = fakeAgent(conn);
@@ -454,7 +475,7 @@ test("createSession spawns the agent, returns the id, and registers a live sessi
 
   const result = await Effect.runPromise(cp.createSession({ cwd: "/work", title: "Fresh" }));
 
-  expect(result).toEqual({ id: "new" });
+  expect(result).toEqual({ id: "new", agentId: "devin" });
   expect(spawns).toEqual([{ cwd: "/work" }]);
 
   await Effect.runPromise(cp.prompt("new", "hi"));

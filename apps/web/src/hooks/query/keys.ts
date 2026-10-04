@@ -5,5 +5,6 @@ export const queryKeys = {
   agents: ["agents"] as const,
   user: ["user"] as const,
   dirs: (path: string) => ["dirs", path] as const,
-  history: (sessionId: string) => ["history", sessionId] as const,
+  history: (sessionId: string, agent?: string) =>
+    ["history", agent === undefined || agent === "" ? sessionId : `${agent}:${sessionId}`] as const,
 };
