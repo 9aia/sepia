@@ -84,6 +84,8 @@ const toSummary = (session: Session): SessionSummary => {
     lockHolderPid: null,
     source: agent,
     busy: false,
+    parentSessionId: Option.getOrUndefined(session.parentSessionId),
+    agentId: Option.getOrUndefined(session.agentId),
   };
 };
 
@@ -224,12 +226,22 @@ export const make = (
         const start = Math.max(0, before - limit);
         const slice = nodes.slice(start, before);
         return {
-          messages: slice.map((node): HistoryMessage => ({
-            role: node.role,
-            content: node.content,
-            createdAt: node.createdAt * 1000,
-            toolName: Option.getOrUndefined(node.toolName),
-          })),
+          messages: slice.map((node): HistoryMessage => {
+            const toolResult = Option.getOrUndefined(node.toolResult);
+            return {
+              role: node.role,
+              content: node.content,
+              createdAt: node.createdAt * 1000,
+              toolName: Option.getOrUndefined(node.toolName),
+              usage: Option.getOrUndefined(node.usage),
+              model: Option.getOrUndefined(node.model),
+              requestId: Option.getOrUndefined(node.requestId),
+              finishReason: Option.getOrUndefined(node.finishReason),
+              toolStatus: toolResult?.status,
+              exitCode: toolResult?.exitCode,
+              durationMs: toolResult?.durationMs,
+            };
+          }),
           total,
           start,
         };

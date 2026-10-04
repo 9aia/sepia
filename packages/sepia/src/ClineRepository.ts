@@ -46,6 +46,7 @@ const manifestToSession = (raw: string, fallbackId: string): Session | null => {
     const meta = JSON.parse(raw) as Record<string, unknown>;
     const id = typeof meta.session_id === "string" ? meta.session_id : fallbackId;
     const createdAt = toSeconds(meta.started_at) ?? Math.floor(Date.now() / 1000);
+    const subagent = Cline.clineSubagentInfo(id);
     return Session.make({
       id,
       title: titleOf(meta, id),
@@ -55,6 +56,8 @@ const manifestToSession = (raw: string, fallbackId: string): Session | null => {
       createdAt,
       lastActivityAt: toSeconds(meta.ended_at) ?? createdAt,
       mainChainId: 0,
+      parentSessionId: Option.fromNullable(subagent?.parentSessionId),
+      agentId: Option.fromNullable(subagent?.agentId),
       metadata: {},
     });
   } catch {
@@ -123,6 +126,8 @@ export const makeClineSessionRepository = (
             cogsJson: session.cogsJson,
             workspaceDirs: session.workspaceDirs,
             hidden: session.hidden,
+            parentSessionId: session.parentSessionId,
+            agentId: session.agentId,
             metadata: session.metadata,
             nodes: session.nodes,
             promptHistory: session.promptHistory,

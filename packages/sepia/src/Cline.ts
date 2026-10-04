@@ -2,7 +2,15 @@ import * as Fs from "@effect/platform/FileSystem";
 import * as Path from "@effect/platform/Path";
 import { Console, Effect, Option } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
-import { ConversionError, MessageNode, PromptHistoryEntry, Session, ToolCall } from "./Domain.js";
+import {
+  ConversionError,
+  MessageNode,
+  PromptHistoryEntry,
+  Session,
+  ToolCall,
+  type TokenUsage,
+  type ToolResultInfo,
+} from "./Domain.js";
 import * as Devin from "./Devin.js";
 
 const sanitize = (text: string | null | undefined): string => {
@@ -55,6 +63,35 @@ const asList = (value: unknown): ReadonlyArray<unknown> => {
 };
 
 const makeToolCallId = (): string => `chatcmpl-tool-${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+
+/**
+ * Sub-agent session ids embed their lineage: `<parent>__teamtask__<agent>__<rand>`
+ * for team tasks and `<parent>__agent_<agent>` for spawned agents — the index
+ * row's `parent_session_id`/`agent_id` repeat exactly these segments, so the
+ * manifest-only read paths can recover them without opening `db/sessions.db`.
+ */
+export const clineSubagentInfo = (
+  sessionId: string,
+): { readonly parentSessionId: string; readonly agentId: string } | null => {
+  // Nested team tasks chain the markers, and the parent is the session one
+  // level up — so the split happens at the last `__teamtask__`, not the first.
+  const teamtask = sessionId.lastIndexOf("__teamtask__");
+  if (teamtask !== -1) {
+    const rest = sessionId.slice(teamtask + "__teamtask__".length);
+    const sep = rest.lastIndexOf("__");
+    const agentId = sep === -1 ? rest : rest.slice(0, sep);
+    if (agentId === "") return null;
+    return { parentSessionId: sessionId.slice(0, teamtask), agentId };
+  }
+  const spawned = sessionId.indexOf("__agent_");
+  if (spawned !== -1) {
+    return {
+      parentSessionId: sessionId.slice(0, spawned),
+      agentId: sessionId.slice(spawned + 2),
+    };
+  }
+  return null;
+};
 
 /**
  * The first field that carries the items of a call. Tool inputs are not uniform
@@ -184,19 +221,26 @@ const mapToolUse = (
  * match is therefore only a hint — entries that match no call fill the calls
  * that matched no entry, in order — so no result is silently dropped.
  */
-const toolResultValues = (
+/** One devin call's share of a Cline tool result: the text plus its success flag. */
+interface ResultShare {
+  readonly content: string | undefined;
+  readonly success: boolean | undefined;
+}
+
+const toolResultShares = (
   clineResult: any,
   devinCalls: ReadonlyArray<{ resultKey: string }>,
-): ReadonlyArray<string | undefined> => {
+): ReadonlyArray<ResultShare> => {
   const content = clineResult?.content;
 
   if (typeof content === "string") {
-    return devinCalls.map(() => content);
+    return devinCalls.map(() => ({ content, success: undefined }));
   }
   if (!Array.isArray(content)) {
-    return devinCalls.map(() =>
-      content === undefined || content === null ? undefined : JSON.stringify(content),
-    );
+    return devinCalls.map(() => ({
+      content: content === undefined || content === null ? undefined : JSON.stringify(content),
+      success: undefined,
+    }));
   }
 
   const entries = content.filter((item) => item !== undefined && item !== null);
@@ -207,33 +251,48 @@ const toolResultValues = (
         ? item.result
         : JSON.stringify(item.result ?? item),
   );
+  const successes = entries.map((item: any) =>
+    typeof item === "object" && typeof item.success === "boolean" ? item.success : undefined,
+  );
   const keys = entries.map((item: any) =>
     typeof item === "object" ? keyOf(item.query ?? item.url ?? "") : "",
   );
 
   const claimed = new Set<number>();
-  const out = devinCalls.map((call) => {
+  const assigned: Array<number | undefined> = devinCalls.map((call) => {
     const index = keys.findIndex((key, i) => key === call.resultKey && !claimed.has(i));
     if (index === -1) return undefined;
     claimed.add(index);
-    return values[index];
+    return index;
   });
 
-  const unclaimed = values.filter((_, i) => !claimed.has(i));
+  const unclaimedEntries = entries.map((_, i) => i).filter((i) => !claimed.has(i));
   let next = 0;
-  for (let i = 0; i < out.length && next < unclaimed.length; i++) {
-    if (out[i] === undefined) {
-      out[i] = unclaimed[next++];
+  for (let i = 0; i < assigned.length && next < unclaimedEntries.length; i++) {
+    if (assigned[i] === undefined) {
+      assigned[i] = unclaimedEntries[next++];
     }
   }
+
+  const out: Array<ResultShare> = assigned.map((index) =>
+    index === undefined
+      ? { content: undefined, success: undefined }
+      : { content: values[index], success: successes[index] },
+  );
 
   // Nothing a result carried is thrown away: entries no call could hold — a
   // tool that could not be split into calls, an answer with more parts than
   // calls — ride along on the last call, and a lone call keeps the whole answer.
-  const tail = unclaimed.slice(next).join("\n");
+  const tailIndices = unclaimedEntries.slice(next);
+  const tail = tailIndices.map((i) => values[i]).join("\n");
   if (tail.length > 0 && out.length > 0) {
     const last = out.length - 1;
-    out[last] = out[last] === undefined ? tail : `${out[last]}\n${tail}`;
+    const merged = out[last];
+    const failed = merged.success === false || tailIndices.some((i) => successes[i] === false);
+    out[last] = {
+      content: merged.content === undefined ? tail : `${merged.content}\n${tail}`,
+      success: merged.success === undefined && !failed ? undefined : failed ? false : true,
+    };
   }
 
   return out;
@@ -282,6 +341,8 @@ const buildAssistantNode = (
   toolCalls: ReadonlyArray<ToolCall>,
   createdAt: number,
   rendered: boolean,
+  usage: Option.Option<TokenUsage>,
+  model: Option.Option<string>,
 ): MessageNode =>
   MessageNode.make({
     nodeId,
@@ -290,6 +351,8 @@ const buildAssistantNode = (
     content: sanitize(text),
     thinking: thinking ? Option.some(sanitize(thinking)) : Option.none<string>(),
     toolCalls,
+    usage,
+    model,
     createdAt,
     metadata: rendered
       ? { summarized_from: null, num_tokens_preceding: null, is_system_prefix: null }
@@ -304,6 +367,7 @@ const buildToolNode = (
   toolName: string,
   toolArguments: unknown,
   createdAt: number,
+  toolResult: Option.Option<ToolResultInfo>,
 ): MessageNode =>
   MessageNode.make({
     nodeId,
@@ -312,6 +376,7 @@ const buildToolNode = (
     content: sanitize(content),
     toolCallId: Option.some(toolCallId),
     toolName: Option.some(toolName),
+    toolResult,
     createdAt,
     metadata: toolArguments === null ? null : { toolArguments },
   });
@@ -321,6 +386,32 @@ const tsToEpochSeconds = (ts: unknown, fallback: number): number => {
     return ts > 1e12 ? Math.floor(ts / 1000) : ts;
   }
   return fallback;
+};
+
+/** Cline `metrics` uses camelCase token keys; `cost` may be absent. */
+const usageFromClineMetrics = (metrics: unknown): Option.Option<TokenUsage> => {
+  if (metrics === null || typeof metrics !== "object") return Option.none();
+  const m = metrics as Record<string, unknown>;
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  const input = num(m.inputTokens);
+  const output = num(m.outputTokens);
+  if (input === undefined && output === undefined) return Option.none();
+  const cacheRead = num(m.cacheReadTokens);
+  const cacheWrite = num(m.cacheWriteTokens);
+  const cost = num(m.cost);
+  return Option.some({
+    input: input ?? 0,
+    output: output ?? 0,
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+    ...(cost !== undefined ? { cost } : {}),
+  });
+};
+
+const modelFromMessage = (m: any): Option.Option<string> => {
+  const id = m?.modelInfo?.id;
+  return typeof id === "string" && id !== "" ? Option.some(id) : Option.none<string>();
 };
 
 const parseMessagesData = (raw: unknown): { messages: ReadonlyArray<any> } => {
@@ -362,9 +453,15 @@ export const fromDirectory = (
     const messagesPath = path.join(dir, `${base}.messages.json`);
 
     const metaJson = yield* fs.readFileString(metaPath);
-    const messagesJson = yield* fs.readFileString(messagesPath);
-
     const meta = JSON.parse(metaJson);
+
+    // Sub-agent manifests point `messages_path` into the parent's directory;
+    // the `<id>.messages.json` sibling only exists for root sessions.
+    const resolvedMessagesPath =
+      typeof meta.messages_path === "string" && meta.messages_path !== ""
+        ? meta.messages_path
+        : messagesPath;
+    const messagesJson = yield* fs.readFileString(resolvedMessagesPath);
     const { messages } = parseMessagesData(JSON.parse(messagesJson));
 
     return yield* Effect.try({
@@ -450,6 +547,7 @@ const buildSession = (
   );
 
   let pendingToolCalls: Record<string, ReadonlyArray<{ devin: ToolCall; resultKey: string }>> = {};
+  const toolCallOutcomes = new Map<string, Devin.ToolCallOutcome>();
   let lastRenderedAssistantNode = nSkills;
   let lastToolResultNode: number | null = null;
   let firstUserSeen = false;
@@ -506,17 +604,29 @@ const buildSession = (
             continue;
           }
 
-          const resultValues = toolResultValues(c, devinCalls);
+          const shares = toolResultShares(c, devinCalls);
           for (let i = 0; i < devinCalls.length; i++) {
             const { devin } = devinCalls[i];
-            const resultStr = resultValues[i];
+            const share = shares[i];
+
+            const status: ToolResultInfo["status"] = share.success === false ? "error" : "success";
+            toolCallOutcomes.set(devin.id, { status });
 
             const parent =
               lastToolResultNode !== null
                 ? Option.some(lastToolResultNode)
                 : Option.some(lastRenderedAssistantNode);
             addNode(parent, (nid, p) =>
-              buildToolNode(nid, p, devin.id, resultStr ?? "", devin.name, devin.arguments, ts),
+              buildToolNode(
+                nid,
+                p,
+                devin.id,
+                share.content ?? "",
+                devin.name,
+                devin.arguments,
+                ts,
+                Option.some({ status }),
+              ),
             );
             lastToolResultNode = nodes[nodes.length - 1].nodeId;
           }
@@ -567,11 +677,13 @@ const buildSession = (
         lastToolResultNode !== null
           ? Option.some(lastToolResultNode)
           : Option.some(lastRenderedAssistantNode);
+      const usage = usageFromClineMetrics(m.metrics);
+      const model = modelFromMessage(m);
       addNode(parent, (nid, p) =>
-        buildAssistantNode(nid, p, text, thinkingText, devinToolCalls, ts, false),
+        buildAssistantNode(nid, p, text, thinkingText, devinToolCalls, ts, false, usage, model),
       );
       addNode(parent, (nid, p) =>
-        buildAssistantNode(nid, p, text, thinkingText, devinToolCalls, ts, true),
+        buildAssistantNode(nid, p, text, thinkingText, devinToolCalls, ts, true, usage, model),
       );
 
       lastRenderedAssistantNode = nodes[nodes.length - 1].nodeId;
@@ -579,7 +691,11 @@ const buildSession = (
     }
   }
 
-  const mainChainId = nodes.length > 0 ? nodes[nodes.length - 1].nodeId : 0;
+  // Result entries carried the success flag per call — fold it back onto the
+  // assistant twins' ToolCalls now that all results have been seen.
+  const enrichedNodes = Devin.applyToolCallOutcomes(nodes, toolCallOutcomes);
+
+  const mainChainId = enrichedNodes.length > 0 ? enrichedNodes[enrichedNodes.length - 1].nodeId : 0;
 
   const promptHistory: Array<PromptHistoryEntry> = [];
   for (const m of messages) {
@@ -598,8 +714,11 @@ const buildSession = (
     }
   }
 
+  const resolvedId = sessionId ?? meta.session_id ?? pathService.basename(dir);
+  const subagent = clineSubagentInfo(resolvedId);
+
   return Session.make({
-    id: sessionId ?? meta.session_id ?? pathService.basename(dir),
+    id: resolvedId,
     title,
     workingDirectory: cwd,
     backendType: "windsurf",
@@ -612,8 +731,10 @@ const buildSession = (
     cogsJson: Devin.defaultCogsJson(),
     workspaceDirs: "[]",
     hidden: 0,
+    parentSessionId: Option.fromNullable(subagent?.parentSessionId),
+    agentId: Option.fromNullable(subagent?.agentId),
     metadata: Devin.defaultSessionMetadata(),
-    nodes,
+    nodes: enrichedNodes,
     promptHistory,
   });
 };
@@ -697,7 +818,14 @@ const toClineToolResultContent = (node: MessageNode, toolName: string): unknown 
     return node.content;
   }
 
-  return [{ query, result: node.content, success: true }];
+  const result = Option.getOrUndefined(node.toolResult);
+  return [
+    {
+      query,
+      result: node.content,
+      success: result === undefined ? true : result.status !== "error",
+    },
+  ];
 };
 
 const assistantFingerprint = (node: MessageNode): string =>
@@ -861,18 +989,22 @@ export const sessionMessages = (session: Session, sessionId: string): Record<str
       // A node with nothing in it carries nothing: the CLI's own import path
       // drops such a turn, so sepia does not write one either.
       if (content.length === 0) continue;
+      const usage = Option.getOrUndefined(node.usage);
       messages.push({
         id: nextId(),
         role: "assistant",
         content,
         ts: node.createdAt * 1000,
-        modelInfo: { id: session.model, provider: CLINE_PROVIDER },
+        modelInfo: {
+          id: Option.getOrElse(node.model, () => session.model),
+          provider: CLINE_PROVIDER,
+        },
         metrics: {
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          cost: 0,
+          inputTokens: usage?.input ?? 0,
+          outputTokens: usage?.output ?? 0,
+          cacheReadTokens: usage?.cacheRead ?? 0,
+          cacheWriteTokens: usage?.cacheWrite ?? 0,
+          cost: usage?.cost ?? 0,
         },
       });
 

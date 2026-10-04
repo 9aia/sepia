@@ -2,7 +2,14 @@ import { Console, Effect, Option } from "effect";
 import * as Cline from "./Cline.js";
 import { ClineStore } from "./ClineStore.js";
 import * as Devin from "./Devin.js";
-import { ConversionError, MessageNode, PromptHistoryEntry, Session } from "./Domain.js";
+import {
+  ConversionError,
+  MessageNode,
+  PromptHistoryEntry,
+  Session,
+  type TokenUsage,
+  type ToolCallStatus,
+} from "./Domain.js";
 import { SessionRepository } from "./Storage.js";
 
 /** A cogs blob is usable when its `core/model` cog resolves to a real model. */
@@ -90,6 +97,8 @@ export const importSession = (session: Session, importedLog?: string) =>
         cogsJson,
         workspaceDirs: session.workspaceDirs,
         hidden: session.hidden,
+        parentSessionId: session.parentSessionId,
+        agentId: session.agentId,
         metadata: session.metadata,
         nodes: session.nodes,
         promptHistory: session.promptHistory,
@@ -212,6 +221,14 @@ export interface ImportedHistoryMessage {
   /** Epoch milliseconds. */
   readonly createdAt: number;
   readonly toolName?: string;
+  readonly usage?: TokenUsage;
+  readonly model?: string;
+  readonly requestId?: string;
+  readonly finishReason?: string;
+  /** Tool-result nodes only: how the call this message answers ended. */
+  readonly toolStatus?: ToolCallStatus;
+  readonly exitCode?: number;
+  readonly durationMs?: number;
 }
 
 const historyMessageSeconds = (ms: number, fallback: number): number =>
@@ -243,6 +260,24 @@ export const sessionFromHistory = (input: {
         typeof message.toolName === "string" && message.toolName !== ""
           ? Option.some(message.toolName)
           : Option.none<string>(),
+      usage: message.usage === undefined ? Option.none() : Option.some(message.usage),
+      model: typeof message.model === "string" ? Option.some(message.model) : Option.none<string>(),
+      requestId:
+        typeof message.requestId === "string"
+          ? Option.some(message.requestId)
+          : Option.none<string>(),
+      finishReason:
+        typeof message.finishReason === "string"
+          ? Option.some(message.finishReason)
+          : Option.none<string>(),
+      toolResult:
+        message.toolStatus === undefined
+          ? Option.none()
+          : Option.some({
+              status: message.toolStatus,
+              ...(message.exitCode === undefined ? {} : { exitCode: message.exitCode }),
+              ...(message.durationMs === undefined ? {} : { durationMs: message.durationMs }),
+            }),
       metadata:
         message.role === "assistant"
           ? { summarized_from: null, num_tokens_preceding: null, is_system_prefix: null }

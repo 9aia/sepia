@@ -15,6 +15,7 @@ const makeNode = (input: {
   toolCalls?: ReadonlyArray<ToolCall>;
   toolCallId?: Option.Option<string>;
   toolName?: Option.Option<string>;
+  toolResult?: Option.Option<import("../src/Domain.js").ToolResultInfo>;
   metadata?: unknown;
 }): MessageNode =>
   MessageNode.make({
@@ -25,6 +26,7 @@ const makeNode = (input: {
     toolCalls: input.toolCalls ?? [],
     toolCallId: input.toolCallId ?? Option.none(),
     toolName: input.toolName ?? Option.none(),
+    toolResult: input.toolResult ?? Option.none(),
     thinking: Option.none(),
     createdAt: 1700000000 + input.nodeId,
     metadata: input.metadata ?? null,
@@ -698,6 +700,199 @@ test("isActiveRow matches abandoned and live-owned sessions correctly", () => {
   expect(ClineIndex.isActiveRow({ status: "running", pid: process.pid }, true)).toBe(true);
   expect(ClineIndex.isActiveRow({ status: "idle", pid: process.pid }, true)).toBe(true);
   expect(ClineIndex.isActiveRow({ status: "pending", pid: process.pid }, true)).toBe(true);
+});
+
+test("import keeps token metrics and the per-message model", async () => {
+  const session = await importedSession("metrics", [
+    { id: "u0", role: "user", content: [{ type: "text", text: "go" }], ts: 1 },
+    {
+      id: "a0",
+      role: "assistant",
+      content: [{ type: "text", text: "done" }],
+      ts: 2,
+      modelInfo: { id: "deepseek/deepseek-v4-flash", provider: "cline-pass" },
+      metrics: {
+        inputTokens: 5720,
+        outputTokens: 279,
+        cacheReadTokens: 100,
+        cacheWriteTokens: 4,
+        cost: 0.02,
+      },
+    },
+  ]);
+
+  const assistant = session.nodes.find((n) => n.role === "assistant" && n.content === "done");
+  expect(Option.getOrNull(assistant!.usage)).toEqual({
+    input: 5720,
+    output: 279,
+    cacheRead: 100,
+    cacheWrite: 4,
+    cost: 0.02,
+  });
+  expect(Option.getOrNull(assistant!.model)).toBe("deepseek/deepseek-v4-flash");
+});
+
+test("import leaves usage/model empty for token-less or malformed message fields", async () => {
+  const session = await importedSession("sparse", [
+    { id: "u0", role: "user", content: [{ type: "text", text: "go" }], ts: 1 },
+    { id: "a0", role: "assistant", content: [{ type: "text", text: "a" }], ts: 2, metrics: "nope" },
+    {
+      id: "a1",
+      role: "assistant",
+      content: [{ type: "text", text: "b" }],
+      ts: 3,
+      metrics: { cacheReadTokens: 9 },
+      modelInfo: { id: "", provider: "cline-pass" },
+    },
+    {
+      id: "a2",
+      role: "assistant",
+      content: [{ type: "text", text: "c" }],
+      ts: 4,
+      metrics: { inputTokens: 1 },
+    },
+  ]);
+
+  const text = (s: string) => session.nodes.find((n) => n.role === "assistant" && n.content === s)!;
+  expect(Option.isNone(text("a").usage)).toBe(true);
+  expect(Option.isNone(text("b").usage)).toBe(true);
+  expect(Option.isNone(text("b").model)).toBe(true);
+  expect(Option.getOrNull(text("c").usage)).toEqual({ input: 1, output: 0 });
+});
+
+test("import folds a failed result back onto the call and the result node", async () => {
+  const session = await importedSession("failed", [
+    { id: "u0", role: "user", content: [{ type: "text", text: "go" }], ts: 1 },
+    {
+      id: "a0",
+      role: "assistant",
+      content: [
+        { type: "tool_use", id: "call_1", name: "run_commands", input: { command: "exit 2" } },
+      ],
+      ts: 2,
+    },
+    {
+      id: "u1",
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "call_1",
+          name: "run_commands",
+          content: [{ query: "exit 2", result: "", success: false }],
+        },
+      ],
+      ts: 3,
+    },
+  ]);
+
+  const tool = session.nodes.find((n) => n.role === "tool");
+  expect(Option.getOrNull(tool!.toolResult)).toEqual({ status: "error" });
+
+  // both assistant twins carry the outcome on their ToolCall
+  const assistants = session.nodes.filter((n) => n.role === "assistant");
+  expect(assistants.length).toBeGreaterThan(0);
+  for (const a of assistants) {
+    expect(a.toolCalls.map((tc) => Option.getOrNull(tc.status))).toEqual(["error"]);
+  }
+});
+
+test("clineSubagentInfo reads lineage out of the session id", () => {
+  expect(Cline.clineSubagentInfo("1788501677312_sh9yh")).toBeNull();
+  expect(Cline.clineSubagentInfo("1788501677312_sh9yh__teamtask__astdata__hXujax")).toEqual({
+    parentSessionId: "1788501677312_sh9yh",
+    agentId: "astdata",
+  });
+  expect(Cline.clineSubagentInfo("1788512223880_qo9bf__agent_1788512292452_l58kf4")).toEqual({
+    parentSessionId: "1788512223880_qo9bf",
+    agentId: "agent_1788512292452_l58kf4",
+  });
+  // nested team tasks split at the last marker — the parent is one level up
+  expect(
+    Cline.clineSubagentInfo(
+      "1789101927554_p6vq1__teamtask__subagent-env-removal__RBdWwq__teamtask__cranelift-env-removal__pUEZ9k",
+    ),
+  ).toEqual({
+    parentSessionId: "1789101927554_p6vq1__teamtask__subagent-env-removal__RBdWwq",
+    agentId: "cranelift-env-removal",
+  });
+  // a truncated marker yields no agent to name
+  expect(Cline.clineSubagentInfo("x__teamtask__")).toBeNull();
+});
+
+test("import marks a sub-agent session's lineage from its id", async () => {
+  const session = await importedSession("1788501677312_sh9yh__teamtask__astdata__hXujax", [
+    { id: "u0", role: "user", content: [{ type: "text", text: "go" }], ts: 1 },
+  ]);
+
+  expect(Option.getOrNull(session.parentSessionId)).toBe("1788501677312_sh9yh");
+  expect(Option.getOrNull(session.agentId)).toBe("astdata");
+});
+
+test("export writes usage, per-message model and result success back", () => {
+  const session = makeSession([
+    makeNode({ nodeId: 0, role: "user", content: "do the thing" }),
+    MessageNode.make({
+      nodeId: 1,
+      parentNodeId: Option.some(0),
+      role: "assistant",
+      content: "on it",
+      toolCalls: [ToolCall.make({ id: "call_1", name: "read", arguments: { file_path: "/a" } })],
+      usage: Option.some({ input: 10, output: 5, cacheRead: 7 }),
+      model: Option.some("deepseek/deepseek-v4-flash"),
+      createdAt: 1700000001,
+      metadata: rendered,
+    }),
+    makeNode({
+      nodeId: 2,
+      parentNodeId: Option.some(1),
+      role: "tool",
+      content: "denied",
+      toolCallId: Option.some("call_1"),
+      toolName: Option.some("read"),
+      toolResult: Option.some({ status: "error" }),
+      metadata: { toolArguments: { file_path: "/a" } },
+    }),
+  ]);
+
+  const messages = Cline.sessionMessages(session, "imported-session")
+    .messages as ReadonlyArray<any>;
+
+  expect(messages[1].modelInfo).toEqual({
+    id: "deepseek/deepseek-v4-flash",
+    provider: "cline-pass",
+  });
+  expect(messages[1].metrics).toEqual({
+    inputTokens: 10,
+    outputTokens: 5,
+    cacheReadTokens: 7,
+    cacheWriteTokens: 0,
+    cost: 0,
+  });
+  expect(messages[2].content[0].content).toEqual([
+    { query: "/a", result: "denied", success: false },
+  ]);
+});
+
+test("sessionRow records sub-agent lineage the index carries", () => {
+  const session = Session.make({
+    id: "1788501677312_sh9yh__teamtask__astdata__hXujax",
+    title: "sub",
+    workingDirectory: "/work",
+    model: "m",
+    createdAt: 1,
+    lastActivityAt: 2,
+    mainChainId: 0,
+    parentSessionId: Option.some("1788501677312_sh9yh"),
+    agentId: Option.some("astdata"),
+    metadata: null,
+    nodes: [],
+  });
+  const row = ClineIndex.sessionRow(session, session.id, "/tmp/m.messages.json");
+
+  expect(row.parent_session_id).toBe("1788501677312_sh9yh");
+  expect(row.agent_id).toBe("astdata");
+  expect(row.is_subagent).toBe(1);
 });
 
 test("needsMigration only fires when a required table is missing", () => {

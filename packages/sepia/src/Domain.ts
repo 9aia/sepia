@@ -2,12 +2,48 @@ import { Option, Schema } from "effect";
 
 export const Role = Schema.Literal("system", "user", "assistant", "tool");
 
+/** Lifecycle of a tool call as the agent's store recorded it. */
+export const ToolCallStatus = Schema.Literal("pending", "success", "error");
+export type ToolCallStatus = Schema.Schema.Type<typeof ToolCallStatus>;
+
+/**
+ * Token metrics for one message. `input`/`output` are the counts every store
+ * carries; the rest appear only where the agent persists them (Cline `cost`,
+ * provider thinking-token counters).
+ */
+export const TokenUsage = Schema.Struct({
+  input: Schema.Number,
+  output: Schema.Number,
+  cacheRead: Schema.optional(Schema.Number),
+  cacheWrite: Schema.optional(Schema.Number),
+  thinking: Schema.optional(Schema.Number),
+  cost: Schema.optional(Schema.Number),
+});
+export type TokenUsage = Schema.Schema.Type<typeof TokenUsage>;
+
+/** Outcome a `role: "tool"` node reports back for the call it answers. */
+export const ToolResultInfo = Schema.Struct({
+  status: ToolCallStatus,
+  exitCode: Schema.optional(Schema.Number),
+  durationMs: Schema.optional(Schema.Number),
+});
+export type ToolResultInfo = Schema.Schema.Type<typeof ToolResultInfo>;
+
 export class ToolCall extends Schema.Class<ToolCall>("ToolCall")({
   id: Schema.String,
   name: Schema.String,
   arguments: Schema.Unknown,
   index: Schema.Number.pipe(Schema.optionalWith({ default: () => 0 })),
   kind: Schema.String.pipe(Schema.optionalWith({ default: () => "function" })),
+  status: Schema.OptionFromSelf(ToolCallStatus).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
+  exitCode: Schema.OptionFromSelf(Schema.Number).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
+  durationMs: Schema.OptionFromSelf(Schema.Number).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
 }) {}
 
 export class PromptHistoryEntry extends Schema.Class<PromptHistoryEntry>("PromptHistoryEntry")({
@@ -33,6 +69,24 @@ export class MessageNode extends Schema.Class<MessageNode>("MessageNode")({
   thinking: Schema.OptionFromSelf(Schema.String).pipe(
     Schema.optionalWith({ default: () => Option.none() }),
   ),
+  /** Token metrics the store recorded for this message (assistant turns mostly). */
+  usage: Schema.OptionFromSelf(TokenUsage).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
+  /** Model that generated this message; the session-level `model` is the default. */
+  model: Schema.OptionFromSelf(Schema.String).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
+  requestId: Schema.OptionFromSelf(Schema.String).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
+  finishReason: Schema.OptionFromSelf(Schema.String).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
+  /** On `role: "tool"` nodes: how the call this result answers ended. */
+  toolResult: Schema.OptionFromSelf(ToolResultInfo).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
   createdAt: Schema.Number,
   metadata: Schema.Unknown,
 }) {}
@@ -51,6 +105,20 @@ export class Session extends Schema.Class<Session>("Session")({
   cogsJson: Schema.String.pipe(Schema.optionalWith({ default: () => "[]" })),
   workspaceDirs: Schema.String.pipe(Schema.optionalWith({ default: () => "[]" })),
   hidden: Schema.Number.pipe(Schema.optionalWith({ default: () => 0 })),
+  /**
+   * The session that spawned this one, when the store records a sub-agent
+   * tree (Cline `parent_session_id`, Devin `subagent_heads`).
+   */
+  parentSessionId: Schema.OptionFromSelf(Schema.String).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
+  /**
+   * Sub-agent identity within the parent session's team (Cline `agent_id`);
+   * unrelated to the agent runtime that resumes the session.
+   */
+  agentId: Schema.OptionFromSelf(Schema.String).pipe(
+    Schema.optionalWith({ default: () => Option.none() }),
+  ),
   metadata: Schema.Unknown,
   nodes: Schema.Array(MessageNode).pipe(Schema.optionalWith({ default: () => [] })),
   promptHistory: Schema.Array(PromptHistoryEntry).pipe(Schema.optionalWith({ default: () => [] })),

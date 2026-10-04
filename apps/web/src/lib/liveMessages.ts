@@ -1,4 +1,5 @@
 import type { AgUiEvent } from "./api";
+import type { MessageUsage, ToolCallStatus } from "./types";
 
 /** A message assembled from live AG-UI stream events (or an optimistic echo). */
 export interface LiveMessage {
@@ -9,6 +10,13 @@ export interface LiveMessage {
   /** Tool-call input JSON, kept apart from `content` (the result) so each can render on its own. */
   readonly args?: string;
   readonly toolName?: string;
+  /** Outcome of the tool call once the stream settles it (IR v2 fields ride along). */
+  readonly toolStatus?: ToolCallStatus;
+  readonly exitCode?: number;
+  readonly durationMs?: number;
+  /** Token metrics when the stream or history backfill carries them. */
+  readonly usage?: MessageUsage;
+  readonly model?: string;
   readonly done: boolean;
 }
 

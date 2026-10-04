@@ -22,7 +22,7 @@ const openDb = (dbPath: string, readonly: boolean) =>
       // Read paths (list/export/install) must leave a live store untouched, so
       // they skip the WAL switch and the migration bookkeeping entirely.
       if (readonly) {
-        return drizzle(sqlite, { schema });
+        return { sqlite, db: drizzle(sqlite, { schema }) };
       }
 
       if (dbPath !== ":memory:") {
@@ -39,7 +39,7 @@ const openDb = (dbPath: string, readonly: boolean) =>
       if (needsMigration(tables)) {
         migrate(db, { migrationsFolder });
       }
-      return db;
+      return { sqlite, db };
     },
     catch: (error) => new StorageError({ message: `Failed to open database: ${String(error)}` }),
   });
@@ -53,14 +53,70 @@ const parseJson = (s: string | null | undefined) => {
   }
 };
 
+/**
+ * Tables a real Devin store carries beyond the schema sepia writes. Both are
+ * optional — a sepia-created store never gets them, and a live one may not
+ * have migrated them in yet.
+ */
+interface DevinExtras {
+  readonly hasToolCallState: boolean;
+  readonly hasSubagentHeads: boolean;
+}
+
+const tableNames = (sqlite: Database): Set<string> =>
+  new Set(
+    sqlite
+      .query<{ name: string }, []>("select name from sqlite_master where type = 'table'")
+      .all()
+      .map((row) => row.name),
+  );
+
+/**
+ * The `tool_call_state` rows are serialised ACP `ToolCall`/`ToolCallUpdate`
+ * objects; the update carries the authoritative `status` (the call row itself
+ * is the still-open snapshot) plus `_meta["cognition.ai/terminal_exit"]` for
+ * shell exit codes. Malformed rows are skipped — a single bad blob must not
+ * take down the whole session read.
+ */
+const toolCallStateOutcomes = (
+  sqlite: Database,
+  sessionId: string,
+): ReadonlyMap<string, Devin.ToolCallOutcome> => {
+  const outcomes = new Map<string, Devin.ToolCallOutcome>();
+  const rows = sqlite
+    .query<{ tool_call_update_json: string | null }, [string]>(
+      "select tool_call_update_json from tool_call_state where session_id = ?",
+    )
+    .all(sessionId);
+  for (const row of rows) {
+    const update = parseJson(row.tool_call_update_json) as Record<string, unknown> | null;
+    const id = update?.toolCallId;
+    const status = Devin.fromAcpToolCallStatus(update?.status);
+    if (typeof id !== "string" || status === undefined) continue;
+    const exit = (update?._meta as Record<string, unknown> | undefined)?.[
+      "cognition.ai/terminal_exit"
+    ] as Record<string, unknown> | undefined;
+    const exitCode = typeof exit?.exit_code === "number" ? exit.exit_code : undefined;
+    outcomes.set(id, {
+      status,
+      ...(exitCode !== undefined ? { exitCode } : {}),
+    });
+  }
+  return outcomes;
+};
+
 const buildSession = (
   sessionRow: any,
   nodeRows: ReadonlyArray<any>,
   promptRows: ReadonlyArray<any>,
+  extra?: {
+    readonly outcomes?: ReadonlyMap<string, Devin.ToolCallOutcome>;
+    readonly parentSessionId?: string | null;
+  },
 ) =>
   Effect.try({
     try: () => {
-      const nodes = nodeRows.map((row) =>
+      const parsed = nodeRows.map((row) =>
         Devin.parseChatMessage(
           parseJson(row.chatMessage),
           parseJson(row.metadata),
@@ -69,6 +125,14 @@ const buildSession = (
           row.createdAt,
         ),
       );
+      // Tool nodes carry each call's recorded outcome; `tool_call_state` rows
+      // (when the table exists) are the authoritative lifecycle and override
+      // them — they never carry durations, so result timing survives either way.
+      const outcomes = new Map(Devin.toolNodeOutcomes(parsed));
+      for (const [id, outcome] of extra?.outcomes ?? []) {
+        outcomes.set(id, { ...outcomes.get(id), ...outcome });
+      }
+      const nodes = Devin.applyToolCallOutcomes(parsed, outcomes);
 
       const promptHistory = promptRows.map((row) =>
         PromptHistoryEntry.make({
@@ -78,7 +142,9 @@ const buildSession = (
         }),
       );
 
-      return Devin.sessionFromDevinRow(sessionRow, nodes, promptHistory);
+      return Devin.sessionFromDevinRow(sessionRow, nodes, promptHistory, {
+        parentSessionId: extra?.parentSessionId ?? null,
+      });
     },
     catch: (error) => new StorageError({ message: `Failed to parse session: ${String(error)}` }),
   });
@@ -89,7 +155,41 @@ export const make = (
 ): Effect.Effect<SessionRepositoryService, StorageError> =>
   Effect.gen(function* () {
     const readonly = options.readonly === true;
-    const db = yield* openDb(dbPath, readonly);
+    const { sqlite, db } = yield* openDb(dbPath, readonly);
+    const tables = tableNames(sqlite);
+    const extras: DevinExtras = {
+      hasToolCallState: tables.has("tool_call_state"),
+      hasSubagentHeads: tables.has("subagent_heads"),
+    };
+
+    /**
+     * `subagent_heads` rows record `agent_id` = the spawned session's id and
+     * `session_id` = the session that spawned it, so the parent of a session
+     * is found by looking its own id up in `agent_id`.
+     */
+    const parentSessionId = (sessionId: string): string | null => {
+      if (!extras.hasSubagentHeads) return null;
+      const row = sqlite
+        .query<{ session_id: string }, [string]>(
+          "select session_id from subagent_heads where agent_id = ? limit 1",
+        )
+        .get(sessionId);
+      return row?.session_id ?? null;
+    };
+
+    /** All known sub-agent links in one scan, for summary-only listings. */
+    const subagentParents = (): ReadonlyMap<string, string> => {
+      const parents = new Map<string, string>();
+      if (!extras.hasSubagentHeads) return parents;
+      for (const row of sqlite
+        .query<{ session_id: string; agent_id: string }, []>(
+          "select session_id, agent_id from subagent_heads",
+        )
+        .all()) {
+        parents.set(row.agent_id, row.session_id);
+      }
+      return parents;
+    };
 
     const save = (session: Session) =>
       readonly
@@ -183,7 +283,10 @@ export const make = (
           .orderBy(schema.promptHistory.id)
           .all();
 
-        const session = yield* buildSession(sessionRow, nodeRows, promptRows);
+        const session = yield* buildSession(sessionRow, nodeRows, promptRows, {
+          outcomes: extras.hasToolCallState ? toolCallStateOutcomes(sqlite, id) : undefined,
+          parentSessionId: parentSessionId(id),
+        });
         return Option.some(session);
       }).pipe(
         Effect.mapError(
@@ -200,8 +303,11 @@ export const make = (
           .from(schema.sessions)
           .orderBy(desc(schema.sessions.lastActivityAt))
           .all();
+        const parents = subagentParents();
         const sessions = yield* Effect.forEach(rows, (row) =>
-          buildSession(row, [], []).pipe(Effect.option),
+          buildSession(row, [], [], { parentSessionId: parents.get(row.id) ?? null }).pipe(
+            Effect.option,
+          ),
         );
         return sessions.flatMap((opt) => (Option.isSome(opt) ? [opt.value] : []));
       }).pipe(

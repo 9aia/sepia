@@ -7,6 +7,7 @@
 import { Context, Schema, type Effect } from "effect";
 import type { AcpConnection } from "sepia-acp";
 import type { Event } from "sepia-agui";
+import type { TokenUsage, ToolCallStatus } from "sepia-core";
 
 /**
  * One run span of a session: which agent on which Sepia node continued it.
@@ -36,6 +37,10 @@ export interface SessionSummary {
   readonly projectIds?: ReadonlyArray<string>;
   /** Run provenance from the meta overlay; empty until the first attach. */
   readonly spans?: ReadonlyArray<RunSpan>;
+  /** Id of the session that spawned this one, when the store records a sub-agent tree. */
+  readonly parentSessionId?: string;
+  /** Sub-agent identity within the parent's team (Cline `agent_id`); not the agent runtime. */
+  readonly agentId?: string;
 }
 
 export interface HistoryMessage {
@@ -43,6 +48,15 @@ export interface HistoryMessage {
   readonly content: string;
   readonly createdAt: number;
   readonly toolName?: string;
+  /** Token metrics the agent's store recorded for this message. */
+  readonly usage?: TokenUsage;
+  readonly model?: string;
+  readonly requestId?: string;
+  readonly finishReason?: string;
+  /** Tool-result messages only: how the call this message answers ended. */
+  readonly toolStatus?: ToolCallStatus;
+  readonly exitCode?: number;
+  readonly durationMs?: number;
 }
 
 export interface AttachResult {

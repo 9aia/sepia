@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Option } from "effect";
 import {
+  applyToolCallOutcomes,
   buildChatMessage,
   defaultCogsJson,
   defaultSessionMetadata,
+  fromAcpToolCallStatus,
   parseChatMessage,
   sessionFromDevinRow,
+  toAcpToolCallStatus,
+  toolNodeOutcomes,
 } from "../src/Devin.js";
 import { MessageNode, ToolCall } from "../src/Domain.js";
 
@@ -138,6 +142,75 @@ describe("buildChatMessage", () => {
     const meta = msg.metadata as { extensions: Record<string, { kind: string }> };
     expect(meta.extensions["chisel/tool_result_meta"]?.kind).toBe("unknown");
   });
+
+  it("persists usage, request, model and finish reason the node carries", () => {
+    const msg = buildChatMessage(
+      node({
+        role: "assistant",
+        usage: Option.some({ input: 100, output: 10, cacheRead: 50, cacheWrite: 5 }),
+        requestId: Option.some("req-1"),
+        finishReason: Option.some("length"),
+        model: Option.some("swe-1-7-high"),
+      }),
+      "fallback-model",
+    ) as Record<string, unknown>;
+    const meta = msg.metadata as Record<string, unknown>;
+    expect(meta.num_tokens).toBe(10);
+    expect(meta.request_id).toBe("req-1");
+    expect(meta.finish_reason).toBe("length");
+    expect(meta.generation_model).toBe("swe-1-7-high");
+    expect(meta.metrics).toEqual({
+      input_tokens: 100,
+      output_tokens: 10,
+      cache_read_tokens: 50,
+      cache_creation_tokens: 5,
+    });
+
+    // usage without cache counters writes explicit nulls
+    const sparse = buildChatMessage(
+      node({ role: "assistant", usage: Option.some({ input: 3, output: 1 }) }),
+      "m",
+    ) as { metadata: { metrics: Record<string, unknown> } };
+    expect(sparse.metadata.metrics).toEqual({
+      input_tokens: 3,
+      output_tokens: 1,
+      cache_read_tokens: null,
+      cache_creation_tokens: null,
+    });
+  });
+
+  it("maps a stored tool-call status back to ACP and emits result extensions", () => {
+    const rendered = node({
+      role: "assistant",
+      toolCalls: [
+        ToolCall.make({
+          id: "t1",
+          name: "exec",
+          arguments: {},
+          status: Option.some("error" as const),
+        }),
+      ],
+      metadata: { summarized_from: 1 },
+    });
+    const assistant = buildChatMessage(rendered, "m") as {
+      metadata: { extensions: { "chisel/tool_call_content": Record<string, { status: string }> } };
+    };
+    expect(assistant.metadata.extensions["chisel/tool_call_content"].t1.status).toBe("failed");
+
+    const tool = buildChatMessage(
+      node({
+        role: "tool",
+        toolName: Option.some("exec"),
+        toolCallId: Option.some("t1"),
+        toolResult: Option.some({ status: "error", exitCode: 2, durationMs: 42 }),
+      }),
+      "m",
+    ) as { metadata: { extensions: Record<string, any>; metrics: unknown; request_id: unknown } };
+    const ext = tool.metadata.extensions;
+    expect(ext["chisel/tool_result_meta"]).toEqual({ success: false, kind: "exec" });
+    expect(ext["chisel/terminal_output"]).toEqual({ exit: { exit_code: 2 } });
+    expect(ext["chisel/tool_call_timing"]).toEqual({ duration_ms: 42 });
+  });
 });
 
 describe("parseChatMessage", () => {
@@ -174,6 +247,157 @@ describe("parseChatMessage", () => {
     expect(Option.isNone(parsed.thinking)).toBe(true);
     expect(Option.isNone(parsed.toolName)).toBe(true);
     expect(Option.isNone(parsed.toolCallId)).toBe(true);
+    expect(Option.isNone(parsed.usage)).toBe(true);
+    expect(Option.isNone(parsed.model)).toBe(true);
+    expect(Option.isNone(parsed.requestId)).toBe(true);
+    expect(Option.isNone(parsed.finishReason)).toBe(true);
+    expect(Option.isNone(parsed.toolResult)).toBe(true);
+  });
+
+  it("reads token metrics, request id, model and finish reason", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "assistant",
+        content: "hi",
+        metadata: {
+          num_tokens: 10,
+          request_id: "req-1",
+          finish_reason: "tool_calls",
+          generation_model: "swe-1-7-medium",
+          metrics: {
+            ttft_ms: 843,
+            input_tokens: 4727,
+            output_tokens: 155,
+            cache_read_tokens: 13312,
+            cache_creation_tokens: null,
+          },
+        },
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    expect(Option.getOrNull(parsed.usage)).toEqual({
+      input: 4727,
+      output: 155,
+      cacheRead: 13312,
+    });
+    expect(Option.getOrNull(parsed.model)).toBe("swe-1-7-medium");
+    expect(Option.getOrNull(parsed.requestId)).toBe("req-1");
+    expect(Option.getOrNull(parsed.finishReason)).toBe("tool_calls");
+  });
+
+  it("leaves usage empty for non-object or token-less metrics", () => {
+    const parse = (metrics: unknown) =>
+      parseChatMessage(
+        { role: "assistant", content: "", metadata: { metrics } },
+        null,
+        0,
+        Option.none(),
+        0,
+      ).usage;
+    expect(Option.isNone(parse("nope"))).toBe(true);
+    expect(Option.isNone(parse({}))).toBe(true);
+    expect(Option.isNone(parse({ ttft_ms: 10 }))).toBe(true);
+    // output only still counts
+    expect(Option.getOrNull(parse({ output_tokens: 7 }))).toEqual({ input: 0, output: 7 });
+    expect(Option.getOrNull(parse({ input_tokens: 9, cache_creation_tokens: 3 }))).toEqual({
+      input: 9,
+      output: 0,
+      cacheWrite: 3,
+    });
+  });
+
+  it("maps chisel tool-call statuses onto the calls", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "done", name: "exec", arguments: {} },
+          { id: "running", name: "exec", arguments: {} },
+          { id: "busted", name: "exec", arguments: {} },
+          { id: "weird", name: "exec", arguments: {} },
+          {},
+        ],
+        metadata: {
+          extensions: {
+            "chisel/tool_call_content": {
+              done: { status: "completed" },
+              running: { status: "in_progress" },
+              busted: { status: "failed" },
+              weird: { status: "surprising" },
+              nullish: null,
+            },
+          },
+        },
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    expect(parsed.toolCalls.map((tc) => Option.getOrNull(tc.status))).toEqual([
+      "success",
+      "pending",
+      "error",
+      null,
+      null,
+    ]);
+    // a call entry with no fields still parses to safe defaults
+    const bare = parsed.toolCalls[4];
+    expect(bare?.id).toBe("");
+    expect(bare?.name).toBe("unknown");
+    expect(bare?.arguments).toEqual({});
+  });
+
+  it("serializes a missing content field as an empty string", () => {
+    const parsed = parseChatMessage({ role: "user" }, null, 0, Option.none(), 0);
+    expect(parsed.content).toBe('""');
+  });
+
+  it("keeps the recorded outcome of a tool result node", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "tool",
+        content: "boom",
+        tool_call_id: "c1",
+        metadata: {
+          extensions: {
+            "chisel/tool_result_meta": { success: false, kind: "exec" },
+            "chisel/terminal_output": { exit: { terminal_id: "t0", exit_code: 2 } },
+            "chisel/tool_call_timing": { duration_ms: 42 },
+          },
+        },
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    expect(Option.getOrNull(parsed.toolResult)).toEqual({
+      status: "error",
+      exitCode: 2,
+      durationMs: 42,
+    });
+    expect(Option.getOrNull(parsed.toolName)).toBe("exec");
+  });
+
+  it("treats a recorded success without extras as a clean result", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "tool",
+        content: "ok",
+        tool_call_id: "c1",
+        metadata: { extensions: { "chisel/tool_result_meta": { success: true } } },
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    expect(Option.getOrNull(parsed.toolResult)).toEqual({ status: "success" });
   });
 });
 
@@ -209,6 +433,82 @@ describe("sessionFromDevinRow", () => {
       sessionFromDevinRow({ ...baseRow, metadata: '{"a":1}', title: "T" }, [], []).metadata,
     ).toEqual({ a: 1 });
     expect(sessionFromDevinRow({ ...baseRow, metadata: "not json" }, [], []).metadata).toEqual({});
+  });
+
+  it("carries sub-agent lineage when the store records it", () => {
+    const session = sessionFromDevinRow(baseRow, [], [], {
+      parentSessionId: "parent-1",
+      agentId: "agent-x",
+    });
+    expect(Option.getOrNull(session.parentSessionId)).toBe("parent-1");
+    expect(Option.getOrNull(session.agentId)).toBe("agent-x");
+
+    const plain = sessionFromDevinRow(baseRow, [], []);
+    expect(Option.isNone(plain.parentSessionId)).toBe(true);
+    expect(Option.isNone(plain.agentId)).toBe(true);
+  });
+});
+
+describe("tool call status mapping", () => {
+  it("maps ACP statuses to the IR lifecycle and back", () => {
+    expect(fromAcpToolCallStatus("completed")).toBe("success");
+    expect(fromAcpToolCallStatus("failed")).toBe("error");
+    expect(fromAcpToolCallStatus("pending")).toBe("pending");
+    expect(fromAcpToolCallStatus("in_progress")).toBe("pending");
+    expect(fromAcpToolCallStatus("bogus")).toBeUndefined();
+    expect(fromAcpToolCallStatus(null)).toBeUndefined();
+
+    expect(toAcpToolCallStatus("success")).toBe("completed");
+    expect(toAcpToolCallStatus("error")).toBe("failed");
+    expect(toAcpToolCallStatus("pending")).toBe("pending");
+  });
+});
+
+describe("tool call outcomes", () => {
+  const assistantWith = (...calls: ReadonlyArray<ToolCall>) =>
+    node({ role: "assistant", toolCalls: calls });
+
+  it("collects outcomes from tool nodes and folds them onto calls", () => {
+    const nodes = [
+      assistantWith(
+        ToolCall.make({ id: "c1", name: "exec", arguments: {} }),
+        ToolCall.make({ id: "c2", name: "read", arguments: {} }),
+      ),
+      node({ role: "user", content: "unrelated" }),
+      node({
+        role: "tool",
+        toolCallId: Option.some("c1"),
+        toolResult: Option.some({ status: "error", exitCode: 2, durationMs: 9 }),
+      }),
+      // a result with no outcome info contributes nothing
+      node({ role: "tool", toolCallId: Option.some("c2") }),
+      // calls no outcome names keep their node untouched
+      assistantWith(ToolCall.make({ id: "c9", name: "exec", arguments: {} })),
+    ];
+
+    const outcomes = toolNodeOutcomes(nodes);
+    expect(outcomes.get("c1")).toEqual({ status: "error", exitCode: 2, durationMs: 9 });
+    expect(outcomes.has("c2")).toBe(false);
+
+    const enriched = applyToolCallOutcomes(nodes, outcomes);
+    const calls = enriched[0]!.toolCalls;
+    expect(Option.getOrNull(calls[0]!.status)).toBe("error");
+    expect(Option.getOrNull(calls[0]!.exitCode)).toBe(2);
+    expect(Option.getOrNull(calls[0]!.durationMs)).toBe(9);
+    expect(Option.isNone(calls[1]!.status)).toBe(true);
+    // untouched nodes keep their identity
+    expect(enriched[1]).toBe(nodes[1]);
+    expect(enriched[2]).toBe(nodes[2]);
+    expect(enriched[4]).toBe(nodes[4]);
+  });
+
+  it("returns the input unchanged when nothing was recorded", () => {
+    const nodes = [assistantWith(ToolCall.make({ id: "c1", name: "exec", arguments: {} }))];
+    expect(applyToolCallOutcomes(nodes, new Map())).toBe(nodes);
+    // a node with no calls is returned as-is even with outcomes around
+    const plain = [node({ role: "user" })];
+    const outcomes = new Map([["c1", { status: "success" as const }]]);
+    expect(applyToolCallOutcomes(plain, outcomes)[0]).toBe(plain[0]);
   });
 });
 

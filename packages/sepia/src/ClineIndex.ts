@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import * as Cline from "./Cline.js";
 import { Session } from "./Domain.js";
 
@@ -104,11 +105,11 @@ export const sessionRow = (
   enable_tools: 1,
   enable_spawn: 1,
   enable_teams: 1,
-  parent_session_id: null,
+  parent_session_id: Option.getOrNull(session.parentSessionId),
   parent_agent_id: null,
-  agent_id: null,
+  agent_id: Option.getOrNull(session.agentId),
   conversation_id: null,
-  is_subagent: 0,
+  is_subagent: Option.isSome(session.parentSessionId) ? 1 : 0,
   prompt: session.nodes.find((node) => node.role === "user")?.content ?? null,
   metadata_json: JSON.stringify({
     sessionHistoryOrigin: { mode: "user", version: Cline.CLINE_AGENT_VERSION },

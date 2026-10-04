@@ -34,6 +34,10 @@ export interface SessionSummary {
   model: string | null;
   /** Run provenance — which agent ran the session on which node, per attach. */
   spans: RunSpan[];
+  /** Id of the session that spawned this one, when the store records a sub-agent tree. */
+  parentSessionId?: string;
+  /** Sub-agent identity within the parent's team; not the agent runtime. */
+  agentId?: string;
 }
 
 export interface Project {
@@ -68,11 +72,31 @@ export interface CreateSessionInput {
 
 export type HistoryRole = "user" | "assistant" | "tool" | "system";
 
+/** Token metrics an agent's store recorded for one message. */
+export interface MessageUsage {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  thinking?: number;
+  cost?: number;
+}
+
+export type ToolCallStatus = "pending" | "success" | "error";
+
 export interface HistoryMessage {
   role: HistoryRole;
   content: string;
   createdAt: number;
   toolName?: string;
+  usage?: MessageUsage;
+  model?: string;
+  requestId?: string;
+  finishReason?: string;
+  /** Tool-result messages only: how the call this message answers ended. */
+  toolStatus?: ToolCallStatus;
+  exitCode?: number;
+  durationMs?: number;
 }
 
 export interface HistoryPage {

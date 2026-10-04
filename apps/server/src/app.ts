@@ -793,6 +793,27 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           content: item.content,
           createdAt: item.createdAt,
           ...(typeof item.toolName === "string" ? { toolName: item.toolName } : {}),
+          // IR v2 fields ride through when present so a converted session
+          // keeps its metrics; anything malformed is dropped, not rejected.
+          ...(isRecord(item.usage) &&
+          typeof item.usage.input === "number" &&
+          typeof item.usage.output === "number"
+            ? { usage: item.usage as Conversion.ImportedHistoryMessage["usage"] }
+            : {}),
+          ...(typeof item.model === "string" ? { model: item.model } : {}),
+          ...(typeof item.requestId === "string" ? { requestId: item.requestId } : {}),
+          ...(typeof item.finishReason === "string" ? { finishReason: item.finishReason } : {}),
+          ...(item.toolStatus === "pending" ||
+          item.toolStatus === "success" ||
+          item.toolStatus === "error"
+            ? { toolStatus: item.toolStatus }
+            : {}),
+          ...(typeof item.exitCode === "number" && Number.isFinite(item.exitCode)
+            ? { exitCode: item.exitCode }
+            : {}),
+          ...(typeof item.durationMs === "number" && Number.isFinite(item.durationMs)
+            ? { durationMs: item.durationMs }
+            : {}),
         });
       }
 
