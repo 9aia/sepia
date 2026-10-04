@@ -177,7 +177,7 @@ export function SectionHeader({
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-1 rounded-md px-1 py-0.5 text-left text-base font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+        className="flex items-center gap-1 rounded-md py-0.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
         aria-expanded={open}
       >
         {label}
