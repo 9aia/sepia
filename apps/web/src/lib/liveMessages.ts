@@ -17,6 +17,7 @@ export interface LiveMessage {
   /** Token metrics when the stream or history backfill carries them. */
   readonly usage?: MessageUsage;
   readonly model?: string;
+  readonly finishReason?: string;
   readonly done: boolean;
 }
 
@@ -35,6 +36,38 @@ const append = (messages: ReadonlyArray<LiveMessage>, message: LiveMessage): Liv
   messages.some((existing) => existing.id === message.id)
     ? messages.slice()
     : [...messages, message];
+
+const num = (v: unknown): number | undefined =>
+  typeof v === "number" && Number.isFinite(v) ? v : undefined;
+
+const nonEmpty = (v: unknown): string | undefined =>
+  typeof v === "string" && v !== "" ? v : undefined;
+
+/** IR names win; ACP-style statuses map onto them. */
+const toolStatusOf = (v: unknown): ToolCallStatus | undefined => {
+  if (v === "success" || v === "completed") return "success";
+  if (v === "error" || v === "failed") return "error";
+  if (v === "pending" || v === "in_progress") return "pending";
+  return undefined;
+};
+
+const usageOf = (v: unknown): MessageUsage | undefined => {
+  if (typeof v !== "object" || v === null) return undefined;
+  const record = v as Record<string, unknown>;
+  const input = num(record["input"]);
+  const output = num(record["output"]);
+  if (input === undefined || output === undefined) return undefined;
+  const usage: MessageUsage = { input, output };
+  const cacheRead = num(record["cacheRead"]);
+  const cacheWrite = num(record["cacheWrite"]);
+  const thinking = num(record["thinking"]);
+  const cost = num(record["cost"]);
+  if (cacheRead !== undefined) usage.cacheRead = cacheRead;
+  if (cacheWrite !== undefined) usage.cacheWrite = cacheWrite;
+  if (thinking !== undefined) usage.thinking = thinking;
+  if (cost !== undefined) usage.cost = cost;
+  return usage;
+};
 
 /**
  * Folds one AG-UI event into the live message list. Returns the previous
@@ -69,8 +102,18 @@ export function applyAguiEvent(
       });
     case "TEXT_MESSAGE_CONTENT":
       return update(messages, messageId, (m) => ({ ...m, content: m.content + delta }));
-    case "TEXT_MESSAGE_END":
-      return update(messages, messageId, (m) => ({ ...m, done: true }));
+    case "TEXT_MESSAGE_END": {
+      const usage = usageOf(event.usage);
+      const finishReason = nonEmpty(event.finishReason);
+      const model = nonEmpty(event.model);
+      return update(messages, messageId, (m) => ({
+        ...m,
+        done: true,
+        ...(usage !== undefined ? { usage } : {}),
+        ...(finishReason !== undefined ? { finishReason } : {}),
+        ...(model !== undefined ? { model } : {}),
+      }));
+    }
     case "REASONING_MESSAGE_START":
       return append(messages, {
         id: messageId ?? `reasoning-${messages.length}`,
@@ -97,8 +140,18 @@ export function applyAguiEvent(
         typeof event.content === "string" ? event.content : JSON.stringify(event.content ?? "");
       return update(messages, toolCallId, (m) => ({ ...m, content: m.content + content }));
     }
-    case "TOOL_CALL_END":
-      return update(messages, toolCallId, (m) => ({ ...m, done: true }));
+    case "TOOL_CALL_END": {
+      const toolStatus = toolStatusOf(event.toolStatus ?? event.status);
+      const exitCode = num(event.exitCode);
+      const durationMs = num(event.durationMs);
+      return update(messages, toolCallId, (m) => ({
+        ...m,
+        done: true,
+        ...(toolStatus !== undefined ? { toolStatus } : {}),
+        ...(exitCode !== undefined ? { exitCode } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
+      }));
+    }
     default:
       return messages.slice();
   }

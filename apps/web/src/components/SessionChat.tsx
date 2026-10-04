@@ -36,7 +36,8 @@ import {
 } from "./ui/alert-dialog";
 
 import type { LiveMessage } from "../lib/liveMessages";
-import type { RunSpan } from "../lib/types";
+import type { MessageUsage, RunSpan } from "../lib/types";
+import { finishReasonLabel, formatUsage, usageLabel } from "../lib/format";
 import { spanNodeLabel } from "../lib/nodes";
 import { cancel, sendPrompt, type StreamStatus } from "../lib/api";
 import { sepiaStore, setReplyTo } from "../lib/store";
@@ -93,7 +94,14 @@ function RowContent({ row }: { readonly row: ChatRow }) {
     const message = row.message;
     if (message.role === "tool") {
       return (
-        <ToolCall toolName={message.toolName ?? "tool"} done={true} content={message.content} />
+        <ToolCall
+          toolName={message.toolName ?? "tool"}
+          done={true}
+          content={message.content}
+          status={message.toolStatus}
+          exitCode={message.exitCode}
+          durationMs={message.durationMs}
+        />
       );
     }
     return (
@@ -101,6 +109,8 @@ function RowContent({ row }: { readonly row: ChatRow }) {
         role={message.role === "user" ? "user" : "assistant"}
         content={message.content}
         createdAt={message.createdAt}
+        usage={message.usage}
+        finishReason={message.finishReason}
       />
     );
   }
@@ -113,6 +123,9 @@ function RowContent({ row }: { readonly row: ChatRow }) {
         done={message.done}
         args={message.args}
         content={message.content}
+        status={message.toolStatus}
+        exitCode={message.exitCode}
+        durationMs={message.durationMs}
       />
     );
   }
@@ -131,6 +144,8 @@ function RowContent({ row }: { readonly row: ChatRow }) {
       role={message.role === "user" ? "user" : "assistant"}
       content={message.content}
       createdAt={message.createdAt}
+      usage={message.usage}
+      finishReason={message.finishReason}
     />
   );
 }
@@ -664,14 +679,21 @@ function MessageRow({
   role,
   content,
   createdAt,
+  usage,
+  finishReason,
 }: {
   readonly role: "user" | "assistant";
   readonly content: string;
   readonly createdAt?: number;
+  /** IR v2 token metrics — renders a compact ↑in ↓out in the footer. */
+  readonly usage?: MessageUsage;
+  /** Non-"stop" endings get a tiny marker; quiet endings render nothing. */
+  readonly finishReason?: string;
 }) {
   // Agents put JSON error payloads in assistant content — a user pasting the
   // same JSON should still render as text.
   const error = role === "assistant" ? parseErrorPayload(content) : null;
+  const finish = finishReasonLabel(finishReason);
   return (
     <Message align={role === "user" ? "end" : "start"}>
       <MessageContent>
@@ -690,6 +712,19 @@ function MessageRow({
           {role === "assistant" ? (
             <>
               {createdAt !== undefined && <span>{formatMessageTime(createdAt)}</span>}
+              {usage !== undefined && (
+                <span className="text-muted-foreground/80" title={formatUsage(usage)}>
+                  {usageLabel(usage)}
+                </span>
+              )}
+              {finish !== null && (
+                <span
+                  className={finish === "error" ? "text-destructive" : "text-muted-foreground/80"}
+                  title={`Finish reason: ${finish}`}
+                >
+                  {finish}
+                </span>
+              )}
               <MessageCopy text={() => content} />
               <MessageReply onReply={() => setReplyTo({ role, content, createdAt })} />
             </>

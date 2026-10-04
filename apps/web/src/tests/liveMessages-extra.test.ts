@@ -65,6 +65,58 @@ describe("applyAguiEvent — edge paths", () => {
     expect(m[0]?.content).toBe("");
   });
 
+  it("TOOL_CALL_END picks up IR v2 fields when they ride along", () => {
+    let m = applyAguiEvent([], ev("TOOL_CALL_START", { toolCallId: "t1" }));
+    m = applyAguiEvent(
+      m,
+      ev("TOOL_CALL_END", { toolCallId: "t1", toolStatus: "error", exitCode: 2, durationMs: 1200 }),
+    );
+    expect(m[0]?.done).toBe(true);
+    expect(m[0]?.toolStatus).toBe("error");
+    expect(m[0]?.exitCode).toBe(2);
+    expect(m[0]?.durationMs).toBe(1200);
+  });
+
+  it("TOOL_CALL_END maps ACP-style statuses onto the IR names", () => {
+    let m = applyAguiEvent([], ev("TOOL_CALL_START", { toolCallId: "t1" }));
+    m = applyAguiEvent(m, ev("TOOL_CALL_END", { toolCallId: "t1", status: "failed" }));
+    expect(m[0]?.toolStatus).toBe("error");
+    m = applyAguiEvent(m, ev("TOOL_CALL_END", { toolCallId: "t1", status: "completed" }));
+    expect(m[0]?.toolStatus).toBe("success");
+  });
+
+  it("TOOL_CALL_END without v2 fields just closes the call", () => {
+    let m = applyAguiEvent([], ev("TOOL_CALL_START", { toolCallId: "t1" }));
+    m = applyAguiEvent(m, ev("TOOL_CALL_END", { toolCallId: "t1", exitCode: "nope" }));
+    expect(m[0]?.done).toBe(true);
+    expect(m[0]?.toolStatus).toBeUndefined();
+    expect(m[0]?.exitCode).toBeUndefined();
+  });
+
+  it("TEXT_MESSAGE_END picks up usage, model, and finishReason", () => {
+    let m = applyAguiEvent([], ev("TEXT_MESSAGE_START", { messageId: "m1" }));
+    m = applyAguiEvent(
+      m,
+      ev("TEXT_MESSAGE_END", {
+        messageId: "m1",
+        usage: { input: 1200, output: 340, cacheRead: 800, cost: 0.02, bogus: "x" },
+        model: "claude-sonnet",
+        finishReason: "length",
+      }),
+    );
+    expect(m[0]?.done).toBe(true);
+    expect(m[0]?.usage).toEqual({ input: 1200, output: 340, cacheRead: 800, cost: 0.02 });
+    expect(m[0]?.model).toBe("claude-sonnet");
+    expect(m[0]?.finishReason).toBe("length");
+  });
+
+  it("TEXT_MESSAGE_END ignores malformed usage", () => {
+    let m = applyAguiEvent([], ev("TEXT_MESSAGE_START", { messageId: "m1" }));
+    m = applyAguiEvent(m, ev("TEXT_MESSAGE_END", { messageId: "m1", usage: { input: "x" } }));
+    expect(m[0]?.done).toBe(true);
+    expect(m[0]?.usage).toBeUndefined();
+  });
+
   it("unhandled events return an equivalent copy", () => {
     const base = applyAguiEvent([], ev("TEXT_MESSAGE_START", { messageId: "m1" }));
     const next = applyAguiEvent(base, ev("SOME_FUTURE_EVENT"));

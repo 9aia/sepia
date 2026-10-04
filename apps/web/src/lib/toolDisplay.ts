@@ -500,32 +500,64 @@ const buildGeneric = (toolName: string, result: { text: string; raw: unknown }):
   };
 };
 
+/** IR v2 fields carried alongside the row — authoritative over parsed text. */
+export interface ToolCallMeta {
+  readonly exitCode?: number;
+}
+
+const EXIT_NOTE_RE = /^exit -?\d+$/;
+
+const withExitCode = (display: ToolDisplay, exitCode: number): ToolDisplay => ({
+  ...display,
+  segments: [
+    ...display.segments.filter((s) => !(s.kind === "note" && EXIT_NOTE_RE.test(s.text))),
+    {
+      kind: "note",
+      text: `exit ${exitCode}`,
+      ...(exitCode === 0 ? {} : { error: true }),
+    },
+  ],
+});
+
 /**
  * Maps a tool row to a label, a one-line detail, and typed body segments.
  * `argsJson` is the live arg stream (undefined for history rows); `content`
- * is the stored/live result text.
+ * is the stored/live result text. `meta.exitCode` (IR v2) is authoritative —
+ * it replaces any `exit N` note parsed out of the content.
  */
 export const toolSummary = (
   toolName: string,
   argsJson: string | undefined,
   content: string,
+  meta?: ToolCallMeta,
 ): ToolDisplay => {
   const args = parseArgs(argsJson);
   const result = resultText(content);
+  let display: ToolDisplay;
   switch (categorize(toolName)) {
     case "exec":
-      return buildExec(toolName, args, result);
+      display = buildExec(toolName, args, result);
+      break;
     case "read":
-      return buildRead(args, result);
+      display = buildRead(args, result);
+      break;
     case "edit":
-      return buildEdit(toolName, args, result);
+      display = buildEdit(toolName, args, result);
+      break;
     case "search":
-      return buildSearch(args, result);
+      display = buildSearch(args, result);
+      break;
     case "fetch":
-      return buildFetch(args, result);
+      display = buildFetch(args, result);
+      break;
     case "todo":
-      return { ...buildGeneric(toolName, result), label: "Updated todos" };
+      display = { ...buildGeneric(toolName, result), label: "Updated todos" };
+      break;
     case "other":
-      return buildGeneric(toolName, result);
+      display = buildGeneric(toolName, result);
+      break;
   }
+  const exitCode = meta?.exitCode;
+  if (exitCode === undefined || !Number.isFinite(exitCode)) return display;
+  return withExitCode(display, exitCode);
 };

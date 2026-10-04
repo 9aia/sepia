@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   bareProjectId,
   findSessionRow,
+  finishReasonLabel,
+  formatCost,
+  formatDuration,
   formatUpdated,
+  formatUsage,
   isLocalNode,
   LOCAL_NODE_ID,
   nodeKey,
@@ -13,6 +17,7 @@ import {
   sessionKey,
   setLocalNodeAlias,
   shouldSyncUrlSelection,
+  usageLabel,
 } from "../lib/format";
 
 afterEach(() => {
@@ -179,6 +184,85 @@ describe("shouldSyncUrlSelection", () => {
     expect(shouldSyncUrlSelection("devin:a", "local:devin:a")).toBe(false);
     expect(shouldSyncUrlSelection("local:devin:a", "devin:a")).toBe(false);
     expect(shouldSyncUrlSelection("local:devin:a", "local:devin:a")).toBe(false);
+  });
+});
+
+describe("formatCost", () => {
+  it("formats cents and hides non-positive costs", () => {
+    expect(formatCost(0.0234)).toBe("$0.02");
+    expect(formatCost(1.5)).toBe("$1.50");
+    expect(formatCost(0)).toBe("");
+    expect(formatCost(-1)).toBe("");
+    expect(formatCost(Number.NaN)).toBe("");
+  });
+
+  it("keeps sub-cent precision instead of rounding to $0.00", () => {
+    expect(formatCost(0.0042)).toBe("$0.0042");
+  });
+});
+
+describe("usageLabel", () => {
+  it("compacts input/output with arrows", () => {
+    expect(usageLabel({ input: 1200, output: 340 })).toBe("↑1.2K ↓340");
+  });
+
+  it("appends cost when priced above zero", () => {
+    expect(usageLabel({ input: 1200, output: 340, cost: 0.023 })).toBe("↑1.2K ↓340 · $0.02");
+    expect(usageLabel({ input: 1200, output: 340, cost: 0 })).toBe("↑1.2K ↓340");
+  });
+});
+
+describe("formatUsage", () => {
+  it("lists input and output with grouped digits", () => {
+    expect(formatUsage({ input: 12345, output: 678 })).toBe("12,345 input · 678 output");
+  });
+
+  it("includes cache tiers, thinking, and cost when recorded", () => {
+    expect(
+      formatUsage({
+        input: 100,
+        output: 50,
+        cacheRead: 800,
+        cacheWrite: 12,
+        thinking: 56,
+        cost: 0.02,
+      }),
+    ).toBe("100 input · 50 output · 800 cache read · 12 cache write · 56 thinking · $0.02");
+  });
+
+  it("omits zero/absent tiers", () => {
+    expect(formatUsage({ input: 1, output: 2, cacheRead: 0 })).toBe("1 input · 2 output");
+  });
+});
+
+describe("formatDuration", () => {
+  it("formats sub-second, seconds, and minutes", () => {
+    expect(formatDuration(450)).toBe("450ms");
+    expect(formatDuration(1200)).toBe("1.2s");
+    expect(formatDuration(59_999)).toBe("60.0s");
+    expect(formatDuration(64_000)).toBe("1m 4s");
+    expect(formatDuration(120_000)).toBe("2m");
+  });
+
+  it("returns empty for bad input", () => {
+    expect(formatDuration(-5)).toBe("");
+    expect(formatDuration(Number.NaN)).toBe("");
+  });
+});
+
+describe("finishReasonLabel", () => {
+  it("quiets the ordinary endings", () => {
+    expect(finishReasonLabel("stop")).toBeNull();
+    expect(finishReasonLabel("end_turn")).toBeNull();
+    expect(finishReasonLabel("tool_calls")).toBeNull();
+    expect(finishReasonLabel(undefined)).toBeNull();
+    expect(finishReasonLabel("")).toBeNull();
+  });
+
+  it("surfaces terminal reasons", () => {
+    expect(finishReasonLabel("length")).toBe("length");
+    expect(finishReasonLabel("error")).toBe("error");
+    expect(finishReasonLabel("content_filter")).toBe("content_filter");
   });
 });
 

@@ -95,6 +95,35 @@ describe("toolSummary — exec", () => {
     const code = d.segments.find((s) => s.kind === "code");
     expect(code?.kind === "code" && code.text).toBe("file1\nfile2");
   });
+
+  it("IR exitCode overrides the parsed one and dedupes to a single note", () => {
+    const content = "Output from command in shell x:\nok\n\n\nExit code: 0";
+    const d = toolSummary("execute", undefined, content, { exitCode: 1 });
+    const exits = d.segments.filter((s) => s.kind === "note" && s.text.startsWith("exit"));
+    expect(exits).toHaveLength(1);
+    expect(exits[0]?.kind === "note" && exits[0].text).toBe("exit 1");
+    expect(exits[0]?.kind === "note" && exits[0].error).toBe(true);
+  });
+
+  it("IR exitCode lands a note even when the content carries none", () => {
+    const d = toolSummary("execute", undefined, "some output", { exitCode: 0 });
+    const exit = d.segments.find((s) => s.kind === "note" && s.text === "exit 0");
+    expect(exit).toBeDefined();
+    expect(exit?.kind === "note" && exit.error).toBeUndefined();
+  });
+
+  it("applies IR exitCode to non-exec tools too", () => {
+    const d = toolSummary("custom_mcp", undefined, "failed silently", { exitCode: 2 });
+    const exit = d.segments.find((s) => s.kind === "note" && s.text === "exit 2");
+    expect(exit?.kind === "note" && exit.error).toBe(true);
+  });
+
+  it("absent or non-finite meta leaves the parsed note alone", () => {
+    const content = "Output from command in shell x:\nok\n\n\nExit code: 3";
+    const d = toolSummary("execute", undefined, content, { exitCode: Number.NaN });
+    const exit = d.segments.find((s) => s.kind === "note" && s.text === "exit 3");
+    expect(exit?.kind === "note" && exit.error).toBe(true);
+  });
 });
 
 describe("toolSummary — read", () => {

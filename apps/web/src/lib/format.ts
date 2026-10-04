@@ -1,3 +1,5 @@
+import type { MessageUsage } from "./types";
+
 export function formatUpdated(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
@@ -8,6 +10,68 @@ export function formatUpdated(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
 }
+
+const compactNumber = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+const groupedNumber = new Intl.NumberFormat("en-US");
+
+/** "$0.02" — "" when the store recorded no (or a non-positive) cost. */
+export const formatCost = (cost: number): string => {
+  if (!Number.isFinite(cost) || cost <= 0) return "";
+  return `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)}`;
+};
+
+/** Compact footer form — "↑1.2k ↓340", plus " · $0.02" when priced. */
+export const usageLabel = (usage: MessageUsage): string => {
+  const base = `↑${compactNumber.format(usage.input)} ↓${compactNumber.format(usage.output)}`;
+  const cost = usage.cost === undefined ? "" : formatCost(usage.cost);
+  return cost === "" ? base : `${base} · ${cost}`;
+};
+
+/** Hover-title breakdown — every tier the agent recorded, grouped digits. */
+export const formatUsage = (usage: MessageUsage): string => {
+  const parts = [
+    `${groupedNumber.format(usage.input)} input`,
+    `${groupedNumber.format(usage.output)} output`,
+  ];
+  if (usage.cacheRead !== undefined && usage.cacheRead > 0) {
+    parts.push(`${groupedNumber.format(usage.cacheRead)} cache read`);
+  }
+  if (usage.cacheWrite !== undefined && usage.cacheWrite > 0) {
+    parts.push(`${groupedNumber.format(usage.cacheWrite)} cache write`);
+  }
+  if (usage.thinking !== undefined && usage.thinking > 0) {
+    parts.push(`${groupedNumber.format(usage.thinking)} thinking`);
+  }
+  const cost = usage.cost === undefined ? "" : formatCost(usage.cost);
+  if (cost !== "") parts.push(cost);
+  return parts.join(" · ");
+};
+
+/** "950ms" / "1.2s" / "1m 4s" — the parenthesized suffix on a tool-call marker. */
+export const formatDuration = (ms: number): string => {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+};
+
+/** Ordinary turn endings — the norm, never worth a marker. */
+const QUIET_FINISH_REASONS = new Set(["stop", "end_turn", "tool_calls"]);
+
+/**
+ * Finish reasons worth surfacing on an assistant row: "length", "error",
+ * and anything else unusual. The quiet endings return null so the footer
+ * adds no noise.
+ */
+export const finishReasonLabel = (reason: string | undefined | null): string | null =>
+  reason === undefined || reason === null || reason === "" || QUIET_FINISH_REASONS.has(reason)
+    ? null
+    : reason;
 
 export const projectName = (cwd: string): string => {
   const trimmed = cwd.replace(/\/+$/, "");

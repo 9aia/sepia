@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  CheckIcon,
   ChevronDownIcon,
   ComputerTerminal01Icon,
   FileEditIcon,
@@ -14,6 +15,8 @@ import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
 import { MessageResponse } from "./streamdown";
+import { formatDuration } from "../lib/format";
+import type { ToolCallStatus } from "../lib/types";
 import { toolSummary, type ToolCategory, type ToolSegment } from "../lib/toolDisplay";
 
 const CATEGORY_ICON: Record<ToolCategory, typeof WrenchIcon> = {
@@ -87,14 +90,23 @@ export function ToolCall({
   done,
   args,
   content,
+  status,
+  exitCode,
+  durationMs,
 }: {
   readonly toolName: string;
   readonly done: boolean;
   /** Live arg stream (JSON); history rows pass undefined. */
   readonly args?: string;
   readonly content: string;
+  /** IR v2 outcome — absent on rows from older stores, where `done` still rules. */
+  readonly status?: ToolCallStatus;
+  /** Authoritative exit code; overrides any parsed from `content`. */
+  readonly exitCode?: number;
+  readonly durationMs?: number;
 }) {
-  const display = toolSummary(toolName, args, content);
+  const display = toolSummary(toolName, args, content, { exitCode });
+  const duration = durationMs === undefined ? "" : formatDuration(durationMs);
   const [open, setOpen] = useState(!done);
   const everStreamed = useRef(!done);
 
@@ -116,14 +128,22 @@ export function ToolCall({
             {display.detail !== undefined && (
               <code className="min-w-0 truncate text-muted-foreground">{display.detail}</code>
             )}
-            <span
-              className={cn(
-                "shrink-0",
-                done ? "text-muted-foreground" : "animate-pulse text-primary",
-              )}
-            >
-              {done ? "Completed" : "Running…"}
-            </span>
+            {status === "error" ? (
+              <span className="shrink-0 text-destructive">Error</span>
+            ) : status === "success" ? (
+              <HugeiconsIcon
+                icon={CheckIcon}
+                strokeWidth={2}
+                className="size-3.5 shrink-0 text-muted-foreground"
+              />
+            ) : status === "pending" || !done ? (
+              <span className="shrink-0 animate-pulse text-primary">Running…</span>
+            ) : (
+              <span className="shrink-0 text-muted-foreground">Completed</span>
+            )}
+            {duration !== "" && (
+              <span className="shrink-0 text-muted-foreground/70">({duration})</span>
+            )}
             <HugeiconsIcon
               icon={ChevronDownIcon}
               strokeWidth={2}

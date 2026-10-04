@@ -14,9 +14,10 @@ import {
 import { ChevronDownIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { SessionSummary } from "../../lib/types";
-import { nodeKey, projectKey, sessionKey } from "../../lib/format";
+import { nodeKey, projectKey, resolveSession, sessionKey } from "../../lib/format";
 import { nodeName, spanNodeLabel } from "../../lib/nodes";
 import { useNodes } from "../../hooks/query/useNodes";
+import { useSessions } from "../../hooks/query/useSessions";
 import { useRenameSession } from "../../hooks/query/useRenameSession";
 import { useAgents } from "../../hooks/query/useAgents";
 import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
@@ -197,11 +198,15 @@ export function SessionDetailsDrawer({
   const resumeNodes = useResumeTargets();
   const { data: projects } = useProjects();
   const { data: agents = [] } = useAgents();
+  const { data: sessions = [] } = useSessions();
   // Subscribing here also refreshes node labels when the peer registry lands.
   const { peers } = useNodes();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const peer = session === undefined ? undefined : peers.find((p) => p.id === session.node);
+  // The sub-agent's parent — clickable when the row is in the merged list.
+  const parent =
+    session === undefined ? undefined : resolveSession(sessions, session.parentSessionId);
 
   useEffect(() => {
     if (session !== undefined && focusRename) setRenameOpen(true);
@@ -274,7 +279,34 @@ export function SessionDetailsDrawer({
                   </Detail>
                   <Detail label="Agent">
                     <Badge variant="secondary">{session.agent}</Badge>
+                    {session.agentId !== undefined && session.agentId !== "" && (
+                      <span
+                        className="text-muted-foreground"
+                        title="Sub-agent identity within the parent's team"
+                      >
+                        · {session.agentId}
+                      </span>
+                    )}
                   </Detail>
+                  {session.parentSessionId !== undefined && session.parentSessionId !== "" && (
+                    <Detail label="Parent" copyValue={session.parentSessionId}>
+                      {parent !== undefined ? (
+                        <button
+                          type="button"
+                          className="font-mono text-xs text-primary underline-offset-4 hover:underline"
+                          title={`Open ${parent.title}`}
+                          onClick={() => {
+                            onOpen(sessionKey(parent));
+                            onClose();
+                          }}
+                        >
+                          {session.parentSessionId}
+                        </button>
+                      ) : (
+                        <span className="font-mono text-xs">{session.parentSessionId}</span>
+                      )}
+                    </Detail>
+                  )}
                   <Detail label="Source">{session.source}</Detail>
                   {session.spans.length > 0 && (
                     <div className="flex flex-col gap-0.5 py-2 text-sm">
