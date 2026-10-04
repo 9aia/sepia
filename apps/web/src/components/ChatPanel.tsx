@@ -17,6 +17,7 @@ import { ApprovalDialog } from "./ApprovalDialog";
 import { ChatHeader } from "./ChatHeader";
 import { ErrorBanner } from "./ErrorBanner";
 import { SessionChat } from "./SessionChat";
+import { Spinner } from "./ui/spinner";
 
 const PERMISSION_EVENT = "acp:permission_request";
 
@@ -48,7 +49,7 @@ const messageOf = (err: unknown, fallback: string): string =>
 
 export function ChatPanel() {
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
-  const { data: sessions = [] } = useSessions();
+  const { data: sessions = [], isLoading: sessionsLoading } = useSessions();
   const session = sessions.find((s) => s.id === selectedId) ?? null;
   const sessionId = session?.id ?? null;
 
@@ -159,11 +160,18 @@ export function ChatPanel() {
   if (!session) {
     return (
       <section className="flex h-svh flex-col overflow-hidden">
-        <EmptyScreen
-          icon={BubbleChatIcon}
-          title="No session selected"
-          description="Pick a session from the sidebar, or create a new one."
-        />
+        {sessionsLoading ? (
+          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Spinner className="size-4" />
+            Loading sessions…
+          </div>
+        ) : (
+          <EmptyScreen
+            icon={BubbleChatIcon}
+            title="No session selected"
+            description="Pick a session from the sidebar, or create a new one."
+          />
+        )}
       </section>
     );
   }

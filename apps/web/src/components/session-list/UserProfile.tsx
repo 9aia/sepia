@@ -11,6 +11,7 @@ import { setKeybindsOpen } from "../../lib/store";
 import { ProfileDialog } from "../ProfileDialog";
 import { SettingsDialog } from "../SettingsDialog";
 import { Button } from "../ui/button";
+import { Skeleton } from "../ui/skeleton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,7 +22,7 @@ import {
 } from "../ui/dropdown-menu";
 
 export function UserProfile() {
-  const { data: user } = useUserInfo();
+  const { data: user, isLoading } = useUserInfo();
   const [dialog, setDialog] = useState<"profile" | "settings" | null>(null);
   const username = user?.username ?? "…";
   const initial = username === "…" ? "?" : username.charAt(0).toUpperCase();
@@ -42,10 +43,19 @@ export function UserProfile() {
             {initial}
           </span>
           <span className="min-w-0 flex-1 text-left">
-            <span className="block truncate text-sm font-medium">{username}</span>
-            <span className="block truncate text-xs text-muted-foreground">
-              {user?.hostname ?? ""}
-            </span>
+            {isLoading ? (
+              <span className="block space-y-1.5">
+                <Skeleton className="h-3.5 w-2/3" />
+                <Skeleton className="h-3 w-1/3" />
+              </span>
+            ) : (
+              <>
+                <span className="block truncate text-sm font-medium">{username}</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {user?.hostname ?? ""}
+                </span>
+              </>
+            )}
           </span>
           <HugeiconsIcon icon={ArrowUp01Icon} strokeWidth={2} className="text-muted-foreground" />
         </DropdownMenuTrigger>
