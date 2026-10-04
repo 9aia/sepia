@@ -7,6 +7,7 @@ import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import type { ItemInstance } from "@headless-tree/core";
 import type { SessionSummary } from "../../lib/types";
 import { formatUpdated, projectName } from "../../lib/format";
+import { useCreateProject, usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -34,6 +35,7 @@ import {
   Add01Icon,
   Copy01Icon,
   FolderDetailsIcon,
+  FolderLibraryIcon,
   MoreVerticalIcon,
 } from "@hugeicons/core-free-icons";
 import { ScrollBar } from "../ui/scroll-area";
@@ -61,14 +63,34 @@ const ROOT_ID = "root";
 function DirActions({
   Item,
   data,
+  sessions,
   onShowDetails,
   onNewSession,
 }: {
   readonly Item: typeof ContextMenuItem;
   readonly data: TreeData & { kind: "dir" };
+  readonly sessions: ReadonlyArray<SessionSummary>;
   onShowDetails: () => void;
   onNewSession: (cwd: string) => void;
 }) {
+  const createProject = useCreateProject();
+  const patch = usePatchSessionMeta();
+  const members = sessions.filter(
+    (session) => session.cwd === data.cwd || session.cwd.startsWith(`${data.cwd}/`),
+  );
+  const createFromFolder = (): void => {
+    createProject.mutate(projectName(data.cwd), {
+      onSuccess: ({ project }) => {
+        for (const session of members) {
+          if (session.projectIds.includes(project.id)) continue;
+          patch.mutate({
+            id: session.id,
+            patch: { projectIds: [...session.projectIds, project.id] },
+          });
+        }
+      },
+    });
+  };
   const copy = (): void => {
     void navigator.clipboard.writeText(data.cwd).then(
       () => {},
@@ -80,6 +102,10 @@ function DirActions({
       <Item onClick={() => onNewSession(data.cwd)}>
         <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
         New session here
+      </Item>
+      <Item onClick={createFromFolder} disabled={members.length === 0}>
+        <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} />
+        New project from folder
       </Item>
       <Item onClick={onShowDetails}>
         <HugeiconsIcon icon={FolderDetailsIcon} strokeWidth={2} />
@@ -129,10 +155,12 @@ function DirDetailsDialog({
 function GroupRow({
   item,
   data,
+  sessions,
   onNewSession,
 }: {
   item: ItemInstance<TreeData>;
   data: TreeData & { kind: "dir" };
+  sessions: ReadonlyArray<SessionSummary>;
   onNewSession: (cwd: string) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -166,6 +194,7 @@ function GroupRow({
               <DirActions
                 Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
                 data={data}
+                sessions={sessions}
                 onShowDetails={() => setDetailsOpen(true)}
                 onNewSession={onNewSession}
               />
@@ -176,6 +205,7 @@ function GroupRow({
           <DirActions
             Item={ContextMenuItem}
             data={data}
+            sessions={sessions}
             onShowDetails={() => setDetailsOpen(true)}
             onNewSession={onNewSession}
           />
@@ -566,7 +596,12 @@ export function SessionTree({
                   }}
                 >
                   {data?.kind === "dir" ? (
-                    <GroupRow item={item} data={data} onNewSession={onNewSession} />
+                    <GroupRow
+                      item={item}
+                      data={data}
+                      sessions={sessions}
+                      onNewSession={onNewSession}
+                    />
                   ) : data?.kind === "session" ? (
                     <SessionItemRow
                       item={item}
