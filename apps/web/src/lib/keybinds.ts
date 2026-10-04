@@ -20,8 +20,8 @@ export const KEYBINDS: ReadonlyArray<KeybindDef> = [
   { id: "filter.focus", group: "App", label: "Focus filter", def: "Mod+K" },
   { id: "filter.clear", group: "App", label: "Clear filter", def: "Escape" },
   { id: "app.sidebar", group: "App", label: "Toggle sidebar", def: "Mod+B" },
-  { id: "app.settings", group: "App", label: "Settings", def: "Mod+Comma" },
-  { id: "app.keybinds", group: "App", label: "Keyboard shortcuts", def: "Shift+Slash" },
+  { id: "app.settings", group: "App", label: "Settings", def: "Mod+[Comma]" },
+  { id: "app.keybinds", group: "App", label: "Keyboard shortcuts", def: "Shift+[Slash]" },
 ];
 
 export const keybindDef = (id: string): KeybindDef | undefined =>
@@ -37,7 +37,15 @@ export const resolveKey = (settings: SepiaSettings, id: string): string | null =
 
 /** Display tokens for a hotkey string: "Mod+K" → ["Ctrl", "K"] / ["⌘", "K"]. */
 export const formatKey = (key: string, modKey: string): string[] =>
-  key.split("+").map((part) => (part === "Mod" ? modKey : part === "Slash" ? "/" : part));
+  key.split("+").map((part) => {
+    if (part === "Mod") return modKey;
+    // [Code] → a readable glyph: [Slash] → /, [Comma] → ,, else strip brackets.
+    if (part.startsWith("[") && part.endsWith("]")) {
+      const code = part.slice(1, -1);
+      return code === "Slash" ? "/" : code === "Comma" ? "," : code.replace(/^Key/, "");
+    }
+    return part;
+  });
 
 /** useHotkey driven by the keybind registry — honors overrides + disables. */
 export const useAppHotkey = (

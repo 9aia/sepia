@@ -3,13 +3,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useAppHotkey } from "../lib/keybinds";
 import { useStore } from "@tanstack/react-store";
 import { ChatPanel } from "../components/ChatPanel";
-import { KeybindsDialog } from "../components/KeybindsDialog";
 import { SessionList } from "../components/SessionList";
 import { TokenGate } from "../components/TokenGate";
 import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";
 import { useSessions } from "../hooks/query/useSessions";
 import { AuthError } from "../lib/api";
-import { sepiaStore, setKeybindsOpen, setSelectedId } from "../lib/store";
+import { sepiaStore, setSettingsOpen, setSelectedId } from "../lib/store";
 import { sessionKey } from "../lib/format";
 
 const DATES = new Set(["day", "week", "month"]);
@@ -69,7 +68,7 @@ function Home() {
     }
   }, [sessions, selectedId, search.session]);
 
-  useAppHotkey("app.keybinds", () => setKeybindsOpen(true));
+  useAppHotkey("app.keybinds", () => setSettingsOpen(true, "keyboard"));
 
   if (error instanceof AuthError) return <TokenGate />;
 
@@ -79,7 +78,6 @@ function Home() {
       <SidebarInset>
         <ChatPanel />
       </SidebarInset>
-      <KeybindsDialog />
     </SidebarProvider>
   );
 }

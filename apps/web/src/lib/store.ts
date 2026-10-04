@@ -7,7 +7,9 @@ import { pushRecent } from "./recents";
  */
 export interface SepiaState {
   selectedId: string | null;
-  keybindsOpen: boolean;
+  /** Settings dialog — settingsSection scrolls it to a section on open. */
+  settingsOpen: boolean;
+  settingsSection: string | null;
   /** Session shown in the details drawer; rename opens its dialog. */
   detailsFor: { id: string; rename: boolean } | null;
   /** Pending cwd for "New session here" — consumed by SessionList. */
@@ -20,7 +22,8 @@ export interface SepiaState {
 
 export const sepiaStore = new Store<SepiaState>({
   selectedId: null,
-  keybindsOpen: false,
+  settingsOpen: false,
+  settingsSection: null,
   detailsFor: null,
   createCwd: null,
   cwd: null,
@@ -32,8 +35,12 @@ export const setSelectedId = (id: string | null): void => {
   sepiaStore.setState((prev) => ({ ...prev, selectedId: id }));
 };
 
-export const setKeybindsOpen = (open: boolean): void => {
-  sepiaStore.setState((prev) => ({ ...prev, keybindsOpen: open }));
+export const setSettingsOpen = (open: boolean, section?: string): void => {
+  sepiaStore.setState((prev) => ({
+    ...prev,
+    settingsOpen: open,
+    settingsSection: open ? (section ?? null) : null,
+  }));
 };
 
 export const setDetailsFor = (details: SepiaState["detailsFor"]): void => {

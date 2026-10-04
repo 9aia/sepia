@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useStore } from "@tanstack/react-store";
 import {
   ArrowUp01Icon,
   KeyboardIcon,
@@ -8,7 +9,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../../hooks/query/useUserInfo";
 import { useAppHotkey } from "../../lib/keybinds";
-import { setKeybindsOpen } from "../../lib/store";
+import { sepiaStore, setSettingsOpen } from "../../lib/store";
 import { ProfileDialog } from "../ProfileDialog";
 import { SettingsDialog } from "../SettingsDialog";
 import { Button } from "../ui/button";
@@ -24,10 +25,10 @@ import {
 
 export function UserProfile() {
   const { data: user, isLoading, isError } = useUserInfo();
-  const [dialog, setDialog] = useState<"profile" | "settings" | null>(null);
-  useAppHotkey("app.settings", () =>
-    setDialog((prev) => (prev === "settings" ? null : "settings")),
-  );
+  const [dialog, setDialog] = useState<"profile" | null>(null);
+  const settingsOpen = useStore(sepiaStore, (state) => state.settingsOpen);
+  useAppHotkey("app.settings", () => setSettingsOpen(!settingsOpen));
+  const openSettings = (open: boolean): void => setSettingsOpen(open);
   const username = user?.username ?? (isError ? "Unavailable" : "");
   const initial = user?.username.charAt(0).toUpperCase();
 
@@ -76,12 +77,12 @@ export function UserProfile() {
             <HugeiconsIcon icon={ProfileIcon} strokeWidth={2} />
             Profile
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setDialog("settings")}>
+          <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
             <HugeiconsIcon icon={Settings02Icon} strokeWidth={2} />
             Settings
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setKeybindsOpen(true)}>
+          <DropdownMenuItem onClick={() => setSettingsOpen(true, "keyboard")}>
             <HugeiconsIcon icon={KeyboardIcon} strokeWidth={2} />
             Keyboard shortcuts
             <DropdownMenuShortcut>?</DropdownMenuShortcut>
@@ -90,7 +91,7 @@ export function UserProfile() {
       </DropdownMenu>
 
       <ProfileDialog open={dialog === "profile"} onOpenChange={(o) => !o && setDialog(null)} />
-      <SettingsDialog open={dialog === "settings"} onOpenChange={(o) => !o && setDialog(null)} />
+      <SettingsDialog open={settingsOpen} onOpenChange={openSettings} />
     </div>
   );
 }

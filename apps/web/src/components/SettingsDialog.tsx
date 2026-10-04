@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useHotkeyRecorder } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
 import { settingsStore, setSettings, type AgentModelPref } from "../lib/settings";
+import { sepiaStore } from "../lib/store";
 import { KEYBINDS, formatKey, resolveKey } from "../lib/keybinds";
 import { Kbd } from "./ui/kbd";
 import { Button } from "./ui/button";
@@ -204,6 +205,15 @@ const MOD_KEY = navigator.platform.toUpperCase().includes("MAC") ? "⌘" : "Ctrl
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { data: agents = [] } = useAgents();
   const settings = useStore(settingsStore);
+  const settingsSection = useStore(sepiaStore, (state) => state.settingsSection);
+  useEffect(() => {
+    if (!open || settingsSection === null) return;
+    contentRef.current
+      ?.querySelector(`[data-spy="${settingsSection}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    sepiaStore.setState((prev) => ({ ...prev, settingsSection: null }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, settingsSection]);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState<string>("general");
 
