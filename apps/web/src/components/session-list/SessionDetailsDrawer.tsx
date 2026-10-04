@@ -334,7 +334,7 @@ export function SessionDetailsDrawer({
                 onClick={() => setRenameOpen(true)}
               >
                 <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-                Rename
+                Rename…
               </Button>
               <Button
                 variant="destructive"

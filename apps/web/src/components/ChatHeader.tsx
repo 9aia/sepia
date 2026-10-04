@@ -81,6 +81,7 @@ export function ChatHeader({ session, running, streamStatus }: ChatHeaderProps) 
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
             <SessionActions
+              hideOpen
               Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
               Separator={DropdownMenuSeparator}
               Sub={DropdownMenuSub as unknown as typeof ContextMenuSub}

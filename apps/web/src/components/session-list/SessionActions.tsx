@@ -39,6 +39,7 @@ export function SessionActions({
   SubTrigger,
   SubContent,
   session,
+  hideOpen = false,
   onSelect,
   onDetails,
   onRequestDelete,
@@ -49,6 +50,8 @@ export function SessionActions({
   readonly SubTrigger: typeof ContextMenuSubTrigger;
   readonly SubContent: typeof ContextMenuSubContent;
   readonly session: SessionSummary;
+  /** Already viewing the session — the Open item is noise. */
+  readonly hideOpen?: boolean;
   onSelect: (id: string) => void;
   onDetails: (id: string, rename: boolean) => void;
   onRequestDelete: (id: string) => void;
@@ -71,10 +74,12 @@ export function SessionActions({
   };
   return (
     <>
-      <Item onClick={() => onSelect(sessionKey(session))}>
-        <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} />
-        Open
-      </Item>
+      {!hideOpen && (
+        <Item onClick={() => onSelect(sessionKey(session))}>
+          <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} />
+          Open
+        </Item>
+      )}
       <Item onClick={() => patch.mutate({ id: session.id, patch: { pinned: !session.pinned } })}>
         <HugeiconsIcon icon={PinIcon} strokeWidth={2} />
         {session.pinned === true ? "Unpin" : "Pin"}
