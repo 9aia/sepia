@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { BotIcon } from "@hugeicons/core-free-icons";
+import { AlertCircleIcon, BotIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { Avatar, AvatarFallback } from "./ui/avatar";
@@ -54,12 +54,17 @@ function RowContent({ row }: { readonly row: Row }) {
       );
     }
     const role = message.role === "user" ? "user" : "assistant";
+    const error = parseErrorPayload(message.content);
     return (
       <Message from={role}>
         <div className="flex items-end gap-2.5">
           {role !== "user" && <RowAvatar role={role} />}
           <MessageContent>
-            <MessageResponse>{message.content}</MessageResponse>
+            {error !== null ? (
+              <ErrorMessage error={error} />
+            ) : (
+              <MessageResponse>{message.content}</MessageResponse>
+            )}
           </MessageContent>
           {role === "user" && <RowAvatar role={role} />}
         </div>
@@ -92,16 +97,72 @@ function RowContent({ row }: { readonly row: Row }) {
     );
   }
   const role = message.role === "user" ? "user" : "assistant";
+  const error = parseErrorPayload(message.content);
   return (
     <Message from={role}>
       <div className="flex items-end gap-2.5">
         {role !== "user" && <RowAvatar role={role} />}
         <MessageContent>
-          <MessageResponse>{message.content}</MessageResponse>
+          {error !== null ? (
+            <ErrorMessage error={error} />
+          ) : (
+            <MessageResponse>{message.content}</MessageResponse>
+          )}
         </MessageContent>
         {role === "user" && <RowAvatar role={role} />}
       </div>
     </Message>
+  );
+}
+
+interface ParsedError {
+  readonly code?: string;
+  readonly message: string;
+}
+
+/** Detect JSON error payloads agents emit as message content. */
+function parseErrorPayload(content: string): ParsedError | null {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const record = parsed as Record<string, unknown>;
+    const inner =
+      typeof record.error === "object" && record.error !== null
+        ? (record.error as Record<string, unknown>)
+        : record;
+    if (typeof inner.message !== "string") return null;
+    return {
+      code: typeof inner.code === "string" ? inner.code : undefined,
+      message: inner.message,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const prettifyCode = (code: string): string =>
+  code
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
+function ErrorMessage({ error }: { readonly error: ParsedError }) {
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2.5 rounded-xl border border-destructive/40 bg-destructive/10 px-3.5 py-2.5"
+    >
+      <HugeiconsIcon icon={AlertCircleIcon} className="mt-0.5 size-4 shrink-0 text-destructive" />
+      <div className="min-w-0">
+        <div className="text-sm font-medium">
+          {error.code !== undefined ? prettifyCode(error.code) : "Something went wrong"}
+        </div>
+        <p className="m-0 text-xs text-muted-foreground">{error.message}</p>
+      </div>
+    </div>
   );
 }
 
