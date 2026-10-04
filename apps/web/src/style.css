@@ -45,6 +45,15 @@
   box-sizing: border-box;
 }
 
+/* Tailwind's reset leaves bare border/outline utilities on currentColor —
+ * white text would mean white borders. Utilities still override these. */
+*,
+::before,
+::after {
+  border-color: var(--border);
+  outline-color: var(--ring);
+}
+
 html,
 body {
   margin: 0;
