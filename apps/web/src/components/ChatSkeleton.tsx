@@ -21,7 +21,7 @@ export function ChatSkeleton() {
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <Skeleton className="size-7 rounded-full" />
-          <Skeleton className="h-9 w-2/5 rounded-2xl" />
+          <Skeleton className="h-9 w-2/5 rounded-lg" />
         </div>
         <div className="flex flex-col items-start gap-1.5">
           <Skeleton className="size-7 rounded-full" />
@@ -30,7 +30,7 @@ export function ChatSkeleton() {
       </div>
 
       <div className="border-t border-border px-4 pt-3 pb-4">
-        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-16 w-full rounded-3xl" />
       </div>
     </div>
   );
