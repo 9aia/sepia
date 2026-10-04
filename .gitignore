@@ -8,3 +8,9 @@ coverage/
 *.log
 .history_*.md
 .vite-hooks/_/
+
+# agent scratch scripts
+*.tmp.mjs
+dbg-*.mjs
+probe-*.mjs
+repro-*.mjs
