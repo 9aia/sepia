@@ -9,7 +9,7 @@ describe("chat", () => {
   e2e("a sent message is optimistic — it shows before the POST resolves", async () => {
     const page = await newPage();
     // Stall the prompt POST so the optimistic row is observable.
-    await page.route("**/api/sessions/*/prompt", async (route) => {
+    await page.route("**/api/sessions/*/prompt*", async (route) => {
       await new Promise((r) => setTimeout(r, 2500));
       await route.continue();
     });
