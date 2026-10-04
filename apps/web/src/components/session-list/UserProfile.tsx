@@ -7,6 +7,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useUserInfo } from "../../hooks/query/useUserInfo";
+import { useAppHotkey } from "../../lib/keybinds";
 import { setKeybindsOpen } from "../../lib/store";
 import { ProfileDialog } from "../ProfileDialog";
 import { SettingsDialog } from "../SettingsDialog";
@@ -24,6 +25,9 @@ import {
 export function UserProfile() {
   const { data: user, isLoading, isError } = useUserInfo();
   const [dialog, setDialog] = useState<"profile" | "settings" | null>(null);
+  useAppHotkey("app.settings", () =>
+    setDialog((prev) => (prev === "settings" ? null : "settings")),
+  );
   const username = user?.username ?? (isError ? "Unavailable" : "");
   const initial = user?.username.charAt(0).toUpperCase();
 

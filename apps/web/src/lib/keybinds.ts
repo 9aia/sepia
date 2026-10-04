@@ -19,6 +19,8 @@ export const KEYBINDS: ReadonlyArray<KeybindDef> = [
   { id: "nav.expand", group: "Sessions", label: "Expand group", def: "ArrowRight" },
   { id: "filter.focus", group: "App", label: "Focus filter", def: "Mod+K" },
   { id: "filter.clear", group: "App", label: "Clear filter", def: "Escape" },
+  { id: "app.sidebar", group: "App", label: "Toggle sidebar", def: "Mod+B" },
+  { id: "app.settings", group: "App", label: "Settings", def: "Mod+Comma" },
   { id: "app.keybinds", group: "App", label: "Keyboard shortcuts", def: "Shift+Slash" },
 ];
 
