@@ -17,6 +17,11 @@ export interface ServerEnv {
   /** 256-bit hex key file encrypting serversPath (SEPIA_SERVERS_KEY overrides). */
   readonly serversKeyPath: string;
   readonly origins: ReadonlyArray<string>;
+  /** Static UI serving: the embedded web bundle, or SEPIA_UI_DIR to override. */
+  readonly ui: {
+    readonly enabled: boolean;
+    readonly dir: string | undefined;
+  };
   readonly otel: {
     readonly enabled: boolean;
     readonly endpoint: string;
@@ -52,6 +57,10 @@ export const parseEnv = (env: NodeJS.ProcessEnv = process.env): ServerEnv => {
 
   const home = env.SEPIA_HOME ?? `${homedir()}/.local/share/sepia`;
 
+  // SEPIA_UI=off (or 0/false) makes this an API-only node; SEPIA_UI_DIR points
+  // at an alternate web bundle on disk instead of the embedded one.
+  const uiFlag = env.SEPIA_UI?.trim().toLowerCase();
+
   return {
     dbPath,
     port,
@@ -67,6 +76,10 @@ export const parseEnv = (env: NodeJS.ProcessEnv = process.env): ServerEnv => {
       env.SEPIA_SERVERS_KEY_PATH ??
       `${env.XDG_CONFIG_HOME ?? `${homedir()}/.config`}/sepia/servers.key`,
     origins: configuredOrigins.length > 0 ? configuredOrigins : DEFAULT_ORIGINS,
+    ui: {
+      enabled: uiFlag !== "0" && uiFlag !== "off" && uiFlag !== "false",
+      dir: env.SEPIA_UI_DIR,
+    },
     otel: {
       enabled: env.SEPIA_OTEL !== "0",
       endpoint: otelEndpoint,

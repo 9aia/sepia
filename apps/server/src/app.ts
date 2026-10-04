@@ -31,6 +31,7 @@ import type { ServerStore } from "./servers";
 import { handleServersRoute } from "./servers-routes";
 import type { TunnelManager } from "./ssh";
 import { keepAliveMsFromEnv, SseChannel } from "./sse-channel";
+import type { UiAssets } from "./ui";
 import { makePushStore, notifyForEvents } from "./push";
 
 export interface AppOptions {
@@ -72,6 +73,11 @@ export interface AppOptions {
    * `POST /api/pair` returns 501.
    */
   readonly pairing?: Pairing;
+  /**
+   * Static web UI (the built TanStack Start SPA). When set, GET/HEAD requests
+   * outside /api/* fall through to it — extensionless paths get index.html.
+   */
+  readonly ui?: UiAssets;
 }
 
 const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([
@@ -1226,6 +1232,17 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           },
         );
       }
+    }
+
+    // Non-API GETs fall through to the bundled SPA — this same-origin host is
+    // what lets the binary serve UI + API on one port (docs/DEPLOY.md).
+    if (
+      options.ui !== undefined &&
+      (method === "GET" || method === "HEAD") &&
+      segments[0] !== "api"
+    ) {
+      const served = await options.ui.fetch(method, url.pathname);
+      if (served !== null) return served;
     }
 
     return jsonResponse({ error: "Not found" }, 404, cors);

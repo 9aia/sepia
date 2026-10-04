@@ -21,5 +21,14 @@ export default defineConfig({
       },
     },
   },
-  plugins: [tailwindcss(), tanstackStart(), viteReact()],
+  plugins: [
+    tailwindcss(),
+    // SPA mode: the server build is only used at build time to prerender a
+    // static shell (dist/client/index.html); every route is client-rendered,
+    // so the whole UI ships as a static bundle the sepia binary embeds.
+    tanstackStart({
+      spa: { enabled: true, maskPath: "/", prerender: { outputPath: "index.html" } },
+    }),
+    viteReact(),
+  ],
 });

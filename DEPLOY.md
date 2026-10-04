@@ -1,7 +1,10 @@
 # Deploying sepia
 
-Sepia is a self-hosted control plane for coding-agent sessions. Two processes
-run side by side:
+Sepia is a self-hosted control plane for coding-agent sessions. The packaged
+form is a **single `bun --compile` binary** that serves the API and the web UI
+on one port — "one binary per machine, any machine hosts the UI" (see
+[Single binary](#single-binary)). For development the two halves still run
+side by side:
 
 - **API** (`sepia-server`, Bun, `:8787`) — REST + AG-UI SSE + AG-UI agent endpoint
   runtime. Spawns `devin acp` / `cline --acp` subprocesses that can read and
@@ -11,6 +14,30 @@ run side by side:
 
 Both processes must run under **Bun ≥ 1.3**: `sepia-core` imports `bun:sqlite`
 at module load, so Node cannot host the API or the repository layer.
+
+## Single binary
+
+```bash
+vp run build:binary        # bun tools/build-binary.ts
+./sepia serve              # API + embedded UI on :8787
+./sepia serve --no-ui      # API-only node (same as SEPIA_UI=off)
+```
+
+`build:binary` builds the web app (TanStack Start SPA mode — the UI is a
+client-rendered static bundle), stages `apps/web/dist/client` at
+`apps/server/ui-dist/`, regenerates `src/ui.assets.gen.ts` with one
+`import ... with { type: "file" }` per asset, and runs
+`bun build apps/sepia/src/main.ts --compile`. The assets land in the binary's
+`$bunfs` store and are served same-origin at `/`; every non-`/api` path falls
+back to `index.html` for client routing.
+
+Flags: `--skip-web-build` reuses an existing `dist/client`, `--outfile <path>`
+renames the output (default `./sepia`).
+
+All `SEPIA_*` configuration applies unchanged. `SEPIA_UI=off` (or `0`/`false`)
+disables UI serving for API-only nodes; `SEPIA_UI_DIR=<dist dir>` serves a
+web bundle from disk instead of the embedded one — useful for trying a newer
+UI without rebuilding the binary.
 
 ## Security model — read this first
 
@@ -44,6 +71,8 @@ Treat network access to the API as remote code execution.
 | `SEPIA_DB`                    | `~/.local/share/devin/cli/sessions.db`        | Devin session store path (opened read-only).                       |
 | `SEPIA_CLINE_DIR`             | `~/.cline/data`                               | Cline data dir merged into the session list (read-only overlay).   |
 | `SEPIA_ORIGINS`               | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated CORS allowlist for browser calls.                  |
+| `SEPIA_UI`                    | `on`                                          | `off`/`0`/`false` disables static UI serving (API-only node).      |
+| `SEPIA_UI_DIR`                | unset                                         | Serve a web bundle from this dir instead of the embedded one.      |
 | `SEPIA_AGENT_<ID>_COMMAND`    | `devin acp` / `cline --acp`                   | Override the spawn argv per agent id (space-separated).            |
 | `SEPIA_IDLE_TTL_MS`           | `600000`                                      | Detach live sessions idle this long; `0` disables.                 |
 | `SEPIA_SWEEP_MS`              | `30000`                                       | Idle-sweep interval.                                               |

@@ -3,6 +3,7 @@ import { BunContext, BunRuntime } from "@effect/platform-bun";
 import { Effect, Option } from "effect";
 import { homedir } from "node:os";
 import { ClineStore, Conversion, SqliteStorage, openSessionsDb } from "sepia-core";
+import { parseEnv, startServer, type ServerEnv } from "sepia-server/serve";
 import { PAIR_CODE_TTL_MS, writePairCodeFile } from "./pair";
 
 const defaultDbPath = `${homedir()}/.local/share/devin/cli/sessions.db`;
@@ -102,8 +103,41 @@ const pairCommand = Command.make(
   Command.withDescription("Print a one-time pairing code — the UI exchanges it via POST /api/pair"),
 );
 
+// Boots the node: the /api/* control plane plus the embedded web UI on one
+// port — "one binary per machine, any machine hosts the UI". `--no-ui` (or
+// SEPIA_UI=off) makes it an API-only node; every SEPIA_* env var applies.
+const serveCommand = Command.make(
+  "serve",
+  {
+    noUi: Options.boolean("no-ui").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Serve only the API — do not serve the bundled web UI"),
+    ),
+  },
+  ({ noUi }) =>
+    Effect.promise(() => {
+      const parsed = parseEnv();
+      const env: ServerEnv = {
+        ...parsed,
+        ui: { ...parsed.ui, enabled: parsed.ui.enabled && !noUi },
+      };
+      return startServer(env).then(() => undefined);
+    }).pipe(Effect.andThen(Effect.never)),
+).pipe(
+  Command.withDescription(
+    "Serve the sepia node — API plus the embedded web UI on one port (SEPIA_* env configures it)",
+  ),
+);
+
 const sepia = Command.make("sepia").pipe(
-  Command.withSubcommands([importCommand, exportCommand, installCommand, listCommand, pairCommand]),
+  Command.withSubcommands([
+    importCommand,
+    exportCommand,
+    installCommand,
+    listCommand,
+    pairCommand,
+    serveCommand,
+  ]),
   Command.withDescription("Convert sessions between the Devin and Cline stores"),
 );
 

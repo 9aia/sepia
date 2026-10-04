@@ -5,9 +5,10 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   fmt: {
-    ignorePatterns: ["apps/web/src/routeTree.gen.ts"],
+    ignorePatterns: ["apps/web/src/routeTree.gen.ts", "apps/server/ui-dist"],
   },
   lint: {
+    ignorePatterns: ["apps/server/ui-dist"],
     jsPlugins: [
       { name: "vite-plus", specifier: "vite-plus/oxlint-plugin" },
       // eslint-plugin-boundaries can't resolve imports under oxlint (it needs

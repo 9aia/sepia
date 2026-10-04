@@ -13,6 +13,7 @@
     "dev": "vp run sepia-web#dev",
     "prepare": "vp config",
     "coverage": "vp run -r coverage",
+    "build:binary": "bun tools/build-binary.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "devDependencies": {

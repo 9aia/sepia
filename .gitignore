@@ -14,3 +14,5 @@ coverage/
 dbg-*.mjs
 probe-*.mjs
 repro-*.mjs
+/sepia
+apps/server/ui-dist/
