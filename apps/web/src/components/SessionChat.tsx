@@ -478,7 +478,7 @@ export function SessionChat({
                   </div>
                   <div className="flex flex-col items-end gap-1.5">
                     <Skeleton className="size-7 rounded-full" />
-                    <Skeleton className="h-9 w-2/5 rounded-2xl" />
+                    <Skeleton className="h-9 w-2/5 rounded-lg" />
                   </div>
                 </div>
               ) : (
