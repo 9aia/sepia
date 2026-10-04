@@ -180,6 +180,8 @@ export function SessionList() {
         session={sessions.find((s) => s.id === details?.id)}
         focusRename={details?.rename ?? false}
         onClose={() => setDetailsFor(null)}
+        onOpen={setSelectedId}
+        onDelete={(id) => deleteMutation.mutate(id)}
       />
 
       <UserProfile />
