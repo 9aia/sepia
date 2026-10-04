@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, type CSSProperties } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useStore } from "@tanstack/react-store";
 import { ChatPanel } from "../components/ChatPanel";
 import { SessionList } from "../components/SessionList";
+import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";
 import { useSessions } from "../hooks/query/useSessions";
 import { sepiaStore, setSelectedId } from "../lib/store";
 
@@ -22,9 +23,11 @@ function Home() {
   }, [sessions, selectedId]);
 
   return (
-    <div className="app-shell">
+    <SidebarProvider style={{ "--sidebar-width": "20rem" } as CSSProperties}>
       <SessionList />
-      <ChatPanel />
-    </div>
+      <SidebarInset>
+        <ChatPanel />
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

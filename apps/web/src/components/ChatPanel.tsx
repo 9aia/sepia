@@ -15,6 +15,7 @@ import { useRespondToPermission } from "../hooks/query/useRespondToPermission";
 import { useSessions } from "../hooks/query/useSessions";
 import { ApprovalDialog } from "./ApprovalDialog";
 import { Badge } from "./ui/badge";
+import { SidebarTrigger } from "./ui/sidebar";
 import { SessionChat } from "./SessionChat";
 
 const PERMISSION_EVENT = "acp:permission_request";
@@ -159,6 +160,7 @@ export function ChatPanel() {
   return (
     <section className="chat-panel">
       <header className="chat-panel__header">
+        <SidebarTrigger />
         <div>
           <h2 className="chat-panel__title">{session.title}</h2>
           <span className="chat-panel__cwd" title={session.cwd}>

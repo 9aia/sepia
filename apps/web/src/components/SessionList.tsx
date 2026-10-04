@@ -17,6 +17,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "./ui/sidebar";
 import { Kbd, KbdGroup } from "./ui/kbd";
 import { ScrollBar } from "./ui/scroll-area";
 import { Spinner } from "./ui/spinner";
@@ -97,7 +98,7 @@ export function SessionList() {
     if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
   }, []);
   const [debouncedFilter] = useDebouncedValue(filter, { wait: 200 });
-  const asideRef = useRef<HTMLElement | null>(null);
+  const asideRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
   const cwdRef = useRef<HTMLInputElement | null>(null);
@@ -267,39 +268,84 @@ export function SessionList() {
   };
 
   return (
-    <aside className="session-list" ref={asideRef}>
-      <header className="session-list__header">
+    <Sidebar collapsible="offcanvas" ref={asideRef}>
+      <SidebarHeader className="session-list__header">
         <h1 className="session-list__title">sepia</h1>
         <span className="session-list__count">{filtered.length}</span>
-      </header>
+      </SidebarHeader>
 
-      <form className="session-list__new" onSubmit={submit}>
-        <Input
-          type="text"
-          placeholder="Working directory (absolute)"
-          aria-label="Working directory"
-          ref={cwdRef}
-          value={cwd}
-          onChange={(event) => setCwd(event.target.value)}
-        />
-        <Input
-          type="text"
-          placeholder="Title (optional)"
-          aria-label="Session title"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-        />
-        {agents.length > 1 && (
+      <SidebarContent className="gap-0 overflow-hidden">
+        <form className="session-list__new" onSubmit={submit}>
+          <Input
+            type="text"
+            placeholder="Working directory (absolute)"
+            aria-label="Working directory"
+            ref={cwdRef}
+            value={cwd}
+            onChange={(event) => setCwd(event.target.value)}
+          />
+          <Input
+            type="text"
+            placeholder="Title (optional)"
+            aria-label="Session title"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+          {agents.length > 1 && (
+            <Select
+              value={agent}
+              onValueChange={(value) => {
+                if (value !== null) setAgent(value);
+              }}
+            >
+              <SelectTrigger aria-label="Agent">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {agents.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button type="submit" disabled={creating || cwd.trim() === ""}>
+            {creating ? "Creating…" : "New session"}
+          </Button>
+          {createError && (
+            <p className="session-list__status session-list__status--error">{createError}</p>
+          )}
+        </form>
+
+        <div className="session-list__search">
+          <Input
+            type="search"
+            className="pr-16"
+            placeholder="Filter sessions…"
+            aria-label="Filter sessions"
+            ref={filterRef}
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+          <KbdGroup className="session-list__search-kbd" aria-hidden="true">
+            <Kbd>{modKey}</Kbd>
+            <Kbd>K</Kbd>
+          </KbdGroup>
+        </div>
+
+        <div className="session-list__filters">
           <Select
-            value={agent}
+            value={agentFilter}
             onValueChange={(value) => {
-              if (value !== null) setAgent(value);
+              if (value !== null) setAgentFilter(value);
             }}
           >
-            <SelectTrigger aria-label="Agent">
+            <SelectTrigger aria-label="Filter by agent" className="h-7 flex-1 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all">All agents</SelectItem>
               {agents.map((a) => (
                 <SelectItem key={a.id} value={a.id}>
                   {a.label}
@@ -307,220 +353,179 @@ export function SessionList() {
               ))}
             </SelectContent>
           </Select>
-        )}
-        <Button type="submit" disabled={creating || cwd.trim() === ""}>
-          {creating ? "Creating…" : "New session"}
-        </Button>
-        {createError && (
-          <p className="session-list__status session-list__status--error">{createError}</p>
-        )}
-      </form>
-
-      <div className="session-list__search">
-        <Input
-          type="search"
-          className="pr-16"
-          placeholder="Filter sessions…"
-          aria-label="Filter sessions"
-          ref={filterRef}
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-        />
-        <KbdGroup className="session-list__search-kbd" aria-hidden="true">
-          <Kbd>{modKey}</Kbd>
-          <Kbd>K</Kbd>
-        </KbdGroup>
-      </div>
-
-      <div className="session-list__filters">
-        <Select
-          value={agentFilter}
-          onValueChange={(value) => {
-            if (value !== null) setAgentFilter(value);
-          }}
-        >
-          <SelectTrigger aria-label="Filter by agent" className="h-7 flex-1 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All agents</SelectItem>
-            {agents.map((a) => (
-              <SelectItem key={a.id} value={a.id}>
-                {a.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={dateFilter}
-          onValueChange={(value) => {
-            if (value !== null) setDateFilter(value as DateFilter);
-          }}
-        >
-          <SelectTrigger aria-label="Filter by recency" className="h-7 flex-1 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Any time</SelectItem>
-            <SelectItem value="day">Today</SelectItem>
-            <SelectItem value="week">Last 7 days</SelectItem>
-            <SelectItem value="month">Last 30 days</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select
-          value={statusFilter}
-          onValueChange={(value) => {
-            if (value !== null) setStatusFilter(value as StatusFilter);
-          }}
-        >
-          <SelectTrigger aria-label="Filter by lock status" className="h-7 flex-1 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Any status</SelectItem>
-            <SelectItem value="free">Free</SelectItem>
-            <SelectItem value="locked">Locked</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select
-          value={sort}
-          onValueChange={(value) => {
-            if (value !== null) setSort(value as SortKey);
-          }}
-        >
-          <SelectTrigger aria-label="Sort sessions" className="h-7 flex-1 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="newest">Newest</SelectItem>
-            <SelectItem value="oldest">Oldest</SelectItem>
-            <SelectItem value="title">Title</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      {loading && (
-        <div className="session-list__status">
-          <Spinner /> Loading sessions…
+          <Select
+            value={dateFilter}
+            onValueChange={(value) => {
+              if (value !== null) setDateFilter(value as DateFilter);
+            }}
+          >
+            <SelectTrigger aria-label="Filter by recency" className="h-7 flex-1 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any time</SelectItem>
+              <SelectItem value="day">Today</SelectItem>
+              <SelectItem value="week">Last 7 days</SelectItem>
+              <SelectItem value="month">Last 30 days</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => {
+              if (value !== null) setStatusFilter(value as StatusFilter);
+            }}
+          >
+            <SelectTrigger aria-label="Filter by lock status" className="h-7 flex-1 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any status</SelectItem>
+              <SelectItem value="free">Free</SelectItem>
+              <SelectItem value="locked">Locked</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={sort}
+            onValueChange={(value) => {
+              if (value !== null) setSort(value as SortKey);
+            }}
+          >
+            <SelectTrigger aria-label="Sort sessions" className="h-7 flex-1 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest</SelectItem>
+              <SelectItem value="oldest">Oldest</SelectItem>
+              <SelectItem value="title">Title</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-      )}
-      {error !== null && (
-        <EmptyScreen
-          className="p-6"
-          icon={AlertCircleIcon}
-          title="Couldn't load sessions"
-          description={messageOf(error, "Failed to list sessions")}
-        />
-      )}
-      {!loading && !error && filtered.length === 0 && sessions.length === 0 && (
-        <EmptyScreen
-          className="p-6"
-          icon={FolderOpenIcon}
-          title="No sessions yet"
-          description="Create your first session above."
-        />
-      )}
-      {!loading && !error && filtered.length === 0 && sessions.length > 0 && (
-        <EmptyScreen
-          className="p-6"
-          icon={SearchAreaIcon}
-          title="No matches"
-          description="No sessions match the current filters."
-        />
-      )}
 
-      <ScrollAreaPrimitive.Root className="session-list__scroll">
-        <ScrollAreaPrimitive.Viewport className="session-list__items" ref={listRef}>
-          <Tree tree={tree} indent={14} className="session-tree">
-            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
-              {virtualizer.getVirtualItems().map((row) => {
-                const item = items[row.index];
-                if (item === undefined) return null;
-                const data = item.getItemData();
-                return (
-                  <div
-                    key={item.getId()}
-                    data-index={row.index}
-                    ref={virtualizer.measureElement}
-                    className="session-row"
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: "100%",
-                      transform: `translateY(${row.start}px)`,
-                    }}
-                  >
-                    {data?.kind === "group" ? (
-                      <TreeItem item={item} className="session-group">
-                        <TreeItemLabel>
-                          <span className="session-group__label" title={data.cwd}>
-                            {data.label}
-                          </span>
-                          <Badge variant="secondary">{data.count}</Badge>
-                        </TreeItemLabel>
-                      </TreeItem>
-                    ) : data?.kind === "session" ? (
-                      <>
-                        <TreeItem
-                          item={item}
-                          className={
-                            "session-item" +
-                            (data.session.id === selectedId ? " session-item--selected" : "")
-                          }
-                        >
-                          <TreeItemLabel className="session-item__label">
-                            <div className="session-item__body">
-                              <div className="session-item__top">
-                                <span className="session-item__title">{data.session.title}</span>
-                                <Badge
-                                  variant={data.session.agent === "cline" ? "outline" : "secondary"}
-                                >
-                                  {data.session.agent}
-                                </Badge>
-                              </div>
-                              <div className="session-item__meta">
-                                <span>{formatUpdated(data.session.updatedAt)}</span>
-                                {data.session.locked && (
-                                  <Badge
-                                    variant="destructive"
-                                    title={`Locked by pid ${data.session.lockHolderPid ?? "unknown"}`}
-                                  >
-                                    locked
-                                  </Badge>
-                                )}
-                              </div>
-                            </div>
+        {loading && (
+          <div className="session-list__status">
+            <Spinner /> Loading sessions…
+          </div>
+        )}
+        {error !== null && (
+          <EmptyScreen
+            className="p-6"
+            icon={AlertCircleIcon}
+            title="Couldn't load sessions"
+            description={messageOf(error, "Failed to list sessions")}
+          />
+        )}
+        {!loading && !error && filtered.length === 0 && sessions.length === 0 && (
+          <EmptyScreen
+            className="p-6"
+            icon={FolderOpenIcon}
+            title="No sessions yet"
+            description="Create your first session above."
+          />
+        )}
+        {!loading && !error && filtered.length === 0 && sessions.length > 0 && (
+          <EmptyScreen
+            className="p-6"
+            icon={SearchAreaIcon}
+            title="No matches"
+            description="No sessions match the current filters."
+          />
+        )}
+
+        <ScrollAreaPrimitive.Root className="session-list__scroll">
+          <ScrollAreaPrimitive.Viewport className="session-list__items" ref={listRef}>
+            <Tree tree={tree} indent={14} className="session-tree">
+              <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
+                {virtualizer.getVirtualItems().map((row) => {
+                  const item = items[row.index];
+                  if (item === undefined) return null;
+                  const data = item.getItemData();
+                  return (
+                    <div
+                      key={item.getId()}
+                      data-index={row.index}
+                      ref={virtualizer.measureElement}
+                      className="session-row"
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${row.start}px)`,
+                      }}
+                    >
+                      {data?.kind === "group" ? (
+                        <TreeItem item={item} className="session-group">
+                          <TreeItemLabel>
+                            <span className="session-group__label" title={data.cwd}>
+                              {data.label}
+                            </span>
+                            <Badge variant="secondary">{data.count}</Badge>
                           </TreeItemLabel>
                         </TreeItem>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          className="session-item__delete"
-                          aria-label={`Delete session ${data.session.title}`}
-                          title="Delete session"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            if (window.confirm(`Delete session "${data.session.title}"?`)) {
-                              deleteMutation.mutate(data.session.id);
+                      ) : data?.kind === "session" ? (
+                        <>
+                          <TreeItem
+                            item={item}
+                            className={
+                              "session-item" +
+                              (data.session.id === selectedId ? " session-item--selected" : "")
                             }
-                          }}
-                        >
-                          ×
-                        </Button>
-                      </>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </Tree>
-        </ScrollAreaPrimitive.Viewport>
-        <ScrollBar />
-        <ScrollAreaPrimitive.Corner />
-      </ScrollAreaPrimitive.Root>
+                          >
+                            <TreeItemLabel className="session-item__label">
+                              <div className="session-item__body">
+                                <div className="session-item__top">
+                                  <span className="session-item__title">{data.session.title}</span>
+                                  <Badge
+                                    variant={
+                                      data.session.agent === "cline" ? "outline" : "secondary"
+                                    }
+                                  >
+                                    {data.session.agent}
+                                  </Badge>
+                                </div>
+                                <div className="session-item__meta">
+                                  <span>{formatUpdated(data.session.updatedAt)}</span>
+                                  {data.session.locked && (
+                                    <Badge
+                                      variant="destructive"
+                                      title={`Locked by pid ${data.session.lockHolderPid ?? "unknown"}`}
+                                    >
+                                      locked
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </TreeItemLabel>
+                          </TreeItem>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="session-item__delete"
+                            aria-label={`Delete session ${data.session.title}`}
+                            title="Delete session"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (window.confirm(`Delete session "${data.session.title}"?`)) {
+                                deleteMutation.mutate(data.session.id);
+                              }
+                            }}
+                          >
+                            ×
+                          </Button>
+                        </>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </Tree>
+          </ScrollAreaPrimitive.Viewport>
+          <ScrollBar />
+          <ScrollAreaPrimitive.Corner />
+        </ScrollAreaPrimitive.Root>
+      </SidebarContent>
 
-      <footer className="session-list__shortcuts">
+      <SidebarFooter className="session-list__shortcuts">
         <span>
           <Kbd>↑</Kbd>
           <Kbd>↓</Kbd> navigate
@@ -531,7 +536,11 @@ export function SessionList() {
         <span>
           <Kbd>Esc</Kbd> clear filter
         </span>
-      </footer>
-    </aside>
+        <span>
+          <Kbd>{modKey}</Kbd>
+          <Kbd>B</Kbd> sidebar
+        </span>
+      </SidebarFooter>
+    </Sidebar>
   );
 }
