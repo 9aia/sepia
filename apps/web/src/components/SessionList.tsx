@@ -114,7 +114,6 @@ export function SessionList() {
     <Sidebar collapsible="offcanvas" ref={asideRef}>
       <div className="flex flex-row items-center justify-between border-b border-border p-4">
         <h1 className="m-0 text-base tracking-wide">sepia</h1>
-        <span className="text-muted-foreground tabular-nums">{filtered.length}</span>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
