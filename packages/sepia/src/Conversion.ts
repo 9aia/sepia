@@ -4,12 +4,15 @@ import { ClineStore } from "./ClineStore.js";
 import * as Devin from "./Devin.js";
 import {
   Block,
+  CheckpointRef,
   ConversionError,
   MessageNode,
   PromptHistoryEntry,
   Role,
   Session,
   ToolCall,
+  ToolCallDiff,
+  ToolCallLocation,
   ToolResultInfo,
   TokenUsage,
   ToolCallStatus,
@@ -103,6 +106,7 @@ export const importSession = (session: Session, importedLog?: string) =>
         hidden: session.hidden,
         parentSessionId: session.parentSessionId,
         agentId: session.agentId,
+        checkpoints: session.checkpoints,
         metadata: session.metadata,
         nodes: session.nodes,
         promptHistory: session.promptHistory,
@@ -358,6 +362,8 @@ const ToolCallJson = Schema.Struct({
   status: Schema.OptionFromUndefinedOr(ToolCallStatus),
   exitCode: Schema.OptionFromUndefinedOr(Schema.Number),
   durationMs: Schema.OptionFromUndefinedOr(Schema.Number),
+  locations: Schema.optionalWith(Schema.Array(ToolCallLocation), { default: () => [] }),
+  diffs: Schema.optionalWith(Schema.Array(ToolCallDiff), { default: () => [] }),
 });
 
 const MessageNodeJson = Schema.Struct({
@@ -402,6 +408,7 @@ export const SessionJson = Schema.Struct({
   hidden: Schema.optionalWith(Schema.Number, { default: () => 0 }),
   parentSessionId: Schema.OptionFromUndefinedOr(Schema.String),
   agentId: Schema.OptionFromUndefinedOr(Schema.String),
+  checkpoints: Schema.optionalWith(Schema.Array(CheckpointRef), { default: () => [] }),
   metadata: Schema.Unknown,
   nodes: Schema.optionalWith(Schema.Array(MessageNodeJson), { default: () => [] }),
   promptHistory: Schema.optionalWith(Schema.Array(PromptHistoryJson), { default: () => [] }),

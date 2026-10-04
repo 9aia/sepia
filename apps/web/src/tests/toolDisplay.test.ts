@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { splitLeadingJson, stripAnsi, toolSummary } from "../lib/toolDisplay";
+import { fileDiffView, splitLeadingJson, stripAnsi, toolSummary } from "../lib/toolDisplay";
 
 // Real payload shapes pulled from GET /api/sessions/:id/history on a devin store.
 
@@ -243,5 +243,47 @@ describe("toolSummary — fetch + generic", () => {
       "Todos have been modified successfully.\nCurrent todo list:\n1. [x] done",
     );
     expect(d.segments[0]?.kind).toBe("markdown");
+  });
+});
+
+describe("fileDiffView", () => {
+  it("elides common prefix/suffix into unchanged markers with context", () => {
+    const old = ["a", "b", "c", "same", "x = 1;", "tail1", "tail2", "tail3", "tail4", "tail5"];
+    const neu = ["a", "b", "c", "same", "x = 2;", "tail1", "tail2", "tail3", "tail4", "tail5"];
+    const v = fileDiffView({ path: "/a.ts", oldText: old.join("\n"), newText: neu.join("\n") });
+    expect(v.added).toBe(1);
+    expect(v.removed).toBe(1);
+    expect(v.text).toBe(
+      [
+        "⋮ 4 unchanged lines",
+        "  b",
+        "  c",
+        "  same",
+        "- x = 1;",
+        "+ x = 2;",
+        "  tail1",
+        "  tail2",
+        "  tail3",
+        "⋮ 5 unchanged lines",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps an editor hunk (no shared context) whole", () => {
+    const v = fileDiffView({ path: "/b.ts", oldText: "old line", newText: "new line" });
+    expect(v.text).toBe("- old line\n+ new line");
+    expect(v.added).toBe(1);
+    expect(v.removed).toBe(1);
+  });
+
+  it("marks a create (no oldText) and an empty diff", () => {
+    const created = fileDiffView({ path: "/n.ts", newText: "one\ntwo" });
+    expect(created.text).toBe("+ one\n+ two");
+    expect(created.removed).toBe(0);
+
+    const empty = fileDiffView({ path: "/e.ts" });
+    expect(empty.text).toBe("");
+    expect(empty.added).toBe(0);
+    expect(empty.removed).toBe(0);
   });
 });

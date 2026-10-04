@@ -9,7 +9,7 @@ import type {
   PermissionRequest,
   PromptPart,
 } from "sepia-acp";
-import { MessageNode, Session, SessionRepository } from "sepia-core";
+import { MessageNode, Session, SessionRepository, ToolCall } from "sepia-core";
 import type { SessionRepositoryService } from "sepia-core";
 import { layer } from "../src/ControlPlane.js";
 import { ControlPlane } from "../src/types.js";
@@ -380,6 +380,60 @@ test("history surfaces thinking text and its signature verbatim", async () => {
   expect(page.messages[1]?.thinkingSignature).toBe("sealed.v1.sig");
   expect(page.messages[0]?.thinking).toBeUndefined();
   expect(page.messages[0]?.thinkingSignature).toBeUndefined();
+});
+
+test("history joins a tool row to its call's locations and diffs", async () => {
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([
+      session("s1", "/work", [
+        new MessageNode({
+          nodeId: 1,
+          role: "assistant",
+          content: "",
+          createdAt: 10,
+          metadata: null,
+          toolCalls: [
+            ToolCall.make({
+              id: "c1",
+              name: "edit",
+              arguments: { file_path: "/work/a.ts" },
+              locations: [{ path: "/work/a.ts" }],
+              diffs: [{ path: "/work/a.ts", oldText: "before", newText: "after" }],
+            }),
+          ],
+        }),
+        new MessageNode({
+          nodeId: 2,
+          role: "tool",
+          content: "updated",
+          createdAt: 11,
+          metadata: null,
+          toolCallId: Option.some("c1"),
+          toolName: Option.some("edit"),
+        }),
+        // a tool row whose call recorded nothing gets no fields at all
+        new MessageNode({
+          nodeId: 3,
+          role: "tool",
+          content: "out",
+          createdAt: 12,
+          metadata: null,
+          toolCallId: Option.some("missing"),
+          toolName: Option.some("exec"),
+        }),
+      ]),
+    ]),
+  );
+
+  const page = await Effect.runPromise(cp.getHistory("s1"));
+
+  expect(page.messages[1]?.locations).toEqual([{ path: "/work/a.ts" }]);
+  expect(page.messages[1]?.diffs).toEqual([
+    { path: "/work/a.ts", oldText: "before", newText: "after" },
+  ]);
+  expect(page.messages[2]?.locations).toBeUndefined();
+  expect(page.messages[2]?.diffs).toBeUndefined();
 });
 
 test("returns the last limit messages and the full node count", async () => {

@@ -6,6 +6,9 @@ import {
   Session,
   ToolCall,
   type Block,
+  type CheckpointRef,
+  type ToolCallDiff,
+  type ToolCallLocation,
   type ToolCallStatus,
   type TokenUsage,
   type ToolResultInfo,
@@ -258,9 +261,21 @@ export const buildChatMessage = (node: MessageNode, generationModel: string): un
             toolCallId: tc.id,
             title,
             status: toAcpToolCallStatus(Option.getOrElse(tc.status, () => "success" as const)),
-            locations,
+            // The locations the call recorded win; the arg-derived path is
+            // only a stand-in for calls a foreign store couldn't locate.
+            locations: tc.locations.length > 0 ? tc.locations : locations,
             kind,
             rawInput: tc.arguments,
+            ...(tc.diffs.length === 0
+              ? {}
+              : {
+                  content: tc.diffs.map((diff) => ({
+                    type: "diff",
+                    path: diff.path,
+                    ...(diff.oldText === undefined ? {} : { oldText: diff.oldText }),
+                    ...(diff.newText === undefined ? {} : { newText: diff.newText }),
+                  })),
+                }),
           };
         }
         extensions["chisel/tool_call_content"] = ext;
@@ -334,23 +349,101 @@ export const buildChatMessage = (node: MessageNode, generationModel: string): un
   }
 };
 
+/** `locations` entries — `{path, line?}` objects with a readable path. */
+const locationsFromAcp = (raw: unknown): ReadonlyArray<ToolCallLocation> => {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (item === null || typeof item !== "object") return [];
+    const loc = item as Record<string, unknown>;
+    const path = stringField(loc, "path");
+    if (path === undefined) return [];
+    const line = finiteNumber(loc.line);
+    return [{ path, ...(line === undefined ? {} : { line }) }];
+  });
+};
+
+/**
+ * `diff` entries of a tool call's `content` — `{type:"diff", path, oldText?,
+ * newText?}`. Other content kinds (terminal output, text) are not file
+ * changes and stay in the tool result.
+ */
+const diffsFromAcpContent = (raw: unknown): ReadonlyArray<ToolCallDiff> => {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (item === null || typeof item !== "object") return [];
+    const c = item as Record<string, unknown>;
+    if (c.type !== "diff") return [];
+    const path = stringField(c, "path");
+    if (path === undefined) return [];
+    const oldText = stringField(c, "oldText");
+    const newText = stringField(c, "newText");
+    return [
+      {
+        path,
+        ...(oldText === undefined ? {} : { oldText }),
+        ...(newText === undefined ? {} : { newText }),
+      },
+    ];
+  });
+};
+
+/**
+ * Sepia-written tool_calls keep `{path, oldText?, newText?}` on the call's
+ * `diffs` field — no `type` marker there, the field itself says what it is.
+ */
+const diffsFromEntry = (raw: unknown): ReadonlyArray<ToolCallDiff> => {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (item === null || typeof item !== "object") return [];
+    const c = item as Record<string, unknown>;
+    const path = stringField(c, "path");
+    if (path === undefined) return [];
+    const oldText = stringField(c, "oldText");
+    const newText = stringField(c, "newText");
+    return [
+      {
+        path,
+        ...(oldText === undefined ? {} : { oldText }),
+        ...(newText === undefined ? {} : { newText }),
+      },
+    ];
+  });
+};
+
+/**
+ * What `chisel/tool_call_content` records per call beyond its status —
+ * the ACP snapshot taken when the call was issued.
+ */
+interface ToolCallExt {
+  readonly status?: ToolCallStatus;
+  readonly locations?: ReadonlyArray<ToolCallLocation>;
+  readonly diffs?: ReadonlyArray<ToolCallDiff>;
+}
+
 const parseToolCalls = (
   raw: unknown,
-  statusById: ReadonlyMap<string, ToolCallStatus>,
+  extById: ReadonlyMap<string, ToolCallExt>,
 ): ReadonlyArray<ToolCall> => {
   if (!Array.isArray(raw)) return [];
   const out: Array<ToolCall> = [];
   for (const tc of raw) {
     if (tc && typeof tc === "object") {
-      const status = statusById.get((tc as any).id);
+      const entry = tc as Record<string, unknown>;
+      const ext = extById.get(entry.id as string);
+      // Sepia-written tool_calls keep locations/diffs on the call itself;
+      // the chisel extension is the store-native carrier and wins.
+      const locations = ext?.locations ?? locationsFromAcp(entry.locations);
+      const diffs = ext?.diffs ?? diffsFromEntry(entry.diffs);
       out.push(
         ToolCall.make({
-          id: (tc as any).id ?? "",
-          name: (tc as any).name ?? "unknown",
-          arguments: (tc as any).arguments ?? {},
-          index: (tc as any).index ?? 0,
-          kind: (tc as any).kind ?? "function",
-          ...(status === undefined ? {} : { status: Option.some(status) }),
+          id: (entry.id as string) ?? "",
+          name: (entry.name as string) ?? "unknown",
+          arguments: entry.arguments ?? {},
+          index: (entry.index as number) ?? 0,
+          kind: (entry.kind as string) ?? "function",
+          ...(ext?.status === undefined ? {} : { status: Option.some(ext.status) }),
+          locations,
+          diffs,
         }),
       );
     }
@@ -359,19 +452,28 @@ const parseToolCalls = (
 };
 
 /**
- * Per-call status snapshots from `chisel/tool_call_content` — recorded when
- * the call was issued, so "pending" here often just means "not yet answered";
- * the tool node's `toolResult` and `tool_call_state` carry the outcome.
+ * Per-call snapshots from `chisel/tool_call_content` — the ACP `ToolCall`
+ * recorded when the call was issued, so "pending" here often just means
+ * "not yet answered"; the tool node's `toolResult` and `tool_call_state`
+ * carry the outcome. `locations` and `content` diffs survive verbatim.
  */
-const toolCallStatusMap = (extensions: unknown): ReadonlyMap<string, ToolCallStatus> => {
-  const map = new Map<string, ToolCallStatus>();
+const toolCallExtMap = (extensions: unknown): ReadonlyMap<string, ToolCallExt> => {
+  const map = new Map<string, ToolCallExt>();
   const content = (extensions as Record<string, unknown> | null | undefined)?.[
     "chisel/tool_call_content"
   ];
   if (content === null || typeof content !== "object") return map;
   for (const [id, entry] of Object.entries(content as Record<string, unknown>)) {
-    const status = fromAcpToolCallStatus((entry as Record<string, unknown> | null)?.status);
-    if (status !== undefined) map.set(id, status);
+    if (entry === null || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const status = fromAcpToolCallStatus(e.status);
+    const locations = locationsFromAcp(e.locations);
+    const diffs = diffsFromAcpContent(e.content);
+    map.set(id, {
+      ...(status === undefined ? {} : { status }),
+      ...(locations.length === 0 ? {} : { locations }),
+      ...(diffs.length === 0 ? {} : { diffs }),
+    });
   }
   return map;
 };
@@ -408,7 +510,7 @@ export const parseChatMessage = (
   const blocks = blocksFromAcp(
     (extensions as Record<string, unknown> | null | undefined)?.["chisel/acp-content-blocks"],
   );
-  const toolCalls = parseToolCalls(msg.tool_calls, toolCallStatusMap(extensions));
+  const toolCalls = parseToolCalls(msg.tool_calls, toolCallExtMap(extensions));
   const thinkingRaw = msg.thinking;
   const thinking =
     thinkingRaw && typeof (thinkingRaw as any).thinking === "string"
@@ -490,6 +592,8 @@ const withOutcome = (tc: ToolCall, outcome: ToolCallOutcome): ToolCall =>
     status: Option.some(outcome.status),
     exitCode: outcome.exitCode === undefined ? tc.exitCode : Option.some(outcome.exitCode),
     durationMs: outcome.durationMs === undefined ? tc.durationMs : Option.some(outcome.durationMs),
+    locations: tc.locations,
+    diffs: tc.diffs,
   });
 
 /**
@@ -608,6 +712,40 @@ export const defaultCogsJson = () =>
     },
   ]);
 
+/**
+ * The namespaced slot sepia keeps workspace-snapshot refs under in the
+ * `sessions.metadata` JSON — Devin's own metadata has no checkpoint slot,
+ * and a `sepia/`-prefixed key can't collide with its extension names.
+ */
+export const SESSION_CHECKPOINTS_KEY = "sepia/checkpoints";
+
+/**
+ * Tolerant read of a `sepia/checkpoints` metadata value: entries that are
+ * not `{ref, createdAt}` objects are dropped rather than failing the row.
+ */
+export const checkpointsFromMetadata = (metadata: unknown): ReadonlyArray<CheckpointRef> => {
+  if (metadata === null || typeof metadata !== "object") return [];
+  const raw = (metadata as Record<string, unknown>)[SESSION_CHECKPOINTS_KEY];
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (item === null || typeof item !== "object") return [];
+    const c = item as Record<string, unknown>;
+    const ref = stringField(c, "ref");
+    const createdAt = finiteNumber(c.createdAt);
+    if (ref === undefined || createdAt === undefined) return [];
+    const runCount = finiteNumber(c.runCount);
+    const kind = stringField(c, "kind");
+    return [
+      {
+        ref,
+        createdAt,
+        ...(runCount === undefined ? {} : { runCount }),
+        ...(kind === undefined ? {} : { kind }),
+      },
+    ];
+  });
+};
+
 /** Columns a real Devin store may leave NULL, with the defaults sepia reads them back as. */
 export const sessionFromDevinRow = (
   row: {
@@ -657,6 +795,7 @@ export const sessionFromDevinRow = (
     hidden: row.hidden,
     parentSessionId: Option.fromNullable(lineage?.parentSessionId),
     agentId: Option.fromNullable(lineage?.agentId),
+    checkpoints: checkpointsFromMetadata(parseJson(row.metadata)),
     metadata: parseJson(row.metadata),
     nodes,
     promptHistory,

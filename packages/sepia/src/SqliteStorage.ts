@@ -209,6 +209,19 @@ export const make = (
                   .run();
                 tx.delete(schema.sessions).where(eq(schema.sessions.id, session.id)).run();
 
+                // Checkpoint refs have no native column; they ride in the
+                // session metadata under a sepia-namespaced key so an
+                // imported Cline session keeps its shadow-git pointers.
+                const sessionMeta =
+                  session.checkpoints.length === 0
+                    ? session.metadata
+                    : {
+                        ...(typeof session.metadata === "object" && session.metadata !== null
+                          ? (session.metadata as Record<string, unknown>)
+                          : {}),
+                        [Devin.SESSION_CHECKPOINTS_KEY]: session.checkpoints,
+                      };
+
                 tx.insert(schema.sessions)
                   .values({
                     id: session.id,
@@ -224,7 +237,7 @@ export const make = (
                     cogsJson: session.cogsJson,
                     workspaceDirs: session.workspaceDirs,
                     hidden: session.hidden,
-                    metadata: JSON.stringify(session.metadata),
+                    metadata: JSON.stringify(sessionMeta),
                   })
                   .run();
 

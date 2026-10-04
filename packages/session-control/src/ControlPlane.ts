@@ -3,7 +3,7 @@ import { Effect, Either, Layer, Metric, Option, Runtime } from "effect";
 import type { AcpConnection, AcpSessionInfo, PromptPart } from "sepia-acp";
 import { createTranslator, type Event, type Translator } from "sepia-agui";
 import { SessionRepository } from "sepia-core";
-import type { Session } from "sepia-core";
+import type { Session, ToolCall } from "sepia-core";
 import { agentForBackend } from "./MergedRepository.js";
 import {
   ControlError,
@@ -225,9 +225,20 @@ export const make = (
             : total;
         const start = Math.max(0, before - limit);
         const slice = nodes.slice(start, before);
+        // Tool rows render the call's file footprint, which lives on the
+        // assistant node's `toolCalls` — join by toolCallId. The map covers
+        // the whole backlog so a paged-in slice still resolves its calls.
+        const callsById = new Map<string, ToolCall>();
+        for (const node of nodes) {
+          for (const call of node.toolCalls) callsById.set(call.id, call);
+        }
         return {
           messages: slice.map((node): HistoryMessage => {
             const toolResult = Option.getOrUndefined(node.toolResult);
+            const call =
+              node.role === "tool"
+                ? callsById.get(Option.getOrUndefined(node.toolCallId) ?? "")
+                : undefined;
             return {
               role: node.role,
               content: node.content,
@@ -243,6 +254,9 @@ export const make = (
               toolStatus: toolResult?.status,
               exitCode: toolResult?.exitCode,
               durationMs: toolResult?.durationMs,
+              locations:
+                call === undefined || call.locations.length === 0 ? undefined : call.locations,
+              diffs: call === undefined || call.diffs.length === 0 ? undefined : call.diffs,
             };
           }),
           total,

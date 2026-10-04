@@ -58,6 +58,7 @@ const manifestToSession = (raw: string, fallbackId: string): Session | null => {
       mainChainId: 0,
       parentSessionId: Option.fromNullable(subagent?.parentSessionId),
       agentId: Option.fromNullable(subagent?.agentId),
+      checkpoints: Cline.checkpointsFromManifest(meta),
       metadata: {},
     });
   } catch {
@@ -128,6 +129,7 @@ export const makeClineSessionRepository = (
             hidden: session.hidden,
             parentSessionId: session.parentSessionId,
             agentId: session.agentId,
+            checkpoints: session.checkpoints,
             metadata: session.metadata,
             nodes: session.nodes,
             promptHistory: session.promptHistory,

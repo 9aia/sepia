@@ -322,7 +322,11 @@ const readOnlyFs = (files: Record<string, string>) =>
     readFileString: (path) => Effect.succeed(files[path] ?? ""),
   });
 
-const importedSession = (id: string, messages: ReadonlyArray<unknown>): Promise<Session> =>
+const importedSession = (
+  id: string,
+  messages: ReadonlyArray<unknown>,
+  manifest: Record<string, unknown> = {},
+): Promise<Session> =>
   Effect.runPromise(
     Cline.fromDirectory(`/session/${id}`).pipe(
       Effect.provide(
@@ -335,6 +339,7 @@ const importedSession = (id: string, messages: ReadonlyArray<unknown>): Promise<
               started_at: "2026-09-01T00:00:00.000Z",
               ended_at: "2026-09-01T00:01:00.000Z",
               metadata: { title: "imported" },
+              ...manifest,
             }),
             [`/session/${id}/${id}.messages.json`]: JSON.stringify({ version: 1, messages }),
           }),
@@ -348,6 +353,97 @@ const toolResultContents = (session: Session): ReadonlyArray<string> =>
   Cline.visibleNodes(session)
     .filter((node) => node.role === "tool")
     .map((node) => node.content);
+
+test("import records editor diffs, touched-file locations and manifest checkpoints", async () => {
+  const session = await importedSession(
+    "checkpointed",
+    [
+      { id: "u0", role: "user", content: [{ type: "text", text: "go" }], ts: 1 },
+      {
+        id: "a0",
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "call_e",
+            name: "editor",
+            input: { path: "/work/a.ts", old_text: "before", new_text: "after" },
+          },
+          {
+            type: "tool_use",
+            id: "call_w",
+            name: "editor",
+            input: { path: "/work/b.ts", new_text: "body" },
+          },
+          {
+            type: "tool_use",
+            id: "call_r",
+            name: "read_files",
+            input: { files: [{ path: "/work/c.ts" }] },
+          },
+        ],
+        ts: 2,
+      },
+      {
+        id: "u1",
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "call_e", name: "editor", content: "ok" },
+          { type: "tool_result", tool_use_id: "call_w", name: "editor", content: "ok" },
+          {
+            type: "tool_result",
+            tool_use_id: "call_r",
+            name: "read_files",
+            content: [{ query: "/work/c.ts", result: "body", success: true }],
+          },
+        ],
+        ts: 3,
+      },
+    ],
+    {
+      metadata: {
+        title: "imported",
+        checkpoint: {
+          latest: { ref: "bbb", createdAt: 200, runCount: 2, kind: "commit" },
+          history: [{ ref: "aaa", createdAt: 100, runCount: 1, kind: "stash" }, "junk"],
+        },
+      },
+    },
+  );
+
+  // `latest` isn't in this manifest's history — it is appended, not lost.
+  expect(session.checkpoints).toEqual([
+    { ref: "aaa", createdAt: 100, runCount: 1, kind: "stash" },
+    { ref: "bbb", createdAt: 200, runCount: 2, kind: "commit" },
+  ]);
+
+  const calls = Cline.visibleNodes(session).flatMap((node) => node.toolCalls);
+  const edit = calls.find((call) => call.name === "edit");
+  expect(edit?.locations).toEqual([{ path: "/work/a.ts" }]);
+  expect(edit?.diffs).toEqual([{ path: "/work/a.ts", oldText: "before", newText: "after" }]);
+
+  // A create (`old_text` absent) records a newText-only diff.
+  const write = calls.find((call) => call.name === "write");
+  expect(write?.diffs).toEqual([{ path: "/work/b.ts", newText: "body" }]);
+  expect(write?.locations).toEqual([{ path: "/work/b.ts" }]);
+
+  const read = calls.find((call) => call.name === "read");
+  expect(read?.locations).toEqual([{ path: "/work/c.ts" }]);
+  expect(read?.diffs).toEqual([]);
+
+  // The manifest write-back restores the Cline-native {latest, history} blob.
+  const manifest = Cline.sessionManifest(session, "checkpointed", "/m") as {
+    metadata: { checkpoint: { latest: { ref: string }; history: ReadonlyArray<{ ref: string }> } };
+  };
+  expect(manifest.metadata.checkpoint.history.map((entry) => entry.ref)).toEqual(["aaa", "bbb"]);
+  expect(manifest.metadata.checkpoint.latest.ref).toBe("bbb");
+
+  // Sessions that never checkpointed write no checkpoint metadata at all.
+  const plain = Cline.sessionManifest(makeSession(sampleNodes()), "plain", "/m") as {
+    metadata: Record<string, unknown>;
+  };
+  expect(plain.metadata.checkpoint).toBeUndefined();
+});
 
 test("import keeps thinking signatures and redacted blobs verbatim", async () => {
   const session = await importedSession("sealed", [

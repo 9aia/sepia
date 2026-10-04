@@ -7,7 +7,14 @@
 import { Context, Schema, type Effect } from "effect";
 import type { AcpConnection, PromptPart } from "sepia-acp";
 import type { Event } from "sepia-agui";
-import type { Block, Session, TokenUsage, ToolCallStatus } from "sepia-core";
+import type {
+  Block,
+  Session,
+  TokenUsage,
+  ToolCallDiff,
+  ToolCallLocation,
+  ToolCallStatus,
+} from "sepia-core";
 
 /**
  * One run span of a session: which agent on which Sepia node continued it.
@@ -67,6 +74,13 @@ export interface HistoryMessage {
   readonly toolStatus?: ToolCallStatus;
   readonly exitCode?: number;
   readonly durationMs?: number;
+  /**
+   * Tool-result messages only: files the call touched (`locations`, ACP)
+   * and the before/after payloads the store recorded (`diffs`). Joined from
+   * the assistant node's `toolCalls` by `toolCallId`.
+   */
+  readonly locations?: ReadonlyArray<ToolCallLocation>;
+  readonly diffs?: ReadonlyArray<ToolCallDiff>;
 }
 
 export interface AttachResult {

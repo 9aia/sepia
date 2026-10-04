@@ -29,6 +29,45 @@ export const ToolResultInfo = Schema.Struct({
 });
 export type ToolResultInfo = Schema.Schema.Type<typeof ToolResultInfo>;
 
+/**
+ * A file location a tool call touched — the ACP `locations` entries Devin
+ * persists (`{path, line?}`) and the paths Cline tool inputs name.
+ */
+export const ToolCallLocation = Schema.Struct({
+  path: Schema.String,
+  line: Schema.optional(Schema.Number),
+});
+export type ToolCallLocation = Schema.Schema.Type<typeof ToolCallLocation>;
+
+/**
+ * The before/after payload a store recorded for a file change — ACP `diff`
+ * tool-call content (`{path, oldText?, newText?}`) on Devin, `editor` tool
+ * inputs on Cline (`old_text`/`new_text`; absent `oldText` means a create,
+ * absent `newText` a delete — a write-only diff is still a diff).
+ */
+export const ToolCallDiff = Schema.Struct({
+  path: Schema.String,
+  oldText: Schema.optional(Schema.String),
+  newText: Schema.optional(Schema.String),
+});
+export type ToolCallDiff = Schema.Schema.Type<typeof ToolCallDiff>;
+
+/**
+ * A snapshot pointer a store records for workspace state — a reference,
+ * never a payload. Cline keeps them in the session manifest's
+ * `metadata.checkpoint` (`{ref, createdAt, runCount, kind}`: shadow-git
+ * stash/commit shas in the workspace repo); Claude's `file-history-snapshot`
+ * and Cursor's `originalFileStates` could map onto the same shape.
+ * `createdAt` is epoch **milliseconds** (the store-native unit).
+ */
+export const CheckpointRef = Schema.Struct({
+  ref: Schema.String,
+  createdAt: Schema.Number,
+  runCount: Schema.optional(Schema.Number),
+  kind: Schema.optional(Schema.String),
+});
+export type CheckpointRef = Schema.Schema.Type<typeof CheckpointRef>;
+
 export class ToolCall extends Schema.Class<ToolCall>("ToolCall")({
   id: Schema.String,
   name: Schema.String,
@@ -44,6 +83,13 @@ export class ToolCall extends Schema.Class<ToolCall>("ToolCall")({
   durationMs: Schema.OptionFromSelf(Schema.Number).pipe(
     Schema.optionalWith({ default: () => Option.none() }),
   ),
+  /** Files the call touched, when the store recorded them (ACP `locations`). */
+  locations: Schema.Array(ToolCallLocation).pipe(Schema.optionalWith({ default: () => [] })),
+  /**
+   * File changes the call made, when the store recorded before/after
+   * payloads (Devin's ACP `diff` content, Cline `editor` inputs).
+   */
+  diffs: Schema.Array(ToolCallDiff).pipe(Schema.optionalWith({ default: () => [] })),
 }) {}
 
 /**
@@ -192,6 +238,12 @@ export class Session extends Schema.Class<Session>("Session")({
   agentId: Schema.OptionFromSelf(Schema.String).pipe(
     Schema.optionalWith({ default: () => Option.none() }),
   ),
+  /**
+   * Workspace snapshot refs the store recorded for this session (Cline's
+   * shadow-git `metadata.checkpoint` history). References only — the
+   * snapshots live in the agent's own store, resolvable via `ref`.
+   */
+  checkpoints: Schema.Array(CheckpointRef).pipe(Schema.optionalWith({ default: () => [] })),
   metadata: Schema.Unknown,
   nodes: Schema.Array(MessageNode).pipe(Schema.optionalWith({ default: () => [] })),
   promptHistory: Schema.Array(PromptHistoryEntry).pipe(Schema.optionalWith({ default: () => [] })),

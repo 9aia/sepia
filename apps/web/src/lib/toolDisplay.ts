@@ -406,6 +406,77 @@ const buildDiffText = (oldText: string, newText: string): string => {
   return lines.join("\n");
 };
 
+/**
+ * One file's recorded before/after rendered for the tool row: common
+ * leading/trailing lines elide to `⋮` markers (with a few lines of context)
+ * so a whole-file `oldText`/`newText` pair still reads as the hunk it was.
+ * `added`/`removed` count the lines the elision kept, i.e. the region that
+ * actually changed — honest stats, not a full Myers diff.
+ */
+export interface FileDiffView {
+  readonly path: string;
+  readonly text: string;
+  readonly added: number;
+  readonly removed: number;
+}
+
+const DIFF_CONTEXT = 3;
+const DIFF_MAX_MIDDLE = 120;
+
+export const fileDiffView = (diff: {
+  readonly path: string;
+  readonly oldText?: string;
+  readonly newText?: string;
+}): FileDiffView => {
+  const oldLines = diff.oldText === undefined ? [] : diff.oldText.split("\n");
+  const newLines = diff.newText === undefined ? [] : diff.newText.split("\n");
+
+  let pre = 0;
+  const maxPre = Math.min(oldLines.length, newLines.length);
+  while (pre < maxPre && oldLines[pre] === newLines[pre]) pre += 1;
+  let suf = 0;
+  const maxSuf = maxPre - pre;
+  while (
+    suf < maxSuf &&
+    oldLines[oldLines.length - 1 - suf] === newLines[newLines.length - 1 - suf]
+  ) {
+    suf += 1;
+  }
+
+  let oldMid = oldLines.slice(pre, oldLines.length - suf);
+  let newMid = newLines.slice(pre, newLines.length - suf);
+  const removed = oldMid.length;
+  const added = newMid.length;
+  let clipped = 0;
+  if (oldMid.length > DIFF_MAX_MIDDLE) {
+    clipped += oldMid.length - DIFF_MAX_MIDDLE;
+    oldMid = oldMid.slice(0, DIFF_MAX_MIDDLE);
+  }
+  if (newMid.length > DIFF_MAX_MIDDLE) {
+    clipped += newMid.length - DIFF_MAX_MIDDLE;
+    newMid = newMid.slice(0, DIFF_MAX_MIDDLE);
+  }
+
+  const out: string[] = [];
+  if (pre > 0) {
+    out.push(`⋮ ${pre} unchanged line${pre === 1 ? "" : "s"}`);
+    for (const line of oldLines.slice(Math.max(0, pre - DIFF_CONTEXT), pre)) out.push(`  ${line}`);
+  }
+  out.push(...oldMid.map((l) => `- ${l}`));
+  out.push(...newMid.map((l) => `+ ${l}`));
+  if (clipped > 0) out.push(`⋮ ${clipped} more changed lines`);
+  if (suf > 0) {
+    for (const line of oldLines.slice(
+      oldLines.length - suf,
+      oldLines.length - suf + DIFF_CONTEXT,
+    )) {
+      out.push(`  ${line}`);
+    }
+    out.push(`⋮ ${suf} unchanged line${suf === 1 ? "" : "s"}`);
+  }
+  return { path: diff.path, text: out.join("\n"), added, removed };
+};
+
 const buildEdit = (
   toolName: string,
   args: Record<string, unknown> | null,

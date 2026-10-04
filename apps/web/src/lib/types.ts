@@ -84,6 +84,23 @@ export interface MessageUsage {
 
 export type ToolCallStatus = "pending" | "success" | "error";
 
+/** A file a tool call touched — the ACP `locations` entries stores record. */
+export interface ToolLocation {
+  path: string;
+  line?: number;
+}
+
+/**
+ * The before/after payload a store recorded for one file change — Devin's
+ * ACP `diff` content, Cline `editor` inputs. Absent `oldText` = create,
+ * absent `newText` = delete.
+ */
+export interface ToolFileDiff {
+  path: string;
+  oldText?: string;
+  newText?: string;
+}
+
 /**
  * One content block of a history message — the wire form of the IR `Block`
  * union (sepia-core Domain.ts). Present only when the agent's store recorded
@@ -121,6 +138,9 @@ export interface HistoryMessage {
   toolStatus?: ToolCallStatus;
   exitCode?: number;
   durationMs?: number;
+  /** Tool-result messages only: files the call touched / changed. */
+  locations?: ToolLocation[];
+  diffs?: ToolFileDiff[];
 }
 
 export interface HistoryPage {

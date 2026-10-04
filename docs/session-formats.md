@@ -13,14 +13,19 @@ cogsJson, workspaceDirs, hidden, metadata, nodes[], promptHistory[]`.
 
 `MessageNode` (`Domain.ts:19`): `nodeId, parentNodeId (tree, not a flat list),
 role ∈ {system,user,assistant,tool}, content (string), toolCalls[]
-{id,name,arguments,index,kind}, toolCallId, toolName, thinking,
+{id,name,arguments,index,kind,status,exitCode,durationMs,locations,diffs},
+toolCallId, toolName, thinking,
 thinkingSignature (opaque provider seal — see gap #4), createdAt
-(epoch **seconds**), metadata`.
+(epoch **seconds**), metadata`. `Session` additionally carries
+`checkpoints[]` (workspace-snapshot refs — see the Cline section).
 
 Notable: nodes form a **forest** (node_id + parent_node_id), matching Devin's
 branching model. `content` is a flat string — no content-block array, no
-attachments. `ToolCall` has no result/status inline — results are separate
-`role:"tool"` nodes paired via `toolCallId`.
+attachments. `ToolCall` has no result inline — results are separate
+`role:"tool"` nodes paired via `toolCallId`; the call's file footprint rides
+on the call itself: `locations[]` (`{path, line?}`, ACP `locations`) and
+`diffs[]` (`{path, oldText?, newText?}`, the before/after payloads the store
+recorded — ACP `diff` content on Devin, `editor` inputs on Cline).
 
 ## Devin CLI
 
@@ -43,8 +48,11 @@ created_at, metadata)` — `chat_message` is a JSON blob (below); `metadata`
 - **`tool_call_state(session_id, tool_call_id, tool_call_json,
 tool_call_update_json)`** — serialised **ACP** `ToolCall` /
   `ToolCallUpdate` objects (`title`, `kind`, `status`, `locations`,
-  `rawInput`, `_meta.cognition.ai/inferenceToolName`). **Sepia ignores this
-  table entirely** — it is the authoritative tool-call status/lifecycle view.
+  `rawInput`, `_meta.cognition.ai/inferenceToolName`). The update rows are
+  sepia's authoritative tool-call status/exit-code source
+  (`toolCallStateOutcomes`); the call rows' `locations`/`content` are also
+  present in the message blob's `chisel/tool_call_content`, which is where
+  the IR reads them — no join needed.
 - **`subagent_heads(session_id, agent_id, chain_node_id, updated_at)`** —
   marks which chain nodes spawn sub-agents (empty in this store but the
   schema exists).
@@ -74,7 +82,12 @@ tool_call_update_json)`** — serialised **ACP** `ToolCall` /
                 "cache_creation_tokens":null,"tpot_ms":1.84,"tokens_per_sec":541},
     "response_dimensions": [/* cumulative UI metrics */],
     "extensions": {
-      "chisel/tool_call_content":   {"<callId>": {title,kind,status,locations,rawInput}},
+      "chisel/tool_call_content":   {"<callId>": {title,kind,status,locations,
+                                     rawInput,content:[{type:"diff",path,
+                                     oldText?,newText?}]}},
+                                     // locations:[{path,line?}]; content also
+                                     // carries non-diff entries (terminal,
+                                     // text) — the IR keeps only the diffs
       "chisel/tool_result_meta":    {"success": true, "kind": "execute"},
       "chisel/tool_call_timing":    {"started_at","finished_at","duration_ms"},
       "chisel/terminal_output":     {"text","cwd","exit":{"terminal_id","exit_code"}},
@@ -185,8 +198,25 @@ currently lists each `__teamtask__` dir as a flat sibling session — the
 parent/child link is in the index row but not in the manifest the repo
 reads.
 
-`checkpoint-scratch/<hash>/` contains real git `index`/`pathspec` files —
-shadow-git workspace checkpoints.
+### Checkpoints
+
+The manifest's `metadata.checkpoint` blob is the checkpoint log:
+
+```jsonc
+"checkpoint": {
+  "latest":  {"ref":"c4bf…","createdAt":1789096199701,"runCount":54,"kind":"stash"},
+  "history": [{"ref":"a325…","createdAt":1789005406769,"runCount":1,"kind":"stash"}, …]
+}
+```
+
+`ref` is a sha in the workspace's shadow git (`kind` ∈ `stash|commit` —
+stash carries uncommitted state, commit a real checkpoint commit);
+`createdAt` is epoch ms; `runCount` the agent run it was taken before.
+`metadata.checkpointEnabled` is the on/off flag. `latest` normally repeats
+the history tail. `checkpoint-scratch/<hash>/` holds real git
+`index`/`pathspec` files — the scratch dirs the shadow-repo bookkeeping
+stages from. The IR keeps these as `Session.checkpoints[]` (refs only, never
+payloads) and `sessionManifest` writes `{latest, history}` back verbatim.
 
 **Resumable via**: `cline --id <session-id>`; requires the index row +
 manifest + messages trio sepia's `installCline` writes.
@@ -340,10 +370,12 @@ Fields each agent persists vs. what the IR normalizes:
 | Tool call status/error       | ✅ tool_call_state + result_meta.success | result.success                     | status field                         | is_error                                  | ❌ assumed success            |
 | Tool timing                  | ✅ tool_call_timing                      | ❌                                 | ✅ timingInfo                        | ❌                                        | ❌                            |
 | Reasoning/thinking           | ✅ text + **signature**                  | ✅ thinking(+signature)            | ⚠️ redacted-reasoning (opaque)       | ✅ thinking / redacted_thinking           | ✅ text + `thinkingSignature` |
-| File diffs / edits           | via tool args                            | via editor args                    | ✅ suggestedCodeBlocks/diffHistories | via Edit tool args + file-history backups | ❌ args only                  |
+| File diffs / edits           | ✅ tool_call_content content[].diff      | via editor args                    | ✅ suggestedCodeBlocks/diffHistories | via Edit tool args + file-history backups | ✅ ToolCall.diffs             |
 | Images/attachments           | ✅ chisel/acp-content-blocks (ACP)       | image/document blocks              | ✅ images, attached chunks           | ✅ image/document blocks                  | ✅ blocks (non-text only)     |
 | Sub-agent/task trees         | ⚠️ subagent_heads table                  | ✅ parent_session_id/agent_id/team | ✅ subComposerIds                    | ✅ isSidechain + Task tool                | ❌                            |
-| Checkpoints/file history     | ❌                                       | ✅ checkpoint-scratch git          | ✅ originalFileStates                | ✅ file-history-snapshot                  | ❌                            |
+| Checkpoints/file history     | ❌                                       | ✅ manifest checkpoint {latest,    | ✅ originalFileStates                | ✅ file-history-snapshot                  | ✅ Session.checkpoints (refs) |
+|                              |                                          | history} + scratch git             |                                      |                                           |                               |
+| Tool-call file locations     | ✅ tool_call_content locations           | via tool args                      | toolFormerData paths                 | via tool args                             | ✅ ToolCall.locations         |
 | Compaction/summaries         | ✅ summarized_from row meta              | ✅ .compaction.json                | ✅ summarizedComposers               | ✅ isCompactSummary+compact_boundary      | ⚠️ raw in node.metadata       |
 | Prompt history               | ✅ prompt_history table                  | prompt field/manifest              | ✅ prompt_history.json               | user entries                              | ✅ promptHistory              |
 | Shell/exec identity          | ✅ terminal_id, cwd, exit_code           | run_commands items                 | Shell tool                           | Bash tool                                 | ❌ flattened to exec          |
@@ -385,9 +417,15 @@ signature}`, Cline writes `signature`/`redacted_thinking`. Unsigned
 7. **Lifecycle/status on Session** — Cline's `status`/`exit_code`/`pid`,
    Devin's `hidden`/locks, Claude's implicit completeness. Needed for a
    correct "resumable vs. live vs. failed" listing.
-8. **Checkpoints / file diffs** — Cline shadow-git, Claude file-history,
-   Cursor `originalFileStates`/`diffHistories`, Devin nothing. Valuable
-   for undo/replay but heavy; store references, not payloads.
+8. ~~**Checkpoints / file diffs**~~ — **done**: the IR records refs, not
+   payloads. `Session.checkpoints[]` keeps Cline's manifest
+   `metadata.checkpoint` history (`{ref, createdAt, runCount, kind}` shadow
+   -git shas, written back verbatim on export; a Devin-DB copy rides in the
+   session metadata under `sepia/checkpoints`). `ToolCall.locations[]` /
+   `diffs[]` keep ACP `locations` and `diff` content — Devin's real
+   `{type:"diff", path, oldText?, newText?}` payloads and Cline's `editor`
+   inputs. Cursor `originalFileStates` and Claude `file-history-snapshot`
+   remain unread; they'd map onto the same shapes.
 9. **Git context** — Claude records `gitBranch` per entry; cheap to add
    to Session.
 10. **Tool call timing + exec env** (cwd, terminal_id, exit_code) — nice
@@ -417,7 +455,9 @@ status: Option<"pending"|"running"|"completed"|"failed"|"cancelled">,
                                  // Devin tool_call_state, CC is_error, Cursor status
 result: Option<unknown>,         // or keep tool nodes but add:
 isError / exitCode / durationMs  // Devin tool_result_meta+timing+terminal_output
-locations: Option<{path:string}[]>,// ACP tool_call locations (Devin)
+locations: {path:string; line?:number}[], // ✅ done — ACP tool_call locations
+diffs: {path:string; oldText?; newText?}[], // ✅ done — ACP diff content, Cline
+                                 // editor inputs; file-change before/after
 kind: "read"|"edit"|"execute"|"search"|"fetch"|"function"|…,
                                  // ACP kind; Devin tool_call_state.kind, Cursor tool enum
 
@@ -433,8 +473,8 @@ agentId: Option<string>,         // Cline agent_id/team_name
 status: Option<"running"|"idle"|"completed"|"failed">,
 exitCode: Option<number>,        // Cline manifest/index
 git: Option<{branch:string; sha?:string}>,   // CC gitBranch (+sha if captured)
-checkpoints: Option<{kind:string; ref:string}[]>,
-                                 // Cline checkpoint-scratch hash, CC file-history
+checkpoints: {ref:string; createdAt:number; runCount?; kind?}[],
+                                 // ✅ done — Cline checkpoint-scratch hash, CC file-history
 citations: Option<{title,url}[]> // Cursor webCitations, CC WebSearch results
 ```
 

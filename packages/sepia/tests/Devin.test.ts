@@ -4,11 +4,13 @@ import {
   applyToolCallOutcomes,
   blocksFromAcp,
   buildChatMessage,
+  checkpointsFromMetadata,
   defaultCogsJson,
   defaultSessionMetadata,
   fromAcpToolCallStatus,
   parseChatMessage,
   sessionFromDevinRow,
+  SESSION_CHECKPOINTS_KEY,
   toAcpToolCallStatus,
   toolNodeOutcomes,
 } from "../src/Devin.js";
@@ -97,6 +99,45 @@ describe("buildChatMessage", () => {
     });
     expect(ext.w2).toMatchObject({ title: "Wrote file", kind: "edit" });
     expect(ext.z1).toMatchObject({ title: "zzz", kind: "function" });
+  });
+
+  it("writes recorded locations and diffs back into the chisel extension", () => {
+    const calls = [
+      ToolCall.make({
+        id: "e1",
+        name: "edit",
+        arguments: { file_path: "/a.ts" },
+        locations: [{ path: "/a.ts", line: 9 }],
+        diffs: [
+          { path: "/a.ts", oldText: "before", newText: "after" },
+          // a create carries no oldText — it must not be fabricated
+          { path: "/b.ts", newText: "body" },
+        ],
+      }),
+      // A call with no recorded locations keeps the arg-derived stand-in.
+      ToolCall.make({ id: "e2", name: "edit", arguments: { file_path: "/c.ts" } }),
+    ];
+    const msg = buildChatMessage(
+      node({ role: "assistant", toolCalls: calls, metadata: { summarized_from: 3 } }),
+      "m",
+    ) as {
+      metadata: {
+        extensions: {
+          "chisel/tool_call_content": Record<
+            string,
+            { locations: unknown; content?: ReadonlyArray<unknown> }
+          >;
+        };
+      };
+    };
+    const ext = msg.metadata.extensions["chisel/tool_call_content"];
+    expect(ext.e1.locations).toEqual([{ path: "/a.ts", line: 9 }]);
+    expect(ext.e1.content).toEqual([
+      { type: "diff", path: "/a.ts", oldText: "before", newText: "after" },
+      { type: "diff", path: "/b.ts", newText: "body" },
+    ]);
+    expect(ext.e2.locations).toEqual([{ path: "/c.ts" }]);
+    expect(ext.e2.content).toBeUndefined();
   });
 
   it("skips the chisel extension for non-rendered or is_system_prefix messages", () => {
@@ -397,6 +438,68 @@ describe("parseChatMessage", () => {
     expect(bare?.arguments).toEqual({});
   });
 
+  it("keeps the chisel locations and diff content the call snapshot recorded", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "e1", name: "edit", arguments: { file_path: "/a.ts" } },
+          { id: "r1", name: "read", arguments: { file_path: "/b.ts" } },
+        ],
+        metadata: {
+          extensions: {
+            "chisel/tool_call_content": {
+              e1: {
+                status: "pending",
+                locations: [{ path: "/a.ts", line: 4 }],
+                content: [
+                  { type: "diff", path: "/a.ts", oldText: "before", newText: "after" },
+                  // non-diff content (terminal output, text) is not a file change
+                  { type: "content", content: { type: "text", text: "done" } },
+                ],
+              },
+              r1: { locations: [{ path: "/b.ts" }, "junk", { line: 1 }] },
+            },
+          },
+        },
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    const edit = parsed.toolCalls[0];
+    expect(edit?.locations).toEqual([{ path: "/a.ts", line: 4 }]);
+    expect(edit?.diffs).toEqual([{ path: "/a.ts", oldText: "before", newText: "after" }]);
+    expect(parsed.toolCalls[1]?.locations).toEqual([{ path: "/b.ts" }]);
+    expect(parsed.toolCalls[1]?.diffs).toEqual([]);
+  });
+
+  it("reads locations/diffs stored on the tool_calls entry itself (sepia-written)", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "e1",
+            name: "edit",
+            arguments: {},
+            locations: [{ path: "/x.ts" }],
+            diffs: [{ path: "/x.ts", newText: "created" }],
+          },
+        ],
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    expect(parsed.toolCalls[0]?.locations).toEqual([{ path: "/x.ts" }]);
+    expect(parsed.toolCalls[0]?.diffs).toEqual([{ path: "/x.ts", newText: "created" }]);
+  });
+
   it("serializes a missing content field as an empty string", () => {
     const parsed = parseChatMessage({ role: "user" }, null, 0, Option.none(), 0);
     expect(parsed.content).toBe('""');
@@ -492,6 +595,29 @@ describe("sessionFromDevinRow", () => {
     expect(Option.isNone(plain.parentSessionId)).toBe(true);
     expect(Option.isNone(plain.agentId)).toBe(true);
   });
+
+  it("reads checkpoint refs from the sepia metadata slot", () => {
+    const metadata = JSON.stringify({
+      total_credit_cost: 0,
+      [SESSION_CHECKPOINTS_KEY]: [
+        { ref: "aaa", createdAt: 100, runCount: 1, kind: "stash" },
+        { ref: "bbb", createdAt: 200 },
+        "junk",
+        { ref: 3, createdAt: 1 },
+      ],
+    });
+    const session = sessionFromDevinRow({ ...baseRow, metadata }, [], []);
+    expect(session.checkpoints).toEqual([
+      { ref: "aaa", createdAt: 100, runCount: 1, kind: "stash" },
+      { ref: "bbb", createdAt: 200 },
+    ]);
+    // The key also stays in the raw metadata the row reported — verbatim.
+    expect((session.metadata as Record<string, unknown>)[SESSION_CHECKPOINTS_KEY]).toHaveLength(4);
+
+    expect(sessionFromDevinRow(baseRow, [], []).checkpoints).toEqual([]);
+    expect(checkpointsFromMetadata(null)).toEqual([]);
+    expect(checkpointsFromMetadata({ [SESSION_CHECKPOINTS_KEY]: "nope" })).toEqual([]);
+  });
 });
 
 describe("tool call status mapping", () => {
@@ -545,6 +671,29 @@ describe("tool call outcomes", () => {
     expect(enriched[1]).toBe(nodes[1]);
     expect(enriched[2]).toBe(nodes[2]);
     expect(enriched[4]).toBe(nodes[4]);
+  });
+
+  it("keeps recorded locations/diffs when folding the outcome onto a call", () => {
+    const nodes = [
+      assistantWith(
+        ToolCall.make({
+          id: "c1",
+          name: "edit",
+          arguments: {},
+          locations: [{ path: "/a.ts" }],
+          diffs: [{ path: "/a.ts", oldText: "o", newText: "n" }],
+        }),
+      ),
+      node({
+        role: "tool",
+        toolCallId: Option.some("c1"),
+        toolResult: Option.some({ status: "success" }),
+      }),
+    ];
+    const calls = applyToolCallOutcomes(nodes, toolNodeOutcomes(nodes))[0]!.toolCalls;
+    expect(calls[0]!.locations).toEqual([{ path: "/a.ts" }]);
+    expect(calls[0]!.diffs).toEqual([{ path: "/a.ts", oldText: "o", newText: "n" }]);
+    expect(Option.getOrNull(calls[0]!.status)).toBe("success");
   });
 
   it("returns the input unchanged when nothing was recorded", () => {

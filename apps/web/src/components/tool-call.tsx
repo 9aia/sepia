@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -16,8 +16,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collap
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
 import { MessageResponse } from "./streamdown";
 import { formatDuration } from "../lib/format";
-import type { ToolCallStatus } from "../lib/types";
-import { toolSummary, type ToolCategory, type ToolSegment } from "../lib/toolDisplay";
+import type { ToolCallStatus, ToolFileDiff, ToolLocation } from "../lib/types";
+import { fileDiffView, toolSummary, type ToolCategory, type ToolSegment } from "../lib/toolDisplay";
 
 const CATEGORY_ICON: Record<ToolCategory, typeof WrenchIcon> = {
   exec: ComputerTerminal01Icon,
@@ -93,6 +93,8 @@ export function ToolCall({
   status,
   exitCode,
   durationMs,
+  diffs,
+  locations,
 }: {
   readonly toolName: string;
   readonly done: boolean;
@@ -104,8 +106,17 @@ export function ToolCall({
   /** Authoritative exit code; overrides any parsed from `content`. */
   readonly exitCode?: number;
   readonly durationMs?: number;
+  /** Recorded before/after payloads — the "files changed" marker + diff view. */
+  readonly diffs?: ReadonlyArray<ToolFileDiff>;
+  /** Files the call touched when no diff was recorded (refs only). */
+  readonly locations?: ReadonlyArray<ToolLocation>;
 }) {
   const display = toolSummary(toolName, args, content, { exitCode });
+  const fileViews = useMemo(() => (diffs ?? []).map(fileDiffView), [diffs]);
+  // Refs stand in only when no diff was recorded — and only on calls whose
+  // category can change files; a read's location is already the detail line.
+  const locationOnly =
+    fileViews.length === 0 && display.category === "edit" ? (locations ?? []) : [];
   const duration = durationMs === undefined ? "" : formatDuration(durationMs);
   const [open, setOpen] = useState(!done);
   const everStreamed = useRef(!done);
@@ -144,6 +155,16 @@ export function ToolCall({
             {duration !== "" && (
               <span className="shrink-0 text-muted-foreground/70">({duration})</span>
             )}
+            {fileViews.length > 0 && (
+              <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {fileViews.length} file{fileViews.length === 1 ? "" : "s"} changed
+              </span>
+            )}
+            {fileViews.length === 0 && locationOnly.length > 0 && (
+              <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {locationOnly.length} file{locationOnly.length === 1 ? "" : "s"}
+              </span>
+            )}
             <HugeiconsIcon
               icon={ChevronDownIcon}
               strokeWidth={2}
@@ -154,12 +175,42 @@ export function ToolCall({
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="ml-6 flex flex-col gap-1.5 border-l-2 border-border/50 py-1 pl-3 text-xs text-muted-foreground">
-          {display.segments.length === 0 ? (
+          {display.segments.length === 0 && fileViews.length === 0 && locationOnly.length === 0 ? (
             <span className="text-muted-foreground/70 italic">
               {done ? "No output" : "Waiting for input…"}
             </span>
           ) : (
-            display.segments.map((segment, i) => <ToolSegmentView key={i} segment={segment} />)
+            <>
+              {display.segments.map((segment, i) => (
+                <ToolSegmentView key={i} segment={segment} />
+              ))}
+              {fileViews.map((file) => (
+                <div key={file.path} className="flex flex-col gap-1">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <code className="min-w-0 truncate text-foreground/70" title={file.path}>
+                      {file.path}
+                    </code>
+                    <span className="shrink-0 text-[10px] whitespace-nowrap">
+                      <span className="text-emerald-600 dark:text-emerald-400">+{file.added}</span>{" "}
+                      <span className="text-red-600 dark:text-red-400">−{file.removed}</span>
+                    </span>
+                  </div>
+                  {file.text !== "" && (
+                    <pre className="max-h-72 overflow-auto rounded-md bg-muted/50 p-2.5 font-mono text-[11px] leading-relaxed">
+                      {file.text.split("\n").map((line, i) => (
+                        <DiffLine key={i} line={line} />
+                      ))}
+                    </pre>
+                  )}
+                </div>
+              ))}
+              {locationOnly.map((loc) => (
+                <code key={`${loc.path}:${loc.line ?? ""}`} className="truncate" title={loc.path}>
+                  {loc.path}
+                  {loc.line === undefined ? "" : `:${loc.line}`}
+                </code>
+              ))}
+            </>
           )}
         </div>
       </CollapsibleContent>

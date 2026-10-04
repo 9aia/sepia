@@ -899,6 +899,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           hidden: decoded.hidden,
           parentSessionId: decoded.parentSessionId,
           agentId: decoded.agentId,
+          checkpoints: decoded.checkpoints,
           metadata: decoded.metadata,
           nodes: decoded.nodes,
           promptHistory: decoded.promptHistory,

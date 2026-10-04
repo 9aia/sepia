@@ -10,7 +10,10 @@ import {
   Session,
   ToolCall,
   type Block,
+  type CheckpointRef,
   type TokenUsage,
+  type ToolCallDiff,
+  type ToolCallLocation,
   type ToolResultInfo,
 } from "./Domain.js";
 import * as Devin from "./Devin.js";
@@ -230,12 +233,23 @@ const asText = (value: unknown, ...keys: ReadonlyArray<string>): string => {
   return value === undefined || value === null ? "" : JSON.stringify(value);
 };
 
-const mapToolUse = (
-  clineTool: any,
-): ReadonlyArray<{ name: string; arguments: unknown; resultKey: string }> => {
+/**
+ * One mapped call. `locations`/`diffs` carry the file refs the tool input
+ * recorded — reads name the files they touch, `editor` inputs are already
+ * a `{path, old_text, new_text}` diff.
+ */
+interface MappedCall {
+  readonly name: string;
+  readonly arguments: unknown;
+  readonly resultKey: string;
+  readonly locations?: ReadonlyArray<ToolCallLocation>;
+  readonly diffs?: ReadonlyArray<ToolCallDiff>;
+}
+
+const mapToolUse = (clineTool: any): ReadonlyArray<MappedCall> => {
   const name = clineTool.name as string;
   const input = (clineTool.input ?? {}) as Record<string, unknown>;
-  const calls: Array<{ name: string; arguments: unknown; resultKey: string }> = [];
+  const calls: Array<MappedCall> = [];
   // A call whose items cannot be read is kept as it arrived: dropping it would
   // leave its result looking like output nobody asked for.
   const raw = () => calls.push({ name, arguments: input, resultKey: keyOf(input) });
@@ -249,7 +263,12 @@ const mapToolUse = (
       }
       for (const f of files) {
         const path = asText(f, "path", "file_path");
-        calls.push({ name: "read", arguments: { file_path: path }, resultKey: keyOf(path) });
+        calls.push({
+          name: "read",
+          arguments: { file_path: path },
+          resultKey: keyOf(path),
+          ...(path === "" ? {} : { locations: [{ path }] }),
+        });
       }
       break;
     }
@@ -297,17 +316,31 @@ const mapToolUse = (
       const newText = input.new_text;
       if (path.length === 0) {
         raw();
-      } else if (oldText === "null" || oldText === null || oldText === undefined) {
+        break;
+      }
+      const locations: ReadonlyArray<ToolCallLocation> = [{ path }];
+      if (oldText === "null" || oldText === null || oldText === undefined) {
         calls.push({
           name: "write",
           arguments: { file_path: path, content: newText },
           resultKey: keyOf(path),
+          locations,
+          // A create has no `old_text` — a newText-only diff marks it so.
+          diffs: typeof newText === "string" ? [{ path, newText }] : [{ path }],
         });
       } else {
         calls.push({
           name: "edit",
           arguments: { file_path: path, old_string: oldText, new_string: newText },
           resultKey: keyOf(path),
+          locations,
+          diffs: [
+            {
+              path,
+              oldText: typeof oldText === "string" ? oldText : JSON.stringify(oldText),
+              ...(typeof newText === "string" ? { newText } : {}),
+            },
+          ],
         });
       }
       break;
@@ -525,6 +558,51 @@ const usageFromClineMetrics = (metrics: unknown): Option.Option<TokenUsage> => {
 const modelFromMessage = (m: any): Option.Option<string> => {
   const id = m?.modelInfo?.id;
   return typeof id === "string" && id !== "" ? Option.some(id) : Option.none<string>();
+};
+
+/**
+ * One `metadata.checkpoint` history entry: `{ref, createdAt (epoch ms),
+ * runCount, kind}` — a shadow-git stash/commit sha in the workspace repo.
+ * Malformed entries are dropped, not fatal.
+ */
+const checkpointEntry = (raw: unknown): CheckpointRef | undefined => {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const c = raw as Record<string, unknown>;
+  const ref = strField(c, "ref");
+  const createdAt = c.createdAt;
+  if (ref === undefined || typeof createdAt !== "number" || !Number.isFinite(createdAt)) {
+    return undefined;
+  }
+  const runCount = c.runCount;
+  const kind = strField(c, "kind");
+  return {
+    ref,
+    createdAt,
+    ...(typeof runCount === "number" && Number.isFinite(runCount) ? { runCount } : {}),
+    ...(kind === undefined ? {} : { kind }),
+  };
+};
+
+/**
+ * The manifest's `metadata.checkpoint` blob — `{latest, history}` of
+ * shadow-git refs. `latest` normally duplicates the history tail; when it
+ * doesn't (older manifests kept `latest` only), it is appended so the
+ * newest ref is never lost.
+ */
+export const checkpointsFromManifest = (meta: any): ReadonlyArray<CheckpointRef> => {
+  const blob = meta?.metadata?.checkpoint;
+  if (blob === null || typeof blob !== "object") return [];
+  const history = Array.isArray((blob as any).history)
+    ? ((blob as any).history as ReadonlyArray<unknown>).flatMap((entry) => {
+        const parsed = checkpointEntry(entry);
+        return parsed === undefined ? [] : [parsed];
+      })
+    : [];
+  const latest = checkpointEntry((blob as any).latest);
+  if (latest !== undefined && history.every((entry) => entry.ref !== latest.ref)) {
+    return [...history, latest];
+  }
+  return history;
 };
 
 const parseMessagesData = (raw: unknown): { messages: ReadonlyArray<any> } => {
@@ -786,6 +864,8 @@ const buildSession = (
             arguments: mc.arguments,
             index: devinToolCalls.length,
             kind: "function",
+            ...(mc.locations === undefined ? {} : { locations: mc.locations }),
+            ...(mc.diffs === undefined ? {} : { diffs: mc.diffs }),
           });
           devinToolCalls.push(devinTc);
           callList.push({ devin: devinTc, resultKey: mc.resultKey });
@@ -881,6 +961,7 @@ const buildSession = (
     hidden: 0,
     parentSessionId: Option.fromNullable(subagent?.parentSessionId),
     agentId: Option.fromNullable(subagent?.agentId),
+    checkpoints: checkpointsFromManifest(meta),
     metadata: Devin.defaultSessionMetadata(),
     nodes: enrichedNodes,
     promptHistory,
@@ -1045,7 +1126,21 @@ export const sessionManifest = (
   enable_spawn: true,
   enable_teams: true,
   prompt: session.nodes.find((n) => n.role === "user")?.content ?? "",
-  metadata: { title: session.title },
+  metadata: {
+    title: session.title,
+    // Shadow-git refs the session recorded — preserved verbatim so a
+    // Cline→IR→Cline round-trip keeps the checkpoint history. Absent for
+    // sessions whose stores never checkpointed.
+    ...(session.checkpoints.length === 0
+      ? {}
+      : {
+          checkpointEnabled: true,
+          checkpoint: {
+            latest: session.checkpoints[session.checkpoints.length - 1],
+            history: session.checkpoints,
+          },
+        }),
+  },
   messages_path: messagesPath,
 });
 
