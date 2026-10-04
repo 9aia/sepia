@@ -12,7 +12,10 @@ export const flattenHistory = (data: InfiniteData<HistoryPage> | undefined): His
     : data.pages
         .slice()
         .reverse()
-        .flatMap((page) => page.messages);
+        .flatMap((page) => page.messages)
+        // Agents persist their system prompt as IR nodes (devin even writes
+        // <system_info> twice) — they're context, not conversation.
+        .filter((message) => message.role !== "system");
 
 /**
  * Stored backlog for a session, paged backwards via the `start` cursor. The
