@@ -489,7 +489,12 @@ export function SessionTree({
     },
     isItemFolder: (item) => item.getItemData()?.kind === "dir" || item.getId() === ROOT_ID,
     dataLoader: {
-      getItem: (id) => dataMap.get(id) as TreeData,
+      // Stale ids (filtered-out sessions still referenced by focus/expanded
+      // state) hit getItem before the next rebuild — a throw crashes the
+      // whole route, so return a transient empty dir instead.
+      getItem: (id) =>
+        (dataMap.get(id) as TreeData | undefined) ??
+        ({ kind: "dir", label: "", cwd: "", count: 0 } as TreeData),
       getChildren: (id) => childrenMap.get(id) ?? [],
     },
     initialState: { expandedItems: rootChildren },

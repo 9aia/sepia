@@ -1,10 +1,4 @@
-import {
-  ArrowUpDownIcon,
-  BotIcon,
-  Clock01Icon,
-  FilterHorizontalIcon,
-  StatusIcon,
-} from "@hugeicons/core-free-icons";
+import { BotIcon, Clock01Icon, FilterHorizontalIcon, StatusIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { AgentInfo } from "../../lib/types";
 import { Badge } from "../ui/badge";
@@ -15,13 +9,12 @@ import {
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import type { DateFilter, SortKey, StatusFilter } from "./FilterBar";
+import type { DateFilter, StatusFilter } from "./FilterBar";
 
 const DATE_LABELS: Record<DateFilter, string> = {
   all: "Any time",
@@ -36,12 +29,6 @@ const STATUS_LABELS: Record<StatusFilter, string> = {
   locked: "Locked",
 };
 
-const SORT_LABELS: Record<SortKey, string> = {
-  newest: "Newest",
-  oldest: "Oldest",
-  title: "Title",
-};
-
 /** Muted right-hand hint showing the active choice on a submenu trigger. */
 function Hint({ children }: { readonly children: React.ReactNode }) {
   return <span className="ml-auto text-xs text-muted-foreground">{children}</span>;
@@ -52,11 +39,9 @@ interface FilterMenuProps {
   readonly agentFilter: ReadonlyArray<string>;
   readonly dateFilter: DateFilter;
   readonly statusFilter: StatusFilter;
-  readonly sort: SortKey;
   onToggleAgent: (id: string, checked: boolean) => void;
   onDateFilterChange: (value: DateFilter) => void;
   onStatusFilterChange: (value: StatusFilter) => void;
-  onSortChange: (value: SortKey) => void;
 }
 
 export function FilterMenu({
@@ -64,17 +49,12 @@ export function FilterMenu({
   agentFilter,
   dateFilter,
   statusFilter,
-  sort,
   onToggleAgent,
   onDateFilterChange,
   onStatusFilterChange,
-  onSortChange,
 }: FilterMenuProps) {
   const active =
-    agentFilter.length +
-    (dateFilter === "all" ? 0 : 1) +
-    (statusFilter === "all" ? 0 : 1) +
-    (sort === "newest" ? 0 : 1);
+    agentFilter.length + (dateFilter === "all" ? 0 : 1) + (statusFilter === "all" ? 0 : 1);
 
   return (
     <DropdownMenu>
@@ -145,25 +125,6 @@ export function FilterMenu({
               {(["all", "free", "locked"] as const).map((value) => (
                 <DropdownMenuRadioItem key={value} value={value} closeOnClick={false}>
                   {STATUS_LABELS[value]}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-
-        <DropdownMenuSeparator />
-
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <HugeiconsIcon icon={ArrowUpDownIcon} strokeWidth={2} />
-            Sort
-            {sort !== "newest" && <Hint>{SORT_LABELS[sort]}</Hint>}
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent>
-            <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSortChange(v as SortKey)}>
-              {(["newest", "oldest", "title"] as const).map((value) => (
-                <DropdownMenuRadioItem key={value} value={value} closeOnClick={false}>
-                  {SORT_LABELS[value]}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>

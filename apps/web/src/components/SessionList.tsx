@@ -95,7 +95,6 @@ export function SessionList() {
       .sort(sorters[sort]);
   }, [sessions, debouncedFilter, agentFilter, dateFilter, statusFilter, sort]);
 
-  useHotkey("Mod+K", () => filterRef.current?.focus(), { preventDefault: true });
   useHotkey("N", () => {
     if (inFormField()) return;
     setAdvancedOpen(true);

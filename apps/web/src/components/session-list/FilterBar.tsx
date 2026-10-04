@@ -1,8 +1,15 @@
-import type { RefObject } from "react";
+import { useState, type RefObject } from "react";
+import { useHotkey } from "@tanstack/react-hotkeys";
+import { PanelLeftCloseIcon, Search01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import type { AgentInfo } from "../../lib/types";
+import { Button } from "../ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Input } from "../ui/input";
 import { Kbd, KbdGroup } from "../ui/kbd";
+import { useSidebar } from "../ui/sidebar";
 import { FilterMenu } from "./FilterMenu";
+import { SortMenu } from "./SortMenu";
 
 export type DateFilter = "all" | "day" | "week" | "month";
 export type StatusFilter = "all" | "free" | "locked";
@@ -39,37 +46,76 @@ export function FilterBar({
   onStatusFilterChange,
   onSortChange,
 }: FilterBarProps) {
+  const { toggleSidebar } = useSidebar();
+  const [searchOpen, setSearchOpen] = useState(false);
+  useHotkey("Mod+K", () => setSearchOpen(true), { preventDefault: true });
   return (
-    <div className="flex items-center gap-1.5 px-2 pt-3 pb-2">
-      <div className="relative min-w-0 flex-1">
-        <Input
-          type="search"
-          className="pr-16"
-          placeholder="Filter sessions…"
-          aria-label="Filter sessions"
-          ref={filterRef}
-          value={filter}
-          onChange={(event) => onFilterChange(event.target.value)}
-        />
-        <KbdGroup
-          className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2"
-          aria-hidden="true"
+    <div className="flex items-center gap-1 px-2 pt-3 pb-2">
+      <Popover
+        open={searchOpen}
+        onOpenChange={(open) => {
+          setSearchOpen(open);
+          if (open) requestAnimationFrame(() => filterRef.current?.focus());
+        }}
+      >
+        <PopoverTrigger
+          render={
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 shrink-0"
+              aria-label="Search sessions"
+              title={`Search (${modKey}K)`}
+            />
+          }
         >
-          <Kbd>{modKey}</Kbd>
-          <Kbd>K</Kbd>
-        </KbdGroup>
-      </div>
+          <HugeiconsIcon icon={Search01Icon} strokeWidth={2} />
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-72 p-1.5">
+          <div className="relative">
+            <Input
+              type="search"
+              autoFocus
+              className="pr-16"
+              placeholder="Filter sessions…"
+              aria-label="Filter sessions"
+              ref={filterRef}
+              value={filter}
+              onChange={(event) => onFilterChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setSearchOpen(false);
+              }}
+            />
+            <KbdGroup
+              className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2"
+              aria-hidden="true"
+            >
+              <Kbd>{modKey}</Kbd>
+              <Kbd>K</Kbd>
+            </KbdGroup>
+          </div>
+        </PopoverContent>
+      </Popover>
       <FilterMenu
         agents={agents}
         agentFilter={agentFilter}
         dateFilter={dateFilter}
         statusFilter={statusFilter}
-        sort={sort}
         onToggleAgent={onToggleAgent}
         onDateFilterChange={onDateFilterChange}
         onStatusFilterChange={onStatusFilterChange}
-        onSortChange={onSortChange}
       />
+      <SortMenu sort={sort} onSortChange={onSortChange} />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="ml-auto h-9 w-9"
+        aria-label="Close sidebar"
+        title="Close sidebar"
+        onClick={toggleSidebar}
+      >
+        <HugeiconsIcon icon={PanelLeftCloseIcon} strokeWidth={2} />
+      </Button>
     </div>
   );
 }
