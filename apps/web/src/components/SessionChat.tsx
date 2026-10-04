@@ -36,7 +36,7 @@ import {
 } from "./ui/alert-dialog";
 
 import type { LiveMessage } from "../lib/liveMessages";
-import type { HistoryBlock, MessageUsage, RunSpan } from "../lib/types";
+import type { HistoryBlock, HistoryMessage, MessageUsage, RunSpan } from "../lib/types";
 import { attachmentToPart, partToBlock, type PendingAttachment } from "../lib/attachments";
 import { attachmentViews } from "../lib/blocks";
 import { finishReasonLabel, formatUsage, usageLabel } from "../lib/format";
@@ -51,11 +51,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
 import { BubbleContent } from "./bubble";
-import { Message, MessageContent, MessageCopy, MessageFooter, MessageReply } from "./message";
+import {
+  Message,
+  MessageContent,
+  MessageCopy,
+  MessageFooter,
+  MessageReply,
+  MessageRewind,
+} from "./message";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { parseSystemContext, type SystemContext } from "../lib/systemContext";
 import { parseErrorPayload, prettifyCode, type ParsedError } from "../lib/errorPayload";
 import { restoreSummary, useRestoreSession } from "../hooks/query/useRestore";
+import { rewindSummary, useRewindSession } from "../hooks/query/useRewind";
 import { toastError, toastSuccess } from "../lib/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { ErrorBanner } from "./ErrorBanner";
@@ -90,9 +98,12 @@ const spanLabel = (span: RunSpan): string => `${span.agent} @ ${spanNodeLabel(sp
 function RowContent({
   row,
   onRestoreDiff,
+  onRewind,
 }: {
   readonly row: ChatRow;
   readonly onRestoreDiff?: (path: string, toolCallId?: string) => void;
+  /** History rows only — the session can truncate back to this node. */
+  readonly onRewind?: (message: HistoryMessage) => void;
 }) {
   if (row.kind === "system") return <SystemContextRow context={row.context} />;
   if (row.kind === "span") {
@@ -129,6 +140,11 @@ function RowContent({
         createdAt={message.createdAt}
         usage={message.usage}
         finishReason={message.finishReason}
+        onRewind={
+          onRewind !== undefined && message.nodeId !== undefined
+            ? () => onRewind(message)
+            : undefined
+        }
       />
     );
   }
@@ -212,12 +228,14 @@ function ChatRows({
   fetchingNext,
   onLoadEarlier,
   onRestoreDiff,
+  onRewind,
 }: {
   readonly rows: ReadonlyArray<ChatRow>;
   readonly hasNextPage: boolean;
   readonly fetchingNext: boolean;
   onLoadEarlier: () => void;
   readonly onRestoreDiff?: (path: string, toolCallId?: string) => void;
+  readonly onRewind?: (message: HistoryMessage) => void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -299,7 +317,7 @@ function ChatRows({
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                <RowContent row={row} onRestoreDiff={onRestoreDiff} />
+                <RowContent row={row} onRestoreDiff={onRestoreDiff} onRewind={onRewind} />
               </MessageScrollerItem>
             );
           })}
@@ -526,6 +544,10 @@ export function SessionChat({
     toolCallId?: string;
   } | null>(null);
   const restore = useRestoreSession();
+  // A conversation rewind requested from a history row — the dialog
+  // confirms before the server truncates the transcript at that node.
+  const [rewindTarget, setRewindTarget] = useState<HistoryMessage | null>(null);
+  const rewind = useRewindSession();
   // Populated by ScrollerApiBridge — lets `send` reveal the row it appended.
   const scrollToEnd = useRef<(() => void) | null>(null);
   const scrollOnSent = useRef(false);
@@ -690,6 +712,7 @@ export function SessionChat({
                 fetchingNext={historyQuery.isFetchingNextPage}
                 onLoadEarlier={loadEarlier}
                 onRestoreDiff={(path, toolCallId) => setRestoreTarget({ path, toolCallId })}
+                onRewind={readOnly || running ? undefined : (message) => setRewindTarget(message)}
               />
               {running && !liveMessages.some((m) => !m.done) && (
                 <div className="mx-auto flex w-full max-w-3xl items-center gap-2 px-4 py-3 text-sm">
@@ -905,6 +928,58 @@ export function SessionChat({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Conversation rewind: the server truncates the transcript after
+          this message — everything past it is deleted, not just hidden. */}
+      <AlertDialog
+        open={rewindTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !rewind.isPending) setRewindTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Rewind to this message?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The conversation will end here — every message after this one is deleted from the
+              session's history. Files the agent already changed are not touched (use restore for
+              that). This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {rewind.isError && (
+            <p role="alert" className="m-0 text-sm text-destructive">
+              {rewind.error instanceof Error ? rewind.error.message : "Rewind failed"}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rewind.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={rewind.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                const target = rewindTarget;
+                if (target === null || target.nodeId === undefined) return;
+                rewind.mutate(
+                  {
+                    sessionId,
+                    agent,
+                    node: sessionRow?.node,
+                    selector: { nodeId: target.nodeId },
+                  },
+                  {
+                    onSuccess: (result) => {
+                      setRewindTarget(null);
+                      toastSuccess(rewindSummary(result), undefined);
+                    },
+                  },
+                );
+              }}
+            >
+              {rewind.isPending ? "Rewinding…" : "Rewind"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
@@ -1006,6 +1081,7 @@ function MessageRow({
   createdAt,
   usage,
   finishReason,
+  onRewind,
 }: {
   readonly role: "user" | "assistant";
   readonly content: string;
@@ -1016,6 +1092,8 @@ function MessageRow({
   readonly usage?: MessageUsage;
   /** Non-"stop" endings get a tiny marker; quiet endings render nothing. */
   readonly finishReason?: string;
+  /** History rows only — truncate the session back to this message. */
+  readonly onRewind?: () => void;
 }) {
   // Agents put JSON error payloads in assistant content — a user pasting the
   // same JSON should still render as text.
@@ -1055,9 +1133,11 @@ function MessageRow({
               )}
               <MessageCopy text={() => content} />
               <MessageReply onReply={() => setReplyTo({ role, content, createdAt })} />
+              {onRewind !== undefined && <MessageRewind onRewind={onRewind} />}
             </>
           ) : (
             <>
+              {onRewind !== undefined && <MessageRewind onRewind={onRewind} />}
               <MessageReply onReply={() => setReplyTo({ role, content, createdAt })} />
               <MessageCopy text={() => content} />
               {createdAt !== undefined && <span>{formatMessageTime(createdAt)}</span>}

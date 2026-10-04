@@ -1463,6 +1463,66 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         );
       }
 
+      if (method === "POST" && action === "rewind") {
+        // Conversation rewind — truncates the transcript at a point:
+        // `{nodeId}` keeps that node and everything before it, `{turns: n}`
+        // drops the last n user turns, `{checkpoint}` rewinds to a recorded
+        // snapshot ref. `confirm: true` required; refused while the session
+        // is busy or held by a live process.
+        let body: unknown;
+        try {
+          body = await readJsonBody(request);
+        } catch {
+          return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+        }
+        if (!isRecord(body)) {
+          return jsonResponse({ error: "Expected a JSON object body" }, 400, cors);
+        }
+        if (body.confirm !== true) {
+          return jsonResponse({ error: "Rewind requires confirm: true" }, 400, cors);
+        }
+        const nodeId = body.nodeId;
+        if (
+          nodeId !== undefined &&
+          (typeof nodeId !== "number" || !Number.isInteger(nodeId) || nodeId < 0)
+        ) {
+          return jsonResponse({ error: "nodeId must be a non-negative integer" }, 400, cors);
+        }
+        const turns = body.turns;
+        if (
+          turns !== undefined &&
+          (typeof turns !== "number" || !Number.isInteger(turns) || turns < 1)
+        ) {
+          return jsonResponse({ error: "turns must be a positive integer" }, 400, cors);
+        }
+        if (body.checkpoint !== undefined && typeof body.checkpoint !== "string") {
+          return jsonResponse({ error: "checkpoint must be a string" }, 400, cors);
+        }
+        return respond(
+          run,
+          plane
+            .rewind(
+              id,
+              {
+                confirm: true,
+                nodeId: nodeId as number | undefined,
+                turns: turns as number | undefined,
+                checkpoint: body.checkpoint as string | undefined,
+              },
+              agentParam,
+            )
+            .pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  feed.emit("session", sessionPayload(id, agentParam, { rewound: true }));
+                }),
+              ),
+            ),
+          cors,
+          { span: "http.post /api/sessions/:id/rewind" },
+        );
+      }
+
       if (method === "POST" && action === "cancel") {
         return respond(run, plane.cancel(id, agentParam), cors, {
           shape: () => ({ ok: true }),

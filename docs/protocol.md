@@ -70,6 +70,17 @@ POST   /api/sessions/:id/restore      file restore — writes under the session'
                                       refused while the session is busy or
                                       locked by a live process; per-file
                                       { restored, skipped } report
+POST   /api/sessions/:id/rewind       conversation rewind — truncates the
+                                      transcript, not files (that's restore).
+                                      Requires { confirm: true } plus exactly
+                                      one selector: { nodeId } keeps that node
+                                      and everything before it (a history row's
+                                      nodeId), { turns } drops the last N user
+                                      turns, { checkpoint } rewinds to a
+                                      recorded snapshot ref. Same gates as
+                                      restore; a live attach is detached
+                                      first. → { kept, removed }; 409 for a
+                                      store that can't truncate safely
 PATCH  /api/sessions/:id              meta overlay { title?, pinned?, archived?, projectIds?, model? }
 DELETE /api/sessions/:id
 POST   /api/sessions/:id/convert      { agent } → new session in another agent's store

@@ -4,7 +4,7 @@ import * as BunPath from "@effect/platform-bun/BunPath";
 import * as Fs from "@effect/platform/FileSystem";
 import * as Path from "@effect/platform/Path";
 import * as Cline from "./Cline.js";
-import { Session, StorageError } from "./Domain.js";
+import { MessageNode, Session, StorageError } from "./Domain.js";
 import type { SessionRepositoryService } from "./Storage.js";
 
 export interface ClineRepositoryOptions {
@@ -157,3 +157,155 @@ export const makeClineSessionRepository = (
     delete: () => Effect.fail(new StorageError({ message: "Cline repository is read-only" })),
   };
 };
+
+/** The `clineMessageIndex` a reader-tagged node carries; anything else is unmappable. */
+const sourceIndexOf = (node: MessageNode): number | undefined => {
+  const meta = node.metadata;
+  if (meta === null || typeof meta !== "object") return undefined;
+  const index = (meta as Record<string, unknown>).clineMessageIndex;
+  return typeof index === "number" && Number.isInteger(index) && index >= 0 ? index : undefined;
+};
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * In-place conversation rewind for a Cline session: slice the transcript's
+ * `messages` array just past the last kept node's source entry.
+ *
+ * Each node emitted by `Cline.fromDirectory` records its source position
+ * in `metadata.clineMessageIndex`, so the cut lands on whole messages —
+ * nodes sharing one entry (assistant twins, a multi-result turn) survive
+ * or drop together even when the requested boundary lands between them.
+ * Every other top-level field of the messages file (`version`, `agent`,
+ * `origin`, fields the reader never modeled) is preserved verbatim and
+ * the manifest is never touched — strictly less invasive than a
+ * `ClineStore.install` rebuild, which regenerates the whole pair from IR.
+ *
+ * Refuses when the resolved `messages_path` escapes the data dir or the
+ * file provably belongs to another session (a subagent manifest pointing
+ * at the parent's transcript would truncate the parent's history).
+ */
+export const truncateClineSession = (
+  options: ClineRepositoryOptions,
+  sessionId: string,
+  kept: ReadonlyArray<MessageNode>,
+  removed: ReadonlyArray<MessageNode>,
+): Effect.Effect<{ readonly removedMessages: number }, StorageError> =>
+  Effect.gen(function* () {
+    const fs = yield* Fs.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(options.dataDir, "sessions", sessionId);
+
+    // Resolve the transcript the way `Cline.fromDirectory` does: manifest's
+    // `messages_path`, else the `<id>.messages.json` sibling.
+    const entries = yield* fs.readDirectory(dir);
+    const metaName = entries.find(
+      (name) =>
+        name.endsWith(".json") &&
+        !name.endsWith(".messages.json") &&
+        !name.includes(".compaction."),
+    );
+    if (metaName === undefined) {
+      return yield* Effect.fail(
+        new StorageError({ message: `No session metadata json found in ${dir}` }),
+      );
+    }
+    const base = metaName.replace(/\.json$/, "");
+    const metaRaw = yield* fs.readFileString(path.join(dir, metaName));
+    let meta: unknown;
+    try {
+      meta = JSON.parse(metaRaw);
+    } catch {
+      return yield* Effect.fail(
+        new StorageError({ message: `Cline manifest is not valid JSON: ${metaName}` }),
+      );
+    }
+    const declaredPath =
+      isObject(meta) && typeof meta.messages_path === "string" && meta.messages_path !== ""
+        ? meta.messages_path
+        : undefined;
+    const resolved = path.resolve(
+      declaredPath === undefined ? path.join(dir, `${base}.messages.json`) : declaredPath,
+    );
+    const root = path.resolve(options.dataDir);
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+      return yield* Effect.fail(
+        new StorageError({
+          message: `Cline messages_path escapes the data dir: ${declaredPath ?? ""}`,
+        }),
+      );
+    }
+
+    const raw = yield* fs.readFileString(resolved);
+    let data: unknown;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return yield* Effect.fail(
+        new StorageError({ message: `Cline transcript is not valid JSON: ${resolved}` }),
+      );
+    }
+    if (!isObject(data) || !Array.isArray(data.messages)) {
+      return yield* Effect.fail(
+        new StorageError({ message: `Cline transcript carries no message array: ${resolved}` }),
+      );
+    }
+    // The file must belong to this session — a manifest pointing at a
+    // transcript that names another id would cut that session's history.
+    const fileSessionId =
+      typeof data.sessionId === "string"
+        ? data.sessionId
+        : isObject(data.origin) && typeof data.origin.sessionId === "string"
+          ? data.origin.sessionId
+          : undefined;
+    if (fileSessionId !== undefined && fileSessionId !== sessionId) {
+      return yield* Effect.fail(
+        new StorageError({
+          message: `Cline transcript belongs to ${fileSessionId}, not ${sessionId}`,
+        }),
+      );
+    }
+    if (fileSessionId === undefined && path.basename(resolved) !== `${sessionId}.messages.json`) {
+      return yield* Effect.fail(
+        new StorageError({
+          message: `Cannot prove ${resolved} is ${sessionId}'s transcript — refusing to truncate`,
+        }),
+      );
+    }
+
+    const messages = data.messages as ReadonlyArray<unknown>;
+    const keptIndices = kept.flatMap((node) => {
+      const index = sourceIndexOf(node);
+      return index === undefined ? [] : [index];
+    });
+    for (const node of removed) {
+      if (sourceIndexOf(node) === undefined) {
+        return yield* Effect.fail(
+          new StorageError({
+            message: `Node ${node.nodeId} has no recorded transcript entry — cannot truncate`,
+          }),
+        );
+      }
+    }
+    const cutIndex = keptIndices.length === 0 ? 0 : Math.max(...keptIndices) + 1;
+    if (cutIndex >= messages.length) return { removedMessages: 0 };
+
+    const out = {
+      ...data,
+      updated_at: new Date().toISOString(),
+      messages: messages.slice(0, cutIndex),
+    };
+    // tmp + rename: a crash mid-write must not leave a torn transcript.
+    const tmp = `${resolved}.tmp-${process.pid}`;
+    yield* fs.writeFileString(tmp, JSON.stringify(out, null, 2));
+    yield* fs.rename(tmp, resolved);
+    return { removedMessages: messages.length - cutIndex };
+  }).pipe(
+    Effect.provide(fsLayer),
+    Effect.mapError((error) =>
+      error instanceof StorageError
+        ? error
+        : storageError("Failed to truncate cline session")(error),
+    ),
+  );

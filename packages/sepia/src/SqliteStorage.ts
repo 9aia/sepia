@@ -356,6 +356,76 @@ export const make = (
     return SessionRepository.of({ save, getById, list, delete: delete_, hasSession });
   });
 
+/**
+ * In-place conversation rewind for the Devin-format store: delete the
+ * `message_nodes` rows the plan removed plus the `tool_call_state` /
+ * `subagent_heads` rows that hung off them (guarded — a sepia-created
+ * store may lack both tables), and move `last_activity_at`/`main_chain_id`
+ * back to the surviving tail.
+ *
+ * Surviving rows are never rewritten — a `save` round-trip rebuilds every
+ * `chat_message` blob through `Devin.buildChatMessage` (fresh message ids,
+ * dropped store-specific fields), which is more damage than a rewind
+ * should do to a store a live Devin install may also have open. Row
+ * deletes are safe: FKs point at `sessions`, nothing references
+ * `message_nodes`, and `node_id` is a contiguous per-session sequence, so
+ * a suffix delete leaves no dangling `parent_node_id`.
+ *
+ * `prompt_history` is left alone — it is the user's input log, not
+ * conversation state. `rendered_commits` is likewise left: it keys rows by
+ * `sequence_number`, which has no reliable join to node ids.
+ */
+export const truncateSessionNodes = (
+  dbPath: string,
+  sessionId: string,
+  removal: {
+    readonly removedNodeIds: ReadonlyArray<number>;
+    readonly removedToolCallIds: ReadonlyArray<string>;
+    readonly lastActivityAt: number;
+    readonly mainChainId: number;
+  },
+): Effect.Effect<void, StorageError> =>
+  Effect.try({
+    try: () => {
+      const sqlite = new Database(dbPath);
+      try {
+        sqlite.run("PRAGMA busy_timeout = 5000;");
+        const tables = tableNames(sqlite);
+        sqlite.transaction(() => {
+          if (removal.removedNodeIds.length > 0) {
+            const nodeMarks = removal.removedNodeIds.map(() => "?").join(", ");
+            sqlite
+              .query(`DELETE FROM message_nodes WHERE session_id = ? AND node_id IN (${nodeMarks})`)
+              .run(sessionId, ...removal.removedNodeIds);
+            if (tables.has("subagent_heads")) {
+              // `chain_node_id` is the parent node that spawned the subagent —
+              // a spawn that happened in a removed turn leaves a stale link.
+              sqlite
+                .query(
+                  `DELETE FROM subagent_heads WHERE session_id = ? AND chain_node_id IN (${nodeMarks})`,
+                )
+                .run(sessionId, ...removal.removedNodeIds);
+            }
+          }
+          if (tables.has("tool_call_state") && removal.removedToolCallIds.length > 0) {
+            const callMarks = removal.removedToolCallIds.map(() => "?").join(", ");
+            sqlite
+              .query(
+                `DELETE FROM tool_call_state WHERE session_id = ? AND tool_call_id IN (${callMarks})`,
+              )
+              .run(sessionId, ...removal.removedToolCallIds);
+          }
+          sqlite
+            .query("UPDATE sessions SET last_activity_at = ?, main_chain_id = ? WHERE id = ?")
+            .run(removal.lastActivityAt, removal.mainChainId, sessionId);
+        })();
+      } finally {
+        sqlite.close();
+      }
+    },
+    catch: (error) => new StorageError({ message: `Failed to truncate session: ${String(error)}` }),
+  });
+
 export const layer = (dbPath: string): Layer.Layer<SessionRepository, StorageError> =>
   Layer.effect(SessionRepository, make(dbPath));
 

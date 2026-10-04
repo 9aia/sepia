@@ -11,6 +11,7 @@ import { builtinAgents, spawnAgent } from "sepia-acp";
 import { ControlPlane, layer as controlPlaneLayer, mergeRepositories } from "sepia-session-control";
 import { createApp } from "./app";
 import { parseEnv, type ServerEnv } from "./env";
+import { makeRewinders } from "./rewinders";
 import { createMetaStore } from "./meta";
 import { loadNodeIdentity } from "./node";
 import { createPairing } from "./pair";
@@ -83,6 +84,8 @@ export const startServer = async (env: ServerEnv): Promise<ReturnType<typeof Bun
     probeCwd: process.cwd(),
     // Claude file-history checkpoints restore from `<claudeDir>/file-history`.
     fileHistoryDir: `${claudeDir}/file-history`,
+    // Conversation rewind — per-store truncation writers (see rewinders.ts).
+    rewinders: makeRewinders({ dbPath: env.dbPath, clineDir, claudeDir, cursorDir }),
   }).pipe(Layer.provide(repoLayer));
 
   const layer = env.otel.enabled

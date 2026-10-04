@@ -15,6 +15,7 @@ import type {
   ToolCallLocation,
   ToolCallStatus,
 } from "sepia-core";
+import type { Rewind } from "sepia-core";
 
 /**
  * One run span of a session: which agent on which Sepia node continued it.
@@ -52,6 +53,11 @@ export interface SessionSummary {
 
 export interface HistoryMessage {
   readonly role: "user" | "assistant" | "tool" | "system";
+  /**
+   * The node this message came from — the key a conversation rewind
+   * (`POST /api/sessions/:id/rewind` with `nodeId`) truncates after.
+   */
+  readonly nodeId: number;
   readonly content: string;
   /**
    * The message's content blocks — present only when the store recorded
@@ -143,6 +149,56 @@ export interface SkippedFile {
 export interface RestoreResult {
   readonly restored: ReadonlyArray<RestoredFile>;
   readonly skipped: ReadonlyArray<SkippedFile>;
+}
+
+/**
+ * A conversation rewind — truncate the session's transcript at a point
+ * (distinct from `restore`, which only touches workspace files). Exactly
+ * one selector:
+ *
+ * - `nodeId`: keep that node and everything recorded before it.
+ * - `turns`: drop the last N user turns (prompt + its response).
+ * - `checkpoint`: keep up to the last node at or before the recorded
+ *   `Session.checkpoints` ref.
+ *
+ * `confirm: true` is mandatory — the cut deletes stored history. Refused
+ * while the session is busy or locked by a live process; a live (idle)
+ * attach is detached first, since the agent's in-memory copy would
+ * otherwise reflush the deleted tail.
+ */
+export interface RewindRequest {
+  readonly confirm: boolean;
+  readonly nodeId?: number;
+  readonly turns?: number;
+  readonly checkpoint?: string;
+}
+
+export interface RewindResult {
+  /** Nodes that survived the cut. */
+  readonly kept: number;
+  /** Nodes the cut dropped. */
+  readonly removed: number;
+}
+
+/**
+ * The store-specific write behind `rewind`, injected per agent (the id
+ * `agentForBackend` returns) so the control plane stays store-agnostic.
+ *
+ * `session` is the pre-rewind IR, `plan` the computed prefix cut
+ * (`kept`/`removed` nodes, `removedToolCallIds`), `truncated` the same
+ * session with the cut applied. Writers pick the store's mechanism —
+ * in-place row delete (Devin `message_nodes`), transcript slice (Cline
+ * `messages`, Claude `.jsonl`), or a checkpoint re-root via `save`
+ * (Cursor). A store that cannot truncate safely fails rather than faking
+ * it; a `ControlError` passes through with its code, anything else wraps
+ * as `internal`.
+ */
+export interface SessionRewinder {
+  readonly truncate: (
+    session: Session,
+    plan: Rewind.RewindPlan,
+    truncated: Session,
+  ) => Effect.Effect<void, unknown>;
 }
 
 /**
@@ -300,6 +356,19 @@ export interface ControlPlaneService {
     agentId?: string,
   ) => Effect.Effect<RestoreResult, ControlError>;
 
+  /**
+   * Conversation rewind — truncates the session's transcript through the
+   * backend's `SessionRewinder` (injected via `options.rewinders`; a
+   * backend without one fails `conflict`). Refused while busy or locked;
+   * a live idle attach is detached first. Requires `confirm: true`.
+   * `agentId` scopes the store lookup — ids collide across agents.
+   */
+  readonly rewind: (
+    id: string,
+    request: RewindRequest,
+    agentId?: string,
+  ) => Effect.Effect<RewindResult, ControlError>;
+
   readonly subscribe: (
     id: string,
     listener: SessionEventListener,
@@ -339,6 +408,13 @@ export interface ControlPlaneOptions {
    * `~/.claude/file-history`; the server passes `$SEPIA_CLAUDE_DIR/file-history`.
    */
   readonly fileHistoryDir?: string;
+  /**
+   * Per-agent transcript writers for `rewind`, keyed by the id
+   * `agentForBackend` returns (`devin`, `cline`, `claude`, `cursor`).
+   * A backend without an entry fails `conflict` — rewind is never faked
+   * by a store that can't truncate safely.
+   */
+  readonly rewinders?: Readonly<Partial<Record<string, SessionRewinder>>>;
 }
 
 export class ControlPlane extends Context.Tag("ControlPlane")<

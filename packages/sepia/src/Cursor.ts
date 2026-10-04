@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
 import { Option } from "effect";
 import {
   MessageNode,
@@ -1139,11 +1140,11 @@ const hashHex = (algorithm: string, data: Uint8Array | string): string =>
 export const blobIdFor = (data: Uint8Array): string => hashHex("sha256", data);
 
 /**
- * The `chats/<hash>` directory is md5 of the workspace path verbatim —
- * `md5("/home/luis")` is a real ws-hash on disk. The hash is over the raw
- * path, no scheme or trailing slash.
+ * The `chats/<hash>` directory is md5 of the workspace path — the agent
+ * hashes `path.resolve(cwd)`, so a trailing slash or `.`/`..` segment is
+ * normalised first, same as the real mapping.
  */
-export const workspaceHashFromCwd = (cwd: string): string => hashHex("md5", cwd);
+export const workspaceHashFromCwd = (cwd: string): string => hashHex("md5", resolvePath(cwd));
 
 /** Inverse of `workspaceFromUri`: each path segment is URI-encoded. */
 export const workspaceUriFromCwd = (cwd: string): string =>
@@ -1230,9 +1231,7 @@ export const encodeStoreMeta = (meta: StoreMetaWriteInput): string =>
         latestRootBlobId: meta.latestRootBlobId,
         ...(meta.name === undefined ? {} : { name: meta.name }),
         ...(meta.mode === undefined ? {} : { mode: meta.mode }),
-        ...(meta.isRunEverything === undefined
-          ? {}
-          : { isRunEverything: meta.isRunEverything }),
+        ...(meta.isRunEverything === undefined ? {} : { isRunEverything: meta.isRunEverything }),
         ...(meta.createdAt === undefined ? {} : { createdAt: meta.createdAt }),
         ...(meta.lastUsedModel === undefined ? {} : { lastUsedModel: meta.lastUsedModel }),
       }),
@@ -1306,10 +1305,7 @@ const toolResultOutput = (node: MessageNode): Record<string, unknown> => {
  * top-level `id` and re-encode `toolResult` under
  * `providerOptions.cursor.highLevelToolCallResult`.
  */
-const messageJson = (
-  sessionId: string,
-  node: MessageNode,
-): Record<string, unknown> | undefined => {
+const messageJson = (sessionId: string, node: MessageNode): Record<string, unknown> | undefined => {
   if (node.role === "system") {
     return node.content === "" ? undefined : { role: "system", content: node.content };
   }
@@ -1325,8 +1321,7 @@ const messageJson = (
       providerOptions: {
         cursor: {
           requestId:
-            Option.getOrUndefined(node.requestId) ??
-            derivedRequestId(sessionId, node.nodeId),
+            Option.getOrUndefined(node.requestId) ?? derivedRequestId(sessionId, node.nodeId),
         },
       },
     };
@@ -1336,9 +1331,7 @@ const messageJson = (
     if (Option.isSome(node.thinking)) {
       content.push({
         type: "redacted-reasoning",
-        ...(Option.isSome(node.thinkingSignature)
-          ? { data: node.thinkingSignature.value }
-          : {}),
+        ...(Option.isSome(node.thinkingSignature) ? { data: node.thinkingSignature.value } : {}),
       });
     }
     if (node.content !== "") content.push({ type: "text", text: node.content });
@@ -1363,7 +1356,8 @@ const messageJson = (
       },
     };
   }
-  return undefined;
+  // `role` is a closed union — the guards above cover every case, so
+  // falling through here (undefined) is unreachable by construction.
 };
 
 export interface StoreBlobWrite {
@@ -1385,7 +1379,9 @@ export const messageBlobsFromSession = (session: Session): ReadonlyArray<StoreBl
     blobs.push({ id: blobIdFor(data), data });
   };
 
-  let group: { blobId: string; results: Array<Record<string, unknown>>; node: MessageNode } | undefined;
+  let group:
+    | { blobId: string; results: Array<Record<string, unknown>>; node: MessageNode }
+    | undefined;
   const flushGroup = (): void => {
     if (group === undefined) return;
     push({

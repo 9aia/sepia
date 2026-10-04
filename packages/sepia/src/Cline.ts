@@ -717,22 +717,59 @@ const buildSession = (
     buildSystemNode(nid, parent, `<rules type="always-on"></rules>`, createdAt, false),
   );
 
+  /**
+   * Merge `clineMessageIndex` — the source entry's position in the
+   * `messages` array — into a node's metadata. The in-place rewind writer
+   * cuts the array on this key; nodes sharing one entry (the assistant
+   * twins, a multi-result turn) carry the same index and survive together.
+   */
+  const withSourceIndex = (node: MessageNode, index: number): MessageNode =>
+    MessageNode.make({
+      nodeId: node.nodeId,
+      parentNodeId: node.parentNodeId,
+      role: node.role,
+      content: node.content,
+      blocks: node.blocks,
+      toolCalls: node.toolCalls,
+      toolCallId: node.toolCallId,
+      toolName: node.toolName,
+      thinking: node.thinking,
+      thinkingSignature: node.thinkingSignature,
+      usage: node.usage,
+      model: node.model,
+      requestId: node.requestId,
+      finishReason: node.finishReason,
+      toolResult: node.toolResult,
+      createdAt: node.createdAt,
+      metadata: {
+        ...(node.metadata !== null && typeof node.metadata === "object"
+          ? (node.metadata as Record<string, unknown>)
+          : {}),
+        clineMessageIndex: index,
+      },
+    });
+
   const firstUser = (() => {
-    for (const m of messages) {
+    for (const [index, m] of messages.entries()) {
       if (m.role === "user") {
         for (const c of m.content ?? []) {
           if (c.type === "text" && c.text) {
-            return { text: cleanUserText(c.text), blocks: blocksFromClineContent(m.content) };
+            return {
+              index,
+              text: cleanUserText(c.text),
+              blocks: blocksFromClineContent(m.content),
+            };
           }
         }
       }
     }
-    return { text: "", blocks: [] as ReadonlyArray<Block> };
+    return { index: -1, text: "", blocks: [] as ReadonlyArray<Block> };
   })();
 
   const nUser = addNode(Option.some(n1), (nid, parent) =>
     buildUserNode(nid, parent, firstUser.text, createdAt, firstUser.blocks),
   );
+  if (firstUser.index !== -1) nodes[nUser] = withSourceIndex(nodes[nUser]!, firstUser.index);
   const nSkills = addNode(Option.some(nUser), (nid, parent) =>
     buildSystemNode(nid, parent, "<available_skills></available_skills>", createdAt, false),
   );
@@ -743,7 +780,13 @@ const buildSession = (
   let lastToolResultNode: number | null = null;
   let firstUserSeen = false;
 
-  for (const m of messages) {
+  /** Tag the just-emitted node with its source `messages` position. */
+  const tagLast = (index: number): void => {
+    const last = nodes[nodes.length - 1];
+    if (last !== undefined) nodes[nodes.length - 1] = withSourceIndex(last, index);
+  };
+
+  for (const [mIndex, m] of messages.entries()) {
     const role = m.role as string;
     const ts = tsToEpochSeconds(m.ts, createdAt);
 
@@ -770,6 +813,7 @@ const buildSession = (
           const parent = Option.some(lastRenderedAssistantNode);
           const blocks = blocksFromClineContent(content);
           addNode(parent, (nid, p) => buildUserNode(nid, p, text, ts, blocks));
+          tagLast(mIndex);
           lastRenderedAssistantNode = nodes[nodes.length - 1].nodeId;
         }
       }
@@ -792,6 +836,7 @@ const buildSession = (
             const contentStr =
               typeof c.content === "string" ? c.content : JSON.stringify(c.content);
             addNode(parent, (nid, p) => buildUserNode(nid, p, `[tool output]\n${contentStr}`, ts));
+            tagLast(mIndex);
             lastToolResultNode = nodes[nodes.length - 1].nodeId;
             continue;
           }
@@ -820,6 +865,7 @@ const buildSession = (
                 Option.some({ status }),
               ),
             );
+            tagLast(mIndex);
             lastToolResultNode = nodes[nodes.length - 1].nodeId;
           }
 
@@ -899,6 +945,7 @@ const buildSession = (
           model,
         ),
       );
+      tagLast(mIndex);
       addNode(parent, (nid, p) =>
         buildAssistantNode(
           nid,
@@ -913,6 +960,7 @@ const buildSession = (
           model,
         ),
       );
+      tagLast(mIndex);
 
       lastRenderedAssistantNode = nodes[nodes.length - 1].nodeId;
       lastToolResultNode = null;

@@ -8,8 +8,8 @@ import type { PromptPart } from "sepia-acp";
 import { createAguiAgentHandler } from "../src/agui-agent";
 
 const HISTORY: ReadonlyArray<HistoryMessage> = [
-  { role: "user", content: "first", createdAt: 1 },
-  { role: "assistant", content: "reply", createdAt: 2 },
+  { role: "user", nodeId: 0, content: "first", createdAt: 1 },
+  { role: "assistant", nodeId: 1, content: "reply", createdAt: 2 },
 ];
 
 interface FakePlane {
@@ -58,6 +58,7 @@ const makePlane = (over: Partial<ControlPlaneService> = {}): FakePlane => {
     deleteSession: () => Effect.void,
     respondToPermission: () => Effect.void,
     restore: () => Effect.succeed({ restored: [], skipped: [] }),
+    rewind: () => Effect.succeed({ kept: 0, removed: 0 }),
     subscribe: (id, listener, agentId) => {
       calls.subscribe.push({ id, agentId });
       listeners.set(id, listener);

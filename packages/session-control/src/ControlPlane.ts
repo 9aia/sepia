@@ -3,7 +3,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { Effect, Either, Layer, Metric, Option, Runtime } from "effect";
 import type { AcpConnection, AcpSessionInfo, PromptPart } from "sepia-acp";
 import { createTranslator, type Event, type Translator } from "sepia-agui";
-import { Restore, SessionRepository } from "sepia-core";
+import { Restore, Rewind, SessionRepository } from "sepia-core";
 import type { Session, ToolCall } from "sepia-core";
 import { agentForBackend } from "./MergedRepository.js";
 import { defaultRestoreExec } from "./restore-exec.js";
@@ -23,6 +23,8 @@ import {
   type RestoreRequest,
   type RestoreResult,
   type RestoredFile,
+  type RewindRequest,
+  type RewindResult,
   type SessionEventListener,
   type SessionSummary,
   type SkippedFile,
@@ -278,6 +280,7 @@ export const make = (
                 : undefined;
             return {
               role: node.role,
+              nodeId: node.nodeId,
               content: node.content,
               blocks: node.blocks.length === 0 ? undefined : node.blocks,
               createdAt: node.createdAt * 1000,
@@ -1164,6 +1167,101 @@ export const make = (
         }),
       );
 
+    /* ---- rewind -------------------------------------------------------
+     * Conversation truncation — the complement of restore's file writes.
+     * The cut itself is pure IR math (`Rewind.planRewind`); persisting it
+     * is delegated to the backend's injected `SessionRewinder`, since each
+     * store truncates differently (row delete, array slice, JSONL rewrite,
+     * checkpoint re-root). Same gates as restore: `confirm`, not busy, not
+     * locked — plus a live idle attach is detached first, because the
+     * agent's in-memory transcript would reflush the deleted tail.
+     */
+    const rewind = (
+      id: string,
+      request: RewindRequest,
+      agentId?: string,
+    ): Effect.Effect<RewindResult, ControlError> =>
+      Effect.gen(function* () {
+        if (request.confirm !== true) {
+          return yield* Effect.fail(
+            controlError(
+              "invalid",
+              "Rewind deletes stored history — pass confirm: true",
+              undefined,
+            ),
+          );
+        }
+        const maybe = yield* repo
+          .getById(id, agentId)
+          .pipe(Effect.mapError(storageFail("Failed to read session")));
+        if (Option.isNone(maybe)) {
+          return yield* Effect.fail(controlError("not_found", `Unknown session: ${id}`, undefined));
+        }
+        const session = maybe.value;
+        const live = liveFor(id, agentId);
+        if (live !== undefined && live.busy) {
+          return yield* Effect.fail(
+            controlError("busy", `Session is busy — wait for the run to finish: ${id}`, undefined),
+          );
+        }
+        if (live === undefined) {
+          const locks = yield* lockState(session.workingDirectory);
+          const lock = locks.get(id);
+          if (lock?.locked === true) {
+            const pid = lock.lockHolderPid;
+            return yield* Effect.fail(
+              controlError(
+                "locked",
+                pid !== null
+                  ? `Session is held by PID ${pid}: ${id}`
+                  : `Session is held by another process: ${id}`,
+                undefined,
+              ),
+            );
+          }
+        }
+
+        const planned = Rewind.planRewind(session, {
+          nodeId: request.nodeId,
+          turns: request.turns,
+          checkpoint: request.checkpoint,
+        });
+        if (!planned.ok) {
+          return yield* Effect.fail(controlError("invalid", planned.reason, undefined));
+        }
+        const { plan } = planned;
+        // Already at the requested point — nothing to write.
+        if (plan.removed.length === 0) return { kept: plan.keepCount, removed: 0 };
+
+        const rewinder = options.rewinders?.[agentForBackend(session.backendType)];
+        if (rewinder === undefined) {
+          return yield* Effect.fail(
+            controlError(
+              "conflict",
+              `Rewind is not supported for this store: ${session.backendType}`,
+              undefined,
+            ),
+          );
+        }
+        // A live agent holds the pre-rewind transcript in memory and flushes
+        // it back on the next turn — drop the attach before writing.
+        if (live !== undefined) yield* detach(id);
+        yield* rewinder
+          .truncate(session, plan, Rewind.rewindSession(session, plan))
+          .pipe(
+            Effect.mapError((cause) =>
+              cause instanceof ControlError
+                ? cause
+                : controlError("internal", `Failed to truncate session: ${id}`, cause),
+            ),
+          );
+        return { kept: plan.keepCount, removed: plan.removed.length };
+      }).pipe(
+        Effect.withSpan("sepia.control.rewind", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
+
     const subscribe = (
       id: string,
       listener: SessionEventListener,
@@ -1219,6 +1317,7 @@ export const make = (
       deleteSession,
       respondToPermission,
       restore,
+      rewind,
       subscribe,
       listAgents,
       closeAll,

@@ -316,9 +316,9 @@ test("returns history in node order with millisecond timestamps", async () => {
 
   expect(await Effect.runPromise(cp.getHistory("s1"))).toEqual({
     messages: [
-      { role: "user", content: "hi", createdAt: 10_000 },
-      { role: "assistant", content: "hello", createdAt: 11_000 },
-      { role: "tool", content: "out", createdAt: 12_000, toolName: "read_file" },
+      { role: "user", nodeId: 1, content: "hi", createdAt: 10_000 },
+      { role: "assistant", nodeId: 2, content: "hello", createdAt: 11_000 },
+      { role: "tool", nodeId: 3, content: "out", createdAt: 12_000, toolName: "read_file" },
     ],
     total: 3,
     start: 0,

@@ -268,6 +268,23 @@ export const makeCursorSessionRepository = (
     });
 
   /**
+   * `db.all` that degrades a throw to `[]` — a 0-byte or schema-less
+   * `store.db` (real `chats/` dirs hold them) opens fine but has no
+   * tables, and a sync throw here is a defect `catchAll` can't rescue.
+   */
+  const allSafe = (
+    db: CursorStoreDb,
+    sql: string,
+    params: ReadonlyArray<unknown> = [],
+  ): ReadonlyArray<Record<string, unknown>> => {
+    try {
+      return db.all(sql, params);
+    } catch {
+      return [];
+    }
+  };
+
+  /**
    * The prior `meta['0']` row for a `save` rewrite — `undefined` whenever
    * the store is missing, empty or unopenable (a fresh chat dir has no
    * meta row yet).
@@ -277,7 +294,7 @@ export const makeCursorSessionRepository = (
       Effect.map((db) => {
         try {
           return Cursor.parseStoreMeta(
-            db.all("select value from meta where key = '0'")[0]?.value,
+            allSafe(db, "select value from meta where key = '0'")[0]?.value,
           );
         } finally {
           db.close();
@@ -291,12 +308,12 @@ export const makeCursorSessionRepository = (
     Effect.gen(function* () {
       const db = yield* openStoreDb(`${chatDir}/store.db`);
       try {
-        const metaRow = db.all("select value from meta where key = '0'")[0];
+        const metaRow = allSafe(db, "select value from meta where key = '0'")[0];
         const meta = Cursor.parseStoreMeta(metaRow?.value);
         let workspace: string | undefined;
         const rootId = meta?.latestRootBlobId;
         if (rootId !== undefined && rootId !== "") {
-          const row = db.all("select data from blobs where id = ?", [rootId])[0];
+          const row = allSafe(db, "select data from blobs where id = ?", [rootId])[0];
           const data = row?.data;
           if (data instanceof Uint8Array) {
             workspace = Cursor.workspaceFromUri(Cursor.decodeCheckpoint(data)?.workspace);
@@ -357,10 +374,10 @@ export const makeCursorSessionRepository = (
       }
       const db = yield* openStoreDb(`${entry.dir}/store.db`);
       try {
-        const metaRow = db.all("select value from meta where key = '0'")[0];
+        const metaRow = allSafe(db, "select value from meta where key = '0'")[0];
         const meta = Cursor.parseStoreMeta(metaRow?.value);
         const blobs = new Map<string, Uint8Array>();
-        for (const row of db.all("select id, data from blobs")) {
+        for (const row of allSafe(db, "select id, data from blobs")) {
           if (typeof row.id === "string" && row.data instanceof Uint8Array) {
             blobs.set(row.id, row.data);
           }
@@ -541,17 +558,21 @@ export const makeCursorSessionRepository = (
           yield* Effect.try({
             try: () => {
               try {
-                run("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+                // the same pragmas + schema the agent's own
+                // `initializeDriver` runs (user_version 1, WAL)
+                run("PRAGMA journal_mode = WAL");
+                run("PRAGMA synchronous = NORMAL");
+                run("PRAGMA busy_timeout = 5000");
+                run("PRAGMA user_version = 1");
                 run("CREATE TABLE IF NOT EXISTS blobs (id TEXT PRIMARY KEY, data BLOB)");
+                run("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
                 for (const blob of plan.blobs) {
-                  run("INSERT OR IGNORE INTO blobs (id, data) VALUES (?, ?)", [
+                  run("INSERT OR REPLACE INTO blobs (id, data) VALUES (?, ?)", [
                     blob.id,
                     blob.data,
                   ]);
                 }
-                run("INSERT OR REPLACE INTO meta (key, value) VALUES ('0', ?)", [
-                  plan.metaRow,
-                ]);
+                run("INSERT OR REPLACE INTO meta (key, value) VALUES ('0', ?)", [plan.metaRow]);
               } finally {
                 db.close();
               }

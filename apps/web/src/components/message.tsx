@@ -1,5 +1,5 @@
 import { useState, type ComponentProps } from "react";
-import { CheckIcon, Copy01Icon, ReplyIcon } from "@hugeicons/core-free-icons";
+import { CheckIcon, Copy01Icon, ReplyIcon, RewindIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { Button } from "./ui/button";
@@ -100,6 +100,21 @@ export function MessageCopy({ text }: { readonly text: () => string }) {
       }}
     >
       <HugeiconsIcon icon={copied ? CheckIcon : Copy01Icon} strokeWidth={2} />
+    </Button>
+  );
+}
+
+/** Rewind action — truncates the session back to this message (after confirm). */
+export function MessageRewind({ onRewind }: { readonly onRewind: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      aria-label="Rewind session to this message"
+      title="Rewind to here"
+      onClick={onRewind}
+    >
+      <HugeiconsIcon icon={RewindIcon} strokeWidth={2} />
     </Button>
   );
 }

@@ -118,6 +118,59 @@ describe("SqliteStorage (real bun:sqlite)", () => {
     expect(Option.isNone(await Effect.runPromise(repo.getById("s1")))).toBe(true);
   });
 
+  test("truncateSessionNodes drops the node suffix and moves the tail markers", async () =>
+    withTempDir(async (dir) => {
+      const dbPath = join(dir, "store.db");
+      const repo = await Effect.runPromise(SqliteStorage.make(dbPath));
+      const full = Session.make({
+        id: "s1",
+        title: "Rewind me",
+        workingDirectory: "/work",
+        model: "swe-2-high",
+        createdAt: 1_700_000_000,
+        lastActivityAt: 1_700_000_400,
+        mainChainId: 3,
+        metadata: null,
+        nodes: [0, 1, 2, 3].map((nodeId) =>
+          MessageNode.make({
+            nodeId,
+            parentNodeId: nodeId === 0 ? Option.none() : Option.some(nodeId - 1),
+            role: nodeId % 2 === 0 ? "user" : "assistant",
+            content: `node ${nodeId}`,
+            createdAt: 1_700_000_000 + nodeId * 100,
+            metadata: null,
+          }),
+        ),
+        promptHistory: [
+          PromptHistoryEntry.make({ content: "node 0", timestamp: 1_700_000_000 }),
+          PromptHistoryEntry.make({ content: "node 2", timestamp: 1_700_000_200 }),
+        ],
+      });
+      await Effect.runPromise(repo.save(full));
+
+      // In-place rewind: delete nodes 2..3, point the session row at node 1.
+      await Effect.runPromise(
+        SqliteStorage.truncateSessionNodes(dbPath, "s1", {
+          removedNodeIds: [2, 3],
+          removedToolCallIds: [],
+          lastActivityAt: 1_700_000_100,
+          mainChainId: 1,
+        }),
+      );
+
+      // The server holds the store read-only; a second connection sees the cut.
+      const ro = await Effect.runPromise(SqliteStorage.make(dbPath, { readonly: true }));
+      const found = await Effect.runPromise(ro.getById("s1"));
+      expect(Option.isSome(found)).toBe(true);
+      if (Option.isSome(found)) {
+        expect(found.value.nodes.map((node) => node.nodeId)).toEqual([0, 1]);
+        expect(found.value.lastActivityAt).toBe(1_700_000_100);
+        expect(found.value.mainChainId).toBe(1);
+        // prompt_history is the input log — it is not conversation state.
+        expect(found.value.promptHistory.length).toBe(2);
+      }
+    }));
+
   test("a read-only store still reads but refuses writes", async () => {
     const dir = mkdtempSync(join(tmpdir(), "sepia-bun-ro-"));
     try {

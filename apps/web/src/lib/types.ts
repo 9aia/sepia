@@ -132,6 +132,8 @@ export type HistoryBlock =
 
 export interface HistoryMessage {
   role: HistoryRole;
+  /** The node this row came from — a `nodeId` rewind truncates after it. */
+  nodeId?: number;
   content: string;
   blocks?: HistoryBlock[];
   createdAt: number;
@@ -176,6 +178,12 @@ export interface SessionCheckpoint {
   createdAt: number;
   runCount?: number;
   kind?: string;
+}
+
+/** POST /api/sessions/:id/rewind — how many nodes the cut kept/dropped. */
+export interface RewindResult {
+  kept: number;
+  removed: number;
 }
 
 /** POST /api/sessions/:id/restore — per-file outcome report. */

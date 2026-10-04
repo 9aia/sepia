@@ -6,6 +6,7 @@ import type {
   HistoryPage,
   NodeDescriptor,
   RestoreResult,
+  RewindResult,
   SessionCheckpoint,
   SessionSummary,
   UserInfo,
@@ -242,6 +243,38 @@ export async function restoreSession(
 ): Promise<RestoreResult> {
   return request<RestoreResult>(
     `/api/sessions/${encodeURIComponent(id)}/restore${agentQuery(agent)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ confirm: true, ...selector }),
+    },
+    target,
+  );
+}
+
+/**
+ * A rewind call's selector: `{nodeId}` truncates the transcript after that
+ * node (a history row's `nodeId`); `{turns: n}` drops the last n user
+ * turns; `{checkpoint}` rewinds to a recorded snapshot ref. `confirm` is
+ * mandatory; the server refuses while the session is busy or held.
+ */
+export type RewindSelector =
+  | { readonly nodeId: number }
+  | { readonly turns: number }
+  | { readonly checkpoint: string };
+
+/**
+ * POST /api/sessions/:id/rewind — deletes stored conversation, not files
+ * (that's `restoreSession`). The session ends at the selector's point; a
+ * live attach is detached first.
+ */
+export async function rewindSession(
+  id: string,
+  selector: RewindSelector,
+  agent?: string,
+  target?: ApiTarget,
+): Promise<RewindResult> {
+  return request<RewindResult>(
+    `/api/sessions/${encodeURIComponent(id)}/rewind${agentQuery(agent)}`,
     {
       method: "POST",
       body: JSON.stringify({ confirm: true, ...selector }),

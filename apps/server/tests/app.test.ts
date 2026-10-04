@@ -51,8 +51,8 @@ const SESSION_JSON = {
 };
 
 const HISTORY: ReadonlyArray<HistoryMessage> = [
-  { role: "user", content: "hello", createdAt: 1 },
-  { role: "assistant", content: "hi", createdAt: 2 },
+  { role: "user", nodeId: 0, content: "hello", createdAt: 1 },
+  { role: "assistant", nodeId: 1, content: "hi", createdAt: 2 },
 ];
 
 /**
@@ -153,6 +153,11 @@ interface FakePlane {
     readonly request: unknown;
     readonly agentId?: string;
   }>;
+  readonly rewinds: Array<{
+    readonly id: string;
+    readonly request: unknown;
+    readonly agentId?: string;
+  }>;
 }
 
 const makeFakePlane = (): FakePlane => {
@@ -162,6 +167,7 @@ const makeFakePlane = (): FakePlane => {
   const permissions: Array<{ id: string; requestId: string; optionId: string | null }> = [];
   const created: Array<{ cwd: string; agentId?: string; title?: string }> = [];
   const restores: FakePlane["restores"] = [];
+  const rewinds: FakePlane["rewinds"] = [];
 
   const plane: ControlPlaneService = {
     listSessions: (options) =>
@@ -218,6 +224,13 @@ const makeFakePlane = (): FakePlane => {
               skipped: [],
             };
           }),
+    rewind: (id, request, agentId) =>
+      id === "missing"
+        ? failure("session not found: missing", "not_found")
+        : Effect.sync(() => {
+            rewinds.push({ id, request, agentId });
+            return { kept: 4, removed: 2 };
+          }),
     subscribe: (id, listener) =>
       Effect.sync(() => {
         listeners.set(id, listener);
@@ -239,6 +252,7 @@ const makeFakePlane = (): FakePlane => {
     permissions,
     created,
     restores,
+    rewinds,
     push: (id, events) => listeners.get(id)?.(events),
   };
 };
@@ -607,6 +621,72 @@ describe("createApp", () => {
     const { plane } = makeFakePlane();
     const response = await createApp(plane)(
       post("/api/sessions/missing/restore", { confirm: true, path: "a.ts" }),
+    );
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "session not found: missing",
+      code: "not_found",
+    });
+  });
+
+  it("POST /api/sessions/:id/rewind forwards a nodeId cut", async () => {
+    const { plane, rewinds } = makeFakePlane();
+    const response = await createApp(plane)(
+      post("/api/sessions/sess-1/rewind?agent=cline", { confirm: true, nodeId: 7 }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ kept: 4, removed: 2 });
+    expect(rewinds).toEqual([
+      { id: "sess-1", request: { confirm: true, nodeId: 7 }, agentId: "cline" },
+    ]);
+  });
+
+  it("POST /api/sessions/:id/rewind forwards turns and checkpoint selectors", async () => {
+    const { plane, rewinds } = makeFakePlane();
+    const app = createApp(plane);
+    await app(post("/api/sessions/sess-1/rewind", { confirm: true, turns: 2 }));
+    await app(post("/api/sessions/sess-1/rewind", { confirm: true, checkpoint: "abc123" }));
+    expect(rewinds.map((call) => call.request)).toEqual([
+      { confirm: true, turns: 2 },
+      { confirm: true, checkpoint: "abc123" },
+    ]);
+  });
+
+  it("POST /api/sessions/:id/rewind refuses without confirm", async () => {
+    const { plane, rewinds } = makeFakePlane();
+    const app = createApp(plane);
+
+    for (const body of [undefined, { nodeId: 1 }, { confirm: false, nodeId: 1 }]) {
+      const response = await app(post("/api/sessions/sess-1/rewind", body));
+      expect(response.status).toBe(400);
+    }
+    expect(rewinds).toEqual([]);
+  });
+
+  it("POST /api/sessions/:id/rewind validates selector types", async () => {
+    const { plane, rewinds } = makeFakePlane();
+    const app = createApp(plane);
+
+    for (const body of [
+      { confirm: true, nodeId: "a" },
+      { confirm: true, nodeId: -1 },
+      { confirm: true, nodeId: 1.5 },
+      { confirm: true, turns: 0 },
+      { confirm: true, turns: "2" },
+      { confirm: true, checkpoint: 3 },
+      "not-an-object",
+    ]) {
+      const response = await app(post("/api/sessions/sess-1/rewind", body));
+      expect(response.status).toBe(400);
+    }
+    expect(rewinds).toEqual([]);
+  });
+
+  it("POST /api/sessions/:id/rewind maps ControlError codes", async () => {
+    const { plane } = makeFakePlane();
+    const response = await createApp(plane)(
+      post("/api/sessions/missing/rewind", { confirm: true, nodeId: 1 }),
     );
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({

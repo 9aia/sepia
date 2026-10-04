@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import * as Cursor from "../src/Cursor.js";
 import * as CursorRepository from "../src/CursorRepository.js";
-import { MessageNode, Session, StorageError, ToolCall } from "../src/Domain.js";
+import { MessageNode, PromptHistoryEntry, Session, StorageError, ToolCall } from "../src/Domain.js";
 
 /* ------------------------------------------------------------- */
 /* fixture helpers                                                */
@@ -969,6 +969,7 @@ const writableSession = (
     readonly metadata?: unknown;
     readonly parentSessionId?: Option.Option<string>;
     readonly nodes?: ReadonlyArray<MessageNode>;
+    readonly promptHistory?: ReadonlyArray<PromptHistoryEntry>;
   } = {},
 ): Session =>
   Session.make({
@@ -982,7 +983,7 @@ const writableSession = (
     metadata: overrides.metadata ?? { source: "import" },
     parentSessionId: overrides.parentSessionId ?? Option.none(),
     nodes: overrides.nodes ?? writableNodes(),
-    promptHistory: [],
+    promptHistory: overrides.promptHistory ?? [],
   });
 
 const writableRepo = (
@@ -1070,6 +1071,46 @@ test("save fails cleanly when the store has no write surface", async () => {
   await expect(Effect.runPromise(repo.save(writableSession("c1", "/w")))).rejects.toThrow(
     /write surface/,
   );
+});
+
+test("save propagates a store write failure as a StorageError", async () => {
+  const root = makeTree({});
+  const repo = CursorRepository.makeCursorSessionRepository({
+    cursorDir: root,
+    openStoreDb: fakeStoreDb(new Map()),
+    openWritableStoreDb: () =>
+      Effect.succeed({
+        all: () => [],
+        run: () => {
+          throw new Error("database is readonly");
+        },
+        close: () => {},
+      }),
+  });
+  await expect(Effect.runPromise(repo.save(writableSession("c9", "/w")))).rejects.toThrow(
+    /Failed to write cursor store/,
+  );
+});
+
+test("default sqlite openers: StorageError outside Bun, real write inside", async () => {
+  // no injectable openers — `bun:sqlite` is unresolvable under vitest so
+  // reads degrade to a meta-only summary and writes surface the error;
+  // under `bun test` the same path writes a real store.db end-to-end.
+  const root = makeTree({ "chats/ws/chat-1/store.db": "" });
+  const repo = CursorRepository.makeCursorSessionRepository({ cursorDir: root });
+  const sessions = await Effect.runPromise(repo.list());
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0].id).toBe("chat-1");
+  if (typeof Bun === "undefined") {
+    await expect(Effect.runPromise(repo.save(writableSession("c1", "/w")))).rejects.toThrow(
+      /for writing/,
+    );
+    return;
+  }
+  await Effect.runPromise(repo.save(writableSession("c1", "/w")));
+  const read = Option.getOrThrow(await Effect.runPromise(repo.getById("c1")));
+  expect(read.nodes.map((n) => n.role)).toEqual(["user", "assistant"]);
+  expect((read.metadata as Record<string, unknown>).store).toBe("chats");
 });
 
 test("save reuses the recorded project slug and overwrites cleanly", async () => {
@@ -1259,11 +1300,15 @@ test("encodeStoreMeta and encodeMetaJson round-trip through their parsers", () =
     cwd: "/w",
   });
   // optional fields stay absent rather than serialising as nulls
-  expect(Cursor.parseMetaJson(Cursor.encodeMetaJson({
-    createdAtMs: 1,
-    updatedAtMs: 2,
-    hasConversation: false,
-  }))).toEqual({
+  expect(
+    Cursor.parseMetaJson(
+      Cursor.encodeMetaJson({
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        hasConversation: false,
+      }),
+    ),
+  ).toEqual({
     schemaVersion: 1,
     createdAtMs: 1,
     updatedAtMs: 2,
@@ -1356,7 +1401,9 @@ test("messageBlobsFromSession emits the shapes the reader decodes", () => {
     id: "t1",
     content: [{ type: "tool-result", toolCallId: "t1", toolName: "Shell", result: "ok" }],
     providerOptions: {
-      cursor: { highLevelToolCallResult: { output: { isError: false, success: { executionTime: 42 } } } },
+      cursor: {
+        highLevelToolCallResult: { output: { isError: false, success: { executionTime: 42 } } },
+      },
     },
   });
 });
@@ -1423,6 +1470,7 @@ test("storeWritePlan roots an empty session at the empty blob", () => {
 test("storeWritePlan preserves a prior createdAt and records cursor meta", () => {
   const session = writableSession("chat-z", "/w", {
     metadata: { mode: "ask", isRunEverything: true },
+    promptHistory: [PromptHistoryEntry.make({ content: "recorded", timestamp: 1 })],
   });
   const plan = Cursor.storeWritePlan(session, { createdAtMs: 1_600_000_000_000 });
   const meta = Cursor.parseStoreMeta(plan.metaRow);
@@ -1430,6 +1478,8 @@ test("storeWritePlan preserves a prior createdAt and records cursor meta", () =>
   expect(meta?.mode).toBe("ask");
   expect(meta?.isRunEverything).toBe(true);
   expect(meta?.lastUsedModel).toBe("composer-1");
+  // explicit prompt history beats node-derived fallbacks
+  expect(plan.promptHistoryJson).toBe('["recorded"]');
   // checkpoint ids all resolve to real blobs in the plan
   const checkpoint = plan.blobs[plan.blobs.length - 1];
   expect(checkpoint.id).toBe(plan.rootBlobId);

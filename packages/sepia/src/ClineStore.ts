@@ -35,7 +35,8 @@ const register = (
 const ownerIsAlive = (row: { status: string; pid: number }): boolean =>
   ClineIndex.isActiveRow(row, ClineIndex.isPidAlive(row.pid));
 
-const readIndexRow = (
+/** The session's index row (`{status, pid}`) — `Option.none` when the index is absent or has no row. */
+export const indexRow = (
   openDb: OpenSessionSqlite,
   fs: Fs.FileSystem,
   dbPath: string,
@@ -109,7 +110,7 @@ export const make = (openDb: OpenSessionSqlite, dataDir: string): ClineStoreServ
       const dbDir = path.join(dataDir, "db");
       const dbPath = path.join(dbDir, "sessions.db");
 
-      const existing = yield* readIndexRow(openDb, fs, dbPath, id);
+      const existing = yield* indexRow(openDb, fs, dbPath, id);
       if (Option.isSome(existing) && ownerIsAlive(existing.value)) {
         if (options?.force !== true) {
           return yield* Effect.fail(
