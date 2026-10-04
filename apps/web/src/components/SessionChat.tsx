@@ -634,8 +634,8 @@ function MessageRow({
           {role === "assistant" ? (
             <>
               {createdAt !== undefined && <span>{formatMessageTime(createdAt)}</span>}
-              <MessageReply onReply={() => setReplyTo({ role, content, createdAt })} />
               <MessageCopy text={() => content} />
+              <MessageReply onReply={() => setReplyTo({ role, content, createdAt })} />
             </>
           ) : (
             <>
