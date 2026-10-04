@@ -3,10 +3,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useAppHotkey } from "../lib/keybinds";
 import { useStore } from "@tanstack/react-store";
 import { ChatPanel } from "../components/ChatPanel";
+import { SessionDetailsDrawer } from "../components/session-list/SessionDetailsDrawer";
+import { useSessions } from "../hooks/query/useSessions";
+import { useDeleteSession } from "../hooks/query/useDeleteSession";
+import { resolveSession } from "../lib/format";
+import { setDetailsFor } from "../lib/store";
+import type { SessionSummary } from "../lib/types";
 import { SessionList } from "../components/SessionList";
 import { TokenGate } from "../components/TokenGate";
 import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";
-import { useSessions } from "../hooks/query/useSessions";
 import { useHealth } from "../hooks/query/useHealth";
 import { useQueryClient } from "@tanstack/react-query";
 import { EmptyScreen } from "../components/EmptyScreen";
@@ -109,6 +114,27 @@ function Home() {
       <SidebarInset>
         <ChatPanel />
       </SidebarInset>
+      <GlobalSessionDrawer />
     </SidebarProvider>
+  );
+}
+
+/** The details drawer lives outside <Sidebar> — on mobile the sidebar is a
+ * Sheet that unmounts its subtree when closed, which would take the drawer
+ * (and its state) with it. */
+function GlobalSessionDrawer() {
+  const { data: sessions = [] } = useSessions();
+  const details = useStore(sepiaStore, (state) => state.detailsFor);
+  const deleteMutation = useDeleteSession();
+  return (
+    <SessionDetailsDrawer
+      session={resolveSession(sessions, details?.id)}
+      focusRename={details?.rename ?? false}
+      onClose={() => setDetailsFor(null)}
+      onOpen={setSelectedId}
+      onDelete={(session: SessionSummary) =>
+        deleteMutation.mutate({ id: session.id, agent: session.agent })
+      }
+    />
   );
 }

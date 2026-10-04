@@ -32,7 +32,7 @@ import { resolveSession, sessionKey } from "../lib/format";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
-import { Sidebar } from "./ui/sidebar";
+import { Sidebar, useSidebar } from "./ui/sidebar";
 import { EmptyScreen } from "./EmptyScreen";
 import { CwdPicker } from "./session-list/CwdPicker";
 import {
@@ -44,7 +44,6 @@ import {
 import { settingsStore } from "../lib/settings";
 import { SessionTree } from "./session-list/SessionTree";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
-import { SessionDetailsDrawer } from "./session-list/SessionDetailsDrawer";
 import {
   FlatSection,
   ProjectNameDialog,
@@ -95,7 +94,6 @@ export function SessionList() {
   const statusFilter = (search.status as StatusFilter | undefined) ?? "all";
   const sort = (search.sort as SortKey | undefined) ?? "newest";
   const createMutation = useCreateSession();
-  const details = useStore(sepiaStore, (state) => state.detailsFor);
   const [modKey, setModKey] = useState("Ctrl");
   const [foldersOpen, setFoldersOpen] = useUiState("ui.section.folders", true);
   const newProjectFor = useStore(sepiaStore, (state) => state.newProjectFor);
@@ -109,6 +107,15 @@ export function SessionList() {
   const createCwd = useStore(sepiaStore, (state) => state.createCwd);
   const cwd = useStore(sepiaStore, (state) => state.cwd);
   const { data: user } = useUserInfo();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const selectAndClose = (key: string): void => {
+    setSelectedId(key);
+    if (isMobile) setOpenMobile(false);
+  };
+  const detailsAndClose = (id: string, rename: boolean): void => {
+    setDetailsFor({ id, rename });
+    if (isMobile) setOpenMobile(false);
+  };
   useEffect(() => {
     if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
   }, []);
@@ -116,6 +123,7 @@ export function SessionList() {
   // most recent session's > home.
   const resolvedCwd = cwd ?? settings.defaultCwd ?? sessions[0]?.cwd ?? user?.homedir ?? "/";
   const create = (dir: string): void => {
+    if (isMobile) setOpenMobile(false);
     const agent = settings.defaultAgent ?? agents[0]?.id;
     createMutation.mutate({
       cwd: dir,
@@ -256,8 +264,8 @@ export function SessionList() {
           recentSessions={recentSessions}
           selectedId={selectedId}
           resolvedCwd={resolvedCwd}
-          onSelect={setSelectedId}
-          onDetails={(id, rename) => setDetailsFor({ id, rename })}
+          onSelect={selectAndClose}
+          onDetails={detailsAndClose}
           onDelete={onDeleteSession}
         />
 
@@ -300,8 +308,8 @@ export function SessionList() {
                 selectedId={selectedId}
                 scrollRef={bodyScrollRef}
                 hotkeyTarget={asideRef}
-                onSelect={setSelectedId}
-                onDetails={(id, rename) => setDetailsFor({ id, rename })}
+                onSelect={selectAndClose}
+                onDetails={detailsAndClose}
                 onDelete={onDeleteSession}
                 onNewSession={setCreateCwd}
               />
@@ -316,8 +324,8 @@ export function SessionList() {
             limit={20}
             sessions={archivedSessions}
             selectedId={selectedId}
-            onSelect={setSelectedId}
-            onDetails={(id, rename) => setDetailsFor({ id, rename })}
+            onSelect={selectAndClose}
+            onDetails={detailsAndClose}
             onDelete={onDeleteSession}
           />
         )}
@@ -345,14 +353,6 @@ export function SessionList() {
           }}
         />
       )}
-      <SessionDetailsDrawer
-        session={resolveSession(sessions, details?.id)}
-        focusRename={details?.rename ?? false}
-        onClose={() => setDetailsFor(null)}
-        onOpen={setSelectedId}
-        onDelete={onDeleteSession}
-      />
-
       <UserProfile />
     </Sidebar>
   );

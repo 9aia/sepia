@@ -95,13 +95,15 @@ export function UserProfile() {
             <HugeiconsIcon icon={Settings02Icon} strokeWidth={2} />
             Settings
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
           {hasKeyboard && (
-            <DropdownMenuItem onClick={() => setSettingsOpen(true, "keyboard")}>
-              <HugeiconsIcon icon={KeyboardIcon} strokeWidth={2} />
-              Keyboard shortcuts
-              <DropdownMenuShortcut>?</DropdownMenuShortcut>
-            </DropdownMenuItem>
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setSettingsOpen(true, "keyboard")}>
+                <HugeiconsIcon icon={KeyboardIcon} strokeWidth={2} />
+                Keyboard shortcuts
+                <DropdownMenuShortcut>?</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            </>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
