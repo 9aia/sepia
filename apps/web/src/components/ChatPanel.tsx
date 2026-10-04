@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import { BubbleChatIcon } from "@hugeicons/core-free-icons";
@@ -104,10 +104,18 @@ export function ChatPanel() {
     setLiveMessages((live) => (liveCoveredByHistory(live, historyMessages) ? [] : live));
   }, [running, historyMessages]);
 
+  // Clear per-session state only when the session actually changes. The
+  // effect also re-runs when attachReady flips (e.g. after a takeover) —
+  // clearing there would wipe the optimistic row a held send just added
+  // (child effects run before this parent's).
+  const clearedFor = useRef<string | null>(null);
   useEffect(() => {
-    setPermissions([]);
-    setRunning(false);
-    setLiveMessages([]);
+    if (clearedFor.current !== sessionId) {
+      clearedFor.current = sessionId;
+      setPermissions([]);
+      setRunning(false);
+      setLiveMessages([]);
+    }
     // The stream subscribes to live-session events; it only exists once the
     // agent is attached, otherwise every request just races a 400.
     if (!sessionId || !attachReady) return;

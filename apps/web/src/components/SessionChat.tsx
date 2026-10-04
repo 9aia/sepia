@@ -45,7 +45,7 @@ import {
 } from "./ui/message-scroller";
 import { MessageResponse } from "./streamdown";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./ai-elements/reasoning";
-import { Tool, ToolContent, ToolHeader } from "./ai-elements/tool";
+import { ToolCall } from "./tool-call";
 import {
   PromptInput,
   PromptInputBody,
@@ -62,17 +62,7 @@ function RowContent({ row }: { readonly row: ChatRow }) {
     const message = row.message;
     if (message.toolName !== undefined) {
       return (
-        <Tool defaultOpen={false}>
-          <ToolHeader
-            type="dynamic-tool"
-            toolName={message.toolName}
-            state="output-available"
-            title={message.toolName}
-          />
-          <ToolContent>
-            <MessageResponse>{message.content}</MessageResponse>
-          </ToolContent>
-        </Tool>
+        <ToolCall toolName={message.toolName ?? "tool"} done={true} content={message.content} />
       );
     }
     return (
@@ -87,17 +77,11 @@ function RowContent({ row }: { readonly row: ChatRow }) {
   const message = row.message;
   if (message.role === "tool") {
     return (
-      <Tool defaultOpen={false}>
-        <ToolHeader
-          type="dynamic-tool"
-          toolName={message.toolName ?? "tool"}
-          state={message.done ? "output-available" : "input-streaming"}
-          title={message.toolName ?? "tool"}
-        />
-        <ToolContent>
-          <MessageResponse>{message.content}</MessageResponse>
-        </ToolContent>
-      </Tool>
+      <ToolCall
+        toolName={message.toolName ?? "tool"}
+        done={message.done}
+        content={message.content}
+      />
     );
   }
   if (message.role === "status") {

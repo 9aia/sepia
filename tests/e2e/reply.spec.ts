@@ -44,8 +44,13 @@ describe("replying to a message", () => {
       .first();
     await row.waitFor({ state: "visible", timeout: 30_000 });
     const author = (await row.getAttribute("data-align")) === "end" ? "You" : "Assistant";
-    const quoted = squash(await row.locator('[data-slot="bubble-content"]').innerText());
-    expect(quoted.length).toBeGreaterThan(0);
+    // textContent — innerText is render-dependent and virtualized rows can
+    // report "" mid-relayout.
+    const bubble = row.locator('[data-slot="bubble-content"]').first();
+    await expect
+      .poll(async () => squash((await bubble.textContent()) ?? ""), { timeout: 10_000 })
+      .not.toBe("");
+    const quoted = squash((await bubble.textContent()) ?? "");
 
     // Footer actions reveal on hover/focus.
     await row.hover();
