@@ -6,7 +6,7 @@ import { MessageResponse } from "./streamdown";
 
 /**
  * A tool call — the collapsed state is a Marker line (icon + name + status),
- * expanding shows the args/result. Replaces the ai-elements Tool card.
+ * expanding shows the args/result.
  */
 export function ToolCall({
   toolName,

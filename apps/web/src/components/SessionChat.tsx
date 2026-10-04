@@ -44,7 +44,7 @@ import {
   MessageScrollerViewport,
 } from "./ui/message-scroller";
 import { MessageResponse } from "./streamdown";
-import { Reasoning, ReasoningContent, ReasoningTrigger } from "./ai-elements/reasoning";
+import { ReasoningBlock } from "./reasoning-block";
 import { ToolCall } from "./tool-call";
 import {
   PromptInput,
@@ -54,7 +54,7 @@ import {
   PromptInputTextarea,
   PromptInputTools,
   type PromptInputMessage,
-} from "./ai-elements/prompt-input";
+} from "./prompt-input";
 
 function RowContent({ row }: { readonly row: ChatRow }) {
   if (row.kind === "system") return <SystemContextRow context={row.context} />;
@@ -92,12 +92,7 @@ function RowContent({ row }: { readonly row: ChatRow }) {
     );
   }
   if (message.role === "reasoning") {
-    return (
-      <Reasoning isStreaming={!message.done}>
-        <ReasoningTrigger />
-        <ReasoningContent>{message.content}</ReasoningContent>
-      </Reasoning>
-    );
+    return <ReasoningBlock done={message.done} content={message.content} />;
   }
   return (
     <MessageRow
