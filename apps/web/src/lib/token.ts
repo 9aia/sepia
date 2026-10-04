@@ -13,6 +13,19 @@ export const getToken = (): string | null => {
   }
 };
 
+const listeners = new Set<() => void>();
+
+/**
+ * Fires after `setToken` — the /api/events feed re-subscribes with the new
+ * credential without polling localStorage.
+ */
+export const onTokenChange = (listener: () => void): (() => void) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+
 export const setToken = (token: string | null): void => {
   try {
     if (token === null || token === "") localStorage.removeItem(TOKEN_KEY);
@@ -20,4 +33,5 @@ export const setToken = (token: string | null): void => {
   } catch {
     // Storage unavailable (private mode); the gate keeps asking.
   }
+  for (const listener of listeners) listener();
 };

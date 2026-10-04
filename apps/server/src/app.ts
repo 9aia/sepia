@@ -17,6 +17,13 @@ import type {
   Unsubscribe,
 } from "sepia-session-control";
 import { createAguiAgentHandler } from "./agui-agent";
+import {
+  busyFromEvents,
+  createEventFeed,
+  instrumentMeta,
+  sessionPayload,
+  type NodeEventFeed,
+} from "./events";
 import type { MetaStore } from "./meta";
 import { PROTOCOL_VERSION, type NodeIdentity } from "./node";
 import type { ServerStore } from "./servers";
@@ -256,6 +263,78 @@ const streamResponse = async (
   return new Response(stream, { headers: { ...sseHeaders, ...cors } });
 };
 
+const frame = (kind: string, payload: Record<string, unknown>): string =>
+  `event: ${kind}\ndata: ${JSON.stringify(payload)}\n\n`;
+
+/**
+ * `GET /api/events` — the node-level feed (docs/protocol.md). Each
+ * connection drains a bounded subscription into an SseChannel; the channel
+ * kills the stream when the client stops draining, so a slow consumer never
+ * wedges the feed (clients refetch on reconnect anyway). Heartbeats ride
+ * the stream as real `heartbeat` events rather than comment pings.
+ */
+const eventsResponse = (
+  feed: NodeEventFeed,
+  signal: AbortSignal,
+  cors: Record<string, string>,
+  keepAliveMs: number,
+): Response => {
+  const sub = feed.subscribe();
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  const stop = (): void => {
+    sub.close();
+    if (heartbeat !== null) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
+  };
+  const channel = new SseChannel({ keepAliveMs: 0, onTerminate: stop });
+
+  void (async () => {
+    for (;;) {
+      const event = await sub.next();
+      if (event === undefined) return;
+      channel.push(frame(event.kind, event.payload));
+    }
+  })();
+
+  if (keepAliveMs > 0) {
+    heartbeat = setInterval(() => {
+      channel.push(frame("heartbeat", { ts: Date.now() }));
+    }, keepAliveMs);
+    heartbeat.unref?.();
+  }
+
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        channel.start(controller);
+        const close = () => {
+          stop();
+          channel.close();
+          try {
+            controller.close();
+          } catch {
+            // Already closed by the consumer.
+          }
+        };
+        if (signal.aborted) close();
+        else signal.addEventListener("abort", close, { once: true });
+      },
+      pull() {
+        channel.onPull();
+      },
+      cancel() {
+        stop();
+        channel.close();
+      },
+    },
+    { highWaterMark: 1 },
+  );
+
+  return new Response(stream, { headers: { ...sseHeaders, ...cors } });
+};
+
 /**
  * The real store write behind `POST /api/sessions/import`: the rebuilt IR
  * session goes through the same paths as `/convert` — Cline's install writes
@@ -298,6 +377,42 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     version: "0.0.0",
   };
 
+  // The node event feed (docs/protocol.md): one emitter per app, drained by
+  // each GET /api/events connection. The meta overlay is instrumented so
+  // every title/pin/project write emits meta/project events automatically.
+  const feed = createEventFeed();
+  const metaStore = options.meta === undefined ? undefined : instrumentMeta(options.meta, feed);
+
+  // Push subscriptions + a per-session listener that turns live AG-UI events
+  // into notifications and `busy` feed events even when no client has the
+  // session open. These live at app scope — per-request maps used to leak a
+  // fresh plane.subscribe() on every attach.
+  const push = metaStore !== undefined ? makePushStore(metaStore) : null;
+  const liveUnsubs = new Map<string, () => void>();
+  const sessionTitles = new Map<string, string>();
+  const registerLiveListener = (id: string, agentId?: string): void => {
+    if (liveUnsubs.has(id)) return;
+    void run(
+      Effect.either(
+        plane.subscribe(
+          id,
+          (events) => {
+            if (push !== null) {
+              notifyForEvents(push, id, agentId, sessionTitles.get(id) ?? id, events);
+            }
+            const busy = busyFromEvents(events);
+            if (busy !== undefined) {
+              feed.emit("session", sessionPayload(id, agentId, { busy }));
+            }
+          },
+          agentId,
+        ),
+      ),
+    ).then((result) => {
+      if (Either.isRight(result)) liveUnsubs.set(id, result.right);
+    });
+  };
+
   const route = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const method = request.method.toUpperCase();
@@ -306,28 +421,6 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     if (method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
     }
-
-    // Push subscriptions + a per-session listener that turns live events into
-    // notifications even when no client has the session open.
-    const push = options.meta !== undefined ? makePushStore(options.meta) : null;
-    const pushUnsubs = new Map<string, () => void>();
-    const sessionTitles = new Map<string, string>();
-    const registerPushListener = (id: string, agentId?: string): void => {
-      if (push === null || pushUnsubs.has(id)) return;
-      void run(
-        Effect.either(
-          plane.subscribe(
-            id,
-            (events) => {
-              notifyForEvents(push, id, agentId, sessionTitles.get(id) ?? id, events);
-            },
-            agentId,
-          ),
-        ),
-      ).then((result) => {
-        if (Either.isRight(result)) pushUnsubs.set(id, result.right);
-      });
-    };
 
     const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
     // Session ids collide across agents (devin and cline mint their own), so
@@ -469,13 +562,19 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       return jsonResponse({ agents: plane.listAgents() }, 200, cors);
     }
 
+    // The node event feed — same CORS + bearer rules as /api/sessions/:id/stream
+    // (EventSource clients authenticate via ?access_token).
+    if (method === "GET" && segmentsEqual(segments, ["api", "events"])) {
+      return eventsResponse(feed, request.signal, cors, keepAliveMs);
+    }
+
     if (method === "GET" && segmentsEqual(segments, ["api", "sessions"])) {
       const withLocks = url.searchParams.get("withLocks") === "1";
       return respond(run, plane.listSessions({ withLocks }), cors, {
         shape: (sessions) => {
           const overlaid = sessions.map((session) => {
             sessionTitles.set(session.id, session.title);
-            const meta = options.meta?.of(session.id);
+            const meta = metaStore?.of(session.id);
             return {
               ...session,
               title: meta?.title ?? session.title,
@@ -490,7 +589,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           // the agent's store survive restarts only in the meta file —
           // surface them so they stay reachable.
           const known = new Set(sessions.map((session) => session.id));
-          const pending = Object.entries(options.meta?.sessions() ?? {}).flatMap(([id, meta]) =>
+          const pending = Object.entries(metaStore?.sessions() ?? {}).flatMap(([id, meta]) =>
             known.has(id) || typeof meta.agent !== "string" || typeof meta.cwd !== "string"
               ? []
               : [
@@ -562,10 +661,18 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         .pipe(
           Effect.tap(({ id, agentId: createdAgent }) =>
             Effect.sync(() => {
+              feed.emit(
+                "session",
+                sessionPayload(id, createdAgent, {
+                  created: true,
+                  cwd,
+                  ...(title !== undefined ? { title } : {}),
+                }),
+              );
               // The agent may not flush the session to its store until the
               // first prompt; keep enough meta to identify it after a restart.
-              registerPushListener(id, createdAgent);
-              options.meta?.patch(id, {
+              registerLiveListener(id, createdAgent);
+              metaStore?.patch(id, {
                 agent: createdAgent,
                 cwd,
                 createdAt: new Date().toISOString(),
@@ -659,9 +766,10 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       const asControl = executor(session, target).pipe(
         Effect.tap((sessionId) =>
           Effect.sync(() => {
+            feed.emit("session", sessionPayload(sessionId, target, { created: true }));
             // Provenance: the imported copy's run continues under `target` on
             // this node — same record an attach would write.
-            options.meta?.addSpan(sessionId, runSpan);
+            metaStore?.addSpan(sessionId, runSpan);
           }),
         ),
         Effect.mapError(
@@ -685,7 +793,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           lockHolderPid: null,
           source: target,
           busy: false,
-          spans: options.meta === undefined ? [] : [runSpan],
+          spans: metaStore === undefined ? [] : [runSpan],
         }),
         span: "http.post /api/sessions/import",
       });
@@ -697,7 +805,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       segments[1] === "sessions" &&
       segments.length === 3
     ) {
-      const meta = options.meta;
+      const meta = metaStore;
       if (meta === undefined) {
         return jsonResponse({ error: "Rename is not configured on this server" }, 501, cors);
       }
@@ -756,11 +864,11 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     const INTERNAL_CONFIG = new Set(["vapid", "pushSubscriptions"]);
     const publicConfig = (): Record<string, unknown> =>
       Object.fromEntries(
-        Object.entries(options.meta?.config() ?? {}).filter(([key]) => !INTERNAL_CONFIG.has(key)),
+        Object.entries(metaStore?.config() ?? {}).filter(([key]) => !INTERNAL_CONFIG.has(key)),
       );
 
     if (method === "GET" && segmentsEqual(segments, ["api", "config"])) {
-      const meta = options.meta;
+      const meta = metaStore;
       if (meta === undefined) {
         return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
       }
@@ -773,7 +881,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       segments[1] === "config" &&
       segments.length === 3
     ) {
-      const meta = options.meta;
+      const meta = metaStore;
       if (meta === undefined) {
         return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
       }
@@ -792,7 +900,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     }
 
     if (method === "GET" && segmentsEqual(segments, ["api", "projects"])) {
-      const meta = options.meta;
+      const meta = metaStore;
       if (meta === undefined) {
         return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
       }
@@ -800,7 +908,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     }
 
     if (method === "POST" && segmentsEqual(segments, ["api", "projects"])) {
-      const meta = options.meta;
+      const meta = metaStore;
       if (meta === undefined) {
         return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
       }
@@ -823,7 +931,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       segments[1] === "projects" &&
       segments.length === 3
     ) {
-      const meta = options.meta;
+      const meta = metaStore;
       if (meta === undefined) {
         return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
       }
@@ -850,7 +958,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       segments[1] === "projects" &&
       segments.length === 3
     ) {
-      const meta = options.meta;
+      const meta = metaStore;
       if (meta === undefined) {
         return jsonResponse({ error: "Meta is not configured on this server" }, 501, cors);
       }
@@ -899,6 +1007,11 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         return jsonResponse({ error: "agent must be 'cline' or 'devin'" }, 400, cors);
       }
       const asControl = effect.pipe(
+        Effect.tap((sessionId) =>
+          Effect.sync(() => {
+            feed.emit("session", sessionPayload(sessionId, target, { created: true }));
+          }),
+        ),
         Effect.mapError(
           (error) =>
             new ControlError({
@@ -928,7 +1041,12 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           (error) => error.code === "not_found",
           () => Effect.void,
         ),
-        Effect.tap(() => Effect.sync(() => options.meta?.remove(id))),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            feed.emit("session", sessionPayload(id, agentParam, { deleted: true }));
+            metaStore?.remove(id);
+          }),
+        ),
       );
       return respond(run, deletion, cors, {
         shape: () => ({ ok: true }),
@@ -999,12 +1117,13 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           plane.attach(id, { takeover, model, fallbacks, agentId: agentParam }).pipe(
             Effect.tap((result) =>
               Effect.sync(() => {
-                registerPushListener(id, agentParam);
+                registerLiveListener(id, agentParam);
+                feed.emit("session", sessionPayload(id, result.agentId, { live: result.attached }));
                 // Provenance: an attach means the run continues under this
                 // node's control plane — record which agent + node own the
                 // span. Idempotent, so a same-agent re-attach doesn't dup.
                 if (result.attached) {
-                  options.meta?.addSpan(id, {
+                  metaStore?.addSpan(id, {
                     at: Date.now(),
                     agent: result.agentId,
                     node: node.id,

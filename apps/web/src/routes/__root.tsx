@@ -9,6 +9,7 @@ import { AlertCircleIcon, FileNotFoundIcon } from "@hugeicons/core-free-icons";
 import { EmptyScreen } from "../components/EmptyScreen";
 import { Button } from "../components/ui/button";
 import { queryClient } from "../hooks/query/queryClient";
+import { startNodeEventFeeds } from "../lib/events";
 import appCss from "../style.css?url";
 
 function RouteError({ error, reset }: { error: unknown; reset: () => void }) {
@@ -66,6 +67,11 @@ function RootComponent() {
       void navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
   }, []);
+
+  // One /api/events SSE stream per registered node — the federation
+  // live-update path that replaces polling. Events invalidate the matching
+  // query keys; EventSource reconnection is silent and automatic.
+  useEffect(() => startNodeEventFeeds(queryClient), []);
 
   // Theme — "system" follows the OS; toggles a .light class on <html>.
   useEffect(() => {
