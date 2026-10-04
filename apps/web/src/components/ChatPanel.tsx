@@ -182,12 +182,7 @@ export function ChatPanel() {
 
   return (
     <section className="flex h-svh flex-col overflow-hidden">
-      <ChatHeader
-        session={session}
-        readOnly={readOnly}
-        running={running}
-        streamStatus={streamStatus}
-      />
+      <ChatHeader session={session} running={running} streamStatus={streamStatus} />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {attachError !== null && <ErrorBanner>{attachError}</ErrorBanner>}

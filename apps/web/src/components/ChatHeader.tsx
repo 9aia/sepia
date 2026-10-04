@@ -38,12 +38,11 @@ import { SessionActions } from "./session-list/SessionActions";
 
 interface ChatHeaderProps {
   readonly session: SessionSummary;
-  readonly readOnly: boolean;
   readonly running: boolean;
   readonly streamStatus: StreamStatus;
 }
 
-export function ChatHeader({ session, readOnly, running, streamStatus }: ChatHeaderProps) {
+export function ChatHeader({ session, running, streamStatus }: ChatHeaderProps) {
   const deleteMutation = useDeleteSession();
   const [confirmOpen, setConfirmOpen] = useState(false);
   return (

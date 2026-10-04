@@ -4,6 +4,7 @@ import { useHotkey } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
 import { AlertCircleIcon, FolderOpenIcon, SearchAreaIcon } from "@hugeicons/core-free-icons";
 import { sepiaStore, setCreateCwd, setDetailsFor, setSelectedId } from "../lib/store";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
@@ -55,11 +56,16 @@ export function SessionList() {
   const deleteMutation = useDeleteSession();
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
   const settings = useStore(settingsStore);
-  const [filter, setFilter] = useState("");
-  const [agentFilter, setAgentFilter] = useState<string[]>([]);
-  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [sort, setSort] = useState<SortKey>("newest");
+  const navigate = useNavigate({ from: "/" });
+  const search = useSearch({ from: "/" });
+  const patchSearch = (update: Record<string, string | undefined>): void => {
+    void navigate({ search: (prev) => ({ ...prev, ...update }), replace: true });
+  };
+  const filter = search.q ?? "";
+  const agentFilter = search.agents?.split(",").filter((a) => a !== "") ?? [];
+  const dateFilter = (search.date as DateFilter | undefined) ?? "all";
+  const statusFilter = (search.status as StatusFilter | undefined) ?? "all";
+  const sort = (search.sort as SortKey | undefined) ?? "newest";
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const details = useStore(sepiaStore, (state) => state.detailsFor);
   const [modKey, setModKey] = useState("Ctrl");
@@ -114,7 +120,7 @@ export function SessionList() {
   useHotkey(
     "Escape",
     () => {
-      setFilter("");
+      patchSearch({ q: undefined });
       filterRef.current?.blur();
     },
     { target: filterRef },
@@ -150,15 +156,18 @@ export function SessionList() {
           dateFilter={dateFilter}
           statusFilter={statusFilter}
           sort={sort}
-          onFilterChange={setFilter}
-          onToggleAgent={(id, checked) =>
-            setAgentFilter((prev) =>
-              checked ? [...prev, id] : prev.filter((agent) => agent !== id),
-            )
+          onFilterChange={(q) => patchSearch({ q: q === "" ? undefined : q })}
+          onToggleAgent={(id, checked) => {
+            const next = checked
+              ? [...agentFilter, id]
+              : agentFilter.filter((agent) => agent !== id);
+            patchSearch({ agents: next.length === 0 ? undefined : next.join(",") });
+          }}
+          onDateFilterChange={(value) => patchSearch({ date: value === "all" ? undefined : value })}
+          onStatusFilterChange={(value) =>
+            patchSearch({ status: value === "all" ? undefined : value })
           }
-          onDateFilterChange={setDateFilter}
-          onStatusFilterChange={setStatusFilter}
-          onSortChange={setSort}
+          onSortChange={(value) => patchSearch({ sort: value === "newest" ? undefined : value })}
         />
 
         <SessionSections
