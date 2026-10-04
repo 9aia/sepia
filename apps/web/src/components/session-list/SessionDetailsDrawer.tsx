@@ -210,7 +210,7 @@ export function SessionDetailsDrawer({
               <div>
                 <DrawerTitle>Session details</DrawerTitle>
                 <DrawerDescription>
-                  Rename lives here as an overlay — the underlying agent store is read-only.
+                  The underlying agent store is read-only.
                 </DrawerDescription>
               </div>
               <DrawerClose
