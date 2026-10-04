@@ -49,7 +49,7 @@ export function ChatHeader({ session, running }: ChatHeaderProps) {
       <SidebarTrigger />
       <button
         type="button"
-        className="min-w-0 flex-1 cursor-pointer rounded-md px-1 py-0.5 text-left transition-colors hover:bg-accent/60"
+        className="min-w-0 flex-1 cursor-pointer rounded-md px-1 py-0.5 text-left transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         aria-label={`Session details: ${session.title}`}
         onClick={() => setDetailsFor({ id: sessionKey(session), rename: false })}
       >

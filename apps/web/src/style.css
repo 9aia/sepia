@@ -90,15 +90,19 @@ html.light {
     border-color: var(--border);
     outline-color: var(--ring);
   }
-  /* One focus style for everything: a 2px primary outline, offset inside
-   * the element. A positive offset would be clipped by overflow-hidden
-   * ancestors (every scroll area) — negative offset draws inside the border
-   * box, so it can never be clipped and follows border-radius. */
+  /* Focus is per-component: outward rings on standalone controls, inset
+   * rings inside scroll containers (positive offsets clip against
+   * overflow-hidden parents), accent fill on menu items.
+   * This is the *fallback* for focusables with no component ring —
+   * components carrying focus-visible:ring-* utilities are excluded, and
+   * so are menu items/options (bg-highlight is their focus affordance). */
   *:focus {
     outline: none;
   }
-  *:focus-visible {
-    outline: 2px solid var(--primary);
+  *:focus-visible:not([class*="focus-visible:ring"]):not([role="menuitem"]):not(
+      [role="option"]
+    ):not([data-slot$="-item"]) {
+    outline: 2px solid var(--ring);
     outline-offset: -2px;
   }
 }

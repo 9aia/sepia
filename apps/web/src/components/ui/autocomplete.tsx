@@ -66,7 +66,7 @@ function AutocompleteItem({ className, ...props }: AutocompleteItemProps) {
   return (
     <AutocompletePrimitive.Item
       className={cn(
-        "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs data-highlighted:bg-accent data-highlighted:text-accent-foreground",
+        "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs outline-hidden data-highlighted:bg-accent data-highlighted:text-accent-foreground",
         className,
       )}
       {...props}
