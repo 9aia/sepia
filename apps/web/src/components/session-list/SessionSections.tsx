@@ -202,24 +202,36 @@ export function SectionHeader({
   readonly action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between px-3 pt-5 pb-1">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex items-center gap-1 rounded-md py-0.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-        aria-expanded={open}
-      >
-        {label}
-        <HugeiconsIcon
-          icon={ChevronRightIcon}
-          strokeWidth={2}
-          className={`size-3.5 transition-all ${
-            open ? "rotate-90 opacity-0 group-hover/section:opacity-100" : ""
-          }`}
-        />
-      </button>
-      <span className="opacity-0 transition-opacity group-hover/section:opacity-100">{action}</span>
-    </div>
+    <ContextMenu>
+      <ContextMenuTrigger className="block">
+        <div className="flex items-center justify-between px-3 pt-5 pb-1">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="flex items-center gap-1 rounded-md py-0.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            aria-expanded={open}
+          >
+            {label}
+            <HugeiconsIcon
+              icon={ChevronRightIcon}
+              strokeWidth={2}
+              className={`size-3.5 transition-all ${
+                open ? "rotate-90 opacity-0 group-hover/section:opacity-100" : ""
+              }`}
+            />
+          </button>
+          <span className="opacity-0 transition-opacity group-hover/section:opacity-100">
+            {action}
+          </span>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={onToggle}>
+          <HugeiconsIcon icon={ChevronRightIcon} strokeWidth={2} />
+          {open ? "Collapse" : "Expand"} section
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -326,6 +338,47 @@ export function ProjectNameDialog({
   );
 }
 
+/**
+ * Project row actions — shared by the ⋯ dropdown and the right-click context
+ * menu. Item is the menu item primitive of whichever menu hosts it.
+ */
+function ProjectActions({
+  project,
+  Item,
+  onDetails,
+  onAdd,
+  onRename,
+  onDelete,
+}: {
+  readonly project: Project;
+  readonly Item: typeof ContextMenuItem;
+  onDetails: (project: Project) => void;
+  onAdd: (project: Project) => void;
+  onRename: (project: Project) => void;
+  onDelete: (project: Project) => void;
+}) {
+  return (
+    <>
+      <Item onClick={() => onDetails(project)}>
+        <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
+        Project details
+      </Item>
+      <Item onClick={() => onAdd(project)}>
+        <HugeiconsIcon icon={UserAdd01Icon} strokeWidth={2} />
+        Add session…
+      </Item>
+      <Item onClick={() => onRename(project)}>
+        <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
+        Rename project
+      </Item>
+      <Item variant="destructive" onClick={() => onDelete(project)}>
+        <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+        Delete project
+      </Item>
+    </>
+  );
+}
+
 function ProjectsSection({
   projects,
   sessions,
@@ -415,79 +468,81 @@ function ProjectsSection({
           const members = membersByProject.get(project.id) ?? [];
           const open = !collapsed[project.id];
           return (
-            <div key={project.id} className="group/row">
-              <div className="relative px-1.5">
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
-                  onClick={() =>
-                    setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
-                  }
-                >
-                  <HugeiconsIcon
-                    icon={ChevronRightIcon}
-                    strokeWidth={2}
-                    className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
-                  />
-                  <HugeiconsIcon
-                    icon={FolderLibraryIcon}
-                    strokeWidth={2}
-                    className="size-4 shrink-0 text-muted-foreground"
-                  />
-                  <span className="min-w-0 flex-1 truncate font-medium" title={project.name}>
-                    {project.name}
-                  </span>
-                </button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="absolute top-1/2 right-8 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
-                  aria-label={`New session in project ${project.name}`}
-                  title="New session here"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    newSessionIn(project, members);
-                  }}
-                >
-                  <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
-                        aria-label={`Actions for project ${project.name}`}
-                        title="Project actions"
-                      />
+            <ContextMenu key={project.id}>
+              <ContextMenuTrigger className="group/row relative block">
+                <div className="relative px-1.5">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60"
+                    onClick={() =>
+                      setCollapsed((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
                     }
-                    onClick={(event) => event.stopPropagation()}
                   >
-                    <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-44">
-                    <DropdownMenuItem onClick={() => setDetailsFor(project)}>
-                      <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
-                      Project details
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setAddFor(project)}>
-                      <HugeiconsIcon icon={UserAdd01Icon} strokeWidth={2} />
-                      Add session…
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setDialog({ id: project.id, name: project.name })}
+                    <HugeiconsIcon
+                      icon={ChevronRightIcon}
+                      strokeWidth={2}
+                      className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+                    />
+                    <HugeiconsIcon
+                      icon={FolderLibraryIcon}
+                      strokeWidth={2}
+                      className="size-4 shrink-0 text-muted-foreground"
+                    />
+                    <span className="min-w-0 flex-1 truncate font-medium" title={project.name}>
+                      {project.name}
+                    </span>
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="absolute top-1/2 right-8 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                    aria-label={`New session in project ${project.name}`}
+                    title="New session here"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      newSessionIn(project, members);
+                    }}
+                  >
+                    <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                          aria-label={`Actions for project ${project.name}`}
+                          title="Project actions"
+                        />
+                      }
+                      onClick={(event) => event.stopPropagation()}
                     >
-                      <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-                      Rename project
-                    </DropdownMenuItem>
-                    <DropdownMenuItem variant="destructive" onClick={() => setDeleteFor(project)}>
-                      <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-                      Delete project
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+                      <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-44">
+                      <ProjectActions
+                        project={project}
+                        Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
+                        onDetails={setDetailsFor}
+                        onAdd={setAddFor}
+                        onRename={(p) => setDialog({ id: p.id, name: p.name })}
+                        onDelete={setDeleteFor}
+                      />
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="w-44">
+                <ProjectActions
+                  project={project}
+                  Item={ContextMenuItem}
+                  onDetails={setDetailsFor}
+                  onAdd={setAddFor}
+                  onRename={(p) => setDialog({ id: p.id, name: p.name })}
+                  onDelete={setDeleteFor}
+                />
+              </ContextMenuContent>
               {open && (
                 <div className="ml-4 flex flex-col gap-1 border-l border-border/50 pl-3">
                   {members.length === 0 && (
@@ -505,7 +560,7 @@ function ProjectsSection({
                   ))}
                 </div>
               )}
-            </div>
+            </ContextMenu>
           );
         })}
       {dialog !== null && (
