@@ -203,7 +203,7 @@ export function SessionDetailsDrawer({
         if (!open) onClose();
       }}
     >
-      <DrawerContent className="[--drawer-content-height:100dvh] [--drawer-content-width:22rem]">
+      <DrawerContent className="[--drawer-content-height:calc(100dvh-var(--drawer-inset,0px)*2)] [--drawer-content-width:22rem]">
         {session !== undefined && (
           <>
             <DrawerHeader className="flex-row items-start justify-between">
