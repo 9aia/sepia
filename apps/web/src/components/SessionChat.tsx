@@ -23,6 +23,7 @@ import { cancel, sendPrompt } from "../lib/api";
 import { settingsStore } from "../lib/settings";
 import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
+import { Skeleton } from "./ui/skeleton";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { parseSystemContext, type SystemContext } from "../lib/systemContext";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -458,9 +459,22 @@ export function SessionChat({
             />
           ) : (
             <MessageScrollerViewport>
-              <p className="mx-auto w-full max-w-3xl p-4 text-muted-foreground">
-                {historyQuery.isLoading ? "Loading history…" : "No messages yet."}
-              </p>
+              {historyQuery.isLoading ? (
+                <div className="mx-auto flex w-full max-w-3xl flex-col justify-end gap-5 p-4">
+                  <div className="flex flex-col items-start gap-1.5">
+                    <Skeleton className="size-7 rounded-full" />
+                    <Skeleton className="h-10 w-3/5 rounded-2xl" />
+                  </div>
+                  <div className="flex flex-col items-end gap-1.5">
+                    <Skeleton className="size-7 rounded-full" />
+                    <Skeleton className="h-9 w-2/5 rounded-2xl" />
+                  </div>
+                </div>
+              ) : (
+                <p className="mx-auto w-full max-w-3xl p-4 text-muted-foreground">
+                  No messages yet.
+                </p>
+              )}
             </MessageScrollerViewport>
           )}
           <MessageScrollerButton direction="end" />

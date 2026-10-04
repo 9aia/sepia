@@ -20,7 +20,7 @@ import { ApprovalDialog } from "./ApprovalDialog";
 import { ChatHeader } from "./ChatHeader";
 import { ErrorBanner } from "./ErrorBanner";
 import { SessionChat } from "./SessionChat";
-import { Spinner } from "./ui/spinner";
+import { ChatSkeleton } from "./ChatSkeleton";
 
 const PERMISSION_EVENT = "acp:permission_request";
 
@@ -174,10 +174,7 @@ export function ChatPanel() {
     return (
       <section className="flex h-svh flex-col overflow-hidden">
         {sessionsLoading ? (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Spinner className="size-4" />
-            Loading sessions…
-          </div>
+          <ChatSkeleton />
         ) : (
           <EmptyScreen
             icon={BubbleChatIcon}
