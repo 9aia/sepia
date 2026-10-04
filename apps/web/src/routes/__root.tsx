@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
+import { AlertCircleIcon, FileNotFoundIcon } from "@hugeicons/core-free-icons";
+import { EmptyScreen } from "../components/EmptyScreen";
+import { Button } from "../components/ui/button";
 import { queryClient } from "../hooks/query/queryClient";
 import "../style.css";
 
@@ -14,18 +17,26 @@ export const Route = createRootRoute({
   }),
   component: RootComponent,
   errorComponent: ({ error, reset }) => (
-    <div className="error-boundary" role="alert">
-      <h1>Something went wrong</h1>
-      <p>{error instanceof Error ? error.message : String(error)}</p>
-      <button type="button" onClick={() => reset()}>
-        Try again
-      </button>
-    </div>
+    <main className="error-screen">
+      <EmptyScreen
+        icon={AlertCircleIcon}
+        title="Something went wrong"
+        description={error instanceof Error ? error.message : String(error)}
+      >
+        <Button onClick={() => reset()}>Try again</Button>
+      </EmptyScreen>
+    </main>
   ),
   notFoundComponent: () => (
-    <div className="error-boundary" role="alert">
-      Page not found.
-    </div>
+    <main className="error-screen">
+      <EmptyScreen
+        icon={FileNotFoundIcon}
+        title="404 — page not found"
+        description="The page you were looking for doesn't exist."
+      >
+        <Button render={<a href="/" />}>Back to sessions</Button>
+      </EmptyScreen>
+    </main>
   ),
 });
 

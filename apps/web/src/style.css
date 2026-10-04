@@ -112,6 +112,9 @@ body {
 }
 
 .session-list__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 16px;
   color: var(--muted-foreground);
 }
@@ -206,12 +209,6 @@ body {
   overflow: hidden;
 }
 
-.chat-panel--empty {
-  align-items: center;
-  justify-content: center;
-  color: var(--muted-foreground);
-}
-
 .chat-panel__header {
   display: flex;
   align-items: center;
@@ -280,35 +277,15 @@ body {
   font-size: 13px;
 }
 
-.error-boundary {
-  margin: 15vh auto;
-  max-width: 420px;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card);
-  text-align: center;
+.error-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: stretch;
 }
 
-.error-boundary h1 {
-  font-size: 18px;
-  margin: 0 0 8px;
-}
-
-.error-boundary p {
-  color: var(--muted-foreground);
-  font-size: 14px;
-  margin: 0 0 16px;
-}
-
-.error-boundary button {
-  padding: 6px 16px;
-  border: 1px solid var(--primary);
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--primary);
-  font: inherit;
-  cursor: pointer;
+.error-screen > * {
+  margin: auto;
+  max-width: 560px;
 }
 
 .session-item__delete {

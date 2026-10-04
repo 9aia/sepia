@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
+import { BubbleChatIcon } from "@hugeicons/core-free-icons";
+import { EmptyScreen } from "./EmptyScreen";
 import type { PermissionRequest } from "../lib/types";
 import { subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
@@ -130,8 +132,12 @@ export function ChatPanel() {
 
   if (!session) {
     return (
-      <section className="chat-panel chat-panel--empty">
-        <p>Select a session to view its conversation.</p>
+      <section className="chat-panel">
+        <EmptyScreen
+          icon={BubbleChatIcon}
+          title="No session selected"
+          description="Pick a session from the sidebar, or create a new one."
+        />
       </section>
     );
   }

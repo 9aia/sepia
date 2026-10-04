@@ -6,6 +6,7 @@ import { useStore } from "@tanstack/react-store";
 import { useTree } from "@headless-tree/react";
 import { syncDataLoaderFeature } from "@headless-tree/core";
 import { sepiaStore, setSelectedId } from "../lib/store";
+import { AlertCircleIcon, FolderOpenIcon, SearchAreaIcon } from "@hugeicons/core-free-icons";
 import type { SessionSummary } from "../lib/types";
 import { useAgents } from "../hooks/query/useAgents";
 import { useCreateSession } from "../hooks/query/useCreateSession";
@@ -15,6 +16,8 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Spinner } from "./ui/spinner";
+import { EmptyScreen } from "./EmptyScreen";
 import { Tree, TreeItem, TreeItemLabel } from "./reui/tree";
 
 function formatUpdated(iso: string): string {
@@ -383,16 +386,34 @@ export function SessionList() {
         </Select>
       </div>
 
-      {loading && <p className="session-list__status">Loading sessions…</p>}
-      {error !== null && (
-        <p className="session-list__status session-list__status--error">
-          {messageOf(error, "Failed to list sessions")}
-        </p>
+      {loading && (
+        <div className="session-list__status">
+          <Spinner /> Loading sessions…
+        </div>
       )}
-      {!loading && !error && filtered.length === 0 && (
-        <p className="session-list__status">
-          {sessions.length === 0 ? "No sessions found." : "No sessions match the filter."}
-        </p>
+      {error !== null && (
+        <EmptyScreen
+          className="p-6"
+          icon={AlertCircleIcon}
+          title="Couldn't load sessions"
+          description={messageOf(error, "Failed to list sessions")}
+        />
+      )}
+      {!loading && !error && filtered.length === 0 && sessions.length === 0 && (
+        <EmptyScreen
+          className="p-6"
+          icon={FolderOpenIcon}
+          title="No sessions yet"
+          description="Create your first session above."
+        />
+      )}
+      {!loading && !error && filtered.length === 0 && sessions.length > 0 && (
+        <EmptyScreen
+          className="p-6"
+          icon={SearchAreaIcon}
+          title="No matches"
+          description="No sessions match the current filters."
+        />
       )}
 
       <div className="session-list__items" ref={listRef}>
