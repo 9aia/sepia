@@ -45,6 +45,13 @@ const DEFAULT_HISTORY_LIMIT = 500;
 const DEFAULT_LOCK_TTL_MS = 5_000;
 const DEFAULT_IDLE_TTL_MS = 600_000;
 const DEFAULT_SWEEP_MS = 30_000;
+// A signaled holder needs a moment to flush and drop the session lock —
+// poll session/list for this long before giving the load a shot anyway.
+const TAKEOVER_SETTLE_MS = 800;
+const TAKEOVER_POLL_MS = 100;
+// A store lock can lag the holder's exit — an explicit takeover retries the
+// load once after this delay.
+const TAKEOVER_RETRY_DELAY_MS = 300;
 
 const controlError = (code: ControlErrorCode, message: string, cause: unknown): ControlError =>
   new ControlError({ code, message, cause });
@@ -101,7 +108,7 @@ export const make = (
   Effect.gen(function* () {
     const repo = yield* SessionRepository;
     const liveSessions = new Map<string, LiveSession>();
-    const pendingAttaches = new Map<string, Promise<AttachResult>>();
+    const pendingAttaches = new Map<string, Promise<Either.Either<AttachResult, ControlError>>>();
     const probeCwd = options.probeCwd ?? process.cwd();
     const idleTtlMs =
       options.idleTtlMs ?? envNumber(process.env.SEPIA_IDLE_TTL_MS, DEFAULT_IDLE_TTL_MS);
@@ -201,6 +208,29 @@ export const make = (
         ? Math.max(1, Math.floor(historyOptions.limit))
         : envNumber(process.env.SEPIA_HISTORY_LIMIT, DEFAULT_HISTORY_LIMIT);
 
+    /**
+     * `ToolCall.arguments` is `unknown` in the IR — stores keep the parsed
+     * arg object, a few keep the raw JSON string. Re-encode to one JSON
+     * value so the flat row matches the live `args` stream's shape.
+     */
+    const callArgsText = (value: unknown): string | undefined => {
+      if (value === undefined || value === null) return undefined;
+      if (typeof value === "string") return value === "" ? undefined : value;
+      // `{}` is what adapters record for arg-less calls — leave the field off.
+      if (
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        Object.keys(value as Record<string, unknown>).length === 0
+      ) {
+        return undefined;
+      }
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return undefined;
+      }
+    };
+
     const getHistory = (
       id: string,
       historyOptions?: HistoryOptions,
@@ -254,6 +284,7 @@ export const make = (
               toolStatus: toolResult?.status,
               exitCode: toolResult?.exitCode,
               durationMs: toolResult?.durationMs,
+              args: call === undefined ? undefined : callArgsText(call.arguments),
               locations:
                 call === undefined || call.locations.length === 0 ? undefined : call.locations,
               diffs: call === undefined || call.diffs.length === 0 ? undefined : call.diffs,
@@ -303,6 +334,51 @@ export const make = (
     // last request fiber saw (or the make-time ambient if none ran yet).
     let attachRuntime: Runtime.Runtime<never> = yield* Effect.runtime<never>();
 
+    // Takeover signals the pid the agent reported as the lock holder —
+    // SIGTERM (graceful; the holder is usually a devin TUI on this machine),
+    // never SIGKILL, never an unreported or guessed pid.
+    const terminateLockHolder =
+      options.terminateLockHolder ??
+      ((pid: number): void => {
+        process.kill(pid, "SIGTERM");
+      });
+
+    /**
+     * Releases the lock an explicit takeover needs: SIGTERM the reported
+     * holder pid, then poll `session/list` until the lock clears or the
+     * settle window ends. A missing/invalid pid, an already-dead holder
+     * (ESRCH), or a refused signal all just fall through — the subsequent
+     * load attempt is the arbiter.
+     */
+    const releaseLockHolder = (
+      conn: AcpConnection,
+      sessionId: string,
+      pid: number | null,
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        if (pid === null || !Number.isInteger(pid) || pid <= 0 || pid === process.pid) return;
+        const signaled = yield* Effect.sync(() => {
+          try {
+            terminateLockHolder(pid);
+            return true;
+          } catch {
+            // ESRCH — the holder already exited; nothing left to release.
+            return false;
+          }
+        });
+        if (!signaled) return;
+        const deadline = Date.now() + TAKEOVER_SETTLE_MS;
+        while (Date.now() < deadline) {
+          yield* Effect.sleep(TAKEOVER_POLL_MS);
+          const current = yield* tryAcp("Failed to list agent sessions", () =>
+            conn.listSessions(),
+          ).pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AcpSessionInfo>)));
+          if (current.find((candidate) => candidate.sessionId === sessionId)?.locked !== true) {
+            return;
+          }
+        }
+      });
+
     const performAttach = (
       id: string,
       takeover: boolean,
@@ -311,7 +387,7 @@ export const make = (
         readonly fallbacks?: ReadonlyArray<string>;
         readonly agentId?: string;
       },
-    ): Promise<AttachResult> =>
+    ): Promise<Either.Either<AttachResult, ControlError>> =>
       Runtime.runPromise(attachRuntime)(
         Effect.gen(function* () {
           const maybe = yield* repo
@@ -369,16 +445,27 @@ export const make = (
             conn.listSessions(),
           ).pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AcpSessionInfo>)));
           const info = infos.find((candidate) => candidate.sessionId === id);
-          if (info?.locked === true && !takeover) {
-            yield* teardown;
-            yield* close;
-            return { attached: false, readOnly: true, agentId: agent.id };
+          if (info?.locked === true) {
+            if (!takeover) {
+              yield* teardown;
+              yield* close;
+              return { attached: false, readOnly: true, agentId: agent.id };
+            }
+            // ACP session/load has no steal flag, so the only way to take a
+            // held session is for the holder to let go — signal the pid the
+            // agent itself reported, then let the load decide.
+            yield* releaseLockHolder(conn, id, info.lockHolderPid);
           }
 
           emit(live, translator.startRun());
-          const loaded = yield* Effect.either(
-            tryAcp("Failed to load session", () => conn.loadSession(id, session.workingDirectory)),
+          const load = tryAcp("Failed to load session", () =>
+            conn.loadSession(id, session.workingDirectory),
           );
+          let loaded = yield* Effect.either(load);
+          if (Either.isLeft(loaded) && takeover) {
+            yield* Effect.sleep(TAKEOVER_RETRY_DELAY_MS);
+            loaded = yield* Effect.either(load);
+          }
           if (Either.isLeft(loaded)) {
             yield* teardown;
             yield* close;
@@ -386,6 +473,23 @@ export const make = (
             // A load failure is authoritative: re-probe once, treating a lock as read-only.
             const locks = yield* lockState(session.workingDirectory, true);
             if (locks.get(id)?.locked === true) {
+              // A takeover that still sees the lock held failed — report it
+              // instead of quietly degrading to read-only, which callers
+              // cannot tell apart from "never tried". Name the holder pid
+              // when the agent reported one so the UI can say what wouldn't
+              // let go.
+              if (takeover) {
+                const heldPid = locks.get(id)?.lockHolderPid ?? info?.lockHolderPid ?? null;
+                return yield* Effect.fail(
+                  controlError(
+                    "locked",
+                    heldPid !== null
+                      ? `Session is held by PID ${heldPid} — it couldn't be released: ${id}`
+                      : `Session is held by another process — the lock couldn't be released: ${id}`,
+                    loaded.left,
+                  ),
+                );
+              }
               return { attached: false, readOnly: true, agentId: agent.id };
             }
             return yield* Effect.fail(loaded.left);
@@ -398,6 +502,7 @@ export const make = (
           Effect.withSpan("sepia.control.attach_work", {
             attributes: { "sepia.session.id": id },
           }),
+          Effect.either,
         ),
       );
 
@@ -444,10 +549,14 @@ export const make = (
               if (pendingAttaches.get(id) === settled) pendingAttaches.delete(id);
             });
         }
-        return yield* Effect.tryPromise({
+        const outcome = yield* Effect.tryPromise({
           try: () => pending,
           catch: (cause) => cause as ControlError,
         });
+        // performAttach resolves an Either so the ControlError — code and
+        // all — survives the nested-runPromise hop that a rejection would
+        // flatten into a FiberFailure.
+        return yield* outcome;
       }).pipe(
         Effect.tap((result) => (result.attached ? Metric.increment(metricAttaches) : Effect.void)),
         Effect.withSpan("sepia.control.attach", {

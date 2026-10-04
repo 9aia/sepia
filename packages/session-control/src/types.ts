@@ -75,6 +75,12 @@ export interface HistoryMessage {
   readonly exitCode?: number;
   readonly durationMs?: number;
   /**
+   * Tool-result messages only: the call's raw input args, JSON-encoded (a
+   * single value — the same shape the live `args` stream accumulates).
+   * Joined from the assistant node's `toolCalls` like `locations`/`diffs`.
+   */
+  readonly args?: string;
+  /**
    * Tool-result messages only: files the call touched (`locations`, ACP)
    * and the before/after payloads the store recorded (`diffs`). Joined from
    * the assistant node's `toolCalls` by `toolCallId`.
@@ -174,8 +180,10 @@ export interface ControlPlaneService {
 
   /**
    * Spawns the session's agent and loads the session. Locked sessions attach
-   * read-only unless `takeover`. `agentId` scopes the store lookup — ids
-   * collide across agents.
+   * read-only unless `takeover`, which SIGTERMs the lock-holder pid the agent
+   * reports before loading; a takeover that still cannot load fails `locked`
+   * rather than silently degrading to read-only. `agentId` scopes the store
+   * lookup — ids collide across agents.
    */
   readonly attach: (
     id: string,
@@ -235,6 +243,12 @@ export interface ControlPlaneOptions {
   readonly idleTtlMs?: number;
   /** How often the idle sweep runs. Defaults to `SEPIA_SWEEP_MS`. */
   readonly sweepMs?: number;
+  /**
+   * Signals the lock-holder pid during an explicit takeover — SIGTERM via
+   * `process.kill` by default. Injectable so tests can fake the process table;
+   * only ever invoked with the pid the agent itself reported.
+   */
+  readonly terminateLockHolder?: (pid: number) => void;
 }
 
 export class ControlPlane extends Context.Tag("ControlPlane")<

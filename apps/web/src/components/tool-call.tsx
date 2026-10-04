@@ -13,11 +13,19 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
+import { Badge } from "./ui/badge";
+import { Spinner } from "./ui/spinner";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
 import { MessageResponse } from "./streamdown";
 import { formatDuration } from "../lib/format";
 import type { ToolCallStatus, ToolFileDiff, ToolLocation } from "../lib/types";
-import { fileDiffView, toolSummary, type ToolCategory, type ToolSegment } from "../lib/toolDisplay";
+import {
+  diffFence,
+  fileDiffView,
+  toolSummary,
+  type ToolCategory,
+  type ToolSegment,
+} from "../lib/toolDisplay";
 
 const CATEGORY_ICON: Record<ToolCategory, typeof WrenchIcon> = {
   exec: ComputerTerminal01Icon,
@@ -29,13 +37,18 @@ const CATEGORY_ICON: Record<ToolCategory, typeof WrenchIcon> = {
   other: WrenchIcon,
 };
 
-function DiffLine({ line }: { readonly line: string }) {
-  const cls = line.startsWith("+")
-    ? "text-emerald-600 dark:text-emerald-400"
-    : line.startsWith("-")
-      ? "text-red-600 dark:text-red-400"
-      : "";
-  return <div className={cls}>{line === "" ? " " : line}</div>;
+/**
+ * Diff text rendered through the shared markdown pipeline as a `diff`
+ * code block — streamdown/Shiki colors the +/- lines and the CodeBlock
+ * chrome adds the lang label + copy button. `max-h` keeps a big recorded
+ * diff bounded like the other segments.
+ */
+function DiffBlock({ text }: { readonly text: string }) {
+  return (
+    <MessageResponse className="[&_pre]:max-h-72 [&_pre]:overflow-y-auto">
+      {diffFence(text)}
+    </MessageResponse>
+  );
 }
 
 function ToolSegmentView({ segment }: { readonly segment: ToolSegment }) {
@@ -56,13 +69,7 @@ function ToolSegmentView({ segment }: { readonly segment: ToolSegment }) {
         </pre>
       );
     case "diff":
-      return (
-        <pre className="max-h-72 overflow-auto rounded-md bg-muted/50 p-2.5 font-mono text-[11px] leading-relaxed">
-          {segment.text.split("\n").map((line, i) => (
-            <DiffLine key={i} line={line} />
-          ))}
-        </pre>
-      );
+      return <DiffBlock text={segment.text} />;
     case "note":
       return (
         <div
@@ -98,7 +105,11 @@ export function ToolCall({
 }: {
   readonly toolName: string;
   readonly done: boolean;
-  /** Live arg stream (JSON); history rows pass undefined. */
+  /**
+   * The call's args as JSON text — a live row's accumulated `args` stream or
+   * a history row's JSON-encoded `ToolCall.arguments`; undefined on rows
+   * from stores that recorded no args.
+   */
   readonly args?: string;
   readonly content: string;
   /** IR v2 outcome — absent on rows from older stores, where `done` still rules. */
@@ -113,6 +124,10 @@ export function ToolCall({
 }) {
   const display = toolSummary(toolName, args, content, { exitCode });
   const fileViews = useMemo(() => (diffs ?? []).map(fileDiffView), [diffs]);
+  const running = status === "pending" || !done;
+  // The marker detail is `$ cmd`-style only when a command was actually
+  // extracted — a shell-id fallback (get_output) stays plain.
+  const hasCommand = display.segments.some((s) => s.kind === "command");
   // Refs stand in only when no diff was recorded — and only on calls whose
   // category can change files; a read's location is already the detail line.
   const locationOnly =
@@ -130,25 +145,32 @@ export function ToolCall({
   return (
     <Collapsible className="group/tool-call" open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger className="block w-full rounded-md transition-colors hover:bg-accent/50">
-        <Marker>
+        <Marker role={running ? "status" : undefined}>
           <MarkerIcon>
             <HugeiconsIcon icon={CATEGORY_ICON[display.category]} strokeWidth={2} />
           </MarkerIcon>
           <MarkerContent className="flex items-center gap-2">
             <span className="shrink-0 font-medium text-foreground/80">{display.label}</span>
             {display.detail !== undefined && (
-              <code className="min-w-0 truncate text-muted-foreground">{display.detail}</code>
+              <code className="min-w-0 truncate text-muted-foreground">
+                {hasCommand ? `$ ${display.detail}` : display.detail}
+              </code>
             )}
             {status === "error" ? (
-              <span className="shrink-0 text-destructive">Error</span>
+              <Badge variant="destructive" className="h-4 px-1.5 text-[10px]">
+                Error
+              </Badge>
             ) : status === "success" ? (
               <HugeiconsIcon
                 icon={CheckIcon}
                 strokeWidth={2}
                 className="size-3.5 shrink-0 text-muted-foreground"
               />
-            ) : status === "pending" || !done ? (
-              <span className="shrink-0 animate-pulse text-primary">Running…</span>
+            ) : running ? (
+              <Badge variant="secondary" className="h-4 gap-1 px-1.5 text-[10px]">
+                <Spinner aria-hidden="true" className="size-2.5" />
+                Running
+              </Badge>
             ) : (
               <span className="shrink-0 text-muted-foreground">Completed</span>
             )}
@@ -195,13 +217,7 @@ export function ToolCall({
                       <span className="text-red-600 dark:text-red-400">−{file.removed}</span>
                     </span>
                   </div>
-                  {file.text !== "" && (
-                    <pre className="max-h-72 overflow-auto rounded-md bg-muted/50 p-2.5 font-mono text-[11px] leading-relaxed">
-                      {file.text.split("\n").map((line, i) => (
-                        <DiffLine key={i} line={line} />
-                      ))}
-                    </pre>
-                  )}
+                  {file.text !== "" && <DiffBlock text={file.text} />}
                 </div>
               ))}
               {locationOnly.map((loc) => (

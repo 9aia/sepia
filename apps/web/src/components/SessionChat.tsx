@@ -41,7 +41,7 @@ import { attachmentToPart, partToBlock, type PendingAttachment } from "../lib/at
 import { attachmentViews } from "../lib/blocks";
 import { finishReasonLabel, formatUsage, usageLabel } from "../lib/format";
 import { spanNodeLabel } from "../lib/nodes";
-import { cancel, sendPrompt, type StreamStatus } from "../lib/api";
+import { ApiError, cancel, sendPrompt, type StreamStatus } from "../lib/api";
 import { sepiaStore, setReplyTo } from "../lib/store";
 import { formatReplyPrompt, replyAuthorLabel, type ReplyQuote } from "../lib/reply";
 import { settingsStore } from "../lib/settings";
@@ -101,6 +101,7 @@ function RowContent({ row }: { readonly row: ChatRow }) {
         <ToolCall
           toolName={message.toolName ?? "tool"}
           done={true}
+          args={message.args}
           content={message.content}
           status={message.toolStatus}
           exitCode={message.exitCode}
@@ -233,7 +234,11 @@ function ChatRows({
     <MessageScrollerViewport ref={viewportRef}>
       <MessageScrollerContent className="mx-auto w-full max-w-3xl px-4">
         {hasNextPage ? (
-          <Marker ref={sentinelRef} role={fetchingNext ? "status" : undefined}>
+          <Marker
+            ref={sentinelRef}
+            variant={fetchingNext ? "border" : "default"}
+            role={fetchingNext ? "status" : undefined}
+          >
             {fetchingNext && (
               <>
                 <MarkerIcon>
@@ -426,7 +431,13 @@ interface SessionChatProps {
   readonly liveMessages: ReadonlyArray<LiveMessage>;
   readonly onUserMessage: (text: string, blocks?: ReadonlyArray<HistoryBlock>) => string;
   readonly onRemoveLiveMessage: (id: string) => void;
+  /** Last takeover attempt's failure — shown inside the dialog, which stays open. */
+  readonly takeoverError: string | null;
+  /** A takeover attach is in flight — the dialog/banner show progress, not a dead button. */
+  readonly takeoverPending: boolean;
   readonly onTakeover: () => void;
+  /** Plain re-attach (no takeover) — used to retry a send that 400'd "not attached". */
+  readonly onReattach: () => Promise<boolean>;
 }
 
 /**
@@ -442,18 +453,30 @@ export function SessionChat({
   liveMessages,
   onUserMessage,
   onRemoveLiveMessage,
+  takeoverError,
+  takeoverPending,
   onTakeover,
+  onReattach,
 }: SessionChatProps) {
   const historyQuery = useHistory(sessionId, agent);
   const history = useMemo(() => flattenHistory(historyQuery.data), [historyQuery.data]);
   const [submitting, setSubmitting] = useState(false);
-  const [promptError, setPromptError] = useState<string | null>(null);
+  // The failed send's payload rides along so Retry can resend it verbatim.
+  const [promptError, setPromptError] = useState<{
+    message: string;
+    /** Server answered "not attached" — retry must re-attach first. */
+    notAttached: boolean;
+    resend: { text: string; attachments: PendingAttachment[] };
+  } | null>(null);
   const replyTo = useStore(sepiaStore, (state) => state.replyTo);
   // Held by another process → the send asks to take over first.
   const [takeoverPrompt, setTakeoverPrompt] = useState<{
     text: string;
     attachments: PendingAttachment[];
   } | null>(null);
+  // The held banner's "Take over" opens the same confirm dialog — without a
+  // queued message.
+  const [takeoverConfirm, setTakeoverConfirm] = useState(false);
   // Populated by ScrollerApiBridge — lets `send` reveal the row it appended.
   const scrollToEnd = useRef<(() => void) | null>(null);
   const scrollOnSent = useRef(false);
@@ -461,7 +484,9 @@ export function SessionChat({
   // Run provenance rides on the session row — the meta overlay's spans land
   // in the merged sessions list.
   const { data: sessions = [] } = useSessions();
-  const spans = sessions.find((s) => s.id === sessionId && s.agent === agent)?.spans;
+  const sessionRow = sessions.find((s) => s.id === sessionId && s.agent === agent);
+  const spans = sessionRow?.spans;
+  const holderPid = sessionRow?.lockHolderPid ?? null;
 
   const rows = useMemo<ChatRow[]>(() => {
     const context = parseSystemContext(history.filter((m) => m.role === "system"));
@@ -493,12 +518,59 @@ export function SessionChat({
       .then((ok) => {
         if (!ok) {
           onRemoveLiveMessage(liveId);
-          setPromptError("Prompt failed.");
+          setPromptError({
+            message: "Prompt failed.",
+            notAttached: false,
+            resend: { text: prompt, attachments: [...attachments] },
+          });
         }
       })
       .catch((error: unknown) => {
         onRemoveLiveMessage(liveId);
-        setPromptError(error instanceof Error ? error.message : "Prompt failed.");
+        // A 400 "Session is not attached" means the live agent went away
+        // (idle detach, server restart) — retry goes through re-attach first.
+        const notAttached =
+          error instanceof ApiError && error.status === 400 && /not attached/i.test(error.message);
+        setPromptError({
+          message: notAttached
+            ? "The session isn't attached anymore — re-attach and retry."
+            : error instanceof Error
+              ? error.message
+              : "Prompt failed.",
+          notAttached,
+          resend: { text: prompt, attachments: [...attachments] },
+        });
+      })
+      .finally(() => setSubmitting(false));
+  };
+
+  const retryPrompt = (): void => {
+    const failure = promptError;
+    if (failure === null) return;
+    setPromptError(null);
+    if (!failure.notAttached) {
+      send(failure.resend.text, failure.resend.attachments);
+      return;
+    }
+    // The prompt payload only sends once the session is attached again.
+    setSubmitting(true);
+    onReattach()
+      .then((ok) => {
+        if (ok) {
+          send(failure.resend.text, failure.resend.attachments);
+        } else {
+          // Attached read-only — the held banner offers the takeover path.
+          setPromptError({
+            ...failure,
+            message: "The session is still held — take it over to send.",
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        setPromptError({
+          ...failure,
+          message: error instanceof Error ? error.message : "Re-attach failed.",
+        });
       })
       .finally(() => setSubmitting(false));
   };
@@ -523,9 +595,13 @@ export function SessionChat({
     return () => cancelAnimationFrame(frame);
   }, [liveMessages]);
 
-  // Takeover confirmed → attach resolved readOnly off → send the held prompt.
+  // Takeover confirmed → attach resolved readOnly off → close the dialog and
+  // send the held prompt. A failed takeover keeps readOnly on, so neither the
+  // dialog nor the queued message is dropped.
   useEffect(() => {
-    if (!readOnly && takeoverPrompt !== null) {
+    if (readOnly) return;
+    setTakeoverConfirm(false);
+    if (takeoverPrompt !== null) {
       const held = takeoverPrompt;
       setTakeoverPrompt(null);
       send(held.text, held.attachments);
@@ -600,7 +676,60 @@ export function SessionChat({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      {promptError !== null && <ErrorBanner>{promptError}</ErrorBanner>}
+      {readOnly && (
+        <div
+          role="status"
+          className="mx-4 my-3 flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-sm"
+        >
+          <HugeiconsIcon icon={AlertCircleIcon} className="size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <p className="m-0 text-muted-foreground">
+              {holderPid !== null
+                ? `Held by another process (PID ${holderPid}) — read-only.`
+                : "Held by another process — read-only."}
+            </p>
+            {takeoverError !== null && (
+              <p role="alert" className="m-0 text-xs text-destructive">
+                {takeoverError}
+              </p>
+            )}
+          </div>
+          <Button
+            size="xs"
+            variant="secondary"
+            disabled={takeoverPending}
+            onClick={() => setTakeoverConfirm(true)}
+          >
+            {takeoverPending
+              ? "Taking over…"
+              : takeoverError !== null
+                ? "Retry takeover"
+                : "Take over"}
+          </Button>
+        </div>
+      )}
+
+      {promptError !== null && (
+        <ErrorBanner
+          action={
+            <>
+              <Button size="xs" variant="secondary" disabled={submitting} onClick={retryPrompt}>
+                {promptError.notAttached ? "Re-attach & retry" : "Retry"}
+              </Button>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Dismiss error"
+                onClick={() => setPromptError(null)}
+              >
+                <HugeiconsIcon icon={Cancel01Icon} />
+              </Button>
+            </>
+          }
+        >
+          {promptError.message}
+        </ErrorBanner>
+      )}
 
       {/* env() resolves to 0 outside notched devices — the max() keeps the
           1rem padding everywhere else, so desktop is unchanged. */}
@@ -629,20 +758,44 @@ export function SessionChat({
       </PromptInput>
 
       <AlertDialog
-        open={takeoverPrompt !== null}
-        onOpenChange={(open) => !open && setTakeoverPrompt(null)}
+        open={takeoverPrompt !== null || takeoverConfirm}
+        onOpenChange={(open) => {
+          if (open) return;
+          setTakeoverPrompt(null);
+          setTakeoverConfirm(false);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Take over this session?</AlertDialogTitle>
             <AlertDialogDescription>
               This session is held by another process. Taking over detaches it and stops in-progress
-              work — your message will be sent after.
+              work{takeoverPrompt !== null ? " — your message will be sent after." : "."}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {takeoverError !== null && (
+            <p role="alert" className="m-0 text-sm text-destructive">
+              {takeoverError}
+            </p>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onTakeover}>Take over</AlertDialogAction>
+            <AlertDialogCancel disabled={takeoverPending}>Cancel</AlertDialogCancel>
+            {/* preventDefault keeps the dialog open — a failed takeover
+                reports in place (with Try again), a successful one closes
+                when readOnly flips off. */}
+            <AlertDialogAction
+              disabled={takeoverPending}
+              onClick={(event) => {
+                event.preventDefault();
+                onTakeover();
+              }}
+            >
+              {takeoverPending
+                ? "Taking over…"
+                : takeoverError !== null
+                  ? "Try again"
+                  : "Take over"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

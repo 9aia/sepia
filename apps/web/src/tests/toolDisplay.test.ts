@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { fileDiffView, splitLeadingJson, stripAnsi, toolSummary } from "../lib/toolDisplay";
+import {
+  diffFence,
+  fileDiffView,
+  splitLeadingJson,
+  stripAnsi,
+  toolSummary,
+} from "../lib/toolDisplay";
 
 // Real payload shapes pulled from GET /api/sessions/:id/history on a devin store.
 
@@ -65,6 +71,42 @@ describe("toolSummary — exec", () => {
     expect(d.label).toBe("Ran command");
     expect(d.detail).toBe("git status");
     expect(d.segments[0]).toEqual({ kind: "command", text: "git status" });
+  });
+
+  it("surfaces the command from stored args alongside the result envelope", () => {
+    // The history row's `args` is the IR ToolCall.arguments, JSON-encoded —
+    // the same string shape a live row accumulates.
+    const content = "Output from command in shell 4070e4:\napps/web/src/lib/api.ts\n\nExit code: 0";
+    const d = toolSummary("execute", '{"command":"rg -n api apps/web","timeout":40000}', content);
+    expect(d.label).toBe("Ran command");
+    expect(d.detail).toBe("rg -n api apps/web");
+    expect(d.segments[0]).toEqual({ kind: "command", text: "rg -n api apps/web" });
+    const code = d.segments.find((s) => s.kind === "code");
+    expect(code?.kind === "code" && code.text).toBe("apps/web/src/lib/api.ts");
+  });
+
+  it("extracts the command from alternate arg field names", () => {
+    expect(toolSummary("execute", '{"cmd":"ls -la"}', "").detail).toBe("ls -la");
+    expect(toolSummary("bash", '{"shell":"pwd"}', "").detail).toBe("pwd");
+    expect(toolSummary("exec", '{"input":{"command":"make test"}}', "").detail).toBe("make test");
+    expect(toolSummary("exec", '{"params":{"cmd":"id"}}', "").detail).toBe("id");
+  });
+
+  it("shows only the first line of a multi-line command as the detail", () => {
+    const d = toolSummary("exec", '{"command":"cd /repo && npm test\\nP=$!"}', "");
+    expect(d.detail).toBe("cd /repo && npm test");
+    expect(d.segments[0]).toEqual({ kind: "command", text: "cd /repo && npm test\nP=$!" });
+  });
+
+  it("details get_output/kill_shell by shell id when no command was recorded", () => {
+    const out = toolSummary("get_output", '{"shell_id":"a6c502","timeout":20000}', "ok");
+    expect(out.label).toBe("Read shell output");
+    expect(out.detail).toBe("shell a6c502");
+    expect(out.segments.some((s) => s.kind === "command")).toBe(false);
+
+    const kill = toolSummary("kill_shell", '{"shell_id":"632775"}', "");
+    expect(kill.label).toBe("Killed shell");
+    expect(kill.detail).toBe("shell 632775");
   });
 
   it("keeps truncation notices as notes", () => {
@@ -285,5 +327,26 @@ describe("fileDiffView", () => {
     expect(empty.text).toBe("");
     expect(empty.added).toBe(0);
     expect(empty.removed).toBe(0);
+  });
+
+  it("produces diff-prefixed lines a `diff` grammar can highlight", () => {
+    const v = fileDiffView({ path: "/b.ts", oldText: "old line", newText: "new line" });
+    // Every line carries a diff marker: -/+/context (or the ⋮ elision note).
+    for (const line of v.text.split("\n")) {
+      expect(/^[-+ ⋮]/.test(line)).toBe(true);
+    }
+  });
+});
+
+describe("diffFence", () => {
+  it("wraps text in a `diff` code fence", () => {
+    expect(diffFence("- a\n+ b")).toBe("```diff\n- a\n+ b\n```");
+  });
+
+  it("widens the fence past backtick runs inside the payload", () => {
+    const text = "+ const fence = ```diff```;";
+    const fenced = diffFence(text);
+    expect(fenced.startsWith("````diff\n")).toBe(true);
+    expect(fenced.endsWith("\n````")).toBe(true);
   });
 });

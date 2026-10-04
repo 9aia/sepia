@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  ApiError,
   attach,
   AuthError,
   cancel,
@@ -261,6 +262,31 @@ describe("error mapping", () => {
   ])("maps HTTP %i to a friendly message", async (code, message) => {
     stubFetch(status(code));
     await expect(listSessions()).rejects.toThrow(message);
+  });
+
+  it("prefers the server's error payload over the friendly status text", async () => {
+    stubFetch(() =>
+      Response.json({ error: "Session is not attached: s1", code: "invalid" }, { status: 400 }),
+    );
+    await expect(listSessions()).rejects.toThrow("Session is not attached: s1");
+  });
+
+  it("carries the server's status and ControlError code on ApiError", async () => {
+    stubFetch(() =>
+      Response.json(
+        { error: "Session is held by PID 42 — it couldn't be released: s1", code: "locked" },
+        { status: 409 },
+      ),
+    );
+    const failure = await listSessions().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).status).toBe(409);
+    expect((failure as ApiError).code).toBe("locked");
+  });
+
+  it("falls back to the friendly text when the error body is not JSON", async () => {
+    stubFetch(status(409));
+    await expect(listSessions()).rejects.toThrow("That operation is busy");
   });
 
   it("throws AuthError on 401", async () => {

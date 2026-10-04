@@ -21,6 +21,22 @@ export class AuthError extends Error {
   }
 }
 
+/**
+ * A non-OK API response with the server's payload decoded — `status` is the
+ * HTTP code, `code` the ControlError tag (`invalid`, `locked`, `busy`…)
+ * when the body carried one, so callers can branch on the failure kind.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 const friendlyHttpError = (status: number): string => {
   if (status === 400) return "The server rejected the request";
   if (status === 403) return "Access denied";
@@ -60,13 +76,33 @@ async function sepiaFetch(
 async function request<T>(path: string, init?: RequestInit, target?: ApiTarget): Promise<T> {
   const res = await sepiaFetch(path, init, target);
   if (!res.ok) {
-    throw new Error(friendlyHttpError(res.status));
+    const { message, code } = await responseError(res);
+    throw new ApiError(message, res.status, code);
   }
   return (await res.json()) as T;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * The server's `{error, code}` payload carries the real failure ("Session
+ * is not attached", "held by another process") — prefer it over the generic
+ * status text, which stays as the fallback for non-JSON bodies.
+ */
+const responseError = async (res: Response): Promise<{ message: string; code?: string }> => {
+  try {
+    const body: unknown = await res.json();
+    if (isRecord(body) && typeof body.error === "string" && body.error !== "") {
+      return typeof body.code === "string" && body.code !== ""
+        ? { message: body.error, code: body.code }
+        : { message: body.error };
+    }
+  } catch {
+    // Non-JSON or unreadable body — fall back to the friendly status text.
+  }
+  return { message: friendlyHttpError(res.status) };
+};
 
 // Session ids collide across agents; `?agent=` scopes the server's lookup.
 const agentQuery = (agent?: string): string =>

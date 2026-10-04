@@ -56,7 +56,9 @@ spawns an agent in a working directory you choose.
 - **Create** — `POST /api/sessions { cwd, agent?, title? }` → `session/new`.
 - **Attach** — `POST /api/sessions/:id/attach` spawns an agent and
   `session/load`s the session. A session locked by a live process attaches
-  read-only; `{ "takeover": true }` overrides.
+  read-only; `{ "takeover": true }` SIGTERMs the lock-holder pid the agent
+  reported, then loads — a takeover that still can't load fails `409 locked`
+  rather than silently degrading to read-only.
 - **Prompt** — `POST /api/sessions/:id/prompt`, or the AG-UI endpoint
   `POST /api/agent?sessionId=<id>` (what the chat UI uses). Concurrent prompts
   on one session return `409 busy`.

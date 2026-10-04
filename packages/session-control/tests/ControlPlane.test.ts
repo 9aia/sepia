@@ -93,7 +93,10 @@ class FakeConnection implements AcpConnection {
     return "new";
   }
 
+  loadAttempts = 0;
+
   async loadSession(sessionId: string, _cwd: string): Promise<void> {
+    this.loadAttempts += 1;
     if (this.loadSessionError !== undefined) throw this.loadSessionError;
     this.loaded.push(sessionId);
   }
@@ -382,7 +385,7 @@ test("history surfaces thinking text and its signature verbatim", async () => {
   expect(page.messages[0]?.thinkingSignature).toBeUndefined();
 });
 
-test("history joins a tool row to its call's locations and diffs", async () => {
+test("history joins a tool row to its call's args, locations and diffs", async () => {
   const cp = await makeService(
     { agents: [fakeAgent(new FakeConnection()).runtime] },
     repository([
@@ -401,6 +404,8 @@ test("history joins a tool row to its call's locations and diffs", async () => {
               locations: [{ path: "/work/a.ts" }],
               diffs: [{ path: "/work/a.ts", oldText: "before", newText: "after" }],
             }),
+            // a call with no recorded arguments gets no `args` on the row
+            ToolCall.make({ id: "c2", name: "noop", arguments: {} }),
           ],
         }),
         new MessageNode({
@@ -412,12 +417,21 @@ test("history joins a tool row to its call's locations and diffs", async () => {
           toolCallId: Option.some("c1"),
           toolName: Option.some("edit"),
         }),
-        // a tool row whose call recorded nothing gets no fields at all
         new MessageNode({
           nodeId: 3,
           role: "tool",
-          content: "out",
+          content: "done",
           createdAt: 12,
+          metadata: null,
+          toolCallId: Option.some("c2"),
+          toolName: Option.some("noop"),
+        }),
+        // a tool row whose call recorded nothing gets no fields at all
+        new MessageNode({
+          nodeId: 4,
+          role: "tool",
+          content: "out",
+          createdAt: 13,
           metadata: null,
           toolCallId: Option.some("missing"),
           toolName: Option.some("exec"),
@@ -428,12 +442,15 @@ test("history joins a tool row to its call's locations and diffs", async () => {
 
   const page = await Effect.runPromise(cp.getHistory("s1"));
 
+  expect(page.messages[1]?.args).toBe('{"file_path":"/work/a.ts"}');
   expect(page.messages[1]?.locations).toEqual([{ path: "/work/a.ts" }]);
   expect(page.messages[1]?.diffs).toEqual([
     { path: "/work/a.ts", oldText: "before", newText: "after" },
   ]);
-  expect(page.messages[2]?.locations).toBeUndefined();
-  expect(page.messages[2]?.diffs).toBeUndefined();
+  expect(page.messages[2]?.args).toBeUndefined();
+  expect(page.messages[3]?.args).toBeUndefined();
+  expect(page.messages[3]?.locations).toBeUndefined();
+  expect(page.messages[3]?.diffs).toBeUndefined();
 });
 
 test("returns the last limit messages and the full node count", async () => {
@@ -553,8 +570,14 @@ test("attaches by spawning the agent and loading the session", async () => {
 test("returns read-only and skips loading when the session is locked", async () => {
   const conn = new FakeConnection();
   conn.infos = [lockedInfo("s1")];
+  const killed: number[] = [];
   const cp = await makeService(
-    { agents: [fakeAgent(conn).runtime] },
+    {
+      agents: [fakeAgent(conn).runtime],
+      terminateLockHolder: (pid) => {
+        killed.push(pid);
+      },
+    },
     repository([session("s1", "/work")]),
   );
 
@@ -563,15 +586,75 @@ test("returns read-only and skips loading when the session is locked", async () 
     readOnly: true,
     agentId: "devin",
   });
+  // Without takeover the reported holder is never signaled.
+  expect(killed).toEqual([]);
   expect(conn.loaded).toEqual([]);
   expect(conn.closed).toBe(true);
 });
 
-test("loads a locked session when takeover is requested", async () => {
+test("takeover signals the reported holder, then loads once the lock clears", async () => {
+  const conn = new FakeConnection();
+  conn.infos = [lockedInfo("s1")];
+  const killed: number[] = [];
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(conn).runtime],
+      terminateLockHolder: (pid) => {
+        killed.push(pid);
+        // The holder exits and drops the lock — the next session/list sees it.
+        conn.infos = conn.infos.map((info) => ({
+          ...info,
+          locked: false,
+          lockHolderPid: null,
+        }));
+      },
+    },
+    repository([session("s1", "/work")]),
+  );
+
+  expect(await Effect.runPromise(cp.attach("s1", { takeover: true }))).toEqual({
+    attached: true,
+    readOnly: false,
+    agentId: "devin",
+  });
+  expect(killed).toEqual([42]);
+  expect(conn.loaded).toEqual(["s1"]);
+});
+
+test("takeover proceeds to the load when no holder pid is reported", async () => {
+  const conn = new FakeConnection();
+  conn.infos = [{ ...lockedInfo("s1"), lockHolderPid: null }];
+  const killed: number[] = [];
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(conn).runtime],
+      terminateLockHolder: (pid) => {
+        killed.push(pid);
+      },
+    },
+    repository([session("s1", "/work")]),
+  );
+
+  expect(await Effect.runPromise(cp.attach("s1", { takeover: true }))).toEqual({
+    attached: true,
+    readOnly: false,
+    agentId: "devin",
+  });
+  // No pid to signal — but the load must still be attempted.
+  expect(killed).toEqual([]);
+  expect(conn.loaded).toEqual(["s1"]);
+});
+
+test("takeover proceeds when the reported holder is already gone", async () => {
   const conn = new FakeConnection();
   conn.infos = [lockedInfo("s1")];
   const cp = await makeService(
-    { agents: [fakeAgent(conn).runtime] },
+    {
+      agents: [fakeAgent(conn).runtime],
+      terminateLockHolder: () => {
+        throw new Error("kill ESRCH: No such process");
+      },
+    },
     repository([session("s1", "/work")]),
   );
 
@@ -581,6 +664,51 @@ test("loads a locked session when takeover is requested", async () => {
     agentId: "devin",
   });
   expect(conn.loaded).toEqual(["s1"]);
+});
+
+test("a takeover that cannot release the lock fails 'locked', not read-only", async () => {
+  const first = new FakeConnection();
+  first.infos = [lockedInfo("s1")];
+  first.loadSessionError = new Error("session is locked");
+  const second = new FakeConnection();
+  second.infos = [lockedInfo("s1")];
+  let spawned = 0;
+  const runtime: AgentRuntime = {
+    id: "devin",
+    label: "Devin",
+    spawn: async () => (spawned++ === 0 ? first : second),
+  };
+  const killed: number[] = [];
+  const cp = await makeService(
+    {
+      agents: [runtime],
+      probeCwd: "/work",
+      terminateLockHolder: (pid) => {
+        killed.push(pid);
+        // The signal lands but the load still fails — the re-probe (a fresh
+        // spawn) confirms the session stays locked.
+        first.infos = first.infos.map((info) => ({
+          ...info,
+          locked: false,
+          lockHolderPid: null,
+        }));
+      },
+    },
+    repository([session("s1", "/work")]),
+  );
+
+  const result = await runEither(cp.attach("s1", { takeover: true }));
+
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) {
+    expect(result.left._tag).toBe("ControlError");
+    expect(result.left.code).toBe("locked");
+    expect(result.left.message).toContain("held by PID 42");
+  }
+  expect(killed).toEqual([42]);
+  // Initial load plus one takeover retry.
+  expect(first.loadAttempts).toBe(2);
+  expect(first.closed).toBe(true);
 });
 
 test("re-attaching a live session does not spawn again", async () => {

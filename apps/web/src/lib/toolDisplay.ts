@@ -3,8 +3,10 @@
  *
  * - History (IR `tool` nodes): `content` is the agent's result *text* —
  *   Devin-style envelopes like `<file-view path=…>`, `Output from command in
- *   shell X:`, `The file P has been updated…`, `Found N match(es)…`. Args are
- *   not stored, so the salient bits (path/command/query) are parsed back out.
+ *   shell X:`, `The file P has been updated…`, `Found N match(es)…`. The
+ *   call's args arrive as `argsJson` too (the IR `ToolCall.arguments`,
+ *   JSON-encoded); older rows lack them, so the salient bits
+ *   (path/command/query) are still parsed back out of the text as well.
  * - Live (AG-UI events): `argsJson` is the concatenated `rawInput` JSON
  *   (repeated snapshots while args stream), `content` the `rawOutput` JSON.
  *
@@ -200,17 +202,33 @@ const argPath = (args: Record<string, unknown> | null): string | undefined =>
       str(args["file"]) ??
       firstString(args["files"]));
 
+/** Args wrapped one level deep — `{input: {command: …}}` and friends. */
+const nestedCommand = (v: unknown): string | undefined => {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const record = v as Record<string, unknown>;
+  return str(record["command"]) ?? str(record["cmd"]) ?? str(record["shell"]);
+};
+
 const argCommand = (args: Record<string, unknown> | null): string | undefined =>
   args === null
     ? undefined
     : (str(args["command"]) ??
       str(args["cmd"]) ??
       str(args["script"]) ??
+      // `shell` reads as a command only when none of the unambiguous fields
+      // set it — it can also name the shell binary (`shell: "bash"`).
+      str(args["shell"]) ??
+      nestedCommand(args["input"]) ??
+      nestedCommand(args["params"]) ??
       (Array.isArray(args["commands"])
         ? (args["commands"] as unknown[])
             .filter((c): c is string => typeof c === "string")
             .join("\n") || undefined
         : undefined));
+
+/** The shell id a `get_output`/`kill_shell`-style call targets. */
+const argShellId = (args: Record<string, unknown> | null): string | undefined =>
+  args === null ? undefined : (str(args["shell_id"]) ?? str(args["shellId"]));
 
 const argQuery = (args: Record<string, unknown> | null): string | undefined =>
   args === null
@@ -341,11 +359,20 @@ const buildExec = (
     });
   }
 
-  const label = /get_?output/i.test(toolName) ? "Read shell output" : "Ran command";
+  const shellId = argShellId(args);
+  const label = /get_?output/i.test(toolName)
+    ? "Read shell output"
+    : /kill_?shell/i.test(toolName)
+      ? "Killed shell"
+      : "Ran command";
+  // A call that only carries a shell id (get_output, kill_shell) still gets
+  // a detail — it just isn't a `$ command` line.
+  const detail =
+    command?.split("\n")[0] ?? (shellId !== undefined ? `shell ${shellId}` : undefined);
   return {
     category: "exec",
     label,
-    ...(command !== undefined ? { detail: command.split("\n")[0] } : {}),
+    ...(detail !== undefined ? { detail } : {}),
     segments,
   };
 };
@@ -475,6 +502,18 @@ export const fileDiffView = (diff: {
     out.push(`⋮ ${suf} unchanged line${suf === 1 ? "" : "s"}`);
   }
   return { path: diff.path, text: out.join("\n"), added, removed };
+};
+
+/**
+ * A markdown code fence carrying `text` as a `diff` block — streamdown/Shiki
+ * then renders it with +/- coloring inside the shared code-block chrome.
+ * The fence widens past any backtick run in the payload so source text that
+ * itself contains ``` can't break out of the block.
+ */
+export const diffFence = (text: string): string => {
+  const longest = (text.match(/`{3,}/g) ?? []).reduce((n, run) => Math.max(n, run.length), 0);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}diff\n${text}\n${fence}`;
 };
 
 const buildEdit = (

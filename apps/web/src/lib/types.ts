@@ -138,6 +138,12 @@ export interface HistoryMessage {
   toolStatus?: ToolCallStatus;
   exitCode?: number;
   durationMs?: number;
+  /**
+   * Tool-result messages only: the call's raw input args, JSON-encoded —
+   * joined from the IR `ToolCall.arguments`, same shape as a live row's
+   * `args` stream (a single JSON value rather than concatenated snapshots).
+   */
+  args?: string;
   /** Tool-result messages only: files the call touched / changed. */
   locations?: ToolLocation[];
   diffs?: ToolFileDiff[];

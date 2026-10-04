@@ -67,11 +67,26 @@ export function ChatPanel() {
   // refers to the session currently on screen.
   const forCurrent = attachMutation.variables?.id === sessionId;
   const attachReady = attachMutation.isSuccess && forCurrent && attachMutation.data.attached;
-  const readOnly = forCurrent && attachMutation.isSuccess && attachMutation.data.readOnly;
+  const takeoverAttempted = forCurrent && attachMutation.variables?.takeover === true;
+  // A failed takeover leaves the session held — the mutation's error state
+  // must not silently flip the composer back to writable, or the next send
+  // just 400s on a still-detached session.
+  const readOnly =
+    forCurrent && attachMutation.isSuccess ? attachMutation.data.readOnly : takeoverAttempted;
+  // A takeover failure stays in the chat (the session is still held) and is
+  // reported inside the takeover dialog — it must not collapse the panel
+  // into the full-screen attach error.
   const attachError =
-    attachMutation.isError && forCurrent
+    attachMutation.isError && forCurrent && !takeoverAttempted
       ? messageOf(attachMutation.error, "Failed to attach session")
       : null;
+  const takeoverError = takeoverAttempted
+    ? attachMutation.isError
+      ? messageOf(attachMutation.error, "Takeover failed")
+      : attachMutation.isSuccess && !attachMutation.data.attached
+        ? "The session is still held — the other process didn't let go."
+        : null
+    : null;
   const historyError = historyQuery.isError
     ? messageOf(historyQuery.error, "Failed to load history")
     : null;
@@ -250,6 +265,8 @@ export function ChatPanel() {
               streamStatus={streamStatus}
               onUserMessage={addUserMessage}
               onRemoveLiveMessage={removeLiveMessage}
+              takeoverError={takeoverError}
+              takeoverPending={takeoverAttempted && attachMutation.isPending}
               onTakeover={() =>
                 attach({
                   id: session.id,
@@ -257,6 +274,15 @@ export function ChatPanel() {
                   takeover: true,
                   ...modelArgsFor(session.agent, session.model, settings),
                 })
+              }
+              onReattach={() =>
+                attachMutation
+                  .mutateAsync({
+                    id: session.id,
+                    agent: session.agent,
+                    ...modelArgsFor(session.agent, session.model, settings),
+                  })
+                  .then((result) => result.attached)
               }
             />
           </>
