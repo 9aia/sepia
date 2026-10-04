@@ -393,7 +393,18 @@ export function SessionChat({
     const system: HistoryMessage[] = [];
     const conversation: HistoryMessage[] = [];
     for (const message of history) {
-      (message.role === "system" ? system : conversation).push(message);
+      if (message.role === "system") {
+        system.push(message);
+        continue;
+      }
+      // Devin rewrites the context block per internal turn — the same user
+      // prompt (and sometimes the reply) lands N times with only system nodes
+      // in between. Collapse back-to-back duplicates in conversation order.
+      const prev = conversation[conversation.length - 1];
+      if (prev !== undefined && prev.role === message.role && prev.content === message.content) {
+        continue;
+      }
+      conversation.push(message);
     }
     const context = parseSystemContext(system);
     const empty =
