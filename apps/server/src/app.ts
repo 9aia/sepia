@@ -9,14 +9,11 @@ import type {
   Unsubscribe,
 } from "sepia-session-control";
 import { createAguiAgentHandler } from "./agui-agent";
-import type { CopilotKitHandler } from "./copilotkit";
 import { keepAliveMsFromEnv, SseChannel } from "./sse-channel";
 
 export interface AppOptions {
   /** Runs effects; pass `runtime.runPromise` so spans/metrics reach the OTLP runtime. */
   readonly run?: EffectRunner;
-  /** Mounted at `/api/copilotkit`; omitted in tests, where the route reports 501. */
-  readonly copilotkitHandler?: CopilotKitHandler;
   /** When set, every `/api/*` route except `GET /api/health` requires a bearer token. */
   readonly token?: string;
   /** Receives one line per request; defaults to `console.log`. */
@@ -241,17 +238,6 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
 
     if (segments[0] === "api" && !isAuthorized(request, options.token)) {
       return unauthorizedResponse(cors);
-    }
-
-    if (segments[0] === "api" && segments[1] === "copilotkit") {
-      if (options.copilotkitHandler === undefined) {
-        return jsonResponse({ error: "CopilotKit runtime is not mounted" }, 501, cors);
-      }
-      const response = await options.copilotkitHandler(request);
-      return new Response(response.body, {
-        status: response.status,
-        headers: { ...Object.fromEntries(response.headers), ...cors },
-      });
     }
 
     if (method === "POST" && segmentsEqual(segments, ["api", "agent"])) {

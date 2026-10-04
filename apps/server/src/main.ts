@@ -4,7 +4,6 @@ import { ClineRepository, SessionRepository, SqliteStorage } from "sepia-core";
 import { builtinAgents, spawnAgent } from "sepia-acp";
 import { ControlPlane, layer as controlPlaneLayer, mergeRepositories } from "sepia-session-control";
 import { createApp } from "./app";
-import { createCopilotKitHandler } from "./copilotkit";
 import { parseEnv } from "./env";
 import { otelLayer } from "./telemetry";
 
@@ -75,17 +74,10 @@ const plane = await runtime.runPromise(ControlPlane).catch((error: unknown) => {
   process.exit(1);
 });
 
-const copilotkitHandler = createCopilotKitHandler({
-  agentUrl: env.agentUrl,
-  basePath: "/api/copilotkit",
-  token: env.token,
-});
-
 const server = Bun.serve({
   hostname: env.host,
   port: env.port,
   fetch: createApp(plane, {
-    copilotkitHandler,
     token: env.token,
     allowedOrigins: env.origins,
     run: (effect) => runtime.runPromise(effect),

@@ -8,14 +8,12 @@ test("applies defaults", () => {
   expect(env.host).toBe("127.0.0.1");
   expect(env.token).toBeUndefined();
   expect(env.origins).toEqual(["http://localhost:3000", "http://127.0.0.1:3000"]);
-  expect(env.agentUrl).toBe("http://localhost:8787/api/agent");
 });
 
 test("derives the agent URL from the port", () => {
   const env = parseEnv({ SEPIA_DB: "/tmp/sepia.db", PORT: "9000" });
 
   expect(env.port).toBe(9000);
-  expect(env.agentUrl).toBe("http://localhost:9000/api/agent");
 });
 
 test("rejects a non-numeric PORT", () => {
@@ -39,5 +37,4 @@ test("parses SEPIA_ORIGINS and SEPIA_AGENT_URL overrides", () => {
   });
 
   expect(env.origins).toEqual(["https://a.example", "https://b.example"]);
-  expect(env.agentUrl).toBe("https://sepia.example/api/agent");
 });

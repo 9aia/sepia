@@ -6,7 +6,6 @@ export interface ServerEnv {
   readonly host: string;
   readonly token: string | undefined;
   readonly origins: ReadonlyArray<string>;
-  readonly agentUrl: string;
   readonly otel: {
     readonly enabled: boolean;
     readonly endpoint: string;
@@ -46,7 +45,6 @@ export const parseEnv = (env: NodeJS.ProcessEnv = process.env): ServerEnv => {
     host: env.SEPIA_HOST ?? "127.0.0.1",
     token: env.SEPIA_TOKEN,
     origins: configuredOrigins.length > 0 ? configuredOrigins : DEFAULT_ORIGINS,
-    agentUrl: env.SEPIA_AGENT_URL ?? `http://localhost:${port}/api/agent`,
     otel: {
       enabled: env.SEPIA_OTEL !== "0",
       endpoint: otelEndpoint,

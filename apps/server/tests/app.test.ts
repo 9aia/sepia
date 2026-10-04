@@ -559,15 +559,6 @@ describe("createApp", () => {
     expect(body.error).toContain("sessionId is required");
   });
 
-  it("POST /api/copilotkit reports 501 when no runtime is mounted", async () => {
-    const { plane } = makeFakePlane();
-    const response = await createApp(plane)(post("/api/copilotkit", {}));
-
-    expect(response.status).toBe(501);
-    const body = (await response.json()) as { error: string };
-    expect(body.error).toContain("CopilotKit runtime is not mounted");
-  });
-
   const authed = (path: string, token: string): Request =>
     new Request(`http://localhost:8787${path}`, {
       headers: { origin: "http://localhost:3000", authorization: `Bearer ${token}` },
@@ -638,19 +629,6 @@ describe("createApp", () => {
 
     expect(response.status).toBe(401);
     expect(created).toEqual([]);
-  });
-
-  it("carries the router CORS headers on the CopilotKit branch", async () => {
-    const { plane } = makeFakePlane();
-    const handler = async (): Promise<Response> =>
-      new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
-    const response = await createApp(plane, { copilotkitHandler: handler })(
-      post("/api/copilotkit", {}),
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
-    expect(response.headers.get("vary")).toBe("Origin");
   });
 
   it("POST /api/agent emits RUN_ERROR when the prompt rejects", async () => {

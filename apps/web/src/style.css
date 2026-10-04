@@ -7,19 +7,6 @@
 @plugin "@tailwindcss/typography";
 
 :root {
-  --bg: #0f1115;
-  --panel: #171a21;
-  --panel-2: #1e222b;
-  --border: oklch(0.92 0.004 286.32);
-  --text: #e6e9ef;
-  --muted: oklch(0.967 0.001 286.375);
-  --accent: oklch(0.967 0.001 286.375);
-  --danger: #f87171;
-  /* Our palette, kept distinct from the shadcn tokens above. */
-  --app-border: #2a2f3a;
-  --app-muted: #8b93a7;
-  --app-accent: #6ea8fe;
-  --app-radius: 8px;
   color-scheme: dark;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
@@ -62,8 +49,8 @@ body {
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
+  background: var(--background);
+  color: var(--foreground);
   font-family:
     ui-sans-serif,
     system-ui,
@@ -86,8 +73,8 @@ body {
 }
 
 .session-list {
-  background: var(--panel);
-  border-right: 1px solid var(--app-border);
+  background: var(--card);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -98,7 +85,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 16px;
-  border-bottom: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--border);
 }
 
 .session-list__title {
@@ -108,7 +95,7 @@ body {
 }
 
 .session-list__count {
-  color: var(--app-muted);
+  color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
 
@@ -117,16 +104,16 @@ body {
   flex-direction: column;
   gap: 6px;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--border);
 }
 
 .session-list__status {
   padding: 16px;
-  color: var(--app-muted);
+  color: var(--muted-foreground);
 }
 
 .session-list__status--error {
-  color: var(--danger);
+  color: var(--destructive);
 }
 
 .session-list__items {
@@ -145,7 +132,7 @@ body {
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--app-radius);
+  border-radius: var(--radius);
   color: inherit;
   padding: 10px 12px;
   cursor: pointer;
@@ -153,12 +140,12 @@ body {
 }
 
 .session-item:hover {
-  background: var(--panel-2);
+  background: var(--secondary);
 }
 
 .session-item--selected {
-  background: var(--panel-2);
-  border-color: var(--app-accent);
+  background: var(--secondary);
+  border-color: var(--primary);
 }
 
 .session-item__top {
@@ -176,7 +163,7 @@ body {
 }
 
 .session-item__cwd {
-  color: var(--app-muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -191,7 +178,7 @@ body {
   align-items: center;
   gap: 8px;
   margin-top: 6px;
-  color: var(--app-muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -204,7 +191,7 @@ body {
 .chat-panel--empty {
   align-items: center;
   justify-content: center;
-  color: var(--app-muted);
+  color: var(--muted-foreground);
 }
 
 .chat-panel__header {
@@ -213,7 +200,7 @@ body {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--border);
 }
 
 .chat-panel__title {
@@ -222,7 +209,7 @@ body {
 }
 
 .chat-panel__cwd {
-  color: var(--app-muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -236,19 +223,17 @@ body {
 }
 
 .chat-panel__loading {
-  color: var(--app-muted);
+  color: var(--muted-foreground);
 }
 
-/* The history Conversation is its own scroll region alongside CopilotChat. */
-.history {
+/* The conversation is its own scroll region above the composer. */
+.chat-conversation {
   flex: 1;
   min-height: 0;
-  border-bottom: 1px dashed var(--app-border);
-  padding-bottom: 8px;
 }
 
 .history__truncated {
-  color: var(--app-muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   text-align: center;
 }
@@ -261,9 +246,10 @@ body {
   padding-bottom: 10px;
 }
 
-.copilot-chat {
-  flex: 1;
-  min-height: 0;
+.chat-composer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
 }
 
 .mock-banner {
@@ -284,10 +270,10 @@ body {
 .chat-panel__error {
   margin: 12px 16px;
   padding: 10px 14px;
-  border: 1px solid #6b2b2b;
-  border-radius: var(--app-radius);
-  background: #3a1a1a;
-  color: var(--danger);
+  border: 1px solid color-mix(in oklch, var(--destructive) 40%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--destructive) 14%, transparent);
+  color: var(--destructive);
   font-size: 13px;
 }
 
@@ -295,9 +281,9 @@ body {
   margin: 15vh auto;
   max-width: 420px;
   padding: 24px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
   text-align: center;
 }
 
@@ -307,17 +293,17 @@ body {
 }
 
 .error-boundary p {
-  color: var(--app-muted);
+  color: var(--muted-foreground);
   font-size: 14px;
   margin: 0 0 16px;
 }
 
 .error-boundary button {
   padding: 6px 16px;
-  border: 1px solid var(--app-accent);
-  border-radius: var(--app-radius);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius);
   background: transparent;
-  color: var(--app-accent);
+  color: var(--primary);
   font: inherit;
   cursor: pointer;
 }
@@ -335,7 +321,7 @@ body {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--app-muted);
+  color: var(--muted-foreground);
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
@@ -349,8 +335,8 @@ body {
 }
 
 .session-item__delete:hover {
-  background: var(--panel-2);
-  color: var(--danger);
+  background: var(--secondary);
+  color: var(--destructive);
 }
 
 @theme inline {

@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { CopilotKit } from "@copilotkit/react-core";
-import { CopilotChat } from "@copilotkit/react-ui";
-import "@copilotkit/react-ui/styles.css";
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import type { PermissionRequest } from "../lib/types";
 import { subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
+import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
 import { sepiaStore } from "../lib/store";
 import { queryKeys } from "../hooks/query/keys";
 import { useAttachSession } from "../hooks/query/useAttachSession";
@@ -15,8 +13,7 @@ import { useRespondToPermission } from "../hooks/query/useRespondToPermission";
 import { useSessions } from "../hooks/query/useSessions";
 import { ApprovalDialog } from "./ApprovalDialog";
 import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { HistoryPane } from "./HistoryPane";
+import { SessionChat } from "./SessionChat";
 
 const PERMISSION_EVENT = "acp:permission_request";
 
@@ -70,23 +67,27 @@ export function ChatPanel() {
     ? messageOf(historyQuery.error, "Failed to load history")
     : null;
 
-  const [mounted, setMounted] = useState(false);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>("connecting");
   const [running, setRunning] = useState(false);
+  const [liveMessages, setLiveMessages] = useState<LiveMessage[]>([]);
   const { mutate: attach } = attachMutation;
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     if (sessionId !== null) attach({ id: sessionId });
   }, [sessionId, attach]);
 
+  // Live rows are optimistic: once the run ends and the refetched IR backlog
+  // covers them, they would duplicate — clear whenever fresh history lands
+  // while no run is active.
+  useEffect(() => {
+    if (!running && historyQuery.data !== undefined) setLiveMessages([]);
+  }, [running, historyQuery.data]);
+
   useEffect(() => {
     setPermission(null);
     setRunning(false);
+    setLiveMessages([]);
     // The stream subscribes to live-session events; it only exists once the
     // agent is attached, otherwise every request just races a 400.
     if (!sessionId || !attachReady) return;
@@ -98,6 +99,7 @@ export function ChatPanel() {
           if (parsed) setPermission(parsed);
           return;
         }
+        setLiveMessages((messages) => applyAguiEvent(messages, event));
         // The SSE feed mirrors the live turn lifecycle; no polling needed.
         if (event.type === "RUN_STARTED") setRunning(true);
         if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
@@ -118,6 +120,13 @@ export function ChatPanel() {
     },
     [sessionId, permission, respondMutation],
   );
+
+  const addUserMessage = useCallback((text: string) => {
+    setLiveMessages((messages) => [
+      ...messages,
+      { id: `user-${Date.now()}`, role: "user", content: text, done: true },
+    ]);
+  }, []);
 
   if (!session) {
     return (
@@ -156,27 +165,15 @@ export function ChatPanel() {
             {historyError}
           </div>
         )}
-        <HistoryPane sessionId={session.id} />
-
-        {attachError !== null ? null : readOnly ? (
-          <div className="chat-panel__readonly">
-            This session is held by another process.
-            <Button size="sm" onClick={() => attach({ id: session.id, takeover: true })}>
-              Take over
-            </Button>
-          </div>
-        ) : mounted ? (
-          <CopilotKit
-            key={session.id}
-            runtimeUrl={`/api/copilotkit?sessionId=${encodeURIComponent(session.id)}`}
-          >
-            <CopilotChat
-              className="copilot-chat"
-              labels={{ title: session.title, initial: "Ask about this session." }}
-            />
-          </CopilotKit>
-        ) : (
-          <div className="chat-panel__loading">Loading chat…</div>
+        {attachError === null && (
+          <SessionChat
+            sessionId={session.id}
+            readOnly={readOnly}
+            running={running || session.busy}
+            liveMessages={liveMessages}
+            onUserMessage={addUserMessage}
+            onTakeover={() => attach({ id: session.id, takeover: true })}
+          />
         )}
       </div>
 
