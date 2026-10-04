@@ -81,12 +81,15 @@ html.light {
 }
 
 /* Tailwind's reset leaves bare border/outline utilities on currentColor —
- * white text would mean white borders. Utilities still override these. */
-*,
-::before,
-::after {
-  border-color: var(--border);
-  outline-color: var(--ring);
+ * white text would mean white borders. Inside @layer base so the utilities
+ * layer (incl. border-transparent on ghost buttons) still wins. */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+    outline-color: var(--ring);
+  }
 }
 
 html,
