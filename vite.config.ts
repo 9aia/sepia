@@ -8,8 +8,19 @@ export default defineConfig({
     ignorePatterns: ["apps/web/src/routeTree.gen.ts"],
   },
   lint: {
-    jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
-    rules: { "vite-plus/prefer-vite-plus-imports": "error" },
+    jsPlugins: [
+      { name: "vite-plus", specifier: "vite-plus/oxlint-plugin" },
+      // eslint-plugin-boundaries can't resolve imports under oxlint (it needs
+      // eslint-plugin-import's resolver); lint/boundaries.js enforces our
+      // app/package boundaries textually instead.
+      "./lint/boundaries.js",
+    ],
+    rules: {
+      "vite-plus/prefer-vite-plus-imports": "error",
+      "sepia/no-cross-app-import": "error",
+      "sepia/no-deep-package-import": "error",
+      "sepia/no-backend-package-import": "error",
+    },
     options: { typeAware: true, typeCheck: true },
   },
   run: {
