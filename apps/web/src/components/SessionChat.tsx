@@ -15,7 +15,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "./ui/alert-dialog";
 import type { HistoryMessage } from "../lib/types";
 import type { LiveMessage } from "../lib/liveMessages";
@@ -24,7 +23,6 @@ import { settingsStore } from "../lib/settings";
 import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
-import { Button } from "./ui/button";
 import { ErrorBanner } from "./ErrorBanner";
 import {
   MessageScroller,
@@ -304,6 +302,8 @@ export function SessionChat({
   const history = useMemo(() => flattenHistory(historyQuery.data), [historyQuery.data]);
   const [submitting, setSubmitting] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
+  // Held by another process → the send asks to take over first.
+  const [takeoverPrompt, setTakeoverPrompt] = useState<string | null>(null);
 
   const rows = useMemo<Row[]>(
     () => [
@@ -313,9 +313,7 @@ export function SessionChat({
     [history, liveMessages],
   );
 
-  const onSubmit = (message: PromptInputMessage) => {
-    const text = message.text.trim();
-    if (text === "" || readOnly || running || submitting) return;
+  const send = (text: string): void => {
     setSubmitting(true);
     setPromptError(null);
     sendPrompt(sessionId, text)
@@ -328,6 +326,26 @@ export function SessionChat({
       )
       .finally(() => setSubmitting(false));
   };
+
+  const onSubmit = (message: PromptInputMessage) => {
+    const text = message.text.trim();
+    if (text === "" || running || submitting) return;
+    if (readOnly) {
+      setTakeoverPrompt(text);
+      return;
+    }
+    send(text);
+  };
+
+  // Takeover confirmed → attach resolved readOnly off → send the held text.
+  useEffect(() => {
+    if (!readOnly && takeoverPrompt !== null) {
+      const text = takeoverPrompt;
+      setTakeoverPrompt(null);
+      send(text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly]);
 
   const loadEarlier = useCallback(() => {
     if (!historyQuery.isFetchingNextPage) void historyQuery.fetchNextPage();
@@ -357,44 +375,41 @@ export function SessionChat({
 
       {promptError !== null && <ErrorBanner>{promptError}</ErrorBanner>}
 
-      {readOnly ? (
-        <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm text-muted-foreground">
-          This session is held by another process.
-          <AlertDialog>
-            <AlertDialogTrigger render={<Button size="sm" />}>Take over</AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Take over this session?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  The process holding this session will be detached and its in-progress work
-                  stopped. Attach it here instead?
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={onTakeover}>Take over</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      ) : (
-        <PromptInput onSubmit={onSubmit} className="shrink-0 border-t border-border px-4 pb-4 pt-3">
-          <PromptInputBody>
-            <PromptInputTextarea placeholder="Prompt the agent…" />
-          </PromptInputBody>
-          <PromptInputFooter>
-            <PromptInputTools />
-            <div className="ml-auto flex items-center gap-1">
-              <ModelSelect sessionId={sessionId} />
-              <PromptInputSubmit
-                status={running ? "streaming" : submitting ? "submitted" : "ready"}
-                disabled={submitting}
-                onStop={() => void cancel(sessionId)}
-              />
-            </div>
-          </PromptInputFooter>
-        </PromptInput>
-      )}
+      <PromptInput onSubmit={onSubmit} className="shrink-0 border-t border-border px-4 pb-4 pt-3">
+        <PromptInputBody>
+          <PromptInputTextarea placeholder="Prompt the agent…" />
+        </PromptInputBody>
+        <PromptInputFooter>
+          <PromptInputTools />
+          <div className="ml-auto flex items-center gap-1">
+            <ModelSelect sessionId={sessionId} />
+            <PromptInputSubmit
+              status={running ? "streaming" : submitting ? "submitted" : "ready"}
+              disabled={submitting}
+              onStop={() => void cancel(sessionId)}
+            />
+          </div>
+        </PromptInputFooter>
+      </PromptInput>
+
+      <AlertDialog
+        open={takeoverPrompt !== null}
+        onOpenChange={(open) => !open && setTakeoverPrompt(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Take over this session?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This session is held by another process. Taking over detaches it and stops in-progress
+              work — your message will be sent after.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={onTakeover}>Take over</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
