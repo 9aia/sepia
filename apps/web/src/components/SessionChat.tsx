@@ -29,14 +29,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
 import { BubbleContent } from "./bubble";
-import {
-  Message,
-  MessageAvatar,
-  MessageContent,
-  MessageCopy,
-  MessageFooter,
-  MessageReply,
-} from "./message";
+import { Message, MessageContent, MessageCopy, MessageFooter, MessageReply } from "./message";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { parseSystemContext, type SystemContext } from "../lib/systemContext";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -625,10 +618,8 @@ function MessageRow({
   const error = role === "assistant" ? parseErrorPayload(content) : null;
   return (
     <Message align={role === "user" ? "end" : "start"}>
-      <MessageAvatar>
-        <RowAvatar role={role} />
-      </MessageAvatar>
       <MessageContent>
+        <RowAvatar role={role} />
         <BubbleContent
           variant={role === "user" ? "default" : "ghost"}
           className={role === "user" ? "max-w-[80%]" : "max-w-none"}
