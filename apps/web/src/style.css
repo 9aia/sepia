@@ -4,7 +4,6 @@
 @import "@fontsource-variable/geist";
 
 @custom-variant dark (&:is(.dark *));
-@plugin "@tailwindcss/typography";
 
 :root {
   color-scheme: dark;
