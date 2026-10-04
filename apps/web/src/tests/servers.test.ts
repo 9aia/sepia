@@ -5,6 +5,7 @@ import {
   deleteServer,
   gatewayTarget,
   listServers,
+  parseServerHost,
   serverTarget,
   updateServer,
   type ManagedServer,
@@ -39,6 +40,7 @@ const SERVER: ManagedServer = {
   label: "box",
   host: "box.example",
   port: 8787,
+  scheme: "http",
   auth: null,
   ssh: null,
 };
@@ -47,6 +49,7 @@ const INPUT: ServerInput = {
   label: "box",
   host: "box.example",
   port: 8787,
+  scheme: "http",
   auth: null,
   ssh: null,
 };
@@ -148,5 +151,51 @@ describe("gatewayTarget", () => {
 
   it("encodes the registry id", () => {
     expect(gatewayTarget("srv a/b").baseUrl).toBe("/api/gateway/srv%20a%2Fb");
+  });
+});
+
+describe("parseServerHost", () => {
+  it("parses a bare host as http with no port override", () => {
+    expect(parseServerHost("thinkpad")).toEqual({ scheme: "http", host: "thinkpad", port: null });
+    expect(parseServerHost("  192.168.1.10  ")).toEqual({
+      scheme: "http",
+      host: "192.168.1.10",
+      port: null,
+    });
+  });
+
+  it("splits host:port even without a scheme", () => {
+    expect(parseServerHost("thinkpad:8787")).toEqual({
+      scheme: "http",
+      host: "thinkpad",
+      port: 8787,
+    });
+  });
+
+  it("parses the scheme and port out of a full URL, dropping any path", () => {
+    expect(parseServerHost("https://box.example")).toEqual({
+      scheme: "https",
+      host: "box.example",
+      port: null,
+    });
+    expect(parseServerHost("https://box.example:8443/api")).toEqual({
+      scheme: "https",
+      host: "box.example",
+      port: 8443,
+    });
+    expect(parseServerHost("http://box.example:8787")).toEqual({
+      scheme: "http",
+      host: "box.example",
+      port: 8787,
+    });
+  });
+
+  it("rejects non-http(s) schemes and unparseable input", () => {
+    expect(parseServerHost("")).toBeNull();
+    expect(parseServerHost("   ")).toBeNull();
+    expect(parseServerHost("ftp://box.example")).toBeNull();
+    expect(parseServerHost("bad host")).toBeNull();
+    expect(parseServerHost("host:notaport")).toBeNull();
+    expect(parseServerHost("host:99999")).toBeNull();
   });
 });

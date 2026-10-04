@@ -4,8 +4,10 @@ import { dirname } from "node:path";
 
 /**
  * Managed-server registry (Settings → Servers). Each entry is a sepia node the
- * UI can reach through this server: either directly (`http://host:port`) or via
- * an SSH local port-forward when `ssh` is configured.
+ * UI can reach through this server: either directly (`scheme://host:port`) or
+ * via an SSH local port-forward when `ssh` is configured. `scheme` marks
+ * whether the upstream port is plain HTTP or TLS-terminated — entries written
+ * before it existed normalize to "http".
  *
  * Why not better-auth: better-auth models *inbound* auth — users, sessions,
  * and (via the apiKey plugin) keys that callers present TO this app. There is
@@ -35,11 +37,20 @@ export interface ServerSsh {
   readonly key?: string;
 }
 
+/** Upstream protocol — what `host:port` speaks on the far end. */
+export type ServerScheme = "http" | "https";
+
 export interface ServerEntry {
   readonly id: string;
   readonly label: string;
   readonly host: string;
   readonly port: number;
+  /**
+   * Whether the upstream is plain HTTP or TLS-terminated (e.g. a sepia node
+   * behind Caddy). Absent in pre-scheme stored entries — the validator
+   * normalizes those to "http".
+   */
+  readonly scheme: ServerScheme;
   readonly auth: ServerAuth | null;
   readonly ssh: ServerSsh | null;
 }
@@ -126,6 +137,11 @@ export const validateServerInput = (
     return { ok: false, error: "host must be a hostname or IP, not a URL" };
   }
   if (!isPort(value.port)) return { ok: false, error: "port must be an integer 1-65535" };
+  // Additive field: absent (legacy clients, pre-scheme stored entries) → http.
+  const scheme = value.scheme === undefined ? "http" : value.scheme;
+  if (scheme !== "http" && scheme !== "https") {
+    return { ok: false, error: "scheme must be 'http' or 'https'" };
+  }
 
   let auth: ServerAuth | null = null;
   if (value.auth !== undefined && value.auth !== null) {
@@ -143,7 +159,7 @@ export const validateServerInput = (
 
   return {
     ok: true,
-    input: { label: value.label.trim(), host, port: value.port, auth, ssh },
+    input: { label: value.label.trim(), host, port: value.port, scheme, auth, ssh },
   };
 };
 
@@ -163,6 +179,7 @@ export const publicServer = (entry: ServerEntry): Record<string, unknown> => ({
   label: entry.label,
   host: entry.host,
   port: entry.port,
+  scheme: entry.scheme,
   auth:
     entry.auth === null
       ? null

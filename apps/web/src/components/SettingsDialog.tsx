@@ -9,7 +9,7 @@ import {
   type SepiaSettings,
 } from "../lib/settings";
 import { sepiaStore } from "../lib/store";
-import { KEYBINDS, formatKey, resolveKey } from "../lib/keybinds";
+import { KEYBINDS, formatKey, keybindConflicts, resolveKey } from "../lib/keybinds";
 import { Kbd } from "./ui/kbd";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
@@ -45,6 +45,13 @@ function KeyboardSection() {
       }
       setRecordingId(null);
     },
+    // Backspace/Delete while recording disables the binding entirely.
+    onClear: () => {
+      if (recordingId !== null) {
+        setSettings({ keybinds: { ...settings.keybinds, [recordingId]: null } });
+      }
+      setRecordingId(null);
+    },
     onCancel: () => setRecordingId(null),
   });
 
@@ -72,10 +79,18 @@ function KeyboardSection() {
           <div className="divide-y divide-border/50 rounded-lg border border-border">
             {KEYBINDS.filter((keybind) => keybind.group === group).map((keybind) => {
               const key = resolveKey(settings, keybind.id);
+              const conflicts = keybindConflicts(settings, keybind.id);
               const recording = recordingId === keybind.id && recorder.isRecording;
               return (
                 <div key={keybind.id} className="flex items-center gap-3 px-3 py-2">
-                  <span className="flex-1 text-sm">{keybind.label}</span>
+                  <div className="flex-1">
+                    <span className="text-sm">{keybind.label}</span>
+                    {conflicts.length > 0 && (
+                      <span className="block text-xs text-amber-600 dark:text-amber-400">
+                        Conflicts with {conflicts.map((other) => other.label).join(", ")}
+                      </span>
+                    )}
+                  </div>
                   {key === null ? (
                     <span className="text-xs text-muted-foreground">Disabled</span>
                   ) : (

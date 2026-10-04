@@ -185,11 +185,14 @@ export const pairPeer = async (url: string, code: string): Promise<PeerNode> => 
 // gateway — a peer the browser can't reach directly is exactly the case
 // gateway mode exists for, so direct probes would always fail.
 
-/** url → the `{host, port}` pair the managed registry stores. */
-const gatewayHostPort = (baseUrl: string): { host: string; port: number } => {
+/** url → the `{scheme, host, port}` triple the managed registry stores. */
+const gatewayTargetParts = (
+  baseUrl: string,
+): { scheme: "http" | "https"; host: string; port: number } => {
   const url = new URL(baseUrl);
-  const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
-  return { host: url.hostname, port };
+  const scheme = url.protocol === "https:" ? "https" : "http";
+  const port = url.port === "" ? (scheme === "https" ? 443 : 80) : Number(url.port);
+  return { scheme, host: url.hostname, port };
 };
 
 /**
@@ -223,12 +226,13 @@ const registerGatewayPeer = async (baseUrl: string, serverId: string): Promise<P
  */
 export const addGatewayPeer = async (url: string, token: string): Promise<PeerNode> => {
   const baseUrl = normalizeNodeUrl(url);
-  const { host, port } = gatewayHostPort(baseUrl);
+  const { scheme, host, port } = gatewayTargetParts(baseUrl);
   const secret = token.trim();
   const entry = await createServer({
     label: host,
     host,
     port,
+    scheme,
     auth: secret === "" ? null : { type: "token", secret },
     ssh: null,
   });
@@ -248,8 +252,8 @@ export const addGatewayPeer = async (url: string, token: string): Promise<PeerNo
  */
 export const pairGatewayPeer = async (url: string, code: string): Promise<PeerNode> => {
   const baseUrl = normalizeNodeUrl(url);
-  const { host, port } = gatewayHostPort(baseUrl);
-  const entry = await createServer({ label: host, host, port, auth: null, ssh: null });
+  const { scheme, host, port } = gatewayTargetParts(baseUrl);
+  const entry = await createServer({ label: host, host, port, scheme, auth: null, ssh: null });
   try {
     const { token } = await pairNode(code.trim(), gatewayTarget(entry.id), {
       forwardTargetAuth: true,
@@ -258,6 +262,7 @@ export const pairGatewayPeer = async (url: string, code: string): Promise<PeerNo
       label: host,
       host,
       port,
+      scheme,
       auth: { type: "token", secret: token },
       ssh: null,
     });

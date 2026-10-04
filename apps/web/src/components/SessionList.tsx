@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useAppHotkey } from "../lib/keybinds";
+import { isFormField } from "../lib/keyboard";
 import { useStore } from "@tanstack/react-store";
 import {
   AlertCircleIcon,
@@ -61,14 +62,7 @@ const sorters: Record<SortKey, (a: SessionSummary, b: SessionSummary) => number>
   title: (a, b) => a.title.localeCompare(b.title),
 };
 
-const inFormField = (): boolean => {
-  const el = document.activeElement;
-  return (
-    el instanceof HTMLInputElement ||
-    el instanceof HTMLTextAreaElement ||
-    el instanceof HTMLSelectElement
-  );
-};
+const inFormField = (): boolean => isFormField(document.activeElement);
 
 const messageOf = (err: unknown, fallback: string): string =>
   err instanceof Error ? err.message : fallback;

@@ -28,11 +28,15 @@ export interface ServerSshPublic {
   readonly keyIsPath?: boolean;
 }
 
+/** Upstream protocol — what the managed node's host:port speaks. */
+export type ServerScheme = "http" | "https";
+
 export interface ManagedServer {
   readonly id: string;
   readonly label: string;
   readonly host: string;
   readonly port: number;
+  readonly scheme: ServerScheme;
   readonly auth: ServerAuthPublic | null;
   readonly ssh: ServerSshPublic | null;
 }
@@ -42,6 +46,7 @@ export interface ServerInput {
   readonly label: string;
   readonly host: string;
   readonly port: number;
+  readonly scheme: ServerScheme;
   readonly auth: {
     readonly type: "token" | "password";
     readonly user?: string;
@@ -137,3 +142,37 @@ export const gatewayTarget = (serverId: string): ApiTarget => ({
   // Generous: an SSH tunnel cold-start is folded into the first proxied call.
   timeoutMs: 12_000,
 });
+
+export interface ParsedServerHost {
+  readonly scheme: ServerScheme;
+  readonly host: string;
+  /** Explicit `:port` from the input, or null when it only named a host. */
+  readonly port: number | null;
+}
+
+/**
+ * Parse the Settings form's host field, which takes a bare hostname/IP or a
+ * full `http(s)://…` address — pasting a URL is the common case, and any
+ * scheme or `:port` it carries wins over the defaults. A path is accepted and
+ * dropped (the registry stores an origin, matching normalizeNodeUrl). Returns
+ * null on unparseable input or a non-http(s) scheme.
+ */
+export const parseServerHost = (raw: string): ParsedServerHost | null => {
+  const trimmed = raw.trim();
+  if (trimmed === "" || /\s/.test(trimmed)) return null;
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+  if (hasScheme && !/^https?:\/\//i.test(trimmed)) return null;
+  try {
+    // `sepia://` stands in for "no scheme given" — non-special schemes still
+    // split authority/port, but don't imply a protocol of their own.
+    const url = new URL(hasScheme ? trimmed : `sepia://${trimmed}`);
+    if (url.hostname === "") return null;
+    return {
+      scheme: !hasScheme || url.protocol === "http:" ? "http" : "https",
+      host: url.hostname,
+      port: url.port === "" ? null : Number(url.port),
+    };
+  } catch {
+    return null;
+  }
+};

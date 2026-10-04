@@ -38,11 +38,21 @@ const json = (body: unknown, status: number, cors: Record<string, string>): Resp
     headers: { "content-type": "application/json", ...cors },
   });
 
-/** Direct URL, or the loopback end of the SSH forward when configured. */
+/**
+ * Direct URL, or the loopback end of the SSH forward when configured.
+ *
+ * `scheme` describes what `host:port` speaks on the far end, so it applies in
+ * both modes: an https entry behind a tunnel gets TLS-over-SSH — `ssh -L`
+ * forwards raw TCP, so whatever terminates the remote port (the sepia server
+ * itself or its TLS proxy) sees a normal TLS handshake. One caveat: the TLS
+ * handshake then names `127.0.0.1`, so certificate verification only passes
+ * for certs covering the loopback address — in practice the SSH channel
+ * already encrypts, and tunneled entries should almost always use `http`.
+ */
 const upstreamBase = async (entry: ServerEntry, deps: ServersRouteDeps): Promise<string> => {
-  if (entry.ssh === null) return `http://${entry.host}:${entry.port}`;
+  if (entry.ssh === null) return `${entry.scheme}://${entry.host}:${entry.port}`;
   const { localPort } = await deps.tunnels.ensure(entry);
-  return `http://127.0.0.1:${localPort}`;
+  return `${entry.scheme}://127.0.0.1:${localPort}`;
 };
 
 const proxy = async (

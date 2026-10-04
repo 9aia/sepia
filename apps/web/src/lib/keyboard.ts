@@ -19,3 +19,19 @@ const subscribe = (onChange: () => void): (() => void) => {
 
 export const useHasKeyboard = (): boolean =>
   useSyncExternalStore(subscribe, hasKeyboard, () => false);
+
+/**
+ * Input-like element where typing must not trigger app shortcuts — mirrors
+ * @tanstack/hotkeys' input guard: text inputs, textarea, select, and
+ * contenteditable; button-type inputs are excluded so Escape-style bindings
+ * still fire when a form button has focus.
+ */
+export const isFormField = (el: Element | null): boolean => {
+  if (el === null || typeof HTMLElement === "undefined") return false;
+  if (el instanceof HTMLInputElement) {
+    const type = el.type.toLowerCase();
+    return type !== "button" && type !== "submit" && type !== "reset";
+  }
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true;
+  return el instanceof HTMLElement && el.isContentEditable;
+};

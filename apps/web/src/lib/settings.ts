@@ -39,6 +39,19 @@ export interface SepiaSettings {
 
 const KEY = "sepia:settings";
 
+/**
+ * Keep only `string` (custom key) and `null` (disabled) overrides — a corrupt
+ * value like `{"session.new": 5}` would flow straight into useHotkey and throw.
+ */
+const sanitizeKeybinds = (value: unknown): Record<string, string | null> => {
+  if (typeof value !== "object" || value === null) return {};
+  const keybinds: Record<string, string | null> = {};
+  for (const [id, override] of Object.entries(value)) {
+    if (typeof override === "string" || override === null) keybinds[id] = override;
+  }
+  return keybinds;
+};
+
 const defaultSettings = (): SepiaSettings => ({
   defaultAgent: null,
   defaultCwd: null,
@@ -61,10 +74,7 @@ const load = (): SepiaSettings => {
         typeof parsed.models === "object" && parsed.models !== null
           ? (parsed.models as Record<string, AgentModelPref>)
           : {},
-      keybinds:
-        typeof parsed.keybinds === "object" && parsed.keybinds !== null
-          ? (parsed.keybinds as Record<string, string | null>)
-          : {},
+      keybinds: sanitizeKeybinds(parsed.keybinds),
       notifications:
         typeof parsed.notifications === "object" && parsed.notifications !== null
           ? {

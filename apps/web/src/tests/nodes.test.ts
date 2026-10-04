@@ -375,6 +375,7 @@ describe("gateway peers (via: gateway)", () => {
     label: "remote.example",
     host: "remote.example",
     port: 8787,
+    scheme: "http" as const,
     auth: null,
     ssh: null,
   };
@@ -434,6 +435,7 @@ describe("gateway peers (via: gateway)", () => {
       label: "remote.example",
       host: "remote.example",
       port: 8787,
+      scheme: "http",
       auth: { type: "token", secret: "peer-secret" },
       ssh: null,
     });
@@ -454,6 +456,54 @@ describe("gateway peers (via: gateway)", () => {
     const persisted = JSON.parse(store.get("sepia:nodes") ?? "[]") as PeerNode[];
     expect(persisted[0]?.via).toBe("gateway");
     expect(persisted[0]?.serverId).toBe("srv_1");
+  });
+
+  it("addGatewayPeer propagates an https peer URL as scheme+port in the managed entry", async () => {
+    mockedCreateServer.mockResolvedValue({ ...managed, scheme: "https", port: 443 });
+    mockedGetNode.mockResolvedValue(descriptor);
+
+    const added = await addGatewayPeer("https://remote.example/", "peer-secret");
+    // A bare https:// URL implies :443 and stores scheme: "https" so the
+    // gateway proxy fetches the TLS upstream instead of plaintext.
+    expect(mockedCreateServer).toHaveBeenCalledWith({
+      label: "remote.example",
+      host: "remote.example",
+      port: 443,
+      scheme: "https",
+      auth: { type: "token", secret: "peer-secret" },
+      ssh: null,
+    });
+    expect(added.url).toBe("https://remote.example");
+  });
+
+  it("pairGatewayPeer keeps the https scheme when writing the issued token back", async () => {
+    mockedCreateServer.mockResolvedValue({ ...managed, scheme: "https", port: 443 });
+    mockedPairNode.mockResolvedValue({ token: "sepia_issued" });
+    mockedUpdateServer.mockResolvedValue({
+      ...managed,
+      scheme: "https",
+      port: 443,
+      auth: { type: "token", secret: "••••••••" },
+    });
+    mockedGetNode.mockResolvedValue(descriptor);
+
+    await pairGatewayPeer("https://remote.example:8443", "7K2M-9PQX");
+    expect(mockedCreateServer).toHaveBeenCalledWith({
+      label: "remote.example",
+      host: "remote.example",
+      port: 8443,
+      scheme: "https",
+      auth: null,
+      ssh: null,
+    });
+    expect(mockedUpdateServer).toHaveBeenCalledWith("srv_1", {
+      label: "remote.example",
+      host: "remote.example",
+      port: 8443,
+      scheme: "https",
+      auth: { type: "token", secret: "sepia_issued" },
+      ssh: null,
+    });
   });
 
   it("addGatewayPeer drops the managed entry when the probe fails", async () => {
@@ -483,6 +533,7 @@ describe("gateway peers (via: gateway)", () => {
       label: "remote.example",
       host: "remote.example",
       port: 8787,
+      scheme: "http",
       auth: null,
       ssh: null,
     });
@@ -495,6 +546,7 @@ describe("gateway peers (via: gateway)", () => {
       label: "remote.example",
       host: "remote.example",
       port: 8787,
+      scheme: "http",
       auth: { type: "token", secret: "sepia_issued" },
       ssh: null,
     });

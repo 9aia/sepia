@@ -12,6 +12,7 @@ const INPUT: ServerInput = {
   label: "Thinkpad",
   host: "192.168.1.10",
   port: 8787,
+  scheme: "http",
   auth: { type: "token", secret: "peer-secret" },
   ssh: null,
 };
@@ -79,6 +80,22 @@ describe("handleGatewayRoute", () => {
     expect(res?.status).toBe(200);
     expect(seen.url).toBe("http://192.168.1.10:8787/api/node?x=1");
     expect(seen.auth).toBe("Bearer peer-secret");
+  });
+
+  it("forwards to an https upstream when the entry is TLS-terminated", async () => {
+    const { store, entry } = makeStore({ ...INPUT, scheme: "https", port: 443 });
+    let seenUrl = "";
+    const fetchImpl: typeof fetch = (input) => {
+      seenUrl = urlOf(input);
+      return Promise.resolve(new Response("{}"));
+    };
+    const res = await handleGatewayRoute(
+      req(`/api/gateway/${entry.id}/api/node`),
+      [entry.id, "api", "node"],
+      makeDeps(store, fetchImpl),
+    );
+    expect(res?.status).toBe(200);
+    expect(seenUrl).toBe("https://192.168.1.10:443/api/node");
   });
 
   it("strips the caller's ?access_token so the peer never sees UI credentials", async () => {

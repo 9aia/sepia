@@ -8,7 +8,12 @@ import {
   useServerStatuses,
   useUpdateServer,
 } from "../../hooks/query/useServers";
-import { SECRET_MASK, type ManagedServer, type ServerInput } from "../../lib/servers";
+import {
+  parseServerHost,
+  SECRET_MASK,
+  type ManagedServer,
+  type ServerInput,
+} from "../../lib/servers";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -71,7 +76,9 @@ const EMPTY_FORM: FormState = {
 /** Masked secrets round-trip untouched; the server keeps the stored value. */
 const formFromServer = (server: ManagedServer): FormState => ({
   label: server.label,
-  host: server.host,
+  // Seed the scheme into the host field — resaving a bare hostname would
+  // silently parse back to http and downgrade a TLS upstream.
+  host: `${server.scheme}://${server.host}`,
   port: String(server.port),
   authType: server.auth?.type ?? "none",
   authUser: server.auth?.user ?? "",
@@ -83,36 +90,48 @@ const formFromServer = (server: ManagedServer): FormState => ({
   sshKey: server.ssh?.key ?? "",
 });
 
-const formToInput = (form: FormState): ServerInput => ({
-  label: form.label,
-  host: form.host,
-  port: Number(form.port),
-  auth:
-    form.authType === "none"
-      ? null
-      : {
-          type: form.authType,
-          user: form.authUser.trim() === "" ? undefined : form.authUser.trim(),
-          secret: form.authSecret,
-        },
-  ssh: form.sshEnabled
-    ? {
-        host: form.sshHost,
-        port: Number(form.sshPort),
-        user: form.sshUser,
-        key: form.sshKey.trim() === "" ? undefined : form.sshKey,
-      }
-    : null,
-});
+const formToInput = (form: FormState): ServerInput => {
+  // The host field accepts `https://host[:port]` — scheme (and an explicit
+  // :port) parsed out of it win over the defaults below.
+  const address = parseServerHost(form.host);
+  return {
+    label: form.label,
+    host: address?.host ?? form.host.trim(),
+    port: address?.port ?? Number(form.port),
+    scheme: address?.scheme ?? "http",
+    auth:
+      form.authType === "none"
+        ? null
+        : {
+            type: form.authType,
+            user: form.authUser.trim() === "" ? undefined : form.authUser.trim(),
+            secret: form.authSecret,
+          },
+    ssh: form.sshEnabled
+      ? {
+          host: form.sshHost,
+          port: Number(form.sshPort),
+          user: form.sshUser,
+          key: form.sshKey.trim() === "" ? undefined : form.sshKey,
+        }
+      : null,
+  };
+};
 
-const formValid = (form: FormState): boolean =>
-  form.label.trim() !== "" &&
-  form.host.trim() !== "" &&
-  Number.isInteger(Number(form.port)) &&
-  Number(form.port) >= 1 &&
-  Number(form.port) <= 65535 &&
-  (form.authType === "none" || form.authSecret !== "") &&
-  (!form.sshEnabled || (form.sshHost.trim() !== "" && form.sshUser.trim() !== ""));
+const portFieldValid = (port: string): boolean =>
+  Number.isInteger(Number(port)) && Number(port) >= 1 && Number(port) <= 65535;
+
+const formValid = (form: FormState): boolean => {
+  const address = parseServerHost(form.host);
+  return (
+    form.label.trim() !== "" &&
+    // The port field only applies when the host field didn't carry :port.
+    address !== null &&
+    (address.port !== null || portFieldValid(form.port)) &&
+    (form.authType === "none" || form.authSecret !== "") &&
+    (!form.sshEnabled || (form.sshHost.trim() !== "" && form.sshUser.trim() !== ""))
+  );
+};
 
 interface ServerFormDialogProps {
   readonly open: boolean;
@@ -165,8 +184,9 @@ function ServerFormDialog({ open, server, onOpenChange }: ServerFormDialogProps)
               onChange={(event) => set({ label: event.target.value })}
             />
             <Input
-              placeholder="hostname or IP"
+              placeholder="host or https://host:port"
               aria-label="Hostname"
+              title="A bare host (http), or a full http(s):// address — an explicit :port there overrides the port field"
               value={form.host}
               onChange={(event) => set({ host: event.target.value })}
             />
@@ -318,7 +338,7 @@ export function ServersSection() {
               <div className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{server.label}</span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  {server.host}:{server.port}
+                  {server.scheme}://{server.host}:{server.port}
                   {server.ssh !== null && ` — via ssh ${server.ssh.user}@${server.ssh.host}`}
                   {server.auth !== null &&
                     ` — ${server.auth.type === "token" ? "token" : "password"} ${server.auth.secret}`}

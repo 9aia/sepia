@@ -91,7 +91,9 @@ GET    /api/config/:key  PATCH /api/config/:key   server-side UI state
 GET    /api/push/vapid  POST/DELETE /api/push/subscribe   web-push
 ANY    /api/gateway/:server/*           gateway mode — forward to a managed
                                         server registry entry (the same store
-                                        as /api/servers) with its stored
+                                        as /api/servers) at its stored
+                                        scheme://host:port (TLS upstreams
+                                        included) with its stored
                                         credential injected; the caller's own
                                         token (incl. ?access_token) is
                                         consumed by the node and never

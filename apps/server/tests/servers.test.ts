@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { createCipheriv, randomBytes } from "node:crypto";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -18,6 +19,7 @@ const INPUT: ServerInput = {
   label: "Thinkpad",
   host: "192.168.1.10",
   port: 8787,
+  scheme: "http",
   auth: { type: "token", secret: "s3cr3t-token" },
   ssh: null,
 };
@@ -34,8 +36,22 @@ describe("validateServerInput", () => {
     const parsed = validateServerInput({ label: "local", host: "127.0.0.1", port: 8787 });
     expect(parsed).toEqual({
       ok: true,
-      input: { label: "local", host: "127.0.0.1", port: 8787, auth: null, ssh: null },
+      input: {
+        label: "local",
+        host: "127.0.0.1",
+        port: 8787,
+        scheme: "http",
+        auth: null,
+        ssh: null,
+      },
     });
+  });
+
+  it("defaults an absent scheme to http and accepts https", () => {
+    const bare = validateServerInput({ label: "x", host: "h", port: 1 });
+    expect(bare.ok && bare.input.scheme).toBe("http");
+    const tls = validateServerInput({ label: "x", host: "h", port: 443, scheme: "https" });
+    expect(tls.ok && tls.input.scheme).toBe("https");
   });
 
   it("defaults ssh.port to 22", () => {
@@ -55,6 +71,8 @@ describe("validateServerInput", () => {
     [{ label: "x", host: "http://h", port: 1 }, "host"],
     [{ label: "x", host: "h", port: 0 }, "port"],
     [{ label: "x", host: "h", port: 70000 }, "port"],
+    [{ label: "x", host: "h", port: 1, scheme: "ftp" }, "scheme"],
+    [{ label: "x", host: "h", port: 1, scheme: "HTTPS" }, "scheme"],
     [{ label: "x", host: "h", port: 1, auth: { type: "oauth" } }, "auth.type"],
     [{ label: "x", host: "h", port: 1, auth: { type: "token" } }, "auth.secret"],
     [{ label: "x", host: "h", port: 1, ssh: { host: "b" } }, "ssh.user"],
@@ -72,6 +90,11 @@ describe("publicServer", () => {
     const pub = publicServer(entry);
     expect(JSON.stringify(pub)).not.toContain("s3cr3t-token");
     expect((pub.auth as { secret: string }).secret).toBe("••••••••");
+  });
+
+  it("echoes the upstream scheme", () => {
+    expect(publicServer(entry).scheme).toBe("http");
+    expect(publicServer({ ...entry, scheme: "https" }).scheme).toBe("https");
   });
 
   it("echoes key paths but masks pasted keys", () => {
@@ -173,6 +196,44 @@ describe("createServerStore", () => {
     const reloaded = createServerStore(file, key, {});
     expect(reloaded.list()).toHaveLength(1);
     expect(reloaded.get(created.id)?.label).toBe("Thinkpad");
+  });
+
+  it("persists the scheme across reloads", () => {
+    const { file, key } = paths();
+    const store = createServerStore(file, key, {});
+    const created = store.create({ ...INPUT, scheme: "https", port: 443 });
+    const reloaded = createServerStore(file, key, {});
+    expect(reloaded.get(created.id)?.scheme).toBe("https");
+  });
+
+  it("normalizes a pre-scheme stored entry to http", () => {
+    const { file, key } = paths();
+    createServerStore(file, key, {}).create(INPUT); // mints the key file
+    // Hand-seal a record in the pre-scheme shape, keyed by the minted key.
+    const keyBuf = Buffer.from(readFileSync(key, "utf8").trim(), "hex");
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", keyBuf, iv);
+    const data = Buffer.concat([
+      cipher.update(
+        JSON.stringify({
+          servers: [{ id: "srv_legacy", label: "old", host: "h", port: 80, auth: null, ssh: null }],
+        }),
+        "utf8",
+      ),
+      cipher.final(),
+    ]);
+    writeFileSync(
+      file,
+      JSON.stringify({
+        v: 1,
+        iv: iv.toString("base64"),
+        tag: cipher.getAuthTag().toString("base64"),
+        data: data.toString("base64"),
+      }),
+    );
+    const store = createServerStore(file, key, {});
+    expect(store.error).toBeNull();
+    expect(store.get("srv_legacy")?.scheme).toBe("http");
   });
 
   it("keeps the stored secret when the update carries the mask", () => {
@@ -329,6 +390,25 @@ describe("handleServersRoute", () => {
     expect(seen.auth).not.toContain("caller-token");
   });
 
+  it("proxies https entries to the TLS upstream", async () => {
+    const dir = tmp();
+    const store = createServerStore(join(dir, "s.json"), join(dir, "k.key"), {});
+    const entry = store.create({ ...INPUT, scheme: "https", port: 443 });
+    let seenUrl = "";
+    const fetchImpl: typeof fetch = (input) => {
+      seenUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      return Promise.resolve(new Response("{}"));
+    };
+    const res = await handleServersRoute(
+      get(`/api/servers/${entry.id}/proxy/api/node`),
+      [entry.id, "proxy", "api", "node"],
+      makeDeps(store, fetchImpl),
+    );
+    expect(res?.status).toBe(200);
+    expect(seenUrl).toBe("https://192.168.1.10:443/api/node");
+  });
+
   it("routes ssh entries through the tunnel's local port", async () => {
     const dir = tmp();
     const store = createServerStore(join(dir, "s.json"), join(dir, "k.key"), {});
@@ -345,5 +425,23 @@ describe("handleServersRoute", () => {
       makeDeps(store, fetchImpl),
     );
     expect(seenUrl).toBe("http://127.0.0.1:44001/api/node");
+  });
+
+  it("does TLS-over-tunnel for an https entry with ssh — the -L forward is raw TCP", async () => {
+    const dir = tmp();
+    const store = createServerStore(join(dir, "s.json"), join(dir, "k.key"), {});
+    const entry = store.create({ ...SSH_INPUT, scheme: "https" });
+    let seenUrl = "";
+    const fetchImpl: typeof fetch = (input) => {
+      seenUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      return Promise.resolve(new Response("{}"));
+    };
+    await handleServersRoute(
+      get(`/api/servers/${entry.id}/proxy/api/node`),
+      [entry.id, "proxy", "api", "node"],
+      makeDeps(store, fetchImpl),
+    );
+    expect(seenUrl).toBe("https://127.0.0.1:44001/api/node");
   });
 });

@@ -107,6 +107,24 @@ describe("settings load", () => {
     expect(loaded.sidebar.sections[2]).toMatchObject({ id: "sessions", limit: 8 });
   });
 
+  it("restores stored keybind overrides verbatim", async () => {
+    store.set(
+      "sepia:settings",
+      JSON.stringify({ keybinds: { "app.sidebar": "Mod+P", "nav.up": null } }),
+    );
+    expect((await loadSettings()).keybinds).toEqual({ "app.sidebar": "Mod+P", "nav.up": null });
+  });
+
+  it("drops corrupt keybind entries — only string|null survives", async () => {
+    store.set(
+      "sepia:settings",
+      JSON.stringify({
+        keybinds: { "app.sidebar": "Mod+P", "nav.up": 42, "nav.down": true, x: null },
+      }),
+    );
+    expect((await loadSettings()).keybinds).toEqual({ "app.sidebar": "Mod+P", x: null });
+  });
+
   it("notifications default per-field: only explicit false flips done/permission", async () => {
     store.set("sepia:settings", JSON.stringify({ notifications: { enabled: true } }));
     expect((await loadSettings()).notifications).toEqual({
