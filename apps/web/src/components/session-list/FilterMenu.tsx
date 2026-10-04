@@ -51,8 +51,7 @@ export function FilterMenu({
         render={
           <Button
             variant="outline"
-            size="sm"
-            className="h-8 shrink-0 gap-1.5 px-2"
+            className="h-9 shrink-0 gap-1.5 px-2"
             aria-label="Filters"
           />
         }
