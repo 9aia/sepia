@@ -26,6 +26,7 @@ import {
 } from "./events";
 import type { MetaStore } from "./meta";
 import { PROTOCOL_VERSION, type NodeIdentity } from "./node";
+import type { Pairing } from "./pair";
 import type { ServerStore } from "./servers";
 import { handleServersRoute } from "./servers-routes";
 import type { TunnelManager } from "./ssh";
@@ -65,6 +66,12 @@ export interface AppOptions {
   readonly servers?: ServerStore;
   /** SSH tunnel manager backing ssh-enabled registry entries. */
   readonly tunnels?: TunnelManager;
+  /**
+   * Pairing backend (docs/protocol.md): `POST /api/pair` redeems a one-time
+   * code and issued credentials authenticate like `SEPIA_TOKEN`. Absent →
+   * `POST /api/pair` returns 501.
+   */
+  readonly pairing?: Pairing;
 }
 
 const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([
@@ -115,7 +122,7 @@ const tokenMatches = (provided: string, expected: string): boolean =>
     createHash("sha256").update(expected).digest(),
   );
 
-const isAuthorized = (request: Request, token: string | undefined): boolean => {
+const isAuthorized = (request: Request, token: string | undefined, pairing?: Pairing): boolean => {
   if (token === undefined || token === "") return true;
   const header = request.headers.get("authorization");
   // EventSource cannot set headers, so /stream clients authenticate via query.
@@ -123,7 +130,10 @@ const isAuthorized = (request: Request, token: string | undefined): boolean => {
   const provided = header?.startsWith("Bearer ")
     ? header.slice("Bearer ".length)
     : new URL(request.url).searchParams.get("access_token");
-  return provided !== null && provided !== undefined && tokenMatches(provided, token);
+  if (provided === null || provided === undefined) return false;
+  // Paired credentials are checked by hash — equivalent privilege to the
+  // env token, but revocable-by-file-deletion and never stored in plaintext.
+  return tokenMatches(provided, token) || pairing?.accepts(provided) === true;
 };
 
 const unauthorizedResponse = (cors: Record<string, string>): Response =>
@@ -477,7 +487,31 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       return healthResponse(run, plane, cors);
     }
 
-    if (segments[0] === "api" && !isAuthorized(request, options.token)) {
+    // Pairing (docs/protocol.md): deliberately unauthenticated — this IS the
+    // credential bootstrap. The code, not a bearer token, authorizes it.
+    if (method === "POST" && segmentsEqual(segments, ["api", "pair"])) {
+      const pairing = options.pairing;
+      if (pairing === undefined) {
+        return jsonResponse({ error: "Pairing is not configured on this server" }, 501, cors);
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(request);
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+      }
+      if (!isRecord(body) || typeof body.code !== "string" || body.code.trim() === "") {
+        return jsonResponse({ error: "code is required" }, 400, cors);
+      }
+      const token = pairing.redeem(body.code);
+      // One 404 for unknown/expired/used — don't leak which case it was.
+      if (token === null) {
+        return jsonResponse({ error: "Invalid or expired pairing code" }, 404, cors);
+      }
+      return jsonResponse({ token }, 200, cors);
+    }
+
+    if (segments[0] === "api" && !isAuthorized(request, options.token, options.pairing)) {
       return unauthorizedResponse(cors);
     }
 
@@ -533,7 +567,13 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
           version: node.version,
           protocol: PROTOCOL_VERSION,
           agents: plane.listAgents().map((agent) => agent.id),
-          capabilities: ["sessions", "projects", "push", "events"],
+          capabilities: [
+            "sessions",
+            "projects",
+            "push",
+            "events",
+            ...(options.pairing !== undefined ? ["pairing"] : []),
+          ],
         },
         200,
         cors,

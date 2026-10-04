@@ -3,9 +3,11 @@ import { BunContext, BunRuntime } from "@effect/platform-bun";
 import { Effect, Option } from "effect";
 import { homedir } from "node:os";
 import { ClineStore, Conversion, SqliteStorage, openSessionsDb } from "sepia-core";
+import { PAIR_CODE_TTL_MS, writePairCodeFile } from "./pair";
 
 const defaultDbPath = `${homedir()}/.local/share/devin/cli/sessions.db`;
 const defaultDataDir = `${homedir()}/.cline/data`;
+const defaultSepiaHome = process.env.SEPIA_HOME ?? `${homedir()}/.local/share/sepia`;
 
 const dbOption = Options.file("db").pipe(
   Options.withDefault(defaultDbPath),
@@ -74,8 +76,34 @@ const listCommand = Command.make("list", { db: dbOption }, ({ db }) =>
   Conversion.listSessions().pipe(Effect.provide(SqliteStorage.layerReadonly(db))),
 ).pipe(Command.withDescription("List sessions in the Devin store"));
 
+const pairCommand = Command.make(
+  "pair",
+  {
+    home: Options.text("home").pipe(
+      Options.withDefault(defaultSepiaHome),
+      Options.withDescription("SEPIA_HOME of the node to pair with"),
+    ),
+    url: Options.text("url").pipe(
+      Options.withDefault(`http://localhost:${process.env.PORT ?? "8787"}`),
+      Options.withDescription("The node's URL, printed for the pairing UI"),
+    ),
+  },
+  ({ home, url }) =>
+    Effect.sync(() => {
+      // Mint = write the code file the running server consumes; whoever can
+      // write $SEPIA_HOME is the machine owner, which is the whole gate.
+      const { code } = writePairCodeFile(home);
+      console.log(`Pairing code (valid ${Math.round(PAIR_CODE_TTL_MS / 1000)}s, single use):`);
+      console.log(`\n  ${code}\n`);
+      console.log(`Node URL: ${url}`);
+      console.log(`Enter both in Settings → Nodes → "Pair with code" before it expires.`);
+    }),
+).pipe(
+  Command.withDescription("Print a one-time pairing code — the UI exchanges it via POST /api/pair"),
+);
+
 const sepia = Command.make("sepia").pipe(
-  Command.withSubcommands([importCommand, exportCommand, installCommand, listCommand]),
+  Command.withSubcommands([importCommand, exportCommand, installCommand, listCommand, pairCommand]),
   Command.withDescription("Convert sessions between the Devin and Cline stores"),
 );
 

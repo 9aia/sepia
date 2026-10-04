@@ -6,6 +6,7 @@ import {
   addPeer,
   nodeName,
   nodesStore,
+  pairPeer,
   peerTarget,
   refreshSelf,
   removePeer,
@@ -74,6 +75,23 @@ export const useAddNode = () => {
     onSuccess: () => {
       void queryClient.invalidateQueries();
       toastSuccess("Node added");
+    },
+    // The caller renders mutation.error inline — no toast here.
+  });
+};
+
+/**
+ * "Pair with code": redeem the one-time code `sepia pair` printed on the
+ * node (POST {url}/api/pair), then register the peer. The manual token path
+ * (useAddNode) stays the fallback.
+ */
+export const usePairNode = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ url, code }: { url: string; code: string }) => pairPeer(url, code),
+    onSuccess: () => {
+      void queryClient.invalidateQueries();
+      toastSuccess("Node paired");
     },
     // The caller renders mutation.error inline — no toast here.
   });

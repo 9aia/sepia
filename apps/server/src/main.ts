@@ -7,6 +7,7 @@ import { createApp } from "./app";
 import { parseEnv } from "./env";
 import { createMetaStore } from "./meta";
 import { loadNodeIdentity } from "./node";
+import { createPairing } from "./pair";
 import { createServerStore } from "./servers";
 import { createTunnelManager } from "./ssh";
 import { otelLayer } from "./telemetry";
@@ -94,6 +95,12 @@ const server = Bun.serve({
     meta: createMetaStore(env.metaPath),
     convert: { dbPath: env.dbPath, clineDir },
     node: loadNodeIdentity(env.nodePath, env.nodeName),
+    // `sepia pair` writes $SEPIA_HOME/pair-code; issued credentials persist
+    // (as sha256 hashes) in $SEPIA_HOME/tokens.json.
+    pairing: createPairing({
+      codeFile: `${env.home}/pair-code`,
+      tokensFile: `${env.home}/tokens.json`,
+    }),
     servers: createServerStore(env.serversPath, env.serversKeyPath),
     tunnels,
   }),

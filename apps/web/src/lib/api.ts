@@ -72,6 +72,27 @@ export async function getNode(target?: ApiTarget): Promise<NodeDescriptor> {
   return request<NodeDescriptor>("/api/node", undefined, target);
 }
 
+/**
+ * POST /api/pair — redeem a one-time code printed by `sepia pair` for a
+ * long-lived credential (docs/protocol.md). Unauthenticated by design: the
+ * code authorizes the exchange, the returned token authenticates later calls.
+ */
+export async function pairNode(code: string, target: ApiTarget): Promise<{ token: string }> {
+  const res = await sepiaFetch(
+    "/api/pair",
+    { method: "POST", body: JSON.stringify({ code }) },
+    // Pairing is pre-credential — never send a stored token along.
+    { ...target, token: null },
+  );
+  if (res.status === 404) {
+    throw new Error("That code didn't work — it may have expired or already been used");
+  }
+  if (!res.ok) {
+    throw new Error(friendlyHttpError(res.status));
+  }
+  return (await res.json()) as { token: string };
+}
+
 export async function listSessions(target?: ApiTarget): Promise<SessionSummary[]> {
   const data = await request<{ sessions: SessionSummary[] }>("/api/sessions", undefined, target);
   return data.sessions;

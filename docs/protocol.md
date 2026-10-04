@@ -60,6 +60,8 @@ POST   /api/sessions/import           { agent, cwd?, title?, history } → sessi
                                         "Resume on…" write — convert with explicit IR)
 GET    /api/sessions/:id/stream       AG-UI SSE (live run)
 GET    /api/events                    node event feed (see below)
+POST   /api/pair                      { code } → { token } — unauthenticated
+                                      bootstrap; the one-time code authorizes it
 GET    /api/projects                  node-local projects
 POST   /api/projects                  { name } → project
 PATCH  /api/projects/:id              rename
@@ -103,10 +105,20 @@ Two modes, same bearer credential underneath:
 
 1. **Direct** — set `SEPIA_TOKEN` on the node, paste the token into the UI's
    node registry. Works today.
-2. **Pairing** (planned) — `sepia pair` prints a short one-time code (or QR).
+2. **Pairing** — `sepia pair` prints a short one-time code (or QR).
    The UI posts it to `POST /api/pair` on the node and receives a long-lived
    credential. Codes expire in ~60s and are single-use. Tailscale-style
    bootstrap without SSH.
+
+Minting is gated by the filesystem, not the network: `sepia pair` runs on
+the node and writes `{code, expiresAt}` to `$SEPIA_HOME/pair-code`, which
+the server consumes on the next `POST /api/pair`. Whoever can write to
+`$SEPIA_HOME` is the machine owner — the right mint authority — so no
+mint endpoint is exposed. Codes are Crockford base32 in a 4-4 group
+(`7K2M-9PQX`), case-insensitive on input. Issued credentials are `sepia_…`
+bearer tokens that authenticate exactly like `SEPIA_TOKEN`; they persist as
+sha256 hashes in `$SEPIA_HOME/tokens.json`, so deleting that file revokes
+them.
 
 Credentials are stored per-node in the UI's `node → token` map
 (`localStorage`/OS keychain later). CORS allows the serving origin + any

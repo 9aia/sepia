@@ -10,6 +10,7 @@ import {
   nodesStore,
   nodeTarget,
   normalizeNodeUrl,
+  pairPeer,
   peerTarget,
   refreshSelf,
   removePeer,
@@ -17,7 +18,7 @@ import {
   upsertPeer,
   type PeerNode,
 } from "../lib/nodes";
-import { getNode, listAgents, listProjects, listSessions } from "../lib/api";
+import { getNode, listAgents, listProjects, listSessions, pairNode } from "../lib/api";
 import { getToken } from "../lib/token";
 import type { Project, SessionSummary } from "../lib/types";
 
@@ -26,12 +27,14 @@ vi.mock("../lib/api", () => ({
   listSessions: vi.fn(),
   listProjects: vi.fn(),
   listAgents: vi.fn(),
+  pairNode: vi.fn(),
 }));
 
 const mockedGetNode = vi.mocked(getNode);
 const mockedListSessions = vi.mocked(listSessions);
 const mockedListProjects = vi.mocked(listProjects);
 const mockedListAgents = vi.mocked(listAgents);
+const mockedPairNode = vi.mocked(pairNode);
 
 const store = new Map<string, string>();
 
@@ -156,6 +159,37 @@ describe("addPeer / removePeer / refreshSelf", () => {
       capabilities: [],
     });
     expect((await addPeer("http://h", "   ")).token).toBeNull();
+  });
+
+  it("pairPeer redeems the code for a token, then registers like addPeer", async () => {
+    mockedPairNode.mockResolvedValue({ token: "sepia_issued" });
+    mockedGetNode.mockResolvedValue({
+      id: "node_1",
+      name: "thinkpad",
+      version: "1",
+      protocol: 1,
+      agents: [],
+      capabilities: ["pairing"],
+    });
+    const added = await pairPeer("thinkpad:8787", " abcd-efgh ");
+    expect(mockedPairNode).toHaveBeenCalledWith("abcd-efgh", {
+      baseUrl: "http://thinkpad:8787",
+      token: null,
+      timeoutMs: 5_000,
+    });
+    expect(added).toEqual({
+      id: "node_1",
+      name: "thinkpad",
+      url: "http://thinkpad:8787",
+      token: "sepia_issued",
+    });
+    expect(getPeers()).toHaveLength(1);
+  });
+
+  it("pairPeer propagates a rejected code without registering", async () => {
+    mockedPairNode.mockRejectedValue(new Error("That code didn't work"));
+    await expect(pairPeer("http://h", "bad")).rejects.toThrow("That code didn't work");
+    expect(getPeers()).toEqual([]);
   });
 
   it("refuses to register the local node as a peer", async () => {

@@ -1,5 +1,5 @@
 import { Store } from "@tanstack/react-store";
-import { getNode, listAgents, listProjects, listSessions } from "./api";
+import { getNode, listAgents, listProjects, listSessions, pairNode } from "./api";
 import { LOCAL_NODE_ID, setLocalNodeAlias } from "./format";
 import { localTarget, type ApiTarget } from "./targets";
 import type { AgentInfo, NodeDescriptor, Project, SessionSummary } from "./types";
@@ -127,6 +127,21 @@ export const addPeer = async (url: string, token: string): Promise<PeerNode> => 
 
 export const removePeer = (id: string): void => {
   commitPeers(removePeerById(nodesStore.state.peers, id));
+};
+
+/**
+ * The pairing add-path (docs/protocol.md): redeem the one-time code `sepia
+ * pair` printed on the node for a long-lived credential, then register the
+ * peer exactly like the manual token flow.
+ */
+export const pairPeer = async (url: string, code: string): Promise<PeerNode> => {
+  const baseUrl = normalizeNodeUrl(url);
+  const { token } = await pairNode(code.trim(), {
+    baseUrl,
+    token: null,
+    timeoutMs: PROBE_TIMEOUT_MS,
+  });
+  return addPeer(baseUrl, token);
 };
 
 /** Populate `nodesStore.self` from the local node's own /api/node. */

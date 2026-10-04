@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
@@ -19,6 +19,7 @@ import type { Event } from "sepia-agui";
 import { EventType } from "sepia-agui";
 import { createApp } from "../src/app";
 import { createMetaStore } from "../src/meta";
+import { createPairing } from "../src/pair";
 
 const SESSION: SessionSummary = {
   id: "sess-1",
@@ -1209,5 +1210,114 @@ describe("push endpoints", () => {
     const app = createApp(plane);
     const res = await app(get("/api/push/vapid"));
     expect(res.status).toBe(501);
+  });
+});
+
+describe("pairing", () => {
+  const pairingFixture = () => {
+    const dir = mkdtempSync(join(tmpdir(), "sepia-pairing-"));
+    return {
+      codeFile: join(dir, "pair-code"),
+      tokensFile: join(dir, "tokens.json"),
+    };
+  };
+
+  const mintViaFile = (codeFile: string, code = "ABCD-EFGH"): void => {
+    writeFileSync(codeFile, JSON.stringify({ code, expiresAt: Date.now() + 60_000 }));
+  };
+
+  const bearer = (path: string, token: string): Request =>
+    new Request(`http://localhost:8787${path}`, {
+      headers: { origin: "http://localhost:3000", authorization: `Bearer ${token}` },
+    });
+
+  it("redeems a minted code for a credential that then authenticates", async () => {
+    const { plane } = makeFakePlane();
+    const { codeFile, tokensFile } = pairingFixture();
+    const pairing = createPairing({ codeFile, tokensFile });
+    const app = createApp(plane, { token: "secret", pairing });
+
+    mintViaFile(codeFile, "ABCD-EFGH");
+    const paired = await app(post("/api/pair", { code: "abcd efgh" }));
+    expect(paired.status).toBe(200);
+    const { token } = (await paired.json()) as { token: string };
+    expect(token).toMatch(/^sepia_/);
+    expect(existsSync(codeFile)).toBe(false);
+
+    // The issued credential authenticates like SEPIA_TOKEN.
+    const authed = await app(bearer("/api/sessions", token));
+    expect(authed.status).toBe(200);
+  });
+
+  it("returns 404 for an unknown code and 404 again on replay (single-use)", async () => {
+    const { plane } = makeFakePlane();
+    const { codeFile, tokensFile } = pairingFixture();
+    const app = createApp(plane, {
+      token: "secret",
+      pairing: createPairing({ codeFile, tokensFile }),
+    });
+
+    const bad = await app(post("/api/pair", { code: "ZZZZ-ZZZZ" }));
+    expect(bad.status).toBe(404);
+
+    mintViaFile(codeFile, "ABCD-EFGH");
+    expect((await app(post("/api/pair", { code: "abcd-efgh" }))).status).toBe(200);
+    expect((await app(post("/api/pair", { code: "abcd-efgh" }))).status).toBe(404);
+  });
+
+  it("works without a bearer token on the request (it IS the bootstrap)", async () => {
+    const { plane } = makeFakePlane();
+    const { codeFile, tokensFile } = pairingFixture();
+    const app = createApp(plane, {
+      token: "secret",
+      pairing: createPairing({ codeFile, tokensFile }),
+    });
+
+    mintViaFile(codeFile);
+    // post() sends no Authorization header — the code alone must be enough.
+    const res = await app(post("/api/pair", { code: "abcd-efgh" }));
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 400 for a missing or malformed code", async () => {
+    const { plane } = makeFakePlane();
+    const { codeFile, tokensFile } = pairingFixture();
+    const app = createApp(plane, { pairing: createPairing({ codeFile, tokensFile }) });
+
+    expect((await app(post("/api/pair", {}))).status).toBe(400);
+    expect((await app(post("/api/pair", { code: "   " }))).status).toBe(400);
+    expect((await app(post("/api/pair", { code: 42 }))).status).toBe(400);
+    expect(
+      (
+        await app(
+          new Request("http://localhost:8787/api/pair", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{not json",
+          }),
+        )
+      ).status,
+    ).toBe(400);
+  });
+
+  it("returns 501 when pairing is not configured", async () => {
+    const { plane } = makeFakePlane();
+    const app = createApp(plane);
+    expect((await app(post("/api/pair", { code: "abcd-efgh" }))).status).toBe(501);
+  });
+
+  it("advertises the pairing capability only when configured", async () => {
+    const { plane } = makeFakePlane();
+    const { codeFile, tokensFile } = pairingFixture();
+
+    const without = await createApp(plane)(get("/api/node"));
+    const capsOff = ((await without.json()) as { capabilities: string[] }).capabilities;
+    expect(capsOff).not.toContain("pairing");
+
+    const withPairing = await createApp(plane, {
+      pairing: createPairing({ codeFile, tokensFile }),
+    })(get("/api/node"));
+    const capsOn = ((await withPairing.json()) as { capabilities: string[] }).capabilities;
+    expect(capsOn).toContain("pairing");
   });
 });

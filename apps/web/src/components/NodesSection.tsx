@@ -5,6 +5,7 @@ import {
   useAddNode,
   useNodes,
   useNodeStatuses,
+  usePairNode,
   useRemoveNode,
   useSelfNode,
 } from "../hooks/query/useNodes";
@@ -33,22 +34,30 @@ export function NodesSection() {
   const selfQuery = useSelfNode();
   const statuses = useNodeStatuses(peers);
   const addNode = useAddNode();
+  const pairNode = usePairNode();
   const removeNode = useRemoveNode();
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
+  const [code, setCode] = useState("");
+  const [mode, setMode] = useState<"code" | "token">("code");
+
+  const active = mode === "code" ? pairNode : addNode;
+  const canSubmit =
+    url.trim() !== "" && (mode === "token" || code.trim() !== "") && !active.isPending;
 
   const submit = (event: FormEvent): void => {
     event.preventDefault();
-    if (url.trim() === "" || addNode.isPending) return;
-    addNode.mutate(
-      { url, token },
-      {
-        onSuccess: () => {
-          setUrl("");
-          setToken("");
-        },
-      },
-    );
+    if (!canSubmit) return;
+    const reset = () => {
+      setUrl("");
+      setToken("");
+      setCode("");
+    };
+    if (mode === "code") {
+      pairNode.mutate({ url, code }, { onSuccess: reset });
+    } else {
+      addNode.mutate({ url, token }, { onSuccess: reset });
+    }
   };
 
   return (
@@ -90,6 +99,24 @@ export function NodesSection() {
         ))}
       </div>
       <form onSubmit={submit} className="flex flex-col gap-2">
+        <div className="flex gap-1">
+          <Button
+            type="button"
+            variant={mode === "code" ? "secondary" : "ghost"}
+            size="xs"
+            onClick={() => setMode("code")}
+          >
+            Pairing code
+          </Button>
+          <Button
+            type="button"
+            variant={mode === "token" ? "secondary" : "ghost"}
+            size="xs"
+            onClick={() => setMode("token")}
+          >
+            Token
+          </Button>
+        </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <Input
             placeholder="https://hostname:8787"
@@ -97,21 +124,30 @@ export function NodesSection() {
             value={url}
             onChange={(event) => setUrl(event.target.value)}
           />
-          <Input
-            type="password"
-            placeholder="Bearer token (if required)"
-            aria-label="Node token"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-          />
+          {mode === "code" ? (
+            <Input
+              placeholder="Code from `sepia pair` (e.g. 7K2M-9PQX)"
+              aria-label="Pairing code"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+            />
+          ) : (
+            <Input
+              type="password"
+              placeholder="Bearer token (if required)"
+              aria-label="Node token"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+            />
+          )}
         </div>
-        {addNode.isError && (
+        {active.isError && (
           <p className="text-xs text-destructive">
-            {addNode.error instanceof Error ? addNode.error.message : "Couldn't reach that node"}
+            {active.error instanceof Error ? active.error.message : "Couldn't reach that node"}
           </p>
         )}
-        <Button type="submit" variant="secondary" disabled={url.trim() === "" || addNode.isPending}>
-          {addNode.isPending ? "Checking…" : "Add node"}
+        <Button type="submit" variant="secondary" disabled={!canSubmit}>
+          {active.isPending ? "Checking…" : mode === "code" ? "Pair node" : "Add node"}
         </Button>
       </form>
     </section>

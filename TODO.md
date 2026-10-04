@@ -9,7 +9,7 @@
       actions routed to the owning node
 - [ ] `GET /api/events` — node SSE feed (session/meta/project/heartbeat),
       replaces per-node polling
-- [ ] `sepia pair` — short-code → long-lived credential exchange
+- [x] `sepia pair` — short-code → long-lived credential exchange
 - [ ] `bun --compile` single binary serving API + built UI
 - [ ] Gateway/proxy mode for unreachable peers (phase 3)
 
@@ -26,7 +26,7 @@
 
 ## Server
 
-- [ ] `POST /api/pair` — one-time-code → credential (protocol doc)
+- [x] `POST /api/pair` — one-time-code → credential (protocol doc)
 - [ ] `/api/events` — the node event feed
 - [ ] `SEPIA_HOME` — node.json + meta + push store consolidation
 - [ ] Gateway proxying (defer)

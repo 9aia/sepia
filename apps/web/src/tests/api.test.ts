@@ -16,6 +16,7 @@ import {
   listDirs,
   listProjects,
   listSessions,
+  pairNode,
   patchSessionMeta,
   renameProject,
   renameSession,
@@ -453,5 +454,35 @@ describe("resumeSession", () => {
     expect(calls[1]?.url).toBe("/api/sessions/import");
     const body = JSON.parse(calls[1]?.init?.body as string) as { history: unknown[] };
     expect(body.history).toHaveLength(1);
+  });
+});
+
+describe("pairNode", () => {
+  it("posts the code to the node with no credentials and returns the token", async () => {
+    stubFetch((url, init) => {
+      expect(url).toBe("https://peer.example/api/pair");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(init?.body as string)).toEqual({ code: "ABCD-EFGH" });
+      const headers = new Headers(init?.headers);
+      expect(headers.has("authorization")).toBe(false);
+      return Response.json({ token: "sepia_issued" });
+    });
+
+    await expect(
+      // Even if the caller's target carries a token, pairing must not send it.
+      pairNode("ABCD-EFGH", { baseUrl: "https://peer.example", token: "stored-secret" }),
+    ).resolves.toEqual({ token: "sepia_issued" });
+  });
+
+  it("surfaces a friendly error when the code is rejected", async () => {
+    stubFetch(status(404));
+    await expect(pairNode("BAD", { baseUrl: "", token: null })).rejects.toThrow(/expired|used/);
+  });
+
+  it("maps other failures through the friendly table", async () => {
+    stubFetch(status(500));
+    await expect(pairNode("BAD", { baseUrl: "", token: null })).rejects.toThrow(
+      "The server hit an error",
+    );
   });
 });
