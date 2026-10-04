@@ -20,6 +20,7 @@ import { modelArgsFor } from "../lib/models";
 import { resolveSession } from "../lib/format";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
+import { ScrollArea } from "./ui/scroll-area";
 import { Sidebar } from "./ui/sidebar";
 import { EmptyScreen } from "./EmptyScreen";
 import { CwdPicker } from "./session-list/CwdPicker";
@@ -183,7 +184,7 @@ export function SessionList() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <ScrollArea className="flex min-h-0 flex-1 flex-col">
         <div className="flex flex-col gap-1.5 border-b border-border px-4 py-3">
           <Button
             variant="secondary"
@@ -251,7 +252,7 @@ export function SessionList() {
             onNewSession={setCreateCwd}
           />
         )}
-      </div>
+      </ScrollArea>
 
       <SessionDetailsDrawer
         session={resolveSession(sessions, details?.id)}
