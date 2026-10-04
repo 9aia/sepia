@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useStore } from "@tanstack/react-store";
-import { AlertCircleIcon, FolderOpenIcon, SearchAreaIcon } from "@hugeicons/core-free-icons";
+import {
+  AlertCircleIcon,
+  FolderOpenIcon,
+  PlusSignIcon,
+  SearchAreaIcon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { sepiaStore, setCreateCwd, setCwd, setDetailsFor, setSelectedId } from "../lib/store";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SessionSummary } from "../lib/types";
@@ -158,7 +164,12 @@ export function SessionList() {
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex flex-col gap-1.5 border-b border-border px-4 py-3">
-          <Button onClick={() => create(resolvedCwd)} disabled={createMutation.isPending}>
+          <Button
+            variant="ghost"
+            onClick={() => create(resolvedCwd)}
+            disabled={createMutation.isPending}
+          >
+            <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} />
             {createMutation.isPending ? "Creating…" : "New session"}
           </Button>
           <CwdPicker
