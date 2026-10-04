@@ -208,10 +208,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const settingsSection = useStore(sepiaStore, (state) => state.settingsSection);
   useEffect(() => {
     if (!open || settingsSection === null) return;
-    contentRef.current
-      ?.querySelector(`[data-spy="${settingsSection}"]`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    sepiaStore.setState((prev) => ({ ...prev, settingsSection: null }));
+    // Two frames — the dialog mounts + lays out its scroll area before
+    // scrollIntoView, or it clamps to the top.
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        contentRef.current
+          ?.querySelector(`[data-spy="${settingsSection}"]`)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        sepiaStore.setState((prev) => ({ ...prev, settingsSection: null }));
+      });
+    });
+    return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, settingsSection]);
   const contentRef = useRef<HTMLDivElement | null>(null);
