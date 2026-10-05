@@ -220,3 +220,92 @@ test("normalizes a permission request without a tool call", () => {
   expect(request.options).toEqual([]);
   expect(request.requestId).toMatch(/^s2:none:\d+$/);
 });
+
+test("normalization defaults missing fields to empty strings", () => {
+  expect(normalizeUpdate({ sessionUpdate: "user_message_chunk", content: 5 })).toEqual({
+    kind: "user_message_chunk",
+    text: "",
+  });
+  expect(normalizeUpdate({ sessionUpdate: "tool_call" })).toMatchObject({
+    kind: "tool_call",
+    toolCallId: "",
+    title: "",
+    status: "",
+    toolKind: "",
+    locations: [],
+    diffs: [],
+  });
+  expect(normalizeUpdate({ sessionUpdate: "tool_call_update" })).toMatchObject({
+    kind: "tool_call_update",
+    toolCallId: "",
+    status: "",
+  });
+  expect(
+    normalizeUpdate({ sessionUpdate: "plan", entries: [{ content: "x" }, { status: "done" }, {}] }),
+  ).toEqual({
+    kind: "plan",
+    entries: [
+      { content: "x", status: "" },
+      { content: "", status: "done" },
+      { content: "", status: "" },
+    ],
+  });
+  expect(normalizeUpdate({ sessionUpdate: "current_mode_update" })).toEqual({
+    kind: "current_mode_update",
+    modeId: "",
+  });
+  expect(
+    normalizeUpdate({
+      sessionUpdate: "available_commands_update",
+      availableCommands: [{ name: "a" }, { description: "b" }, {}],
+    }),
+  ).toEqual({
+    kind: "available_commands_update",
+    commands: [{ name: "a" }, { name: "", description: "b" }, { name: "" }],
+  });
+  expect(normalizeUpdate({})).toMatchObject({ kind: "other", sessionUpdate: "" });
+});
+
+test("content entries drop unusable shapes and keep partial ones", () => {
+  const update = normalizeUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "t",
+    content: [
+      // a content block that is a bare text
+      { type: "content", content: { type: "text", text: "hi" } },
+      // text block without text — dropped
+      { type: "content", content: { type: "text" } },
+      // image with no source — dropped
+      { type: "content", content: { type: "image" } },
+      // image with only a uri
+      { type: "content", content: { type: "image", uri: "https://x.png" } },
+      // image with data + mimeType
+      { type: "content", content: { type: "image", data: "AAAA", mimeType: "image/png" } },
+      // an unrecognized block — dropped
+      { type: "content", content: { type: "audio", data: "x" } },
+      // a bare diff entry with only a path
+      { type: "diff", path: "/a.ts", newText: "n" },
+      // a diff without a path — dropped
+      { type: "diff", oldText: "o" },
+      // a location with no line
+      { type: "location" },
+    ],
+    locations: [{ path: "/b.ts" }],
+  }) as { contents?: ReadonlyArray<unknown>; locations?: ReadonlyArray<unknown> };
+
+  expect(update.contents).toEqual([
+    { type: "text", text: "hi" },
+    { type: "image", uri: "https://x.png" },
+    { type: "image", data: "AAAA", mimeType: "image/png" },
+  ]);
+  expect(update.locations).toEqual([{ path: "/b.ts" }]);
+});
+
+test("normalizePermission defaults absent fields", () => {
+  expect(normalizePermission({})).toMatchObject({
+    sessionId: "",
+    toolCallId: null,
+    title: "",
+    options: [],
+  });
+});

@@ -375,4 +375,23 @@ describe("fileHistorySnapshot", () => {
       ),
     ).toBeUndefined();
   });
+
+  it("is undefined when the snapshot's files are not a map", () => {
+    expect(
+      fileHistorySnapshot(
+        withMetadata({
+          fileHistory: { sessionId: "s", snapshots: { "msg-1": { files: null } } },
+        }),
+        "msg-1",
+      ),
+    ).toBeUndefined();
+    expect(
+      fileHistorySnapshot(
+        withMetadata({
+          fileHistory: { sessionId: "s", snapshots: { "msg-1": "not-an-object" } },
+        }),
+        "msg-1",
+      ),
+    ).toBeUndefined();
+  });
 });

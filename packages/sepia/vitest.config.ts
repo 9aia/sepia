@@ -25,42 +25,52 @@ export default defineConfig({
       thresholds: {
         // Aggregate floor — the current total; a new uncovered file drags it
         // below the line. Per-glob entries pin each file's measured floor
-        // (`bun run coverage`); raise them as coverage improves, never lower
+        // (`vp run coverage`); raise them as coverage improves, never lower
         // them silently.
-        lines: 87.74,
-        statements: 86.76,
-        functions: 77.52,
-        branches: 84.24,
+        lines: 99,
+        statements: 99,
+        functions: 97,
+        branches: 94,
         "src/{ClineIndex,Domain,Storage}.ts": {
           lines: 100,
           statements: 100,
           functions: 100,
           branches: 100,
         },
-        "src/ClaudeCode.ts": { lines: 100, statements: 100, functions: 100, branches: 98.11 },
+        "src/ClaudeCode.ts": { lines: 100, statements: 100, functions: 100, branches: 99 },
         "src/ClaudeCodeRepository.ts": {
           lines: 100,
-          statements: 98.48,
-          functions: 95.45,
-          branches: 90.9,
+          statements: 100,
+          functions: 100,
+          branches: 97,
         },
-        "src/Cline.ts": { lines: 91.22, statements: 91.22, functions: 88.23, branches: 81.31 },
-        // Only covered by the bun-side install path (storage.bun.test.ts) and
-        // the cli.integration subprocess; the injected-fake node tests never
-        // call `make`.
-        "src/ClineStore.ts": { lines: 10.41, statements: 10.2, functions: 0, branches: 0 },
-        "src/Conversion.ts": { lines: 23.96, statements: 23.38, functions: 14.89, branches: 32.95 },
-        "src/Cursor.ts": { lines: 98.78, statements: 94.82, functions: 100, branches: 84.94 },
+        "src/Cline.ts": { lines: 100, statements: 99.5, functions: 99, branches: 94 },
+        // `make`/`indexRow` run against an injected `openDb` fake under node;
+        // the real `bun:sqlite` driver is covered by storage.bun.test.ts.
+        "src/ClineStore.ts": { lines: 97, statements: 97, functions: 93, branches: 93 },
+        "src/Conversion.ts": { lines: 97, statements: 96, functions: 93, branches: 80 },
+        "src/Cursor.ts": { lines: 100, statements: 99, functions: 100, branches: 93 },
+        // The uncovered lines are the default `bun:sqlite` openers' success
+        // bodies — importable only under Bun (storage.bun.test.ts).
         "src/CursorRepository.ts": {
-          lines: 94.4,
-          statements: 90.74,
-          functions: 80.43,
-          branches: 82.92,
+          lines: 96,
+          statements: 96,
+          functions: 92,
+          branches: 90,
         },
-        // Node-importable but only exercised under `bun test`
-        // (storage.bun.test.ts) and by apps/server's e2e suite.
-        "src/ClineRepository.ts": { lines: 0, statements: 0, functions: 0, branches: 0 },
-        "src/Devin.ts": { lines: 99.54, statements: 98.03, functions: 97.77, branches: 96.18 },
+        "src/ClineRepository.ts": {
+          lines: 100,
+          statements: 98,
+          functions: 93,
+          branches: 87,
+        },
+        "src/Devin.ts": { lines: 100, statements: 100, functions: 100, branches: 98 },
+        "src/{Restore,Rewind}.ts": {
+          lines: 100,
+          statements: 100,
+          functions: 100,
+          branches: 94,
+        },
       },
     },
   },

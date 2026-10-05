@@ -108,3 +108,20 @@ test("close kills the child and resolves after it exits", async () => {
   await conn.close();
   expect(child.killed).toEqual(["SIGTERM"]);
 });
+
+test("an in-flight request names the signal when the child is killed", async () => {
+  const child = new FakeChild();
+  const conn = createAcpConnection(silentStream(), asChild(child));
+
+  const prompt = conn.prompt("s1", [{ type: "text", text: "hi" }]);
+  const rejection = expect(prompt).rejects.toThrow(/code=null, signal=SIGKILL/);
+
+  child.emit("exit", null, "SIGKILL");
+  await rejection;
+});
+
+test("recentStderr is empty when no stderr tail is attached", () => {
+  const child = new FakeChild();
+  const conn = createAcpConnection(silentStream(), asChild(child));
+  expect(conn.recentStderr()).toEqual([]);
+});

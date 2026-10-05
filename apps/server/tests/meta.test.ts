@@ -216,3 +216,27 @@ describe("createMetaStore", () => {
     expect(readFileSync(path, "utf8")).toContain('"k":1');
   });
 });
+
+it("drops mistyped optional fields from a stored record", async () => {
+  const { path: file } = tempStore();
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 2,
+      sessions: {
+        s1: { title: "x", spans: "not-array", agent: 5, cwd: {}, createdAt: 9, model: "m" },
+      },
+    }),
+  );
+  const store = createMetaStore(file);
+  const meta = store.of("s1");
+  expect(meta?.title).toBe("x");
+  expect(meta?.spans).toEqual([]);
+  expect(meta?.agent).toBeUndefined();
+});
+
+it("drops a mistyped model field from a stored record", async () => {
+  const { path: file } = tempStore();
+  writeFileSync(file, JSON.stringify({ version: 2, sessions: { s1: { title: "x", model: 7 } } }));
+  expect(createMetaStore(file).of("s1")?.model).toBeUndefined();
+});

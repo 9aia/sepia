@@ -608,3 +608,87 @@ test("file-history restore rejects path escapes in the paths subset", async () =
   expect(Either.isLeft(result)).toBe(true);
   if (Either.isLeft(result)) expect(result.left.code).toBe("invalid");
 });
+
+test("path restore reports unchanged when the file is already absent", async () => {
+  // `made.ts` was created by the session and is already gone — the revert
+  // folds to the pre-state which matches disk exactly.
+  const { exec } = fakeExec({});
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection())], restoreExec: exec },
+    repository([restoreSession]),
+  );
+  const result = await Effect.runPromise(cp.restore("s1", { confirm: true, path: "made.ts" }));
+  expect(result.restored).toEqual([{ path: `${CWD}/made.ts`, action: "unchanged" }]);
+});
+
+test("checkpoint restore reports unchanged for files absent at both ends", async () => {
+  // `missing.ts` is covered by the diff but absent at the ref and on disk.
+  const { exec } = fakeExec({}, (_cwd, args) => {
+    const cmd = args.join(" ");
+    if (cmd === "rev-parse --is-inside-work-tree") return { code: 0, stdout: "true\n" };
+    if (cmd === `cat-file -e ${REF}^{commit}`) return { code: 0 };
+    if (cmd === "rev-parse --show-toplevel") return { code: 0, stdout: `${CWD}\n` };
+    if (cmd === `rev-list --parents -n 1 ${REF}`) return { code: 0, stdout: `${REF} ${BASE}\n` };
+    if (cmd === `diff --name-only -z ${BASE} ${REF}`) return { code: 0, stdout: "missing.ts\0" };
+    return { code: 128, stderr: `unhandled: ${cmd}` };
+  });
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection())], restoreExec: exec },
+    repository([checkpointSession]),
+  );
+  const result = await Effect.runPromise(cp.restore("ck", { confirm: true, checkpoint: REF }));
+  expect(result.restored).toEqual([{ path: `${CWD}/missing.ts`, action: "unchanged" }]);
+});
+
+test("checkpoint restore fails when the diff listing fails", async () => {
+  const { exec } = fakeExec({}, (_cwd, args) => {
+    const cmd = args.join(" ");
+    if (cmd === `diff --name-only -z ${BASE} ${REF}`) return { code: 1, stderr: "bad rev" };
+    return checkpointGit("", {})(args[0] === "" ? "" : _cwd, args);
+  });
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection())], restoreExec: exec },
+    repository([checkpointSession]),
+  );
+  const result = await runEither(cp.restore("ck", { confirm: true, checkpoint: REF }));
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) expect(result.left.message).toContain("bad rev");
+});
+
+test("file-history restore reports unchanged for a tombstone already absent", async () => {
+  const { exec } = fakeExec();
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(new FakeConnection())],
+      restoreExec: exec,
+      fileHistoryDir: "/history",
+    },
+    repository([
+      fileHistorySession({
+        [`${CWD}/already-gone.ts`]: { backup: null },
+      }),
+    ]),
+  );
+  const result = await Effect.runPromise(cp.restore("fh", { confirm: true, checkpoint: FH_REF }));
+  expect(result.restored).toEqual([{ path: `${CWD}/already-gone.ts`, action: "unchanged" }]);
+});
+
+test("checkpoint restore fails when rev-parse cannot find the repo root", async () => {
+  const { exec } = fakeExec({}, (_cwd, args) => {
+    const cmd = args.join(" ");
+    if (cmd === "rev-parse --is-inside-work-tree") return { code: 0, stdout: "true\n" };
+    if (cmd === `cat-file -e ${REF}^{commit}`) return { code: 0 };
+    if (cmd === "rev-parse --show-toplevel") return { code: 1, stderr: "detached" };
+    return { code: 128, stderr: `unhandled: ${cmd}` };
+  });
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection())], restoreExec: exec },
+    repository([checkpointSession]),
+  );
+  const result = await runEither(cp.restore("ck", { confirm: true, checkpoint: REF }));
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) {
+    expect(result.left.code).toBe("internal");
+    expect(result.left.message).toContain("rev-parse");
+  }
+});

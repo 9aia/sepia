@@ -927,3 +927,74 @@ describe("default fixtures", () => {
     expect(JSON.parse(defaultCogsJson())).toHaveLength(4);
   });
 });
+
+describe("buildChatMessage thinking seal", () => {
+  it("writes a seal-only node with empty thinking text", () => {
+    // A fully-redacted reasoning block rides as signature-only — the seal
+    // replays with an empty display string.
+    const msg = buildChatMessage(
+      node({ thinkingSignature: Option.some("sealed.only") }),
+      "m",
+    ) as Record<string, unknown>;
+    expect(msg.thinking).toEqual({ thinking: "", signature: "sealed.only" });
+  });
+});
+
+describe("diff decoders", () => {
+  it("skips content entries that are not usable diffs", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id: "e1", name: "edit", arguments: {} }],
+        metadata: {
+          extensions: {
+            "chisel/tool_call_content": {
+              e1: {
+                content: [
+                  null,
+                  "junk",
+                  { type: "diff" }, // no path — not a file change
+                  { type: "diff", path: "/a.ts" }, // path only is still a diff
+                  { type: "diff", path: "/b.ts", oldText: "o", newText: "n" },
+                ],
+              },
+              // a non-object snapshot entry is ignored entirely
+              bad: "junk",
+            },
+          },
+        },
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    expect(parsed.toolCalls[0]?.diffs).toEqual([
+      { path: "/a.ts" },
+      { path: "/b.ts", oldText: "o", newText: "n" },
+    ]);
+  });
+
+  it("skips sepia-written diff entries that are not usable", () => {
+    const parsed = parseChatMessage(
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "e1",
+            name: "edit",
+            arguments: {},
+            diffs: [null, "junk", { noPath: true }, { path: "/a.ts", newText: "n" }],
+          },
+        ],
+      },
+      null,
+      0,
+      Option.none(),
+      0,
+    );
+    expect(parsed.toolCalls[0]?.diffs).toEqual([{ path: "/a.ts", newText: "n" }]);
+  });
+});

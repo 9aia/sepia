@@ -310,3 +310,126 @@ describe("createAguiAgentHandler — streaming", () => {
     await res.body?.cancel();
   });
 });
+
+describe("createAguiAgentHandler — stream lifecycle edges", () => {
+  it("rejects a body whose messages field is not an array", async () => {
+    const { plane } = makePlane();
+    const response = await handler(plane)(runInput({ ...BODY, messages: "not-a-list" }));
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain("user message");
+  });
+
+  it("swallows a cancel rejection and ignores events after termination", async () => {
+    const { plane, calls, push } = makePlane();
+    const recordAndFail = (id: string): never => {
+      calls.cancel.push(id);
+      // a failing cancel — the disconnect path must swallow it
+      return Effect.fail(
+        new ControlError({ code: "internal", message: "nope", cause: undefined }),
+      ) as never;
+    };
+    (plane as { cancel: unknown }).cancel = (id: string) => recordAndFail(id);
+    const ac = new AbortController();
+    const request = new Request("http://localhost:8787/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(BODY),
+      signal: ac.signal,
+    });
+    const response = await handler(plane)(request);
+    expect(response.status).toBe(200);
+    // run ends, then the client aborts — the second finish() is a no-op and
+    // cancel's rejection is swallowed
+    push("sess-1", [{ type: EventType.RUN_FINISHED } as Event]);
+    push("sess-1", [{ type: EventType.TEXT_MESSAGE_CONTENT } as Event]);
+    ac.abort();
+    await response.body?.cancel().catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.cancel.length).toBeGreaterThan(0);
+    expect(calls.cancel[0]).toBe("sess-1");
+  });
+
+  it("cancels the turn when the request was already aborted", async () => {
+    const { plane, calls } = makePlane();
+    const ac = new AbortController();
+    ac.abort();
+    const request = new Request("http://localhost:8787/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(BODY),
+      signal: ac.signal,
+    });
+    const response = await handler(plane)(request);
+    // the abort listener fires on stream start — the turn is cancelled
+    await response.body?.cancel().catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.cancel).toEqual(["sess-1"]);
+  });
+});
+
+describe("default options + terminal emit edges", () => {
+  it("uses the default keepAlive when options are omitted", async () => {
+    const { plane } = makePlane();
+    const res = await createAguiAgentHandler(plane)(runInput(BODY));
+    expect(res.status).toBe(200);
+    await res.body?.cancel().catch(() => undefined);
+  });
+
+  it("messageOf renders a bare non-object failure", async () => {
+    const { plane } = makePlane({
+      attach: () => Effect.fail("plain-string-failure") as never,
+    });
+    const res = await handler(plane)(runInput(BODY));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("plain-string-failure");
+  });
+
+  it("a prompt rejecting after the client aborted hits the terminated-emit guard", async () => {
+    const { plane, calls } = makePlane({
+      prompt: () =>
+        Effect.sleep("80 millis").pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ControlError({ code: "internal", message: "late failure", cause: undefined }),
+            ),
+          ),
+        ),
+    });
+    const ac = new AbortController();
+    const request = new Request("http://localhost:8787/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(BODY),
+      signal: ac.signal,
+    });
+    const res = await handler(plane)(request);
+    expect(res.status).toBe(200);
+    ac.abort(); // stream terminates before the prompt effect settles
+    await new Promise((r) => setTimeout(r, 150));
+    expect(calls.cancel.length).toBeGreaterThan(0);
+  });
+});
+
+describe("messageOf + backlog edges", () => {
+  it("renders a record-shaped failure's message field", async () => {
+    const { plane } = makePlane();
+    // inject a runner that rejects with the raw non-Error failure value
+    const res = await createAguiAgentHandler(plane, {
+      run: () => Promise.reject({ message: "structured but not Error" }),
+    })(runInput(BODY));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("structured but not Error");
+  });
+
+  it("skips the snapshot when the backlog read fails", async () => {
+    const { plane } = makePlane({
+      getHistory: () =>
+        Effect.fail(
+          new ControlError({ code: "internal", message: "store gone", cause: undefined }),
+        ),
+    });
+    const res = await handler(plane)(runInput(BODY));
+    expect(res.status).toBe(200);
+    await res.body?.cancel().catch(() => undefined);
+  });
+});

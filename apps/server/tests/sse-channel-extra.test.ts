@@ -82,3 +82,51 @@ describe("keepAliveMsFromEnv", () => {
     expect(keepAliveMsFromEnv("Infinity")).toBe(15_000);
   });
 });
+
+it("enqueue on a dead controller terminates with 'stream already closed'", async () => {
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  const reasons: Array<string | null> = [];
+  const channel = new SseChannel({ keepAliveMs: 0, onTerminate: (r) => reasons.push(r) });
+  channel.start(controller!);
+  await stream.cancel();
+  // subsequent pushes hit a dead controller — the channel terminates
+  channel.push("event: x\n\n");
+  expect(channel.isTerminated).toBe(true);
+});
+
+it("a terminated channel flushes pending frames without throwing on a dead controller", async () => {
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  const channel = new SseChannel({ keepAliveMs: 0 });
+  channel.push("event: one\ndata: {}\n\n");
+  channel.close();
+  // cancel the stream so the late start() flush hits a dead controller
+  await stream.cancel();
+  channel.start(controller!);
+  expect(channel.isTerminated).toBe(true);
+});
+
+it("a keep-alive ping on a dead stream terminates the channel", async () => {
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  const reasons: Array<string | null> = [];
+  const channel = new SseChannel({ keepAliveMs: 1, onTerminate: (r) => reasons.push(r) });
+  channel.start(controller!);
+  await stream.cancel();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(channel.isTerminated).toBe(true);
+  expect(reasons).toContain("stream already closed");
+});

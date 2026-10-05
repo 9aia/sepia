@@ -147,3 +147,24 @@ describe("createPairing", () => {
     expect(pairing.accepts(mintPairToken())).toBe(false);
   });
 });
+
+describe("edge cases", () => {
+  it("ignores a non-object code file and never stores an un-normalizable code", () => {
+    const { codeFile, tokensFile } = paths();
+    const pairing = createPairing({ codeFile, tokensFile });
+    writeFileSync(codeFile, JSON.stringify("just-a-string"));
+    expect(pairing.redeem("abcd-efgh")).toBeNull();
+
+    const store = new PairingStore();
+    store.register("!!!", Date.now() + PAIR_CODE_TTL_MS); // normalizes to ""
+    expect(store.redeem("!!!")).toBe(false);
+  });
+
+  it("skips non-string tokens in a corrupt-shaped credentials file", () => {
+    const { codeFile, tokensFile } = paths();
+    writeFileSync(tokensFile, JSON.stringify({ tokens: [42, hashPairToken("sepia_good"), null] }));
+    const pairing = createPairing({ codeFile, tokensFile });
+    expect(pairing.accepts("sepia_good")).toBe(true);
+    expect(pairing.accepts("42")).toBe(false);
+  });
+});

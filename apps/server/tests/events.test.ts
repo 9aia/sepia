@@ -393,3 +393,21 @@ describe("held-session watch", () => {
     expect(lockLists).toBe(0);
   });
 });
+
+it("instrumentMeta suppresses events for no-op removals", async () => {
+  const feed = createEventFeed();
+  const sub = feed.subscribe();
+  const store = instrumentMeta(tmpMeta(), feed);
+
+  // remove/rename/delete of unknown ids must not emit
+  store.remove("ghost");
+  expect(store.renameProject("ghost", "x")).toBe(false);
+  store.deleteProject("ghost");
+
+  const drained = await Promise.race([
+    sub.next().then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 25)),
+  ]);
+  expect(drained).toBe(false);
+  sub.close();
+});

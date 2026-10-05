@@ -276,3 +276,51 @@ test("startRun resets state so a second run mints fresh ids", () => {
   // The open message from run 1 is gone — a new START opens instead of CONTENT.
   expect(events[0]?.type).toBe(EventType.TEXT_MESSAGE_START);
 });
+
+test("a completing update forwards locations, diffs and contents on END", () => {
+  const translator = createTranslator({ threadId: "t", runId: "r", messageId: "m" });
+  translator.translate({
+    kind: "tool_call",
+    toolCallId: "call-1",
+    title: "edit",
+    status: "in_progress",
+    toolKind: "edit",
+    rawInput: {},
+    locations: [],
+    diffs: [],
+  });
+  const events = translator.translate({
+    kind: "tool_call_update",
+    toolCallId: "call-1",
+    status: "completed",
+    rawOutput: "done",
+    locations: [{ path: "/a.ts" }],
+    diffs: [{ path: "/a.ts", newText: "n" }],
+    contents: [{ type: "terminal", terminalId: "term-1" }],
+  } as Parameters<typeof translator.translate>[0]);
+  const end = events.find((e) => e.type === EventType.TOOL_CALL_END) as Record<string, unknown>;
+  expect(end).toMatchObject({
+    toolCallId: "call-1",
+    status: "completed",
+    locations: [{ path: "/a.ts" }],
+    diffs: [{ path: "/a.ts", newText: "n" }],
+    contents: [{ type: "terminal", terminalId: "term-1" }],
+  });
+});
+
+test('toJson falls back to "null" for unserializable payloads', () => {
+  const translator = createTranslator({ threadId: "t", runId: "r", messageId: "m" });
+  const events = translator.translate({
+    kind: "tool_call",
+    toolCallId: "call-1",
+    title: "x",
+    status: "pending",
+    toolKind: "other",
+    // a function is not JSON-serializable — stringify yields undefined
+    rawInput: (() => {}) as unknown,
+    locations: [],
+    diffs: [],
+  });
+  const args = events.find((e) => e.type === EventType.TOOL_CALL_ARGS) as { delta: string };
+  expect(args.delta).toBe("null");
+});

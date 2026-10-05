@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { expect, test } from "vite-plus/test";
 import { Effect, Either, Layer, Option } from "effect";
 import { EventType } from "sepia-agui";
@@ -1607,4 +1608,194 @@ test("deleteSession fails invalid on an agent that never advertised session/dele
   // The RPC was never issued; the spawn used to learn the advertisement is closed.
   expect(conn.deleted).toEqual([]);
   expect(conn.closed).toBe(true);
+});
+
+test("detach is a no-op for a session that was never live", async () => {
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([]),
+  );
+  await expect(Effect.runPromise(cp.detach("ghost"))).resolves.toBeUndefined();
+});
+
+test("respondToPermission wraps a throwing connection as an internal error", async () => {
+  const conn = new FakeConnection();
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+  );
+  await Effect.runPromise(cp.attach("s1"));
+  conn.respondToPermission = () => {
+    throw new Error("broker exploded");
+  };
+  const result = await runEither(cp.respondToPermission("s1", "r1", "allow"));
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) {
+    expect(result.left.code).toBe("internal");
+    expect(result.left.message).toContain("respond to permission");
+  }
+});
+
+test("getHistory drops tool-call args that are absent, empty or unserializable", async () => {
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  const assistant = new MessageNode({
+    nodeId: 1,
+    role: "assistant",
+    content: "",
+    createdAt: 1,
+    metadata: null,
+    toolCalls: [
+      new ToolCall({ id: "c1", name: "exec", arguments: circular }),
+      new ToolCall({ id: "c2", name: "exec", arguments: "" }),
+      new ToolCall({ id: "c3", name: "exec", arguments: {} }),
+      new ToolCall({ id: "c4", name: "exec", arguments: undefined }),
+      new ToolCall({ id: "c5", name: "exec", arguments: { path: "/a" } }),
+    ],
+  });
+  const tool = new MessageNode({
+    nodeId: 2,
+    role: "tool",
+    content: "out",
+    createdAt: 2,
+    metadata: null,
+    toolCallId: Option.some("c1"),
+    toolName: Option.some("exec"),
+  });
+  const cp = await makeService(
+    { agents: [fakeAgent(new FakeConnection()).runtime] },
+    repository([session("s1", "/work", [assistant, tool])]),
+  );
+  const history = await Effect.runPromise(cp.getHistory("s1"));
+  // circular and absent args all collapse to undefined — nothing serializable
+  const row = history.messages.find((m) => m.role === "tool");
+  expect(row?.args).toBeUndefined();
+});
+
+test("a takeover signals the real holder pid and waits out the lock", async () => {
+  const child = spawn("sleep", ["30"]);
+  const pid = child.pid;
+  expect(pid).toBeDefined();
+  const conn = new FakeConnection();
+  conn.infos = [{ ...lockedInfo("s1"), lockHolderPid: pid! }];
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+    // no terminateLockHolder override — the default SIGTERMs the real pid
+  );
+  // the holder drops the lock before the first poll lands
+  setTimeout(() => {
+    conn.infos = conn.infos.map((info) => ({ ...info, locked: false, lockHolderPid: null }));
+  }, 10);
+  const exited = new Promise<string | null>((resolve) =>
+    child.on("exit", (_code, signal) => resolve(signal)),
+  );
+  try {
+    const outcome = await Effect.runPromise(cp.attach("s1", { takeover: true }));
+    expect(outcome.attached).toBe(true);
+    expect(await exited).toBe("SIGTERM");
+    expect(conn.loaded).toEqual(["s1"]);
+  } finally {
+    child.kill("SIGKILL");
+  }
+});
+
+test("a takeover skips the settle poll when the fresh conn cannot list", async () => {
+  // The holder is reported by a *different* agent's probe; this attach's
+  // own connection lacks session/list so there is nothing to poll.
+  const cline = new FakeConnection();
+  cline.infos = [lockedInfo("s1")];
+  const devin = new FakeConnection();
+  devin.capabilities = { ...FULL_CAPABILITIES, sessionList: false };
+  const killed: number[] = [];
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(devin).runtime, fakeAgent(cline, "cline").runtime],
+      probeCwd: "/work",
+      terminateLockHolder: (pid) => {
+        killed.push(pid);
+      },
+    },
+    repository([session("s1", "/work")]),
+  );
+  const outcome = await Effect.runPromise(cp.attach("s1", { takeover: true }));
+  expect(outcome.attached).toBe(true);
+  expect(killed).toEqual([42]);
+  expect(devin.loaded).toEqual(["s1"]);
+});
+
+test("a takeover treats a failing settle poll as 'lock cleared'", async () => {
+  const conn = new FakeConnection();
+  conn.infos = [lockedInfo("s1")];
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(conn).runtime],
+      terminateLockHolder: () => {
+        // the holder is gone — the follow-up list fails entirely
+        conn.listError = new Error("agent gone");
+      },
+    },
+    repository([session("s1", "/work")]),
+  );
+  const outcome = await Effect.runPromise(cp.attach("s1", { takeover: true }));
+  expect(outcome.attached).toBe(true);
+  expect(conn.loaded).toEqual(["s1"]);
+});
+
+test("a defect inside attach surfaces as a failed attach, not a hang", async () => {
+  const broken = new FakeConnection();
+  broken.onUpdate = () => {
+    throw new Error("listener wiring exploded");
+  };
+  const cp = await makeService(
+    { agents: [fakeAgent(broken).runtime] },
+    repository([session("s1", "/work")]),
+  );
+  const result = await runEither(cp.attach("s1"));
+  expect(Either.isLeft(result)).toBe(true);
+});
+
+test("a permission request reaches subscribers on an attached session", async () => {
+  const conn = new FakeConnection();
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+  );
+  await Effect.runPromise(cp.attach("s1"));
+  const seen: Array<ReadonlyArray<Event>> = [];
+  await Effect.runPromise(
+    cp.subscribe("s1", (events) => {
+      seen.push(events);
+    }),
+  );
+  conn.pushPermission({
+    requestId: "s1:t1:0",
+    sessionId: "s1",
+    toolCallId: "t1",
+    title: "Run it",
+    options: [],
+  });
+  const custom = seen.flat().find((event) => event.type === EventType.CUSTOM);
+  expect(custom).toMatchObject({ name: "acp:permission_request" });
+});
+
+test("a permission request reaches subscribers on a created session", async () => {
+  const conn = new FakeConnection();
+  const cp = await makeService({ agents: [fakeAgent(conn).runtime] }, repository([]));
+  const created = await Effect.runPromise(cp.createSession({ cwd: "/work" }));
+  const seen: Array<ReadonlyArray<Event>> = [];
+  await Effect.runPromise(
+    cp.subscribe(created.id, (events) => {
+      seen.push(events);
+    }),
+  );
+  conn.pushPermission({
+    requestId: "new:t1:0",
+    sessionId: created.id,
+    toolCallId: "t1",
+    title: "Run it",
+    options: [],
+  });
+  const custom = seen.flat().find((event) => event.type === EventType.CUSTOM);
+  expect(custom).toMatchObject({ name: "acp:permission_request" });
 });
