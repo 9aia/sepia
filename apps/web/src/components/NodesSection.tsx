@@ -15,6 +15,7 @@ import {
 } from "../hooks/query/useNodes";
 import {
   buildPeerFromForm,
+  isLocalAccess,
   isPeerEnabled,
   peerUrlParts,
   setPeerAlias,
@@ -22,6 +23,7 @@ import {
 } from "../lib/nodes";
 import { parseServerHost, SECRET_MASK } from "../lib/servers";
 import { setSettings, settingsStore } from "../lib/settings";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -498,9 +500,13 @@ export function NodesSection() {
               onBlur={(e) => setSettings({ localNodeName: e.currentTarget.value.trim() || null })}
               onKeyDown={blurOnEnter}
             />
-            <span className="block truncate text-xs text-muted-foreground">
-              {location.origin} — this machine
-              {selfStatus === "offline" ? " (offline)" : ""}
+            <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+              <span className="truncate">{location.origin}</span>
+              {isLocalAccess() && (
+                <Badge variant="secondary" className="h-4 shrink-0 px-1.5 text-[10px]">
+                  this machine
+                </Badge>
+              )}
             </span>
           </div>
         </div>

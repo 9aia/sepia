@@ -490,11 +490,25 @@ export const nodeTarget = (node: string | undefined): ApiTarget => {
   return { baseUrl: `http://${node}.invalid`, token: null, timeoutMs: PEER_TIMEOUT_MS };
 };
 
+/**
+ * Whether the browser is on the machine hosting the UI — loopback origin
+ * means "this machine" labels are honest; a LAN/remote origin (a phone on
+ * the network) is a different machine and must not claim it.
+ */
+export const isLocalAccess = (): boolean =>
+  typeof location !== "undefined" &&
+  (location.hostname === "localhost" ||
+    location.hostname === "127.0.0.1" ||
+    location.hostname === "[::1]");
+
 /** Display name for a node id — nicknames win, then self-reported names. */
 export const nodeName = (node: string | undefined): string => {
   if (node === undefined || node === LOCAL_NODE_ID) {
-    const name = settingsStore.state.localNodeName ?? nodesStore.state.self?.name ?? "this machine";
-    return nodesStore.state.selfStatus === "offline" ? `${name} (offline)` : name;
+    return (
+      settingsStore.state.localNodeName ??
+      nodesStore.state.self?.name ??
+      (isLocalAccess() ? "this machine" : "local")
+    );
   }
   const peer = nodesStore.state.peers.find((p) => p.id === node);
   return peer === undefined ? node : (peer.alias ?? peer.name);

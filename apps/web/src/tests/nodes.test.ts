@@ -299,6 +299,7 @@ describe("nodeTarget / nodeName", () => {
   });
 
   it("nodeName prefers the self name, falls back gracefully", () => {
+    vi.stubGlobal("location", { hostname: "localhost" });
     expect(nodeName(undefined)).toBe("this machine");
     nodesStore.setState(() => ({
       selfStatus: "unknown",
@@ -318,23 +319,11 @@ describe("nodeTarget / nodeName", () => {
     expect(nodeName("node_ghost")).toBe("node_ghost");
   });
 
-  it("nodeName marks this machine (offline) while selfStatus is offline", () => {
-    nodesStore.setState(() => ({ self: null, selfStatus: "offline", peers: [] }));
-    expect(nodeName(undefined)).toBe("this machine (offline)");
-    expect(nodeName("local")).toBe("this machine (offline)");
-    nodesStore.setState(() => ({
-      selfStatus: "offline",
-      self: {
-        id: "node_self",
-        name: "laptop",
-        version: "1",
-        protocol: 1,
-        agents: [],
-        capabilities: [],
-      },
-      peers: [],
-    }));
-    expect(nodeName(undefined)).toBe("laptop (offline)");
+  it("nodeName falls back to 'local' when accessed remotely", () => {
+    // No `location` (node env → isLocalAccess false) — a remote device must
+    // not see "this machine".
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [] }));
+    expect(nodeName(undefined)).toBe("local");
   });
 
   it("peer alias overrides the self-reported name", () => {
