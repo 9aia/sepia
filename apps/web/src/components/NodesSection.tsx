@@ -35,7 +35,6 @@ import { LOCAL_NODE_ID } from "../lib/format";
 import { SECRET_MASK, type ManagedServer } from "../lib/servers";
 import { useServers } from "../hooks/query/useServers";
 import { setSettings, settingsStore } from "../lib/settings";
-import { setSettingsOpen } from "../lib/store";
 import { toastSuccess } from "../lib/toast";
 import { useCatalog } from "../hooks/useCatalog";
 import { CatalogRow, CountBadge, ModelList } from "./settings/CatalogRow";
@@ -971,7 +970,7 @@ function LocalNodeEditForm({
         {(field) => (
           <AddressField
             field={field}
-            hint="Which node this client treats as local — empty uses the URL you opened the client on. Point peers at this address to add this machine's node."
+            hint="The node's address — empty uses the URL you opened the client on. Share it so other clients can add this node."
             trailing={
               <Button
                 type="button"
@@ -987,26 +986,6 @@ function LocalNodeEditForm({
           />
         )}
       </form.Field>
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <span className="block text-sm">Client identity</span>
-          <span className="block text-xs text-muted-foreground">
-            This client&apos;s label and keypair live under Settings → Client.
-          </span>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          onClick={() => {
-            // Jump to the Client section inside the still-open settings dialog.
-            setSettingsOpen(true, "client");
-            onClose();
-          }}
-        >
-          Open
-        </Button>
-      </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onClose}>
           Cancel
@@ -1267,8 +1246,8 @@ export function NodesSection() {
           <DialogHeader>
             <DialogTitle>{`Edit ${localName ?? self?.name ?? "this node"}`}</DialogTitle>
             <DialogDescription>
-              The node this client treats as local — by default the one serving this UI. Edit the
-              address to point the client at a different node; it can&apos;t be removed.
+              The node this client calls its own — a machine running sepia serve. Its address
+              defaults to the URL you opened the client on; it can&apos;t be removed.
             </DialogDescription>
           </DialogHeader>
           <LocalNodeEditForm selfName={self?.name} onClose={() => setEditingLocal(false)} />
