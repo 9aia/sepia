@@ -28,8 +28,12 @@ mobile polish, coverage, takeover, folder-by-node, live contents.
 
 ### Housekeeping
 
-- [ ] `AGENTS.md` stale claims (sqlite stub note, coverage policy)
-- [ ] `package.json` script name vs `vp` built-in drift (`vp dev` vs
-      `vp run dev`)
+- [x] `AGENTS.md` stale claims (sqlite stub note, coverage policy) — stubs
+      live in `apps/server`/`session-control` vitest configs; thresholds are
+      per-file floors, not a blanket 100%
+- [x] `package.json` script name vs `vp` built-in drift (`vp dev` vs
+      `vp run dev`) — `vp run dev` is canonical: root script runs
+      `sepia-web#dev` → `vp dev` inside `apps/web`; bare `vp dev` at the
+      workspace root errors (needs a package target)
 - [ ] Push-notification end-to-end verification on a real device —
       subscribe/reconcile/test coverage exist; real push untested

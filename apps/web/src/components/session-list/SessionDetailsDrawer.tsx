@@ -14,7 +14,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { ChevronDownIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { SessionCheckpoint, SessionSummary } from "../../lib/types";
+import type { AgentCapabilities, SessionCheckpoint, SessionSummary } from "../../lib/types";
 import { toastError, toastSuccess } from "../../lib/toast";
 import { restoreSummary, useCheckpoints, useRestoreSession } from "../../hooks/query/useRestore";
 import { nodeKey, projectKey, resolveSession, sessionKey, subAgentsOf } from "../../lib/format";
@@ -69,6 +69,24 @@ import {
 } from "../ui/drawer";
 import { Input } from "../ui/input";
 import { SessionContextTabs } from "./SessionContextTabs";
+
+/**
+ * "load · list · delete" — the session-method capabilities an agent
+ * advertised at `initialize` (ACP `loadSession` + `sessionCapabilities`).
+ * Rendered only once a spawn has probed them.
+ */
+const agentSupports = (caps: AgentCapabilities): string => {
+  const flags: string[] = [];
+  if (caps.loadSession) flags.push("load");
+  const session = caps.sessionCapabilities;
+  if (session.list) flags.push("list");
+  if (session.delete) flags.push("delete");
+  if (session.fork) flags.push("fork");
+  if (session.resume) flags.push("resume");
+  if (session.close) flags.push("close");
+  if (session.additionalDirectories) flags.push("extra dirs");
+  return flags.length === 0 ? "baseline only" : flags.join(" · ");
+};
 
 function Detail({
   label,
@@ -220,6 +238,12 @@ export function SessionDetailsDrawer({
     checkpointsOpen,
   );
   const peer = session === undefined ? undefined : peers.find((p) => p.id === session.node);
+  // Probed capabilities of the session's agent — absent until its first
+  // spawn on the owning node (or when the store has no runtime, e.g. cursor).
+  const sessionAgentCaps =
+    session === undefined
+      ? undefined
+      : agents.find((agent) => agent.id === session.agent)?.capabilities;
   // The sub-agent's parent — clickable when the row is in the merged list.
   const parent =
     session === undefined ? undefined : resolveSession(sessions, session.parentSessionId);
@@ -309,6 +333,9 @@ export function SessionDetailsDrawer({
                       </span>
                     )}
                   </Detail>
+                  {sessionAgentCaps !== undefined && (
+                    <Detail label="Supports">{agentSupports(sessionAgentCaps)}</Detail>
+                  )}
                   {session.parentSessionId !== undefined && session.parentSessionId !== "" && (
                     <Detail label="Parent" copyValue={session.parentSessionId}>
                       {parent !== undefined ? (

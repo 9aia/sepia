@@ -53,7 +53,8 @@ vp run -r build           # build the apps/packages that define a build script
 vp run ready              # check + test + build
 
 bun apps/server/src/main.ts    # API on 127.0.0.1:8787 (SEPIA_* env below)
-vp run dev                     # web on :3000 (proxies /api to :8787)
+vp run dev                     # root script → sepia-web's dev; web on :3000 (proxies /api to :8787)
+                               # (bare `vp dev` at the workspace root needs a package target)
 bun apps/sepia/src/main.ts list --db ~/.local/share/devin/cli/sessions.db
 ```
 
@@ -95,9 +96,14 @@ never run concurrent installs).
 
 ## Constraints worth knowing
 
-- `sepia-core` imports `bun:sqlite` at module load, so anything that imports it
-  (the CLI, `sepia-server`) must run under Bun. Tests stub it via `resolve.alias`
-  in the package's `vitest.config.ts`.
+- `sepia-core`'s sqlite modules (`SessionSqlite`, `SqliteStorage`) import
+  `bun:sqlite` at module load and `index.ts` re-exports them, so anything that
+  imports `sepia-core` (the CLI, `sepia-server`) must run under Bun.
+  `CursorRepository` loads it lazily to stay Node-importable. The package's own
+  vitest suite never touches the bun modules — `tests/**/*.bun.test.ts` is
+  excluded there and run via `bun test` (`test:bun`) instead. The `bun:sqlite` /
+  `drizzle-orm/bun-sqlite` `resolve.alias` stubs live in `apps/server`'s and
+  `session-control`'s vitest configs, whose node tests do import the package.
 - `devin acp` and `cline --acp` are the agent runtimes. `devin acp` advertises
   `loadSession` plus `session/list` (with live lock metadata).
 - The web UI chats over `POST /api/sessions/:id/prompt` + `GET
@@ -107,5 +113,8 @@ never run concurrent installs).
   `{ "takeover": true }` overrides that.
 - The generated `apps/web/src/routeTree.gen.ts` is excluded from formatting via
   `fmt.ignorePatterns` in the root `vite.config.ts`.
-- Only `packages/sepia` sets coverage thresholds (100%).
+- Only `packages/sepia` sets coverage thresholds — an aggregate floor plus
+  per-file measured floors in `vitest.config.ts` (100% only where a file is
+  fully covered, e.g. `Domain`/`Storage`/`ClineIndex`). Raise them as coverage
+  improves; never lower them silently.
 - The `devin acp` integration test is skipped unless `ACP_IT=1`.

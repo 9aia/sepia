@@ -639,6 +639,22 @@ export const make = (
             yield* releaseLockHolder(conn, id, info.lockHolderPid);
           }
 
+          // `session/load` is a capability, not a baseline method — an agent
+          // that never advertised it can only answer method-not-found, so
+          // fail with the real reason instead of an opaque load error. A
+          // held session still resolved to read-only above.
+          if (conn.capabilities.loadSession !== true) {
+            yield* teardown;
+            yield* close;
+            return yield* Effect.fail(
+              controlError(
+                "invalid",
+                `Agent ${agent.id} does not support session/load: ${id}`,
+                undefined,
+              ),
+            );
+          }
+
           emit(live, translator.startRun());
           const load = tryAcp("Failed to load session", () =>
             conn.loadSession(id, session.workingDirectory),
@@ -950,10 +966,24 @@ export const make = (
         }
 
         const conn = yield* spawn(agent, "Failed to spawn agent", { cwd });
+        const close = tryAcp("Failed to close agent connection", () => conn.close()).pipe(
+          Effect.ignore,
+        );
+        // `session/delete` is a capability — a non-advertising agent would
+        // only answer method-not-found; fail with the real reason. The spawn
+        // that learned this is the fresh advertisement, not a stale probe.
+        if (conn.capabilities.sessionCapabilities.delete !== true) {
+          yield* close;
+          return yield* Effect.fail(
+            controlError(
+              "invalid",
+              `Agent ${agent.id} does not support session/delete: ${id}`,
+              undefined,
+            ),
+          );
+        }
         yield* tryAcp("Failed to delete session", () => conn.deleteSession(id)).pipe(
-          Effect.ensuring(
-            tryAcp("Failed to close agent connection", () => conn.close()).pipe(Effect.ignore),
-          ),
+          Effect.ensuring(close),
         );
       }).pipe(
         Effect.tap(() => Metric.increment(metricDeletes)),

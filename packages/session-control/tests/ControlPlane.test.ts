@@ -1536,3 +1536,75 @@ test("deleteSession fails for an unknown session", async () => {
   expect(Either.isLeft(result)).toBe(true);
   if (Either.isLeft(result)) expect(result.left.code).toBe("not_found");
 });
+
+test("attach fails invalid on an agent that never advertised session/load", async () => {
+  const conn = new FakeConnection();
+  conn.capabilities = { ...FULL_CAPABILITIES, loadSession: false };
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+  );
+
+  const result = await runEither(cp.attach("s1"));
+
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) {
+    expect(result.left.code).toBe("invalid");
+    expect(result.left.message).toContain("session/load");
+  }
+  // The RPC was never issued — neither was the lock probe's session/list,
+  // which the same advertisement already ruled out.
+  expect(conn.loaded).toEqual([]);
+  expect(conn.listCalls).toBe(0);
+  expect(conn.closed).toBe(true);
+});
+
+test("attach to a locked session on a load-incapable agent still reads read-only", async () => {
+  // Claude — the session's own agent — cannot load, so it isn't lock-probed
+  // itself; a colliding id held in devin's view still marks it locked. The
+  // read-only report resolves before the capability gate fires.
+  const devinConn = new FakeConnection();
+  devinConn.infos = [lockedInfo("s1")];
+  const claudeConn = new FakeConnection();
+  claudeConn.capabilities = { ...FULL_CAPABILITIES, loadSession: false };
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(devinConn, "devin").runtime, fakeAgent(claudeConn, "claude").runtime],
+      defaultAgentId: "devin",
+      probeCwd: "/work",
+    },
+    repository([session("s1", "/work", [], "claude")]),
+  );
+
+  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({
+    attached: false,
+    readOnly: true,
+    agentId: "claude",
+    capabilities: claudeConn.capabilities,
+  });
+  expect(claudeConn.loaded).toEqual([]);
+  expect(claudeConn.closed).toBe(true);
+});
+
+test("deleteSession fails invalid on an agent that never advertised session/delete", async () => {
+  const conn = new FakeConnection();
+  conn.capabilities = {
+    ...FULL_CAPABILITIES,
+    sessionCapabilities: { ...FULL_CAPABILITIES.sessionCapabilities, delete: false },
+  };
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+  );
+
+  const result = await runEither(cp.deleteSession("s1"));
+
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) {
+    expect(result.left.code).toBe("invalid");
+    expect(result.left.message).toContain("session/delete");
+  }
+  // The RPC was never issued; the spawn used to learn the advertisement is closed.
+  expect(conn.deleted).toEqual([]);
+  expect(conn.closed).toBe(true);
+});

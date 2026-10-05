@@ -322,7 +322,8 @@ export interface ControlPlaneService {
    * read-only unless `takeover`, which SIGTERMs the lock-holder pid the agent
    * reports before loading; a takeover that still cannot load fails `locked`
    * rather than silently degrading to read-only. `agentId` scopes the store
-   * lookup — ids collide across agents.
+   * lookup — ids collide across agents. An agent that never advertised the
+   * `loadSession` capability fails `invalid` — it cannot attach at all.
    */
   readonly attach: (
     id: string,
@@ -349,7 +350,11 @@ export interface ControlPlaneService {
 
   readonly cancel: (id: string, agentId?: string) => Effect.Effect<void, ControlError>;
 
-  /** Detaches if live, then deletes the session through its agent runtime. `agentId` scopes the store lookup. */
+  /**
+   * Detaches if live, then deletes the session through its agent runtime.
+   * `agentId` scopes the store lookup. Fails `invalid` when the agent never
+   * advertised the `sessionCapabilities.delete` capability.
+   */
   readonly deleteSession: (
     id: string,
     options?: { readonly agentId?: string },
