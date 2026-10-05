@@ -3,8 +3,11 @@ import { useStore } from "@tanstack/react-store";
 import { useHasKeyboard } from "../../lib/keyboard";
 import {
   ArrowUp01Icon,
+  BrainIcon,
   ComputerIcon,
+  FolderIcon,
   KeyboardIcon,
+  ServerIcon,
   Settings02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -303,40 +306,61 @@ export function ClientBar() {
         <DropdownMenuContent align="start" className="w-60">
           <DropdownMenuGroup>
             <DropdownMenuLabel>Desktop</DropdownMenuLabel>
-            {entries.map((target) => (
-              <DropdownMenuSub key={target.node}>
-                <DropdownMenuSubTrigger
-                  className={target.reachable === false ? "text-muted-foreground" : undefined}
-                >
-                  {target.label}
-                  {focusedKey === target.node && desktop.agent === null && <Check />}
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="w-44">
-                  <DropdownMenuItem onClick={() => pick(target.node, null)}>
-                    Node default
-                    {focusedKey === target.node && desktop.agent === null && <Check />}
-                  </DropdownMenuItem>
-                  {target.agents.length > 0 && <DropdownMenuSeparator />}
-                  {target.agents.length === 0 && (
-                    <DropdownMenuItem disabled>
-                      <span className="text-muted-foreground">No agents</span>
-                    </DropdownMenuItem>
-                  )}
-                  {target.agents.map((id) => (
-                    <DropdownMenuItem key={id} onClick={() => pick(target.node, id)}>
-                      {agentLabel(id)}
-                      {focusedKey === target.node && desktop.agent === id && <Check />}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            ))}
-            {nodeMissing && desktop.node !== null && (
-              <DropdownMenuItem disabled>{nodeName(desktop.node)} — unavailable</DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
+              <DropdownMenuSubTrigger title="Machine">
+                <HugeiconsIcon
+                  icon={ServerIcon}
+                  strokeWidth={2}
+                  className="shrink-0 text-muted-foreground"
+                />
+                <span className="flex min-w-0 flex-1 items-baseline justify-between gap-2">
+                  <span>Node</span>
+                  <SubValue>{machineLabel}</SubValue>
+                </span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-44">
+                {entries.map((target) => (
+                  <DropdownMenuSub key={target.node}>
+                    <DropdownMenuSubTrigger
+                      className={target.reachable === false ? "text-muted-foreground" : undefined}
+                    >
+                      {target.label}
+                      {focusedKey === target.node && desktop.agent === null && <Check />}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-44">
+                      <DropdownMenuItem onClick={() => pick(target.node, null)}>
+                        Node default
+                        {focusedKey === target.node && desktop.agent === null && <Check />}
+                      </DropdownMenuItem>
+                      {target.agents.length > 0 && <DropdownMenuSeparator />}
+                      {target.agents.length === 0 && (
+                        <DropdownMenuItem disabled>
+                          <span className="text-muted-foreground">No agents</span>
+                        </DropdownMenuItem>
+                      )}
+                      {target.agents.map((id) => (
+                        <DropdownMenuItem key={id} onClick={() => pick(target.node, id)}>
+                          {agentLabel(id)}
+                          {focusedKey === target.node && desktop.agent === id && <Check />}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                ))}
+                {nodeMissing && desktop.node !== null && (
+                  <DropdownMenuItem disabled>
+                    {nodeName(desktop.node)} — unavailable
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger title="Model">
+                <HugeiconsIcon
+                  icon={BrainIcon}
+                  strokeWidth={2}
+                  className="shrink-0 text-muted-foreground"
+                />
                 <span className="flex min-w-0 flex-1 items-baseline justify-between gap-2">
                   <span>Model</span>
                   <SubValue>{modelText}</SubValue>
@@ -363,7 +387,12 @@ export function ClientBar() {
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
+              <DropdownMenuSubTrigger title="Working directory">
+                <HugeiconsIcon
+                  icon={FolderIcon}
+                  strokeWidth={2}
+                  className="shrink-0 text-muted-foreground"
+                />
                 <span className="flex min-w-0 flex-1 items-baseline justify-between gap-2">
                   <span>Directory</span>
                   <SubValue>
@@ -402,14 +431,11 @@ export function ClientBar() {
             Settings
           </DropdownMenuItem>
           {hasKeyboard && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setSettingsOpen(true, "keyboard")}>
-                <HugeiconsIcon icon={KeyboardIcon} strokeWidth={2} />
-                Keyboard shortcuts
-                <DropdownMenuShortcut>?</DropdownMenuShortcut>
-              </DropdownMenuItem>
-            </>
+            <DropdownMenuItem onClick={() => setSettingsOpen(true, "keyboard")}>
+              <HugeiconsIcon icon={KeyboardIcon} strokeWidth={2} />
+              Keyboard shortcuts
+              <DropdownMenuShortcut>?</DropdownMenuShortcut>
+            </DropdownMenuItem>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
