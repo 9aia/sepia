@@ -1,7 +1,15 @@
 import { Store } from "@tanstack/react-store";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "./api";
 import { LOCAL_NODE_ID, setLocalNodeAlias } from "./format";
-import { createServer, deleteServer, gatewayTarget, updateServer } from "./servers";
+import {
+  createServer,
+  deleteServer,
+  gatewayTarget,
+  listServers,
+  parseServerHost,
+  SECRET_MASK,
+  updateServer,
+} from "./servers";
 import { settingsStore } from "./settings";
 import { localTarget, type ApiTarget } from "./targets";
 import type { AgentInfo, NodeDescriptor, Project, SessionSummary } from "./types";
@@ -35,6 +43,13 @@ export interface PeerNode {
   readonly via?: "gateway";
   /** Managed-server registry id holding the peer's url + credential. */
   readonly serverId?: string;
+  /**
+   * Settings → Nodes' enable switch. Absent means enabled; `false` parks the
+   * peer — it stays registered (and editable) but contributes nothing to
+   * fan-out lists, status probes, event feeds or resume targets, and
+   * `peerTarget`/`nodeTarget` resolve it to the unreachable sentinel.
+   */
+  readonly enabled?: boolean;
 }
 
 interface NodesState {
@@ -65,6 +80,8 @@ export const normalizePeer = (value: unknown): PeerNode | null => {
     url: raw.url,
     token: typeof raw.token === "string" && raw.token !== "" ? raw.token : null,
     ...(typeof raw.alias === "string" && raw.alias !== "" ? { alias: raw.alias } : {}),
+    // Absent (and any non-false legacy value) reads as enabled.
+    ...(raw.enabled === false ? { enabled: false as const } : {}),
     ...(gateway ? { via: "gateway" as const, serverId: raw.serverId as string } : {}),
   };
 };
@@ -94,8 +111,11 @@ export const nodesStore = new Store<NodesState>({ self: null, peers: loadPeers()
 /** Registered peers, sorted by name for stable display. */
 export const getPeers = (): ReadonlyArray<PeerNode> => nodesStore.state.peers;
 
-/** Whether any peer is registered — gates every federation UI affordance. */
-export const isMultiNode = (): boolean => nodesStore.state.peers.length > 0;
+/** A disabled peer is parked, not removed — absent `enabled` reads as on. */
+export const isPeerEnabled = (peer: PeerNode): boolean => peer.enabled !== false;
+
+/** Whether any enabled peer is registered — gates every federation UI affordance. */
+export const isMultiNode = (): boolean => nodesStore.state.peers.some(isPeerEnabled);
 
 /** Normalize a user-entered address to an origin the API calls can prefix. */
 export const normalizeNodeUrl = (input: string): string => {
@@ -106,6 +126,38 @@ export const normalizeNodeUrl = (input: string): string => {
     throw new Error("Node address must be an http(s) URL");
   }
   return url.origin;
+};
+
+/** url → the `{scheme, host, port}` triple the managed registry stores. */
+export const peerUrlParts = (
+  baseUrl: string,
+): { scheme: "http" | "https"; host: string; port: number } => {
+  const url = new URL(baseUrl);
+  const scheme = url.protocol === "https:" ? "https" : "http";
+  const port = url.port === "" ? (scheme === "https" ? 443 : 80) : Number(url.port);
+  return { scheme, host: url.hostname, port };
+};
+
+/**
+ * Compose the add/edit form's split address fields into a peer origin. The
+ * host field also accepts a pasted `http(s)://…` address — a scheme or
+ * `:port` it carries wins over the dedicated fields, matching the Servers
+ * form's paste-a-URL affordance.
+ */
+export const buildPeerFromForm = (form: {
+  readonly scheme: "http" | "https";
+  readonly host: string;
+  readonly port: string;
+}): string => {
+  const parsed = parseServerHost(form.host);
+  if (parsed === null) throw new Error("Enter a hostname or an http(s) address");
+  const hasScheme = /^https?:\/\//i.test(form.host.trim());
+  const port = parsed.port ?? Number(form.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("Port must be a number from 1 to 65535");
+  }
+  const scheme = hasScheme ? parsed.scheme : form.scheme;
+  return normalizeNodeUrl(`${scheme}://${parsed.host}:${port}`);
 };
 
 /**
@@ -120,6 +172,19 @@ export const upsertPeer = (peers: ReadonlyArray<PeerNode>, peer: PeerNode): Peer
 
 export const removePeerById = (peers: ReadonlyArray<PeerNode>, id: string): PeerNode[] =>
   peers.filter((p) => p.id !== id);
+
+/**
+ * Set/clear a peer's parked state. Disabled peers stay in the registry (and
+ * in Settings → Nodes) but are skipped everywhere the app fans out — see
+ * `PeerNode.enabled`. Re-enabling restores normal fan-out on the next refetch.
+ */
+export const setPeerEnabled = (id: string, enabled: boolean): void => {
+  commitPeers(
+    nodesStore.state.peers.map((peer) =>
+      peer.id !== id ? peer : { ...peer, enabled: enabled ? undefined : false },
+    ),
+  );
+};
 
 /** Set/clear a peer nickname — an empty/whitespace alias reverts to `name`. */
 export const setPeerAlias = (id: string, alias: string): void => {
@@ -194,6 +259,69 @@ export const pairPeer = async (url: string, code: string): Promise<PeerNode> => 
   return addPeer(baseUrl, token);
 };
 
+/**
+ * What the Settings → Nodes edit form submits: an address change and/or a
+ * credential change. `token: SECRET_MASK` echoes the form's masked field and
+ * keeps the stored credential; "" clears it; anything else replaces it.
+ */
+export interface PeerEntryUpdate {
+  readonly url?: string;
+  readonly token?: string;
+}
+
+/**
+ * Apply an edit-form save to a peer. A direct peer's url/token update in the
+ * browser registry; a `via: "gateway"` peer's credential lives in the managed
+ * registry, so url + auth changes go through `updateServer` — the existing
+ * entry is fetched first so untouched fields (label, SSH config, a masked
+ * secret) round-trip instead of being clobbered by the PATCH's full-replace
+ * semantics.
+ */
+export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Promise<void> => {
+  const peer = nodesStore.state.peers.find((p) => p.id === id);
+  if (peer === undefined) return;
+  const url = update.url === undefined ? peer.url : normalizeNodeUrl(update.url);
+  const keepToken = update.token === undefined || update.token === SECRET_MASK;
+  const secret = keepToken ? null : update.token?.trim() || null;
+  let token = peer.token;
+  if (peer.via === "gateway" && peer.serverId !== undefined) {
+    token = null;
+    const entry = (await listServers()).find((s) => s.id === peer.serverId);
+    // A peer whose managed entry vanished (removed via Settings → Servers)
+    // still gets the local url update — its calls will 404 either way.
+    if (entry !== undefined) {
+      const { scheme, host, port } = peerUrlParts(url);
+      await updateServer(entry.id, {
+        label: entry.label,
+        host,
+        port,
+        scheme,
+        auth: keepToken
+          ? entry.auth === null
+            ? null
+            : { type: entry.auth.type, user: entry.auth.user, secret: SECRET_MASK }
+          : secret === null
+            ? null
+            : { type: "token", secret },
+        ssh:
+          entry.ssh === null
+            ? null
+            : {
+                host: entry.ssh.host,
+                port: entry.ssh.port,
+                user: entry.ssh.user,
+                // A masked key keeps the stored material; a key path
+                // round-trips as itself.
+                key: entry.ssh.key,
+              },
+      });
+    }
+  } else if (!keepToken) {
+    token = secret;
+  }
+  commitPeers(nodesStore.state.peers.map((p) => (p.id !== id ? p : { ...p, url, token })));
+};
+
 // --- Gateway-mode peers (docs/protocol.md phase 3) ---------------------------
 //
 // A `via: "gateway"` peer keeps no credential in the browser: the add flow
@@ -202,16 +330,6 @@ export const pairPeer = async (url: string, code: string): Promise<PeerNode> => 
 // where the server injects the stored credential. Probing goes *through* the
 // gateway — a peer the browser can't reach directly is exactly the case
 // gateway mode exists for, so direct probes would always fail.
-
-/** url → the `{scheme, host, port}` triple the managed registry stores. */
-const gatewayTargetParts = (
-  baseUrl: string,
-): { scheme: "http" | "https"; host: string; port: number } => {
-  const url = new URL(baseUrl);
-  const scheme = url.protocol === "https:" ? "https" : "http";
-  const port = url.port === "" ? (scheme === "https" ? 443 : 80) : Number(url.port);
-  return { scheme, host: url.hostname, port };
-};
 
 /**
  * Probe the peer through the fresh gateway entry and register it. Throws (and
@@ -244,7 +362,7 @@ const registerGatewayPeer = async (baseUrl: string, serverId: string): Promise<P
  */
 export const addGatewayPeer = async (url: string, token: string): Promise<PeerNode> => {
   const baseUrl = normalizeNodeUrl(url);
-  const { scheme, host, port } = gatewayTargetParts(baseUrl);
+  const { scheme, host, port } = peerUrlParts(baseUrl);
   const secret = token.trim();
   const entry = await createServer({
     label: host,
@@ -270,7 +388,7 @@ export const addGatewayPeer = async (url: string, token: string): Promise<PeerNo
  */
 export const pairGatewayPeer = async (url: string, code: string): Promise<PeerNode> => {
   const baseUrl = normalizeNodeUrl(url);
-  const { scheme, host, port } = gatewayTargetParts(baseUrl);
+  const { scheme, host, port } = peerUrlParts(baseUrl);
   const entry = await createServer({ label: host, host, port, scheme, auth: null, ssh: null });
   try {
     const { token } = await pairNode(code.trim(), gatewayTarget(entry.id), {
@@ -306,6 +424,12 @@ export const refreshSelf = async (): Promise<NodeDescriptor> => {
  * resolves to its own origin + browser-held token.
  */
 export const peerTarget = (peer: PeerNode): ApiTarget => {
+  // A disabled peer resolves to the same deliberately-unreachable sentinel
+  // `nodeTarget` gives unknown ids — any call site that slipped past the
+  // enabled-filters fails safely instead of touching the local machine.
+  if (!isPeerEnabled(peer)) {
+    return { baseUrl: `http://${peer.id}.invalid`, token: null, timeoutMs: PEER_TIMEOUT_MS };
+  }
   if (peer.via === "gateway" && peer.serverId !== undefined) {
     return gatewayTarget(peer.serverId);
   }
@@ -314,9 +438,9 @@ export const peerTarget = (peer: PeerNode): ApiTarget => {
 
 /**
  * Resolve a row's `node` field to the API target that owns it. Local rows
- * (undefined/"local") hit the same-origin server; an unknown peer id yields
- * a deliberately unreachable target so stale rows fail instead of silently
- * mutating the local machine.
+ * (undefined/"local") hit the same-origin server; an unknown peer id — or a
+ * peer the user disabled — yields a deliberately unreachable target so stale
+ * rows fail instead of silently mutating the local machine.
  */
 export const nodeTarget = (node: string | undefined): ApiTarget => {
   if (node === undefined || node === LOCAL_NODE_ID) return localTarget();
@@ -372,7 +496,8 @@ const tagProject = (project: Project, node: string | undefined): Project =>
   node === undefined ? project : { ...project, node };
 
 export const listAllSessions = async (): Promise<SessionSummary[]> => {
-  const peers = nodesStore.state.peers;
+  // Disabled peers contribute nothing — same as if they weren't registered.
+  const peers = nodesStore.state.peers.filter(isPeerEnabled);
   const multi = peers.length > 0;
   const local = await listSessions(localTarget());
   const rows = local.map((s) => tagSession(s, multi ? LOCAL_NODE_ID : undefined));
@@ -389,7 +514,7 @@ export const listAllSessions = async (): Promise<SessionSummary[]> => {
 };
 
 export const listAllProjects = async (): Promise<Project[]> => {
-  const peers = nodesStore.state.peers;
+  const peers = nodesStore.state.peers.filter(isPeerEnabled);
   const multi = peers.length > 0;
   const local = await listProjects(localTarget());
   const rows = local.projects.map((p) => tagProject(p, multi ? LOCAL_NODE_ID : undefined));
@@ -409,7 +534,7 @@ export const listAllProjects = async (): Promise<Project[]> => {
 
 /** Union of agent rosters across nodes — deduped by agent id, local wins. */
 export const listAllAgents = async (): Promise<AgentInfo[]> => {
-  const peers = nodesStore.state.peers;
+  const peers = nodesStore.state.peers.filter(isPeerEnabled);
   const merged = new Map<string, AgentInfo>();
   for (const agent of await listAgents(localTarget())) merged.set(agent.id, agent);
   if (peers.length === 0) return [...merged.values()];

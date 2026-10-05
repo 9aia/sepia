@@ -1,7 +1,7 @@
 import type { Query, QueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../hooks/query/keys";
 import { LOCAL_NODE_ID } from "./format";
-import { nodesStore, peerTarget } from "./nodes";
+import { isPeerEnabled, nodesStore, peerTarget } from "./nodes";
 import { localTarget, type ApiTarget } from "./targets";
 import { onTokenChange } from "./token";
 
@@ -114,7 +114,8 @@ export const startNodeEventFeeds = (client: QueryClient): (() => void) => {
     const wanted = new Map<string, ApiTarget>();
     wanted.set(LOCAL_NODE_ID, localTarget());
     for (const peer of nodesStore.state.peers) {
-      wanted.set(peer.id, peerTarget(peer));
+      // Disabled peers keep no feed — the same skip as the fan-out lists.
+      if (isPeerEnabled(peer)) wanted.set(peer.id, peerTarget(peer));
     }
     for (const [node, feed] of feeds) {
       const target = wanted.get(node);

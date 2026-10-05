@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   addGatewayPeer,
   addPeer,
+  buildPeerFromForm,
   getPeers,
   isMultiNode,
+  isPeerEnabled,
   listAllAgents,
   listAllProjects,
   listAllSessions,
@@ -15,16 +17,19 @@ import {
   pairGatewayPeer,
   pairPeer,
   peerTarget,
+  peerUrlParts,
   refreshSelf,
   removePeer,
   removePeerById,
   removePeerEntry,
   setPeerAlias,
+  setPeerEnabled,
+  updatePeerEntry,
   upsertPeer,
   type PeerNode,
 } from "../lib/nodes";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "../lib/api";
-import { createServer, deleteServer, updateServer } from "../lib/servers";
+import { createServer, deleteServer, listServers, SECRET_MASK, updateServer } from "../lib/servers";
 import { getToken } from "../lib/token";
 import type { Project, SessionSummary } from "../lib/types";
 
@@ -45,6 +50,7 @@ vi.mock("../lib/servers", async (importOriginal) => {
     createServer: vi.fn(),
     updateServer: vi.fn(),
     deleteServer: vi.fn(),
+    listServers: vi.fn(),
   };
 });
 
@@ -56,6 +62,7 @@ const mockedPairNode = vi.mocked(pairNode);
 const mockedCreateServer = vi.mocked(createServer);
 const mockedUpdateServer = vi.mocked(updateServer);
 const mockedDeleteServer = vi.mocked(deleteServer);
+const mockedListServers = vi.mocked(listServers);
 
 const store = new Map<string, string>();
 
@@ -592,5 +599,245 @@ describe("gateway peers (via: gateway)", () => {
 
     await removePeerEntry("node_remote");
     expect(getPeers()).toEqual([]);
+  });
+});
+
+describe("peer address helpers", () => {
+  it("peerUrlParts splits scheme/host/port and fills default ports", () => {
+    expect(peerUrlParts("https://peer.example")).toEqual({
+      scheme: "https",
+      host: "peer.example",
+      port: 443,
+    });
+    expect(peerUrlParts("http://peer.example")).toEqual({
+      scheme: "http",
+      host: "peer.example",
+      port: 80,
+    });
+    expect(peerUrlParts("http://peer.example:8787")).toEqual({
+      scheme: "http",
+      host: "peer.example",
+      port: 8787,
+    });
+  });
+
+  it("buildPeerFromForm composes scheme+host+port into an origin", () => {
+    expect(buildPeerFromForm({ scheme: "https", host: "peer.example", port: "8787" })).toBe(
+      "https://peer.example:8787",
+    );
+    // The scheme's default port collapses out of the origin.
+    expect(buildPeerFromForm({ scheme: "http", host: "peer.example", port: "80" })).toBe(
+      "http://peer.example",
+    );
+  });
+
+  it("buildPeerFromForm lets a pasted URL's scheme and :port win", () => {
+    expect(
+      buildPeerFromForm({ scheme: "http", host: "https://peer.example:8443", port: "8787" }),
+    ).toBe("https://peer.example:8443");
+    // A pasted URL without :port uses the field.
+    expect(buildPeerFromForm({ scheme: "http", host: "https://peer.example", port: "8787" })).toBe(
+      "https://peer.example:8787",
+    );
+  });
+
+  it("buildPeerFromForm rejects a bad host or port", () => {
+    expect(() => buildPeerFromForm({ scheme: "http", host: "", port: "8787" })).toThrow();
+    expect(() => buildPeerFromForm({ scheme: "http", host: "bad host", port: "8787" })).toThrow();
+    expect(() => buildPeerFromForm({ scheme: "http", host: "h", port: "abc" })).toThrow();
+    expect(() => buildPeerFromForm({ scheme: "http", host: "h", port: "70000" })).toThrow();
+  });
+});
+
+describe("enabled peers", () => {
+  const disabled = (id: string): PeerNode => ({ ...peer(id), enabled: false });
+
+  it("normalizePeer treats absent as enabled and keeps an explicit false", () => {
+    expect(normalizePeer(peer("a"))?.enabled).toBeUndefined();
+    expect(normalizePeer({ ...peer("a"), enabled: false })?.enabled).toBe(false);
+    // Non-boolean legacy values normalize away — the peer stays enabled.
+    expect(normalizePeer({ ...peer("a"), enabled: "no" })?.enabled).toBeUndefined();
+    expect(isPeerEnabled(normalizePeer(peer("a"))!)).toBe(true);
+  });
+
+  it("setPeerEnabled parks and un-parks a peer, persisting the flag", () => {
+    nodesStore.setState(() => ({ self: null, peers: [peer("a")] }));
+    setPeerEnabled("a", false);
+    expect(nodesStore.state.peers[0]?.enabled).toBe(false);
+    expect((JSON.parse(store.get("sepia:nodes") ?? "[]") as PeerNode[])[0]?.enabled).toBe(false);
+    setPeerEnabled("a", true);
+    expect(nodesStore.state.peers[0]?.enabled).toBeUndefined();
+    expect(isPeerEnabled(nodesStore.state.peers[0]!)).toBe(true);
+  });
+
+  it("isMultiNode counts only enabled peers", () => {
+    nodesStore.setState(() => ({ self: null, peers: [disabled("a")] }));
+    expect(isMultiNode()).toBe(false);
+    nodesStore.setState(() => ({ self: null, peers: [disabled("a"), peer("b")] }));
+    expect(isMultiNode()).toBe(true);
+  });
+
+  it("peerTarget/nodeTarget resolve disabled peers to the unreachable sentinel", () => {
+    const target = peerTarget(disabled("node_off"));
+    expect(target.baseUrl).toBe("http://node_off.invalid");
+    expect(target.token).toBeNull();
+    nodesStore.setState(() => ({ self: null, peers: [disabled("node_off")] }));
+    expect(nodeTarget("node_off").baseUrl).toBe("http://node_off.invalid");
+    // Display names still resolve — a parked peer keeps its identity.
+    expect(nodeName("node_off")).toBe("node_off");
+  });
+
+  it("disabled peers are skipped by the fan-out lists", async () => {
+    nodesStore.setState(() => ({
+      self: null,
+      peers: [disabled("node_off"), peer("node_on")],
+    }));
+    mockedListSessions.mockImplementation(async (target) =>
+      target?.baseUrl === "" ? [session("local-1")] : [session(`peer-${target?.baseUrl}`)],
+    );
+    const rows = await listAllSessions();
+    const calledUrls = mockedListSessions.mock.calls.map(([target]) => target?.baseUrl);
+    expect(calledUrls).not.toContain("https://node_off.example");
+    expect(rows.map((r) => `${r.node}:${r.id}`)).toEqual([
+      "local:local-1",
+      "node_on:peer-https://node_on.example",
+    ]);
+  });
+
+  it("with every peer disabled, local rows stay untagged (single-node shape)", async () => {
+    nodesStore.setState(() => ({ self: null, peers: [disabled("node_off")] }));
+    mockedListSessions.mockResolvedValue([session("local-1", ["p1"])]);
+    const rows = await listAllSessions();
+    expect(rows[0]?.node).toBeUndefined();
+    expect(rows[0]?.projectIds).toEqual(["p1"]);
+    expect(mockedListSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("listAllProjects and listAllAgents skip disabled peers", async () => {
+    nodesStore.setState(() => ({ self: null, peers: [disabled("node_off"), peer("node_on")] }));
+    mockedListProjects.mockImplementation(async (target) =>
+      target?.baseUrl === "" ? { projects: [{ id: "p1", name: "p1" }] } : { projects: [] },
+    );
+    await listAllProjects();
+    expect(mockedListProjects.mock.calls.map(([target]) => target?.baseUrl)).not.toContain(
+      "https://node_off.example",
+    );
+
+    mockedListAgents.mockImplementation(async (target) =>
+      target?.baseUrl === "" ? [{ id: "devin", label: "Devin" }] : [],
+    );
+    await listAllAgents();
+    expect(mockedListAgents.mock.calls.map(([target]) => target?.baseUrl)).not.toContain(
+      "https://node_off.example",
+    );
+  });
+});
+
+describe("updatePeerEntry", () => {
+  it("updates a direct peer's url and token in place", async () => {
+    nodesStore.setState(() => ({ self: null, peers: [peer("a")] }));
+    await updatePeerEntry("a", { url: "https://new.example:9000", token: "fresh" });
+    const updated = getPeers()[0];
+    expect(updated?.url).toBe("https://new.example:9000");
+    expect(updated?.token).toBe("fresh");
+    expect(mockedListServers).not.toHaveBeenCalled();
+    expect(mockedUpdateServer).not.toHaveBeenCalled();
+  });
+
+  it("keeps the stored token on the mask, clears it on empty", async () => {
+    nodesStore.setState(() => ({ self: null, peers: [peer("a")] }));
+    await updatePeerEntry("a", { token: SECRET_MASK });
+    expect(getPeers()[0]?.token).toBe("tok-a");
+    await updatePeerEntry("a", { token: "   " });
+    expect(getPeers()[0]?.token).toBeNull();
+  });
+
+  it("routes a gateway peer's edits through updateServer, preserving the stored credential", async () => {
+    const managed = {
+      id: "srv_1",
+      label: "remote.example",
+      host: "remote.example",
+      port: 8787,
+      scheme: "http" as const,
+      auth: { type: "token" as const, secret: SECRET_MASK },
+      ssh: { host: "bastion", port: 22, user: "ops", key: "/keys/id" },
+    };
+    const gw: PeerNode = {
+      id: "node_gw",
+      name: "gw",
+      url: "http://remote.example:8787",
+      token: null,
+      via: "gateway",
+      serverId: "srv_1",
+    };
+    nodesStore.setState(() => ({ self: null, peers: [gw] }));
+    mockedListServers.mockResolvedValue([managed]);
+    mockedUpdateServer.mockResolvedValue(managed);
+
+    await updatePeerEntry("node_gw", { url: "https://remote2.example", token: SECRET_MASK });
+    expect(mockedUpdateServer).toHaveBeenCalledWith("srv_1", {
+      label: "remote.example",
+      host: "remote2.example",
+      port: 443,
+      scheme: "https",
+      // Masked auth + ssh round-trip untouched — the server keeps the stored secret.
+      auth: { type: "token", user: undefined, secret: SECRET_MASK },
+      ssh: { host: "bastion", port: 22, user: "ops", key: "/keys/id" },
+    });
+    // The peer record itself keeps token: null — the browser never holds it.
+    expect(getPeers()[0]?.url).toBe("https://remote2.example");
+    expect(getPeers()[0]?.token).toBeNull();
+  });
+
+  it("a new token on a gateway peer replaces the managed credential; empty clears it", async () => {
+    const managed = {
+      id: "srv_1",
+      label: "remote.example",
+      host: "remote.example",
+      port: 8787,
+      scheme: "http" as const,
+      auth: { type: "token" as const, secret: SECRET_MASK },
+      ssh: null,
+    };
+    const gw: PeerNode = {
+      id: "node_gw",
+      name: "gw",
+      url: "http://remote.example:8787",
+      token: null,
+      via: "gateway",
+      serverId: "srv_1",
+    };
+    nodesStore.setState(() => ({ self: null, peers: [gw] }));
+    mockedListServers.mockResolvedValue([managed]);
+    mockedUpdateServer.mockResolvedValue(managed);
+
+    await updatePeerEntry("node_gw", { token: "fresh-secret" });
+    expect(mockedUpdateServer.mock.calls[0]?.[1].auth).toEqual({
+      type: "token",
+      secret: "fresh-secret",
+    });
+    await updatePeerEntry("node_gw", { token: "" });
+    expect(mockedUpdateServer.mock.calls[1]?.[1].auth).toBeNull();
+  });
+
+  it("a gateway peer whose managed entry is gone still updates locally", async () => {
+    const gw: PeerNode = {
+      id: "node_gw",
+      name: "gw",
+      url: "http://remote.example:8787",
+      token: null,
+      via: "gateway",
+      serverId: "srv_gone",
+    };
+    nodesStore.setState(() => ({ self: null, peers: [gw] }));
+    mockedListServers.mockResolvedValue([]);
+
+    await updatePeerEntry("node_gw", { url: "http://remote.example:9999" });
+    expect(mockedUpdateServer).not.toHaveBeenCalled();
+    expect(getPeers()[0]?.url).toBe("http://remote.example:9999");
+  });
+
+  it("an unknown peer id is a no-op", async () => {
+    await expect(updatePeerEntry("ghost", { url: "http://x" })).resolves.toBeUndefined();
   });
 });

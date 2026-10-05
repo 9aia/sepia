@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { resumeSession } from "../../lib/api";
 import { LOCAL_NODE_ID, sessionKey } from "../../lib/format";
-import { isMultiNode, nodeName, nodeTarget } from "../../lib/nodes";
+import { isMultiNode, isPeerEnabled, nodeName, nodeTarget } from "../../lib/nodes";
 import { resumeTargets, type ResumeTargetNode } from "../../lib/resume";
 import { setSelectedId } from "../../lib/store";
 import { toastError, toastLoading, toastSuccess } from "../../lib/toast";
@@ -29,11 +29,19 @@ export const useResumeTargets = (
   return resumeTargets(
     [
       { label: "This machine", agents: self?.agents ?? fallbackIds },
-      ...peers.map((peer, index) => ({
-        node: peer.id,
-        label: peer.name,
-        agents: descriptors[index]?.agents ?? fallbackIds,
-      })),
+      // Disabled peers aren't resumable targets — flatMap keeps `index`
+      // aligned with the full `peers`/`descriptors` arrays.
+      ...peers.flatMap((peer, index) =>
+        isPeerEnabled(peer)
+          ? [
+              {
+                node: peer.id,
+                label: peer.name,
+                agents: descriptors[index]?.agents ?? fallbackIds,
+              },
+            ]
+          : [],
+      ),
     ],
     session,
   );

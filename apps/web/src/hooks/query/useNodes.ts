@@ -5,6 +5,7 @@ import { toastError, toastSuccess } from "../../lib/toast";
 import {
   addGatewayPeer,
   addPeer,
+  isPeerEnabled,
   nodeName,
   nodesStore,
   pairGatewayPeer,
@@ -12,6 +13,9 @@ import {
   peerTarget,
   refreshSelf,
   removePeerEntry,
+  setPeerEnabled,
+  updatePeerEntry,
+  type PeerEntryUpdate,
   type PeerNode,
 } from "../../lib/nodes";
 import { queryKeys } from "./keys";
@@ -23,7 +27,7 @@ import { queryKeys } from "./keys";
  */
 export const useNodes = () => useStore(nodesStore);
 
-export const useMultiNode = (): boolean => useStore(nodesStore, (s) => s.peers.length > 0);
+export const useMultiNode = (): boolean => useStore(nodesStore, (s) => s.peers.some(isPeerEnabled));
 
 /** The local node's /api/node descriptor — populates `nodesStore.self`. */
 export const useSelfNode = () =>
@@ -38,7 +42,10 @@ export const useSelfNode = () =>
 export const useNodeLabel = (node: string | undefined): string =>
   useStore(nodesStore, () => nodeName(node));
 
-/** Per-peer reachability for the Settings list (green/grey dot). */
+/**
+ * Per-peer reachability for the Settings list (green/grey dot). Disabled
+ * peers aren't probed — their index reports `undefined` (grey dot).
+ */
 export const useNodeStatuses = (
   peers: ReadonlyArray<PeerNode>,
 ): ReadonlyArray<boolean | undefined> =>
@@ -49,25 +56,35 @@ export const useNodeStatuses = (
         await getNode(peerTarget(peer));
         return true;
       },
+      enabled: isPeerEnabled(peer),
       retry: 1,
       refetchInterval: 15_000,
       staleTime: 10_000,
     })),
-  }).map((result) => (result.data === undefined ? undefined : result.isSuccess));
+  }).map((result, index) => {
+    const peer = peers[index];
+    if (peer === undefined || !isPeerEnabled(peer)) return undefined;
+    return result.data === undefined ? undefined : result.isSuccess;
+  });
 
 /**
  * Each peer's own /api/node descriptor, aligned with `peers` by index —
- * powers menus that list a peer's agents (e.g. "Resume on…").
+ * powers menus that list a peer's agents (e.g. "Resume on…"). Disabled peers
+ * aren't probed; their slot stays `undefined`.
  */
 export const usePeerDescriptors = (peers: ReadonlyArray<PeerNode>) =>
   useQueries({
     queries: peers.map((peer) => ({
       queryKey: [...queryKeys.node, "descriptor", peer.id],
       queryFn: () => getNode(peerTarget(peer)),
+      enabled: isPeerEnabled(peer),
       retry: 1,
       staleTime: 60_000,
     })),
-  }).map((result) => result.data);
+  }).map((result, index) => {
+    const peer = peers[index];
+    return peer === undefined || !isPeerEnabled(peer) ? undefined : result.data;
+  });
 
 /** How the browser reaches the peer — directly, or through this node's gateway. */
 export type PeerVia = "direct" | "gateway";
@@ -101,6 +118,43 @@ export const usePairNode = () => {
       toastSuccess("Node paired");
     },
     // The caller renders mutation.error inline — no toast here.
+  });
+};
+
+/**
+ * Save the Settings → Nodes edit form: url/token changes (`PeerEntryUpdate`)
+ * — the alias is committed separately via `setPeerAlias` in the caller since
+ * it needs no async work. A gateway peer's credential rides `updateServer`
+ * inside `updatePeerEntry`.
+ */
+export const useUpdateNode = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, update }: { id: string; update: PeerEntryUpdate }) =>
+      updatePeerEntry(id, update),
+    onSuccess: () => {
+      void queryClient.invalidateQueries();
+      toastSuccess("Node updated");
+    },
+    // The caller renders mutation.error inline — no toast here.
+  });
+};
+
+/**
+ * The per-row enable switch. Toggling is synchronous store work, but the
+ * merged lists/descriptors/event feeds must re-sync — hence a mutation that
+ * just invalidates everything.
+ */
+export const useSetNodeEnabled = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
+      setPeerEnabled(id, enabled);
+    },
+    onSuccess: (_data, { enabled }) => {
+      void queryClient.invalidateQueries();
+      toastSuccess(enabled ? "Node enabled" : "Node disabled");
+    },
   });
 };
 
