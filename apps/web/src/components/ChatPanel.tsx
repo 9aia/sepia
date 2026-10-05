@@ -118,9 +118,9 @@ export function ChatPanel() {
   // identity changes on any pref write (theme, keybinds) and would
   // re-attach the session on every change.
   const modelArgs = useMemo(
-    () => modelArgsFor(session?.agent ?? "", session?.model, settings),
+    () => modelArgsFor(session?.agent ?? "", session?.model, settings, session?.node),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [session?.agent, session?.model, settings.models],
+    [session?.agent, session?.model, session?.node, settings.models, settings.desktop],
   );
   useEffect(() => {
     if (sessionId === null) return;
@@ -376,7 +376,7 @@ export function ChatPanel() {
                   agent: session.agent,
                   node: session.node,
                   takeover: true,
-                  ...modelArgsFor(session.agent, session.model, settings),
+                  ...modelArgsFor(session.agent, session.model, settings, session.node),
                 })
               }
               onReattach={() =>
@@ -385,7 +385,7 @@ export function ChatPanel() {
                     id: session.id,
                     agent: session.agent,
                     node: session.node,
-                    ...modelArgsFor(session.agent, session.model, settings),
+                    ...modelArgsFor(session.agent, session.model, settings, session.node),
                   })
                   .then((result) => result.attached)
               }

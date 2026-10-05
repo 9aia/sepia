@@ -21,8 +21,8 @@ import { useCreateSession } from "../../hooks/query/useCreateSession";
 import { useNodeLabel, useNodes, useNodesConnected } from "../../hooks/query/useNodes";
 import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
-import { focusNode, resolveCreateTarget, useFocus } from "../../lib/focus";
-import { defaultAgentFor, defaultCwdFor, recentCwdFor, settingsStore } from "../../lib/settings";
+import { resolveCreateTarget, useFocus } from "../../lib/focus";
+import { desktopAgentFor, desktopCwdFor, recentCwdFor, settingsStore } from "../../lib/settings";
 import { sidebarSectionLabel, sidebarSectionLimit } from "../../lib/sidebar";
 import { modelArgsFor } from "../../lib/models";
 import { useStore } from "@tanstack/react-store";
@@ -426,10 +426,10 @@ function ProjectsSection({
   const patchSession = usePatchSessionMeta();
   const { data: agents = [] } = useAgents();
   const settings = useStore(settingsStore);
-  const focus = useFocus();
-  // resolvedCwd belongs to the focused node — a project elsewhere can only
-  // fall back to a dir that exists there, so cross-node falls to "/".
-  const focusedKey = nodeKey(focusNode(focus));
+  const desktop = useFocus();
+  // resolvedCwd belongs to the desktop's node — a project elsewhere can
+  // only fall back to a dir that exists there, so cross-node falls to "/".
+  const focusedKey = nodeKey(desktop.node ?? undefined);
 
   // Bucket members per project in one pass instead of filtering `sessions`
   // once per project row on every render. Keys are node-namespaced
@@ -447,30 +447,27 @@ function ProjectsSection({
   }, [sessions]);
 
   const newSessionIn = (project: Project, members: ReadonlyArray<SessionSummary>): void => {
-    // Spawn in the newest member's cwd — falling back to the owning node's
-    // configured default, then its most recent session's dir — on the node
-    // that owns the project, then enroll the session via its namespaced
-    // project key.
+    // Spawn in the newest member's cwd — falling back to the desktop's dir
+    // pick (when the project sits on the desktop's node), then its most
+    // recent session's dir — on the node that owns the project, then enroll
+    // the session via its namespaced project key.
     const cwd =
       members[0]?.cwd ??
-      defaultCwdFor(settings, project.node) ??
+      desktopCwdFor(settings, project.node) ??
       recentCwdFor(sessions, project.node) ??
       (nodeKey(project.node) === focusedKey ? resolvedCwd : "/");
-    // The focused agent wins when the project sits on the focused node;
-    // else the node's configured default — unset → local keeps the roster's
-    // first agent, while a peer gets no override and picks its own.
-    const focusedAgent =
-      focus !== null && nodeKey(project.node) === focusedKey ? focus.agent : null;
+    // The desktop's agent wins when the project sits on the desktop's node —
+    // unset → local keeps the roster's first agent, while a peer gets no
+    // override and picks its own.
     const agent =
-      focusedAgent ??
-      defaultAgentFor(settings, project.node) ??
+      desktopAgentFor(settings, project.node) ??
       (isLocalNode(project.node) ? agents[0]?.id : undefined);
     void createSession
       .mutateAsync({
         cwd,
         agent,
         node: project.node,
-        ...modelArgsFor(agent ?? "", null, settings),
+        ...modelArgsFor(agent ?? "", null, settings, project.node),
       })
       .then(({ id, agentId }) =>
         patchSession.mutate({
@@ -741,7 +738,6 @@ export function SessionSections({
   const nodesConnected = useNodesConnected();
   const createSession = useCreateSession();
   const settings = useStore(settingsStore);
-  const focus = useFocus();
   // Membership comes from a live-query view the engine maintains
   // incrementally — it only re-derives when a session's `pinned` actually
   // flips. The `sessions` prop still supplies ordering + UI filters.
@@ -834,16 +830,16 @@ export function SessionSections({
                     aria-label="New session"
                     title="New session"
                     onClick={() => {
-                      // The recents "+" targets the focus, same as the main
-                      // button — resolvedCwd is already resolved for it.
-                      const target = resolveCreateTarget(focus, settings, undefined);
+                      // The recents "+" targets the desktop, same as the
+                      // main button — resolvedCwd is already resolved for it.
+                      const target = resolveCreateTarget(settings, undefined);
                       const agent =
                         target.agent ?? (isLocalNode(target.node) ? agents[0]?.id : undefined);
                       createSession.mutate({
                         cwd: resolvedCwd,
                         agent,
                         node: target.node,
-                        ...modelArgsFor(agent ?? "", null, settings),
+                        ...modelArgsFor(agent ?? "", target.model, settings, target.node),
                       });
                     }}
                   >

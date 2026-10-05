@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { focusNode, resolveCreateCwd, resolveCreateTarget } from "../lib/focus";
+import {
+  clearFocus,
+  focusNode,
+  resolveCreateCwd,
+  resolveCreateTarget,
+  setFocus,
+} from "../lib/focus";
 import { defaultSidebarSections } from "../lib/sidebar";
-import type { SepiaSettings } from "../lib/settings";
-import { sepiaStore, setFocus, type FocusTarget } from "../lib/store";
+import { settingsStore, type DesktopEnvironment, type SepiaSettings } from "../lib/settings";
 
 const store = new Map<string, string>();
 
@@ -16,10 +21,12 @@ const storage = {
   },
 };
 
+const EMPTY_DESKTOP: DesktopEnvironment = { node: null, agent: null, model: null, cwd: null };
+
 beforeEach(() => {
   store.clear();
   vi.stubGlobal("localStorage", storage);
-  setFocus(null);
+  setFocus(EMPTY_DESKTOP);
 });
 
 afterEach(() => {
@@ -27,8 +34,7 @@ afterEach(() => {
 });
 
 const SETTINGS: SepiaSettings = {
-  defaultAgent: {},
-  defaultCwd: {},
+  desktop: EMPTY_DESKTOP,
   models: {},
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },
@@ -39,72 +45,91 @@ const SETTINGS: SepiaSettings = {
   sidebar: { sections: defaultSidebarSections() },
 };
 
-const settings = (patch: Partial<SepiaSettings>): SepiaSettings => ({ ...SETTINGS, ...patch });
+const settings = (desktop: Partial<DesktopEnvironment>): SepiaSettings => ({
+  ...SETTINGS,
+  desktop: { ...EMPTY_DESKTOP, ...desktop },
+});
 
-describe("sepiaStore focus", () => {
-  it("setFocus sets and clears the target", () => {
-    expect(sepiaStore.state.focus).toBeNull();
+describe("the desktop is the persisted focus", () => {
+  it("setFocus patches settings.desktop and persists it", () => {
+    expect(settingsStore.state.desktop).toEqual(EMPTY_DESKTOP);
     setFocus({ node: "node_a1b2", agent: "cline" });
-    expect(sepiaStore.state.focus).toEqual({ node: "node_a1b2", agent: "cline" });
-    setFocus(null);
-    expect(sepiaStore.state.focus).toBeNull();
+    expect(settingsStore.state.desktop).toEqual({
+      ...EMPTY_DESKTOP,
+      node: "node_a1b2",
+      agent: "cline",
+    });
+    const persisted = JSON.parse(store.get("sepia:settings") ?? "{}") as SepiaSettings;
+    expect(persisted.desktop).toEqual({ ...EMPTY_DESKTOP, node: "node_a1b2", agent: "cline" });
+    clearFocus();
+    expect(settingsStore.state.desktop).toEqual(EMPTY_DESKTOP);
+  });
+
+  it("setFocus merges — untouched fields keep their values", () => {
+    setFocus({ node: "node_a1b2", cwd: "/peer/dir" });
+    setFocus({ agent: "cline" });
+    expect(settingsStore.state.desktop).toEqual({
+      node: "node_a1b2",
+      agent: "cline",
+      model: null,
+      cwd: "/peer/dir",
+    });
   });
 });
 
 describe("focusNode", () => {
   it("normalizes the local nodeKey to undefined for API call sites", () => {
-    expect(focusNode(null)).toBeUndefined();
-    expect(focusNode({ node: "local", agent: null })).toBeUndefined();
-    expect(focusNode({ node: "node_a1b2", agent: null })).toBe("node_a1b2");
+    expect(focusNode(EMPTY_DESKTOP)).toBeUndefined();
+    expect(focusNode({ ...EMPTY_DESKTOP, node: "local" })).toBeUndefined();
+    expect(focusNode({ ...EMPTY_DESKTOP, node: "node_a1b2" })).toBe("node_a1b2");
   });
 });
 
 describe("resolveCreateTarget", () => {
-  it("no focus: the create stays local with the configured default agent", () => {
-    const s = settings({ defaultAgent: { local: "devin" } });
-    expect(resolveCreateTarget(null, s, undefined)).toEqual({ node: undefined, agent: "devin" });
-    expect(resolveCreateTarget(null, settings({}), undefined)).toEqual({
+  it("an unset desktop: the create stays local and the node picks", () => {
+    expect(resolveCreateTarget(settings({}), undefined)).toEqual({
       node: undefined,
       agent: null,
+      model: null,
     });
   });
 
-  it("a focused peer drives node + agent; null agent falls back to the node's default", () => {
-    const s = settings({ defaultAgent: { node_a1b2: "cline", local: "devin" } });
-    const focused: FocusTarget = { node: "node_a1b2", agent: "cursor" };
-    expect(resolveCreateTarget(focused, s, undefined)).toEqual({
+  it("a local desktop resolves to undefined node and keeps its picks", () => {
+    const s = settings({ node: "local", agent: "cline", model: "claude-x" });
+    expect(resolveCreateTarget(s, undefined)).toEqual({
+      node: undefined,
+      agent: "cline",
+      model: "claude-x",
+    });
+  });
+
+  it("a peer desktop drives node + agent + model", () => {
+    const s = settings({ node: "node_a1b2", agent: "cursor", model: "gpt-y", cwd: "/peer/dir" });
+    expect(resolveCreateTarget(s, undefined)).toEqual({
       node: "node_a1b2",
       agent: "cursor",
+      model: "gpt-y",
     });
-    // agent null → the peer's own configured default, not the local one.
-    expect(resolveCreateTarget({ node: "node_a1b2", agent: null }, s, undefined)).toEqual({
+    // Unset agent/model → null (the peer picks).
+    expect(resolveCreateTarget(settings({ node: "node_a1b2" }), undefined)).toEqual({
       node: "node_a1b2",
-      agent: "cline",
-    });
-    // No peer default either → null (the peer picks).
-    expect(resolveCreateTarget({ node: "node_zzz", agent: null }, s, undefined)).toEqual({
-      node: "node_zzz",
       agent: null,
+      model: null,
     });
   });
 
-  it("a local focus resolves to undefined node but keeps its agent pick", () => {
-    expect(resolveCreateTarget({ node: "local", agent: "cline" }, settings({}), undefined)).toEqual(
-      { node: undefined, agent: "cline" },
-    );
-  });
-
-  it("an explicit node always wins — 'New session here' rows ignore the focus", () => {
-    const s = settings({ defaultAgent: { node_b: "cline" } });
-    const focused: FocusTarget = { node: "node_a1b2", agent: "cursor" };
-    expect(resolveCreateTarget(focused, s, "node_b")).toEqual({
+  it("an explicit node always wins — 'New session here' rows ignore the desktop", () => {
+    const s = settings({ node: "node_a1b2", agent: "cursor", model: "gpt-y" });
+    expect(resolveCreateTarget(s, "node_b")).toEqual({
       node: "node_b",
-      agent: "cline",
-    });
-    // …and a focused agent doesn't leak onto a different node's create.
-    expect(resolveCreateTarget(focused, s, "node_c")).toEqual({
-      node: "node_c",
       agent: null,
+      model: null,
+    });
+    // …unless the row names the desktop's own node — then its picks apply.
+    expect(resolveCreateTarget(s, "node_a1b2")).toEqual({
+      node: "node_a1b2",
+      agent: "cursor",
+      model: "gpt-y",
     });
   });
 });
@@ -115,64 +140,48 @@ describe("resolveCreateCwd", () => {
     { cwd: "/local/newest", node: "local" },
   ];
 
-  it("local/no focus: picked > configured default > most recent local > homedir > /", () => {
-    const s = settings({ defaultCwd: { local: "/local/default" } });
-    const base = { settings: s, sessions, homedir: "/home/u" };
+  it("local/unset desktop: picked > desktop cwd > most recent local > homedir > /", () => {
+    const s = settings({ cwd: "/desktop/dir" });
+    const base = { sessions, homedir: "/home/u" };
     // Picked wins over everything.
-    expect(resolveCreateCwd(null, { ...base, picked: "/picked" })).toBe("/picked");
-    // Configured default beats the recent-session dir and homedir.
-    expect(resolveCreateCwd(null, { ...base, picked: null })).toBe("/local/default");
+    expect(resolveCreateCwd(s, { ...base, picked: "/picked" })).toBe("/picked");
+    // The desktop's dir pick beats the recent-session dir and homedir.
+    expect(resolveCreateCwd(s, { ...base, picked: null })).toBe("/desktop/dir");
     // Then the newest local session's dir…
-    expect(
-      resolveCreateCwd(null, {
-        settings: settings({}),
-        sessions,
-        picked: null,
-        homedir: "/home/u",
-      }),
-    ).toBe("/local/newest");
+    expect(resolveCreateCwd(settings({}), { sessions, picked: null, homedir: "/home/u" })).toBe(
+      "/local/newest",
+    );
     // …then home, then root.
-    expect(
-      resolveCreateCwd(null, { settings: settings({}), sessions: [], picked: null, homedir: "/h" }),
-    ).toBe("/h");
-    expect(
-      resolveCreateCwd(null, {
-        settings: settings({}),
-        sessions: [],
-        picked: null,
-        homedir: undefined,
-      }),
-    ).toBe("/");
-    // A local-node focus behaves identically.
-    expect(resolveCreateCwd({ node: "local", agent: null }, { ...base, picked: "/picked" })).toBe(
+    expect(resolveCreateCwd(settings({}), { sessions: [], picked: null, homedir: "/h" })).toBe(
+      "/h",
+    );
+    expect(resolveCreateCwd(settings({}), { sessions: [], picked: null, homedir: undefined })).toBe(
+      "/",
+    );
+    // A local-node desktop behaves identically.
+    expect(resolveCreateCwd(settings({ node: "local" }), { ...base, picked: "/picked" })).toBe(
       "/picked",
     );
   });
 
-  it("a peer focus resolves dirs on that node — local picks and homedir don't leak", () => {
-    const focus: FocusTarget = { node: "node_a1b2", agent: null };
-    const s = settings({ defaultCwd: { node_a1b2: "/peer/default", local: "/local/default" } });
+  it("a peer desktop resolves dirs on that node — local picks and homedir don't leak", () => {
+    const s = settings({ node: "node_a1b2", cwd: "/peer/default" });
+    expect(resolveCreateCwd(s, { sessions, picked: "/picked", homedir: "/home/u" })).toBe(
+      "/peer/default",
+    );
     expect(
-      resolveCreateCwd(focus, { settings: s, sessions, picked: "/picked", homedir: "/home/u" }),
-    ).toBe("/peer/default");
-    expect(
-      resolveCreateCwd(focus, {
-        settings: settings({}),
+      resolveCreateCwd(settings({ node: "node_a1b2" }), {
         sessions,
         picked: "/picked",
         homedir: "/home/u",
       }),
     ).toBe("/peer/newest");
     expect(
-      resolveCreateCwd(
-        { node: "node_zzz", agent: null },
-        {
-          settings: settings({}),
-          sessions,
-          picked: "/picked",
-          homedir: "/home/u",
-        },
-      ),
+      resolveCreateCwd(settings({ node: "node_zzz" }), {
+        sessions,
+        picked: "/picked",
+        homedir: "/home/u",
+      }),
     ).toBe("/");
   });
 });

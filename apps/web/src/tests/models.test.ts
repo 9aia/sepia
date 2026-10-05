@@ -3,9 +3,11 @@ import { modelArgsFor } from "../lib/models";
 import type { SepiaSettings } from "../lib/settings";
 import { defaultSidebarSections } from "../lib/sidebar";
 
-const settings = (models: SepiaSettings["models"]): SepiaSettings => ({
-  defaultAgent: {},
-  defaultCwd: {},
+const settings = (
+  models: SepiaSettings["models"],
+  desktop: Partial<SepiaSettings["desktop"]> = {},
+): SepiaSettings => ({
+  desktop: { node: null, agent: null, model: null, cwd: null, ...desktop },
   localNodeName: null,
   localNodeUrl: null,
   localNodeEnabled: true,
@@ -64,5 +66,37 @@ describe("modelArgsFor", () => {
   it("an all-empty fallback list collapses to undefined", () => {
     const s = settings({ devin: { model: "m1", fallbacks: " , ,", mode: "auto" } });
     expect(modelArgsFor("devin", null, s).fallbacks).toBeUndefined();
+  });
+
+  it("applies the desktop's model when the session's agent matches", () => {
+    const s = settings({}, { agent: "devin", model: "claude-x" });
+    // Local desktop → sessions with no node field are on its machine.
+    expect(modelArgsFor("devin", null, s).model).toBe("claude-x");
+    expect(modelArgsFor("devin", null, s, "local").model).toBe("claude-x");
+    expect(modelArgsFor("devin", null, s, undefined).model).toBe("claude-x");
+    // A different agent or node doesn't inherit the pick.
+    expect(modelArgsFor("cline", null, s).model).toBeUndefined();
+    expect(modelArgsFor("devin", null, s, "node_a1b2").model).toBeUndefined();
+    // A peer-scoped desktop applies on its own node only.
+    const peer = settings({}, { node: "node_a1b2", agent: "devin", model: "gpt-y" });
+    expect(modelArgsFor("devin", null, peer, "node_a1b2").model).toBe("gpt-y");
+    expect(modelArgsFor("devin", null, peer).model).toBeUndefined();
+  });
+
+  it("the session's own model still beats the desktop pick, which beats the agent pref", () => {
+    const s = settings(
+      { devin: { model: "configured", fallbacks: "", mode: "manual" } },
+      { agent: "devin", model: "desktop-m" },
+    );
+    expect(modelArgsFor("devin", "session-m", s).model).toBe("session-m");
+    expect(modelArgsFor("devin", null, s).model).toBe("desktop-m");
+    // Off the desktop's agent, the configured pref resumes.
+    expect(modelArgsFor("cline", null, s).model).toBeUndefined();
+  });
+
+  it("a desktop with no agent pick applies its model to whatever runs", () => {
+    const s = settings({}, { model: "m1" });
+    expect(modelArgsFor("devin", null, s).model).toBe("m1");
+    expect(modelArgsFor("cline", null, s).model).toBe("m1");
   });
 });

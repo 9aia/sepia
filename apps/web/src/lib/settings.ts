@@ -21,18 +21,30 @@ export interface AgentModelPref {
   readonly mode: "auto" | "manual";
 }
 
+/**
+ * The client's current working environment — which machine, agent, model,
+ * and directory "New session" aims at. This is the persisted *focus*: the
+ * sidebar footer's picks and the Settings → Desktop section both write
+ * here. Every field is optional; unset fields fall back —
+ * `node` → this machine, `agent` → the node's own pick, `model` → the
+ * agent's configured pref (`settings.models`), `cwd` → the most recent
+ * session's directory on that node. `agent`/`model`/`cwd` only apply on
+ * `node` — they're scoped picks, not global defaults.
+ */
+export interface DesktopEnvironment {
+  /** nodeKey — "local" or a peer id; `null` = this machine. */
+  readonly node: string | null;
+  /** Agent id on `node`; `null` = the node picks. */
+  readonly agent: string | null;
+  /** Spawn-time model for the desktop's agent; `null` = agent pref/default. */
+  readonly model: string | null;
+  /** Working directory on `node`; `null` = most recent session's dir. */
+  readonly cwd: string | null;
+}
+
 export interface SepiaSettings {
-  /**
-   * Agent id preselected when creating sessions, keyed by `nodeKey` —
-   * "local" or a peer id. An absent key means the node's own default (the
-   * create goes out with no agent override and the node picks).
-   */
-  defaultAgent: Record<string, string>;
-  /**
-   * cwd prefilled when creating sessions, keyed by `nodeKey`. An absent
-   * key falls back to the most recent session's dir on that node.
-   */
-  defaultCwd: Record<string, string>;
+  /** The current desktop — the machine+agent+model+dir creates target. */
+  desktop: DesktopEnvironment;
   /** Per-agent model prefs keyed by agent id. */
   models: Record<string, AgentModelPref>;
   /** Keybind overrides by action id — string = custom key, null = disabled. */
@@ -80,19 +92,42 @@ const sanitizeKeybinds = (value: unknown): Record<string, string | null> => {
   return keybinds;
 };
 
+/** A non-empty string field reads through; anything else is unset. */
+const stringOrNull = (value: unknown): string | null =>
+  typeof value === "string" && value !== "" ? value : null;
+
 /**
- * Node-scoped defaults load as `Record<nodeKey, value>`; a stored scalar
- * (pre-federation settings) migrates onto the local key so the pref
- * survives, and non-string entries drop.
+ * The legacy node-scoped default maps (`Record<nodeKey, value>`, or a
+ * pre-federation scalar read as the local entry) survive only as a desktop
+ * seed — the local node's entries become the current environment's agent/
+ * cwd, and every peer entry drops. Returns `null` when nothing stored.
  */
-const normalizeNodeMap = (value: unknown): Record<string, string> => {
-  if (typeof value === "string") return value === "" ? {} : { [LOCAL_NODE_ID]: value };
-  if (typeof value !== "object" || value === null) return {};
-  const map: Record<string, string> = {};
-  for (const [node, entry] of Object.entries(value)) {
-    if (typeof entry === "string" && entry !== "") map[node] = entry;
-  }
-  return map;
+const legacyLocalDefault = (value: unknown): string | null => {
+  if (typeof value === "string") return stringOrNull(value);
+  if (typeof value !== "object" || value === null) return null;
+  const entry = (value as Record<string, unknown>)[LOCAL_NODE_ID];
+  return stringOrNull(entry);
+};
+
+/**
+ * `settings.desktop` — each field keeps only a non-empty string. The legacy
+ * per-node `defaultAgent`/`defaultCwd` maps seed unset fields from their
+ * local entry, so a pre-desktop store keeps its local picks; a `desktop`
+ * field that's already set always wins over the legacy seed.
+ */
+const normalizeDesktop = (
+  value: unknown,
+  legacyAgent: unknown,
+  legacyCwd: unknown,
+): DesktopEnvironment => {
+  const raw: Record<string, unknown> =
+    typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  return {
+    node: stringOrNull(raw.node),
+    agent: stringOrNull(raw.agent) ?? legacyLocalDefault(legacyAgent),
+    model: stringOrNull(raw.model),
+    cwd: stringOrNull(raw.cwd) ?? legacyLocalDefault(legacyCwd),
+  };
 };
 
 /**
@@ -111,8 +146,7 @@ const normalizeLocalNodeUrl = (value: unknown): string | null => {
 };
 
 const defaultSettings = (): SepiaSettings => ({
-  defaultAgent: {},
-  defaultCwd: {},
+  desktop: { node: null, agent: null, model: null, cwd: null },
   models: {},
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },
@@ -128,9 +162,11 @@ const load = (): SepiaSettings => {
     const raw = localStorage.getItem(KEY);
     if (raw === null) return defaultSettings();
     const parsed = JSON.parse(raw) as Partial<SepiaSettings>;
+    // Pre-desktop stores carried per-node `defaultAgent`/`defaultCwd` maps;
+    // their local entries seed the desktop (see normalizeDesktop).
+    const legacy = parsed as Record<string, unknown>;
     return {
-      defaultAgent: normalizeNodeMap(parsed.defaultAgent),
-      defaultCwd: normalizeNodeMap(parsed.defaultCwd),
+      desktop: normalizeDesktop(parsed.desktop, legacy.defaultAgent, legacy.defaultCwd),
       models:
         typeof parsed.models === "object" && parsed.models !== null
           ? (parsed.models as Record<string, AgentModelPref>)
@@ -184,34 +220,44 @@ export const setSettings = (patch: Partial<SepiaSettings>): void => {
   });
 };
 
-// --- Node-scoped creation defaults --------------------------------------------
-// `node` is the creation target's node field — undefined/"local"/the issued
-// local id all normalize through `nodeKey`, so a peer id and the local row
-// forms resolve to the same slot.
+/** Merge a partial desktop pick into `settings.desktop` and persist. */
+export const setDesktop = (patch: Partial<DesktopEnvironment>): void =>
+  setSettings({ desktop: { ...settingsStore.state.desktop, ...patch } });
 
-/** The configured default agent for `node` — null = the node picks. */
-export const defaultAgentFor = (settings: SepiaSettings, node: string | undefined): string | null =>
-  settings.defaultAgent[nodeKey(node)] ?? null;
+// --- Desktop-scoped lookups ---------------------------------------------------
+// `node` is the caller's node field — undefined/"local"/the issued local id
+// all normalize through `nodeKey`, and the desktop's `agent`/`cwd`/`model`
+// only resolve when `node` is the desktop's own machine: a pick for a peer
+// is never a valid local value (or vice versa).
 
-/** The configured spawn dir for `node` — null = fall back to recents/home. */
-export const defaultCwdFor = (settings: SepiaSettings, node: string | undefined): string | null =>
-  settings.defaultCwd[nodeKey(node)] ?? null;
+/** Whether `node` is the machine the desktop currently targets. */
+export const onDesktop = (settings: SepiaSettings, node: string | undefined): boolean =>
+  nodeKey(node) === nodeKey(settings.desktop.node ?? undefined);
+
+/** The desktop's agent pick — null when unset or `node` isn't the desktop's. */
+export const desktopAgentFor = (
+  settings: SepiaSettings,
+  node: string | undefined,
+): string | null => (onDesktop(settings, node) ? settings.desktop.agent : null);
+
+/** The desktop's working dir — null when unset or `node` isn't the desktop's. */
+export const desktopCwdFor = (settings: SepiaSettings, node: string | undefined): string | null =>
+  onDesktop(settings, node) ? settings.desktop.cwd : null;
 
 /**
- * Write one node's entry in a node-scoped defaults map. `null`/`""` removes
- * the key — an unset slot falls back rather than storing an explicit empty.
+ * The desktop's model pick for `agent` on `node` — the spawn-time model a
+ * session of that agent inherits. `null` when unset, when `node` isn't the
+ * desktop's machine, or when `agent` isn't the desktop's picked agent (a
+ * desktop with no agent pick applies its model to whatever the node runs).
  */
-export const withNodeDefault = (
-  map: Record<string, string>,
+export const desktopModelFor = (
+  settings: SepiaSettings,
   node: string | undefined,
-  value: string | null,
-): Record<string, string> => {
-  const key = nodeKey(node);
-  const next = { ...map };
-  if (value === null || value === "") delete next[key];
-  else next[key] = value;
-  return next;
-};
+  agent: string,
+): string | null =>
+  onDesktop(settings, node) && (settings.desktop.agent === null || settings.desktop.agent === agent)
+    ? settings.desktop.model
+    : null;
 
 /**
  * The most recent session's cwd on `node`. The input list is newest-first

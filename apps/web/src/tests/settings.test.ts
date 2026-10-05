@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
-  defaultAgentFor,
-  defaultCwdFor,
+  desktopAgentFor,
+  desktopCwdFor,
+  desktopModelFor,
   recentCwdFor,
-  withNodeDefault,
   type SepiaSettings,
 } from "../lib/settings";
 import { defaultSidebarSections } from "../lib/sidebar";
@@ -20,9 +20,10 @@ const storage = {
   },
 };
 
+const EMPTY_DESKTOP = { node: null, agent: null, model: null, cwd: null };
+
 const DEFAULTS: SepiaSettings = {
-  defaultAgent: {},
-  defaultCwd: {},
+  desktop: EMPTY_DESKTOP,
   models: {},
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },
@@ -63,8 +64,7 @@ describe("settings load", () => {
     store.set(
       "sepia:settings",
       JSON.stringify({
-        defaultAgent: 42,
-        defaultCwd: "/work",
+        desktop: "nope",
         models: "nope",
         keybinds: "no",
         notifications: "no",
@@ -72,38 +72,73 @@ describe("settings load", () => {
       }),
     );
     const loaded = await loadSettings();
-    expect(loaded.defaultAgent).toEqual({});
-    // A stored scalar cwd migrates onto the local node key.
-    expect(loaded.defaultCwd).toEqual({ local: "/work" });
+    expect(loaded.desktop).toEqual(EMPTY_DESKTOP);
     expect(loaded.models).toEqual({});
     expect(loaded.keybinds).toEqual({});
     expect(loaded.notifications).toEqual({ enabled: false, done: true, permission: true });
     expect(loaded.theme).toBe("dark");
   });
 
-  it("migrates a stored scalar defaultAgent onto the local node key", async () => {
-    store.set("sepia:settings", JSON.stringify({ defaultAgent: "cline" }));
-    expect((await loadSettings()).defaultAgent).toEqual({ local: "cline" });
+  it("normalizes a stored desktop — non-string and empty fields drop to null", async () => {
+    store.set(
+      "sepia:settings",
+      JSON.stringify({
+        desktop: { node: "node_a1b2", agent: "", model: 7, cwd: "/work", extra: "x" },
+      }),
+    );
+    expect((await loadSettings()).desktop).toEqual({
+      node: "node_a1b2",
+      agent: null,
+      model: null,
+      cwd: "/work",
+    });
   });
 
-  it("keeps node-keyed default maps, dropping non-string entries", async () => {
+  it("migrates the local node's legacy defaults into the desktop", async () => {
     store.set(
       "sepia:settings",
       JSON.stringify({
         defaultAgent: { local: "devin", node_a1b2: "cline", bad: 7, empty: "" },
-        defaultCwd: { node_a1b2: "/peer/work" },
+        defaultCwd: { local: "/local/work", node_a1b2: "/peer/work" },
       }),
     );
-    const loaded = await loadSettings();
-    expect(loaded.defaultAgent).toEqual({ local: "devin", node_a1b2: "cline" });
-    expect(loaded.defaultCwd).toEqual({ node_a1b2: "/peer/work" });
+    // Only the local entries migrate — peer entries were per-node defaults,
+    // and the desktop is a single current environment.
+    expect((await loadSettings()).desktop).toEqual({
+      node: null,
+      agent: "devin",
+      model: null,
+      cwd: "/local/work",
+    });
   });
 
-  it("treats null/empty node defaults as unset", async () => {
-    store.set("sepia:settings", JSON.stringify({ defaultAgent: null, defaultCwd: "" }));
+  it("migrates legacy scalar defaults (pre-federation) as the local entries", async () => {
+    store.set("sepia:settings", JSON.stringify({ defaultAgent: "cline", defaultCwd: "/work" }));
     const loaded = await loadSettings();
-    expect(loaded.defaultAgent).toEqual({});
-    expect(loaded.defaultCwd).toEqual({});
+    expect(loaded.desktop.agent).toBe("cline");
+    expect(loaded.desktop.cwd).toBe("/work");
+  });
+
+  it("a stored desktop field wins over the legacy seed", async () => {
+    store.set(
+      "sepia:settings",
+      JSON.stringify({
+        desktop: { node: "node_a1b2", agent: "cursor" },
+        defaultAgent: { local: "devin" },
+        defaultCwd: "/legacy",
+      }),
+    );
+    expect((await loadSettings()).desktop).toEqual({
+      node: "node_a1b2",
+      agent: "cursor",
+      model: null,
+      cwd: "/legacy",
+    });
+  });
+
+  it("treats null/empty legacy defaults as unset", async () => {
+    store.set("sepia:settings", JSON.stringify({ defaultAgent: null, defaultCwd: "" }));
+    expect((await loadSettings()).desktop).toEqual(EMPTY_DESKTOP);
   });
 
   it("accepts light and system themes", async () => {
@@ -203,15 +238,28 @@ describe("setSettings", () => {
   it("merges the patch and persists the whole settings object", async () => {
     vi.resetModules();
     const mod = await import("../lib/settings");
-    mod.setSettings({ theme: "light", defaultAgent: { local: "cline" } });
+    mod.setSettings({ theme: "light" });
+    mod.setDesktop({ node: "node_a1b2", agent: "cline" });
     expect(mod.settingsStore.state.theme).toBe("light");
-    expect(mod.settingsStore.state.defaultAgent).toEqual({ local: "cline" });
-    // Untouched keys keep their values.
+    expect(mod.settingsStore.state.desktop).toEqual({
+      node: "node_a1b2",
+      agent: "cline",
+      model: null,
+      cwd: null,
+    });
+    // Untouched keys keep their values; a later patch merges into the desktop.
     expect(mod.settingsStore.state.notifications).toEqual(DEFAULTS.notifications);
+    mod.setDesktop({ model: "claude-x" });
+    expect(mod.settingsStore.state.desktop.agent).toBe("cline");
 
     const persisted = JSON.parse(store.get("sepia:settings") ?? "{}") as SepiaSettings;
     expect(persisted.theme).toBe("light");
-    expect(persisted.defaultAgent).toEqual({ local: "cline" });
+    expect(persisted.desktop).toEqual({
+      node: "node_a1b2",
+      agent: "cline",
+      model: "claude-x",
+      cwd: null,
+    });
   });
 
   it("keeps working when persistence throws", async () => {
@@ -228,35 +276,43 @@ describe("setSettings", () => {
   });
 });
 
-describe("node-scoped defaults", () => {
-  const settings = (patch: Partial<SepiaSettings>): SepiaSettings => ({
+describe("desktop-scoped lookups", () => {
+  const settings = (desktop: Partial<SepiaSettings["desktop"]>): SepiaSettings => ({
     ...DEFAULTS,
-    ...patch,
+    desktop: { ...EMPTY_DESKTOP, ...desktop },
   });
 
-  it("defaultAgentFor resolves the target node's entry — local forms share one slot", () => {
-    const s = settings({ defaultAgent: { local: "devin", node_a1b2: "cline" } });
-    expect(defaultAgentFor(s, undefined)).toBe("devin");
-    expect(defaultAgentFor(s, "local")).toBe("devin");
-    expect(defaultAgentFor(s, "node_a1b2")).toBe("cline");
-    expect(defaultAgentFor(s, "node_zzz")).toBeNull();
+  it("desktopAgentFor resolves only on the desktop's node — local forms share one slot", () => {
+    const s = settings({ agent: "devin" });
+    expect(desktopAgentFor(s, undefined)).toBe("devin");
+    expect(desktopAgentFor(s, "local")).toBe("devin");
+    expect(desktopAgentFor(s, "node_a1b2")).toBeNull();
+    // A peer-scoped desktop doesn't leak its agent onto local creates.
+    const peer = settings({ node: "node_a1b2", agent: "cline" });
+    expect(desktopAgentFor(peer, "node_a1b2")).toBe("cline");
+    expect(desktopAgentFor(peer, undefined)).toBeNull();
+    expect(desktopAgentFor(peer, "node_zzz")).toBeNull();
   });
 
-  it("defaultCwdFor resolves per node and misses to null", () => {
-    const s = settings({ defaultCwd: { node_a1b2: "/peer/work" } });
-    expect(defaultCwdFor(s, "node_a1b2")).toBe("/peer/work");
-    expect(defaultCwdFor(s, undefined)).toBeNull();
-    expect(defaultCwdFor(s, "local")).toBeNull();
+  it("desktopCwdFor resolves per node scope and misses to null", () => {
+    const s = settings({ node: "node_a1b2", cwd: "/peer/work" });
+    expect(desktopCwdFor(s, "node_a1b2")).toBe("/peer/work");
+    expect(desktopCwdFor(s, undefined)).toBeNull();
+    expect(desktopCwdFor(s, "local")).toBeNull();
   });
 
-  it("withNodeDefault writes under the node key and clears on null/empty", () => {
-    let map = withNodeDefault({}, "node_a1b2", "/peer/work");
-    expect(map).toEqual({ node_a1b2: "/peer/work" });
-    map = withNodeDefault(map, undefined, "/local/work");
-    expect(map).toEqual({ node_a1b2: "/peer/work", local: "/local/work" });
-    // Clearing one node leaves the other's entry alone.
-    expect(withNodeDefault(map, "node_a1b2", null)).toEqual({ local: "/local/work" });
-    expect(withNodeDefault(map, "local", "")).toEqual({ node_a1b2: "/peer/work" });
+  it("desktopModelFor needs the desktop's node and (when picked) its agent", () => {
+    const s = settings({ node: "node_a1b2", agent: "cline", model: "claude-x" });
+    expect(desktopModelFor(s, "node_a1b2", "cline")).toBe("claude-x");
+    // Wrong node or wrong agent → unset.
+    expect(desktopModelFor(s, "node_zzz", "cline")).toBeNull();
+    expect(desktopModelFor(s, "node_a1b2", "devin")).toBeNull();
+    // No agent pick → the model applies to whatever agent runs there.
+    const noAgent = settings({ model: "m1" });
+    expect(desktopModelFor(noAgent, undefined, "devin")).toBe("m1");
+    expect(desktopModelFor(noAgent, undefined, "cline")).toBe("m1");
+    // No model pick → null regardless.
+    expect(desktopModelFor(settings({ agent: "devin" }), undefined, "devin")).toBeNull();
   });
 
   it("recentCwdFor picks the most recent session on the target node only", () => {
