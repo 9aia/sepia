@@ -922,6 +922,28 @@ const sessionsGroup = Command.make("sessions").pipe(
 
 // --- projects ------------------------------------------------------------------
 
+/** `projects pull`/`push` stream SSE frames — an `error` frame fails the command. */
+const runTransfer = (
+  effect: (onFrame: (frame: api.SseFrame) => void) => Effect.Effect<void, api.ApiError>,
+): Effect.Effect<void, Error | api.ApiError> =>
+  Effect.gen(function* () {
+    let failed: string | undefined;
+    yield* effect((frame) => {
+      printFrame(frame);
+      if (frame.event === "error") {
+        try {
+          const data = JSON.parse(frame.data) as { error?: unknown };
+          failed = typeof data.error === "string" ? data.error : "transfer failed";
+        } catch {
+          failed = "transfer failed";
+        }
+      }
+    });
+    if (failed !== undefined) {
+      return yield* Effect.fail(new Error(failed));
+    }
+  });
+
 const projectsGroup = Command.make("projects").pipe(
   Command.withSubcommands([
     Command.make(
@@ -947,6 +969,152 @@ const projectsGroup = Command.make("projects").pipe(
           yield* Console.log(`${project.id}\t${project.name}`);
         }),
     ).pipe(Command.withDescription("POST /api/projects — create a project")),
+    Command.make(
+      "init",
+      {
+        name: Args.text({ name: "name" }),
+        node: nodeOption,
+        token: tokenOption,
+      },
+      ({ name, node, token }) =>
+        Effect.gen(function* () {
+          const project = yield* api.createProject(target(node, token), name);
+          yield* Console.log(`${project.id}\t${project.name}`);
+        }),
+    ).pipe(
+      Command.withDescription("Alias of `projects create` — init a project (repo) on the node"),
+    ),
+    Command.make(
+      "export",
+      {
+        projectId: Args.text({ name: "project-id" }).pipe(
+          Args.withDescription("Project id on the node"),
+        ),
+        out: Options.text("out").pipe(
+          Options.optional,
+          Options.withDescription("Write the NDJSON bundle to this file (default: stdout)"),
+        ),
+        node: nodeOption,
+        token: tokenOption,
+      },
+      ({ projectId, out, node, token }) =>
+        Effect.gen(function* () {
+          const bundle = yield* api.exportProject(target(node, token), projectId);
+          const outPath = Option.getOrUndefined(out);
+          if (outPath === undefined || outPath === "-") {
+            return yield* Console.log(bundle.trimEnd());
+          }
+          const fs = yield* Fs.FileSystem;
+          yield* fs.writeFileString(outPath, bundle);
+          yield* Console.log(`Exported project ${projectId} to ${outPath}`);
+        }),
+    ).pipe(
+      Command.withDescription(
+        "GET /api/projects/:id/export — the project's NDJSON bundle (sessions as full IR)",
+      ),
+    ),
+    Command.make(
+      "import",
+      {
+        file: Args.file({ name: "file" }).pipe(
+          Args.withDescription("An NDJSON bundle from `projects export`"),
+        ),
+        node: nodeOption,
+        token: tokenOption,
+        json: jsonOption,
+      },
+      ({ file, node, token, json }) =>
+        Effect.gen(function* () {
+          const fs = yield* Fs.FileSystem;
+          const bundle = yield* fs
+            .readFileString(file)
+            .pipe(Effect.mapError((cause) => new Error(`Cannot read ${file}: ${String(cause)}`)));
+          const summary = yield* api.importProject(target(node, token), bundle);
+          if (json) return yield* printJson(summary);
+          yield* Console.log(
+            `Imported "${summary.project.name}" (${summary.project.id}): ` +
+              `${summary.imported.length} session(s), ${summary.skipped.length} skipped` +
+              (summary.truncated ? " — bundle was truncated" : ""),
+          );
+          for (const row of summary.imported) {
+            yield* Console.log(`  ${row.agent}:${row.id}\t${row.title}`);
+          }
+        }),
+    ).pipe(
+      Command.withDescription(
+        "POST /api/projects/import — write a bundle into the node's stores (idempotent by id)",
+      ),
+    ),
+    Command.make(
+      "pull",
+      {
+        projectId: Args.text({ name: "project-id" }).pipe(
+          Args.withDescription("Project id on the source node"),
+        ),
+        from: Options.text("from").pipe(
+          Options.withDescription("Source node URL (e.g. http://thinkpad:8787)"),
+        ),
+        sourceToken: Options.text("source-token").pipe(
+          Options.optional,
+          Options.withDescription("Bearer token for the source node"),
+        ),
+        node: nodeOption,
+        token: tokenOption,
+      },
+      ({ projectId, from, sourceToken, node, token }) =>
+        runTransfer((onFrame) =>
+          api.pullProject(
+            target(node, token),
+            {
+              source: {
+                url: from,
+                ...(Option.isSome(sourceToken) ? { token: sourceToken.value } : {}),
+              },
+              project: projectId,
+            },
+            onFrame,
+          ),
+        ),
+    ).pipe(
+      Command.withDescription(
+        "POST /api/projects/pull — this node fetches the project bundle from --from and imports it",
+      ),
+    ),
+    Command.make(
+      "push",
+      {
+        projectId: Args.text({ name: "project-id" }).pipe(
+          Args.withDescription("Project id on this node"),
+        ),
+        to: Options.text("to").pipe(
+          Options.withDescription("Target node URL (e.g. http://thinkpad:8787)"),
+        ),
+        targetToken: Options.text("target-token").pipe(
+          Options.optional,
+          Options.withDescription("Bearer token for the target node"),
+        ),
+        node: nodeOption,
+        token: tokenOption,
+      },
+      ({ projectId, to, targetToken, node, token }) =>
+        runTransfer((onFrame) =>
+          api.pushProject(
+            target(node, token),
+            projectId,
+            {
+              target: {
+                url: to,
+                ...(Option.isSome(targetToken) ? { token: targetToken.value } : {}),
+              },
+            },
+            onFrame,
+          ),
+        ),
+    ).pipe(
+      Command.withDescription(
+        "POST /api/projects/:id/push — this node POSTs the bundle to --to's /api/projects/import",
+      ),
+    ),
     Command.make(
       "rename",
       {

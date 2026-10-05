@@ -6,12 +6,14 @@ import {
   Add01Icon,
   ChevronRightIcon,
   Delete02Icon,
+  Download01Icon,
   Edit02Icon,
   FolderLibraryIcon,
   InformationCircleIcon,
   MoreVerticalIcon,
   PinIcon,
   PinOffIcon,
+  Upload01Icon,
   UserAdd01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -19,6 +21,9 @@ import type { Project, SessionSummary } from "../../lib/types";
 import { formatUpdated, isLocalNode, nodeKey, projectKey, sessionKey } from "../../lib/format";
 import { useCreateSession } from "../../hooks/query/useCreateSession";
 import { useNodeLabel, useNodes, useNodesConnected } from "../../hooks/query/useNodes";
+import { isPeerEnabled, nodeName } from "../../lib/nodes";
+import { peerEndpoint } from "../../lib/transfer";
+import { PullProjectDialog, PushProjectDialog } from "./ProjectTransferDialogs";
 import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
 import { enabledAgentOr } from "../../lib/catalog";
@@ -33,6 +38,7 @@ import {
   useCreateProject,
   useDeleteProject,
   useProjects,
+  usePullProject,
   useRenameProject,
 } from "../../hooks/query/useProjects";
 import {
@@ -368,6 +374,8 @@ function ProjectActions({
   onAdd,
   onRename,
   onDelete,
+  onPush,
+  onPullHere,
 }: {
   readonly project: Project;
   readonly Item: typeof ContextMenuItem;
@@ -375,6 +383,10 @@ function ProjectActions({
   onAdd: (project: Project) => void;
   onRename: (project: Project) => void;
   onDelete: (project: Project) => void;
+  /** Present when the project can be pushed somewhere (any other node registered). */
+  onPush?: (project: Project) => void;
+  /** Present for peer-owned projects — pulls a copy onto this machine. */
+  onPullHere?: (project: Project) => void;
 }) {
   return (
     <>
@@ -386,6 +398,18 @@ function ProjectActions({
         <HugeiconsIcon icon={UserAdd01Icon} strokeWidth={2} />
         Add session…
       </Item>
+      {onPush !== undefined && (
+        <Item onClick={() => onPush(project)}>
+          <HugeiconsIcon icon={Upload01Icon} strokeWidth={2} />
+          Push to node…
+        </Item>
+      )}
+      {onPullHere !== undefined && (
+        <Item onClick={() => onPullHere(project)}>
+          <HugeiconsIcon icon={Download01Icon} strokeWidth={2} />
+          Pull to this machine
+        </Item>
+      )}
       <Item onClick={() => onRename(project)}>
         <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
         Rename project
@@ -420,6 +444,11 @@ function ProjectsSection({
   const [deleteFor, setDeleteFor] = useState<Project | null>(null);
   const [detailsFor, setDetailsFor] = useState<Project | null>(null);
   const [addFor, setAddFor] = useState<Project | null>(null);
+  const [pushFor, setPushFor] = useState<Project | null>(null);
+  const [pullOpen, setPullOpen] = useState(false);
+  const pullProject = usePullProject();
+  const { peers } = useNodes();
+  const enabledPeers = peers.filter(isPeerEnabled);
   const createProject = useCreateProject();
   const renameProject = useRenameProject();
   const deleteProject = useDeleteProject();
@@ -489,6 +518,31 @@ function ProjectsSection({
     setDialog(null);
   };
 
+  /**
+   * The transfer verbs for a project row: "Push to node…" whenever another
+   * node is registered; "Pull to this machine" on peer-owned rows — the
+   * local node fetches that peer's bundle directly (through our gateway
+   * mount for `via: "gateway"` peers — see lib/transfer.ts).
+   */
+  const transferProps = (project: Project) => {
+    const owner = peers.find((p) => p.id === project.node);
+    return {
+      onPush:
+        enabledPeers.some((p) => p.id !== project.node) || !isLocalNode(project.node)
+          ? setPushFor
+          : undefined,
+      onPullHere:
+        owner !== undefined && isPeerEnabled(owner)
+          ? () =>
+              pullProject.mutate({
+                endpoint: peerEndpoint(owner),
+                remoteProjectId: project.id,
+                label: nodeName(project.node),
+              })
+          : undefined,
+    };
+  };
+
   const [open, setOpen] = useUiState("ui.section.projects", true);
   return (
     <section className="group/section">
@@ -497,15 +551,28 @@ function ProjectsSection({
         open={open}
         onToggle={() => setOpen((v) => !v)}
         action={
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="New project"
-            title="New project"
-            onClick={() => setDialog({ name: "" })}
-          >
-            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-          </Button>
+          <>
+            {enabledPeers.length > 0 && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Pull project from a node"
+                title="Pull project from a node"
+                onClick={() => setPullOpen(true)}
+              >
+                <HugeiconsIcon icon={Download01Icon} strokeWidth={2} />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="New project"
+              title="New project"
+              onClick={() => setDialog({ name: "" })}
+            >
+              <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+            </Button>
+          </>
         }
       />
       {open && !projectsLoading && projects.length === 0 && (
@@ -585,6 +652,7 @@ function ProjectsSection({
                         onAdd={setAddFor}
                         onRename={(p) => setDialog({ id: projectKey(p), name: p.name })}
                         onDelete={setDeleteFor}
+                        {...transferProps(project)}
                       />
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -598,6 +666,7 @@ function ProjectsSection({
                   onAdd={setAddFor}
                   onRename={(p) => setDialog({ id: projectKey(p), name: p.name })}
                   onDelete={setDeleteFor}
+                  {...transferProps(project)}
                 />
               </ContextMenuContent>
               {open && (
@@ -644,6 +713,8 @@ function ProjectsSection({
       {addFor !== null && (
         <AddSessionDialog project={addFor} sessions={sessions} onClose={() => setAddFor(null)} />
       )}
+      {pushFor !== null && <PushProjectDialog project={pushFor} onClose={() => setPushFor(null)} />}
+      {pullOpen && <PullProjectDialog onClose={() => setPullOpen(false)} />}
       <AlertDialog open={deleteFor !== null} onOpenChange={(open) => !open && setDeleteFor(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

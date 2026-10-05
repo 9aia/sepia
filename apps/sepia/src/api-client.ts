@@ -423,6 +423,84 @@ export const renameProject = (target: NodeTarget, id: string, name: string) =>
 export const deleteProject = (target: NodeTarget, id: string) =>
   request<{ readonly ok: boolean }>(target, "DELETE", `/api/projects/${encodeURIComponent(id)}`);
 
+// --- Project transfer (docs/protocol.md "Project transfer") -------------------
+
+/** A peer node's `{url, token}` — the credential a node authenticates with there. */
+export interface TransferEndpoint {
+  readonly url: string;
+  readonly token?: string;
+}
+
+/** What a bundle import reports back (POST /api/projects/import or a pull/push `done` frame). */
+export interface ProjectImportSummary {
+  readonly project: Project;
+  readonly imported: ReadonlyArray<{
+    readonly id: string;
+    readonly sourceId: string;
+    readonly agent: string;
+    readonly title: string;
+  }>;
+  readonly skipped: ReadonlyArray<{ readonly id: string; readonly error: string }>;
+  readonly truncated: boolean;
+}
+
+/** GET /api/projects/:id/export — the NDJSON bundle, returned raw. */
+export const exportProject = (target: NodeTarget, id: string) =>
+  Effect.tryPromise({
+    try: async () => {
+      const res = await fetch(`${target.baseUrl}/api/projects/${encodeURIComponent(id)}/export`, {
+        headers: headers(target, false),
+      });
+      if (!res.ok) throw await toApiError(res);
+      return res.text();
+    },
+    catch: (cause) => asApiError(cause, target.baseUrl),
+  });
+
+/** POST /api/projects/import — upload an NDJSON bundle; the server streams the parse. */
+export const importProject = (target: NodeTarget, bundle: string) =>
+  Effect.tryPromise({
+    try: async () => {
+      const res = await fetch(`${target.baseUrl}/api/projects/import`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-ndjson",
+          ...(target.token !== null ? { authorization: `Bearer ${target.token}` } : {}),
+        },
+        body: bundle,
+      });
+      if (!res.ok) throw await toApiError(res);
+      return (await res.json()) as ProjectImportSummary;
+    },
+    catch: (cause) => asApiError(cause, target.baseUrl),
+  });
+
+/**
+ * POST /api/projects/pull — the receiving node fetches `{source.url}`'s
+ * export with `source.token` and imports it; progress arrives as SSE frames
+ * (`start`, `session`, `done`, `error`).
+ */
+export const pullProject = (
+  target: NodeTarget,
+  input: { readonly source: TransferEndpoint; readonly project: string },
+  onFrame: (frame: SseFrame) => void,
+) => streamSse(target, "/api/projects/pull", onFrame, { method: "POST", body: input });
+
+/**
+ * POST /api/projects/:id/push — this node bundles the project and POSTs it
+ * to `{target.url}`'s /api/projects/import with `target.token`.
+ */
+export const pushProject = (
+  target: NodeTarget,
+  id: string,
+  input: { readonly target: TransferEndpoint },
+  onFrame: (frame: SseFrame) => void,
+) =>
+  streamSse(target, `/api/projects/${encodeURIComponent(id)}/push`, onFrame, {
+    method: "POST",
+    body: input,
+  });
+
 // --- Managed servers ----------------------------------------------------------
 
 export const listServers = (target: NodeTarget) =>

@@ -98,6 +98,24 @@ GET    /api/projects                  node-local projects
 POST   /api/projects                  { name } → project
 PATCH  /api/projects/:id              rename
 DELETE /api/projects/:id
+GET    /api/projects/:id/export       the project bundle — a streamed
+                                      application/x-ndjson document (see
+                                      "Project transfer")
+POST   /api/projects/import           consumes an NDJSON bundle body (parsed
+                                      streaming, so big projects don't hit
+                                      the JSON body's size ceiling); writes
+                                      sessions through the same store paths
+                                      as /api/sessions/import and re-points
+                                      the meta overlay at the local project
+POST   /api/projects/pull             { source: { url, token? }, project } —
+                                      this node fetches the source's export
+                                      with the supplied credential and
+                                      imports it (node-to-node). Response is
+                                      SSE: start, session×N, done | error
+POST   /api/projects/:id/push         { target: { url, token? } } — this node
+                                      bundles the project and POSTs it to
+                                      target.url's /api/projects/import with
+                                      target.token. Same SSE progress shape
 GET    /api/config/:key  PATCH /api/config/:key   server-side UI state
 GET    /api/push/vapid  POST/DELETE /api/push/subscribe   web-push
 ANY    /api/gateway/:server/*           gateway mode — forward to a managed
@@ -149,6 +167,52 @@ means a slightly stale row until the next refetch.
 Node-local: `{ id, name, cwd }` where `cwd` is a path on _that_ node. The
 aggregated UI shows `name @ node` (or a machine badge). Cross-machine
 grouping of like-named projects is a UI concern — no sync.
+
+### Project transfer
+
+Projects are the git-like unit of movement between nodes — sessions decouple
+from the machine the agent runs on, so a project moves wholesale. The verbs:
+
+- `GET /api/projects/:id/export` — streams the bundle:
+  `application/x-ndjson`, one JSON object per line. The first line is
+  `{"type":"project","version":1,"id","name","node":{"id","name"},"sessions":N}`;
+  then one `{"type":"session","id","agent","title","meta","session"}` per
+  member — `session` is the full IR from `GET /api/sessions/:id/export`
+  (nodes, toolCalls, thinking, usage, checkpoints verbatim) and `meta` is the
+  sepia overlay minus `projectIds` (node-local). A member the store can't
+  read becomes `{"type":"skipped","id","error"}`; the trailer is
+  `{"type":"end","sessions":N,"skipped":M}`. Unknown line types are ignored.
+- `POST /api/projects/import` — consumes a bundle body, line by line (the
+  parse streams, so project size is bounded by per-line memory, not a body
+  cap). The `project` line creates the project under its source id — or
+  refreshes the name when it already exists, which is what makes a re-pull
+  an update rather than a clone. Each session writes through the
+  `/api/sessions/import` executor: `cline` members land in the Cline store,
+  everything else in the Devin store; the overlay then re-points
+  `projectIds` at the local project, restores title/pinned/archived/model/
+  spans, and appends a run span for this node. `meta`/`session`/`project`
+  feed events fire as rows land. → `201 { project, imported, skipped,
+truncated }`.
+- `POST /api/projects/pull` — `{ source: { url, token? }, project }` — the
+  receiving node fetches the source's `export` itself (no browser relay)
+  and imports it. The response streams progress as SSE: `start`, one
+  `session` frame per landed session (`{index, total, id, sourceId, agent,
+title}`), then `done` (the import summary) or `error`.
+- `POST /api/projects/:id/push` — `{ target: { url, token? } }` — the owning
+  node POSTs the bundle to `target.url`'s `/api/projects/import`
+  authenticated with `target.token`. Same SSE shape.
+
+Clone is pull-with-a-new-id — the same op covers both cases since import is
+idempotent by id. `init` is just `POST /api/projects` (`sepia projects
+init`). Auth is the existing bearer model: the client authenticates to the
+node it calls, and hands the peer's credential (`source.token` /
+`target.token`) to the node for the cross-node leg — a `via: "gateway"`
+peer resolves to this node's `/api/gateway/<serverId>` mount authenticated
+with the local token, so unreachable peers transfer through the same path
+the rest of federation uses.
+
+`sepia projects export|import|pull|push` drive the same endpoints from the
+CLI.
 
 ## Auth — pairing
 

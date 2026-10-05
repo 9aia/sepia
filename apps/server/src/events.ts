@@ -145,6 +145,16 @@ export const instrumentMeta = (meta: MetaStore, feed: NodeEventFeed): MetaStore 
     feed.emit("project", { id: project.id, patch: { name: project.name } });
     return project;
   },
+  ensureProject: (id, name) => {
+    const before = meta.listProjects().find((project) => project.id === id);
+    const project = meta.ensureProject(id, name);
+    // ensureProject covers both transfer halves: clone (the id is new here)
+    // and pull (a rename lands). An unchanged row emits nothing.
+    if (before?.name !== name) {
+      feed.emit("project", { id, patch: { name } });
+    }
+    return project;
+  },
   renameProject: (id, name) => {
     const renamed = meta.renameProject(id, name);
     if (renamed) feed.emit("project", { id, patch: { name } });

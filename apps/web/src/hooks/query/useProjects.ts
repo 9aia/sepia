@@ -1,7 +1,14 @@
-import { toastError, toastSuccess } from "../../lib/toast";
+import { toast } from "sonner";
+import { toastError, toastLoading, toastSuccess } from "../../lib/toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLiveQuery } from "@tanstack/react-db";
-import { convertSession, createProject } from "../../lib/api";
+import {
+  convertSession,
+  createProject,
+  pullProject,
+  pushProject,
+  type TransferEndpoint,
+} from "../../lib/api";
 import { projectsCollection } from "../../lib/db-projects";
 import { LOCAL_NODE_ID, projectKey } from "../../lib/format";
 import { isMultiNode, nodeTarget } from "../../lib/nodes";
@@ -79,6 +86,113 @@ export const useDeleteProject = () => {
       toastSuccess("Project deleted");
     },
     onError: (error) => toastError("Couldn't delete the project", error),
+  });
+};
+
+/** Progress line for the live transfer toast — "3/8 · Fix auth flow". */
+const transferProgress = (frame: { data: Record<string, unknown> }): string | undefined => {
+  if (typeof frame.data.title !== "string" || frame.data.title === "") return undefined;
+  const index = typeof frame.data.index === "number" ? frame.data.index : "?";
+  const total = typeof frame.data.total === "number" ? frame.data.total : "?";
+  return `${index}/${total} · ${frame.data.title}`;
+};
+
+/**
+ * Push `project` to another node — `POST /api/projects/:id/push` on the
+ * owning node, which streams the bundle to `endpoint` (resolved by the
+ * caller via lib/transfer.ts). `label` is the destination's display name.
+ * Progress rides a loading toast; the events feed refreshes both lists.
+ */
+export const usePushProject = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      project,
+      endpoint,
+      label,
+    }: {
+      project: Project;
+      endpoint: TransferEndpoint;
+      label: string;
+    }) => {
+      const pending = toastLoading(`Pushing "${project.name}" to ${label}…`);
+      try {
+        const summary = await pushProject(
+          project.id,
+          endpoint,
+          (frame) => {
+            const progress = transferProgress(frame);
+            if (frame.event === "session" && progress !== undefined) {
+              // sonner updates a toast in place by id — the description
+              // carries the per-session progress line.
+              toast.loading(`Pushing "${project.name}" to ${label}…`, {
+                id: pending,
+                description: progress,
+              });
+            }
+          },
+          nodeTarget(project.node),
+        );
+        return { summary, pending, label };
+      } catch (error) {
+        toastError(`Couldn't push "${project.name}"`, error, pending);
+        throw error;
+      }
+    },
+    onSuccess: ({ summary, pending, label }) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+      const skipped = summary.skipped.length;
+      toastSuccess(
+        `Pushed ${summary.imported.length} session(s) to ${label}` +
+          (skipped > 0 ? ` (${skipped} skipped)` : ""),
+        pending,
+      );
+    },
+  });
+};
+
+/**
+ * Pull a project from a peer onto this machine — `POST /api/projects/pull`
+ * on the local node, which fetches the peer's `export` with the resolved
+ * credential and imports it. Pull = clone when the project id is new here,
+ * update when it already exists (import is idempotent by id).
+ */
+export const usePullProject = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      endpoint,
+      remoteProjectId,
+      label,
+    }: {
+      endpoint: TransferEndpoint;
+      remoteProjectId: string;
+      label: string;
+    }) => {
+      const pending = toastLoading(`Pulling "${remoteProjectId}" from ${label}…`);
+      try {
+        const summary = await pullProject(
+          { source: endpoint, project: remoteProjectId },
+          undefined,
+          nodeTarget(undefined),
+        );
+        return { summary, pending, label };
+      } catch (error) {
+        toastError(`Couldn't pull from ${label}`, error, pending);
+        throw error;
+      }
+    },
+    onSuccess: ({ summary, pending, label }) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+      const skipped = summary.skipped.length;
+      toastSuccess(
+        `Pulled "${summary.project.name}" from ${label} — ${summary.imported.length} session(s)` +
+          (skipped > 0 ? ` (${skipped} skipped)` : ""),
+        pending,
+      );
+    },
   });
 };
 

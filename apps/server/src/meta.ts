@@ -49,7 +49,8 @@ export const appendSpan = (
   return [...(spans ?? []), span];
 };
 
-const isRunSpan = (value: unknown): value is RunSpan => {
+/** Structural guard for a run span off the wire (transfer bundles carry them). */
+export const isRunSpan = (value: unknown): value is RunSpan => {
   if (typeof value !== "object" || value === null) return false;
   const raw = value as Record<string, unknown>;
   return (
@@ -84,6 +85,12 @@ export interface MetaStore {
   readonly remove: (id: string) => void;
   readonly listProjects: () => ReadonlyArray<Project>;
   readonly createProject: (name: string) => Project;
+  /**
+   * Create the project under a caller-chosen id, or refresh its name when it
+   * already exists — the idempotent half of a project transfer (a re-pull
+   * updates the row instead of cloning it under a fresh id).
+   */
+  readonly ensureProject: (id: string, name: string) => Project;
   readonly renameProject: (id: string, name: string) => boolean;
   readonly deleteProject: (id: string) => void;
   readonly config: () => Record<string, unknown>;
@@ -188,6 +195,14 @@ export const createMetaStore = (path: string): MetaStore => {
       data = { ...data, projects: { ...data.projects, [project.id]: { name } } };
       flush();
       return project;
+    },
+    ensureProject: (id, name) => {
+      const existing = data.projects[id];
+      if (existing === undefined || existing.name !== name) {
+        data = { ...data, projects: { ...data.projects, [id]: { name } } };
+        flush();
+      }
+      return { id, name };
     },
     renameProject: (id, name) => {
       if (data.projects[id] === undefined) return false;

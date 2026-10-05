@@ -10,7 +10,7 @@
     "dev": "bun src/main.ts",
     "start": "bun src/main.ts",
     "check": "tsc --noEmit",
-    "test": "vitest run && bun tests/e2e.ts",
+    "test": "vitest run && bun tests/e2e.ts && bun tests/e2e-transfer.ts",
     "coverage": "vitest run --coverage"
   },
   "dependencies": {

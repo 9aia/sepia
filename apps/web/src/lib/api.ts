@@ -381,6 +381,139 @@ export async function deleteProject(id: string, target?: ApiTarget): Promise<boo
   return res.ok;
 }
 
+// --- Project transfer (docs/protocol.md "Project transfer") -------------------
+
+/** A peer node's `{url, token}` — resolved by lib/transfer.ts's peerEndpoint. */
+export interface TransferEndpoint {
+  readonly url: string;
+  readonly token?: string | null;
+}
+
+/** The `done` frame payload / POST /api/projects/import response. */
+export interface ProjectImportSummary {
+  readonly project: { id: string; name: string };
+  readonly imported: ReadonlyArray<{
+    id: string;
+    sourceId: string;
+    agent: string;
+    title: string;
+  }>;
+  readonly skipped: ReadonlyArray<{ id: string; error: string }>;
+  readonly truncated: boolean;
+}
+
+/** One SSE frame off a pull/push stream (`start`, `session`, `done`, `error`). */
+export interface TransferFrame {
+  readonly event: string;
+  readonly data: Record<string, unknown>;
+}
+
+/**
+ * Read an SSE `Response` body (EventSource can't POST) — resolves on `done`,
+ * rejects on an `error` frame or a dead stream.
+ */
+const readTransferStream = async (
+  res: Response,
+  onFrame?: (frame: TransferFrame) => void,
+): Promise<ProjectImportSummary> => {
+  if (res.body === null) throw new Error("The transfer stream had no body");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let summary: ProjectImportSummary | undefined;
+  let failure: string | undefined;
+  const handle = (raw: string): void => {
+    const event = /^event: (.*)$/m.exec(raw)?.[1];
+    const dataLine = /^data: (.*)$/m.exec(raw)?.[1];
+    if (event === undefined || dataLine === undefined) return;
+    let data: Record<string, unknown> = {};
+    try {
+      data = JSON.parse(dataLine) as Record<string, unknown>;
+    } catch {
+      // Malformed frame — skip it like the feed does.
+      return;
+    }
+    onFrame?.({ event, data });
+    if (event === "done") summary = data as unknown as ProjectImportSummary;
+    if (event === "error") {
+      failure = typeof data.error === "string" ? data.error : "The transfer failed";
+    }
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let at: number;
+    while ((at = buffer.indexOf("\n\n")) !== -1) {
+      const raw = buffer.slice(0, at);
+      buffer = buffer.slice(at + 2);
+      handle(raw);
+    }
+  }
+  if (failure !== undefined) throw new Error(failure);
+  if (summary === undefined) throw new Error("The transfer stream ended without a result");
+  return summary;
+};
+
+/**
+ * POST /api/projects/pull on `target` (the node receiving the project —
+ * default this one). It fetches `source.url`'s export with `source.token`
+ * itself; progress frames arrive over the response's SSE stream.
+ */
+export async function pullProject(
+  input: { readonly source: TransferEndpoint; readonly project: string },
+  onFrame?: (frame: TransferFrame) => void,
+  target?: ApiTarget,
+): Promise<ProjectImportSummary> {
+  const res = await sepiaFetch(
+    "/api/projects/pull",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        source: {
+          url: input.source.url,
+          ...(input.source.token ? { token: input.source.token } : {}),
+        },
+        project: input.project,
+      }),
+    },
+    target,
+  );
+  if (!res.ok) {
+    const { message, code } = await responseError(res);
+    throw new ApiError(message, res.status, code);
+  }
+  return readTransferStream(res, onFrame);
+}
+
+/**
+ * POST /api/projects/:id/push on the node that owns the project — it bundles
+ * the sessions and POSTs them to `endpoint.url`'s /api/projects/import with
+ * `endpoint.token`.
+ */
+export async function pushProject(
+  id: string,
+  endpoint: TransferEndpoint,
+  onFrame?: (frame: TransferFrame) => void,
+  target?: ApiTarget,
+): Promise<ProjectImportSummary> {
+  const res = await sepiaFetch(
+    `/api/projects/${encodeURIComponent(id)}/push`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        target: { url: endpoint.url, ...(endpoint.token ? { token: endpoint.token } : {}) },
+      }),
+    },
+    target,
+  );
+  if (!res.ok) {
+    const { message, code } = await responseError(res);
+    throw new ApiError(message, res.status, code);
+  }
+  return readTransferStream(res, onFrame);
+}
+
 export async function convertSession(
   id: string,
   agent: string,
