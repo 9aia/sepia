@@ -46,10 +46,10 @@ describe("applyAguiEvent — edge paths", () => {
     const base = applyAguiEvent([], ev("TEXT_MESSAGE_START", { messageId: "m1" }));
     expect(applyAguiEvent(base, ev("TEXT_MESSAGE_END", { messageId: "ghost" }))).toHaveLength(1);
     expect(applyAguiEvent(base, ev("TEXT_MESSAGE_CONTENT", { delta: "x" }))).toHaveLength(1);
-    expect(
-      applyAguiEvent(base, ev("TOOL_CALL_ARGS", { toolCallId: "ghost", delta: "{}" })),
-    ).toHaveLength(1);
-    expect(applyAguiEvent(base, ev("TOOL_CALL_END", { toolCallId: "ghost" }))).toHaveLength(1);
+    // Tool events for an unknown id synthesize a row (attach mid-call) —
+    // but with no id at all there's still nothing to fold into.
+    expect(applyAguiEvent(base, ev("TOOL_CALL_ARGS", { delta: "{}" }))).toHaveLength(1);
+    expect(applyAguiEvent(base, ev("TOOL_CALL_END"))).toHaveLength(1);
     expect(
       applyAguiEvent(base, ev("REASONING_MESSAGE_CONTENT", { messageId: "ghost" })),
     ).toHaveLength(1);

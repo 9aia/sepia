@@ -95,11 +95,13 @@ class FakeConnection implements AcpConnection {
   cancelled: string[] = [];
   permissions: Array<{ requestId: string; optionId: string | null }> = [];
   closed = false;
+  listCalls = 0;
   private promptGate: Promise<void> | null = null;
   private updateListener: ((update: AcpSessionUpdate) => void) | null = null;
   private permissionListener: ((request: PermissionRequest) => void) | null = null;
 
   async listSessions(): Promise<ReadonlyArray<AcpSessionInfo>> {
+    this.listCalls += 1;
     if (this.listError !== undefined) throw this.listError;
     return this.infos;
   }
@@ -272,6 +274,32 @@ test("merges agent lock state when withLocks is set", async () => {
   ]);
   expect(spawns).toEqual([{ cwd: "/work" }]);
   expect(conn.closed).toBe(true);
+});
+
+test("probes every registered agent — a cline-held lock is not invisible to the devin probe", async () => {
+  const devinConn = new FakeConnection();
+  // Devin's view reports the same id free; cline's reports it held. The
+  // merged probe is a union — locked in any agent's view counts as held.
+  devinConn.infos = [{ ...lockedInfo("s1"), locked: false, lockHolderPid: null }];
+  const clineConn = new FakeConnection();
+  clineConn.infos = [{ ...lockedInfo("s1"), lockHolderPid: 777 }];
+  const devin = fakeAgent(devinConn, "devin");
+  const cline = fakeAgent(clineConn, "cline");
+  const cp = await makeService(
+    { agents: [devin.runtime, cline.runtime], defaultAgentId: "devin", probeCwd: "/work" },
+    repository([session("s1", "/work", [], "cline")]),
+  );
+
+  const summaries = await Effect.runPromise(cp.listSessions({ withLocks: true }));
+
+  expect(summaries.map((item) => [item.id, item.locked, item.lockHolderPid])).toEqual([
+    ["s1", true, 777],
+  ]);
+  // Both agents were probed once — each throwaway spawn closed after listing.
+  expect(devin.spawns).toEqual([{ cwd: "/work" }]);
+  expect(cline.spawns).toEqual([{ cwd: "/work" }]);
+  expect(devinConn.closed).toBe(true);
+  expect(clineConn.closed).toBe(true);
 });
 
 test("probes locks once for two rapid lists", async () => {
@@ -749,8 +777,10 @@ test("re-attaching a live session does not spawn again", async () => {
 });
 
 test("attach prefers the session's own agent", async () => {
-  const devin = fakeAgent(new FakeConnection(), "devin");
-  const cline = fakeAgent(new FakeConnection(), "cline");
+  const devinConn = new FakeConnection();
+  const clineConn = new FakeConnection();
+  const devin = fakeAgent(devinConn, "devin");
+  const cline = fakeAgent(clineConn, "cline");
   const cp = await makeService(
     { agents: [devin.runtime, cline.runtime], defaultAgentId: "devin" },
     repository([session("s1", "/work", [], "cline")]),
@@ -758,8 +788,184 @@ test("attach prefers the session's own agent", async () => {
 
   await Effect.runPromise(cp.attach("s1"));
 
+  // The load goes to the session's own backend agent; devin's spawn is the
+  // lock-check fan-out every registered agent gets — it lists, never loads.
   expect(cline.spawns).toHaveLength(1);
-  expect(devin.spawns).toHaveLength(0);
+  expect(clineConn.loaded).toEqual(["s1"]);
+  expect(devin.spawns).toHaveLength(1);
+  expect(devinConn.loaded).toEqual([]);
+});
+
+test("a lock only visible in another agent's probe still attaches read-only", async () => {
+  const devinConn = new FakeConnection();
+  // Devin's probe holds a colliding id; cline — the session's own agent —
+  // does not list it at all, so the merged union still counts it as held.
+  devinConn.infos = [lockedInfo("s1")];
+  const clineConn = new FakeConnection();
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(devinConn, "devin").runtime, fakeAgent(clineConn, "cline").runtime],
+      defaultAgentId: "devin",
+      probeCwd: "/work",
+    },
+    repository([session("s1", "/work", [], "cline")]),
+  );
+
+  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({
+    attached: false,
+    readOnly: true,
+    agentId: "cline",
+    capabilities: clineConn.capabilities,
+  });
+  expect(clineConn.loaded).toEqual([]);
+  expect(clineConn.closed).toBe(true);
+});
+
+test("takeover signals the holder pid the session's own agent reported", async () => {
+  const devinConn = new FakeConnection();
+  // A colliding id in devin's view must not supply the holder pid — the
+  // signal has to go to the pid cline (the backend's agent) reported.
+  devinConn.infos = [{ ...lockedInfo("s1"), lockHolderPid: 1111 }];
+  const clineConn = new FakeConnection();
+  clineConn.infos = [{ ...lockedInfo("s1"), lockHolderPid: 4242 }];
+  const killed: number[] = [];
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(devinConn, "devin").runtime, fakeAgent(clineConn, "cline").runtime],
+      defaultAgentId: "devin",
+      terminateLockHolder: (pid) => {
+        killed.push(pid);
+        // The holder exits and drops the lock — cline's next list sees it.
+        clineConn.infos = clineConn.infos.map((info) => ({
+          ...info,
+          locked: false,
+          lockHolderPid: null,
+        }));
+      },
+    },
+    repository([session("s1", "/work", [], "cline")]),
+  );
+
+  expect(await Effect.runPromise(cp.attach("s1", { takeover: true }))).toEqual({
+    attached: true,
+    readOnly: false,
+    agentId: "cline",
+    capabilities: clineConn.capabilities,
+  });
+  expect(killed).toEqual([4242]);
+  expect(clineConn.loaded).toEqual(["s1"]);
+});
+
+test("the holder pid comes from the agent owning the session's backend", async () => {
+  const devinConn = new FakeConnection();
+  devinConn.infos = [{ ...lockedInfo("s1"), lockHolderPid: 1111 }];
+  const clineConn = new FakeConnection();
+  clineConn.infos = [{ ...lockedInfo("s1"), lockHolderPid: 4242 }];
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(devinConn, "devin").runtime, fakeAgent(clineConn, "cline").runtime],
+      defaultAgentId: "devin",
+      probeCwd: "/work",
+    },
+    repository([session("s1", "/work", [], "cline")]),
+  );
+
+  const [summary] = await Effect.runPromise(cp.listSessions({ withLocks: true }));
+
+  // Both probes see the id locked; the reported pid is cline's — the pid a
+  // takeover would have to signal — not devin's colliding one.
+  expect(summary).toMatchObject({ locked: true, lockHolderPid: 4242 });
+});
+
+test("a colliding locked id in another agent's view marks locked but cannot supply the pid", async () => {
+  const devinConn = new FakeConnection();
+  devinConn.infos = [{ ...lockedInfo("s1"), lockHolderPid: 1111 }];
+  const clineConn = new FakeConnection();
+  // Cline — the owning agent — lists the id itself and reports it free.
+  // Devin's locked entry is a different session colliding on the id, so
+  // the union still marks it held but the foreign pid is not ours.
+  clineConn.infos = [{ ...lockedInfo("s1"), locked: false, lockHolderPid: null }];
+  const cp = await makeService(
+    {
+      agents: [fakeAgent(devinConn, "devin").runtime, fakeAgent(clineConn, "cline").runtime],
+      defaultAgentId: "devin",
+      probeCwd: "/work",
+    },
+    repository([session("s1", "/work", [], "cline")]),
+  );
+
+  const [summary] = await Effect.runPromise(cp.listSessions({ withLocks: true }));
+
+  expect(summary).toMatchObject({ locked: true, lockHolderPid: null });
+});
+
+test("agents that advertised they cannot list or load sessions are not re-probed", async () => {
+  const previousTtl = process.env.SEPIA_LOCK_TTL_MS;
+  process.env.SEPIA_LOCK_TTL_MS = "0";
+  try {
+    const devinConn = new FakeConnection();
+    // Cline cannot answer session/list; claude cannot load a session, so it
+    // can never hold a lock a takeover would need to release. The first
+    // probe's spawn is what learns each capability set — later probes skip
+    // both agents entirely.
+    const clineConn = new FakeConnection();
+    clineConn.capabilities = {
+      ...FULL_CAPABILITIES,
+      sessionList: false,
+      sessionCapabilities: { ...FULL_CAPABILITIES.sessionCapabilities, list: false },
+    };
+    const claudeConn = new FakeConnection();
+    claudeConn.capabilities = { ...FULL_CAPABILITIES, loadSession: false };
+    const devin = fakeAgent(devinConn, "devin");
+    const cline = fakeAgent(clineConn, "cline");
+    const claude = fakeAgent(claudeConn, "claude");
+    const cp = await makeService(
+      {
+        agents: [devin.runtime, cline.runtime, claude.runtime],
+        defaultAgentId: "devin",
+        probeCwd: "/work",
+      },
+      repository([session("s1", "/work", [], "cline"), session("s2", "/work", [], "claude")]),
+    );
+
+    await Effect.runPromise(cp.listSessions({ withLocks: true }));
+    await Effect.runPromise(cp.listSessions({ withLocks: true }));
+
+    // Incapable agents spawned once (the capability probe) and never again —
+    // and the capability gate meant neither answered a session/list RPC.
+    expect(cline.spawns).toHaveLength(1);
+    expect(claude.spawns).toHaveLength(1);
+    expect(clineConn.listCalls).toBe(0);
+    expect(claudeConn.listCalls).toBe(0);
+    expect(devin.spawns).toHaveLength(2);
+  } finally {
+    if (previousTtl === undefined) delete process.env.SEPIA_LOCK_TTL_MS;
+    else process.env.SEPIA_LOCK_TTL_MS = previousTtl;
+  }
+});
+
+test("attach does not call session/list on an agent that advertised it cannot list", async () => {
+  const conn = new FakeConnection();
+  conn.capabilities = {
+    ...FULL_CAPABILITIES,
+    sessionList: false,
+    sessionCapabilities: { ...FULL_CAPABILITIES.sessionCapabilities, list: false },
+  };
+  const cp = await makeService(
+    { agents: [fakeAgent(conn).runtime] },
+    repository([session("s1", "/work")]),
+  );
+
+  expect(await Effect.runPromise(cp.attach("s1"))).toEqual({
+    attached: true,
+    readOnly: false,
+    agentId: "devin",
+    capabilities: conn.capabilities,
+  });
+  // The borrowed connection stood in for its own probe — without
+  // session/list there is nothing to ask, and the load is the arbiter.
+  expect(conn.listCalls).toBe(0);
+  expect(conn.loaded).toEqual(["s1"]);
 });
 
 test("treats a loadSession failure as authoritative and re-probes", async () => {

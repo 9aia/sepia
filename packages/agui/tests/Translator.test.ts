@@ -157,9 +157,42 @@ test("ignores user chunks and streams reasoning", () => {
   ]);
 });
 
-test("never closes an unknown tool call", () => {
+test("an update for an unknown tool call synthesizes its start", () => {
   const translator = createTranslator();
+  // Attached mid-call — the tool_call START fired before this translator
+  // existed. The update still yields a well-formed START → END pair.
+  const events = translator.translate({
+    kind: "tool_call_update",
+    toolCallId: "ghost",
+    status: "completed",
+    title: "bash",
+    rawInput: { cmd: "ls" },
+    rawOutput: "ok",
+  });
+  expect(types(events)).toEqual([
+    EventType.TOOL_CALL_START,
+    EventType.TOOL_CALL_ARGS,
+    EventType.TOOL_CALL_RESULT,
+    EventType.TOOL_CALL_END,
+  ]);
+  expect(events[0]).toMatchObject({
+    toolCallId: "ghost",
+    toolCallName: "bash",
+  });
+  // The call is closed — a later endTurn doesn't END it twice.
   expect(
-    translator.translate({ kind: "tool_call_update", toolCallId: "ghost", status: "completed" }),
-  ).toEqual([]);
+    translator.endTurn().filter((event) => event.type === EventType.TOOL_CALL_END),
+  ).toHaveLength(0);
+});
+
+test("a nameless update names the synthesized call by its id", () => {
+  const translator = createTranslator();
+  const events = translator.translate({
+    kind: "tool_call_update",
+    toolCallId: "call-9",
+    status: "in_progress",
+  });
+  expect(events).toEqual([
+    { type: EventType.TOOL_CALL_START, toolCallId: "call-9", toolCallName: "call-9" },
+  ]);
 });

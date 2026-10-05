@@ -328,9 +328,7 @@ export const nodeTarget = (node: string | undefined): ApiTarget => {
 /** Display name for a node id — nicknames win, then self-reported names. */
 export const nodeName = (node: string | undefined): string => {
   if (node === undefined || node === LOCAL_NODE_ID) {
-    return (
-      settingsStore.state.localNodeName ?? nodesStore.state.self?.name ?? "this machine"
-    );
+    return settingsStore.state.localNodeName ?? nodesStore.state.self?.name ?? "this machine";
   }
   const peer = nodesStore.state.peers.find((p) => p.id === node);
   return peer === undefined ? node : (peer.alias ?? peer.name);

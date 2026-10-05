@@ -89,9 +89,7 @@ export function NodesSection() {
               placeholder={self?.name ?? "This machine"}
               aria-label="Nickname for this machine"
               title="Nickname for this machine"
-              onBlur={(e) =>
-                setSettings({ localNodeName: e.currentTarget.value.trim() || null })
-              }
+              onBlur={(e) => setSettings({ localNodeName: e.currentTarget.value.trim() || null })}
               onKeyDown={blurOnEnter}
             />
             <span className="block truncate text-xs text-muted-foreground">

@@ -51,6 +51,29 @@ const append = (messages: ReadonlyArray<LiveMessage>, message: LiveMessage): Liv
     ? messages.slice()
     : [...messages, message];
 
+/**
+ * A tool row synthesized by an update event — attach mid-call means the
+ * TOOL_CALL_START fired before the stream reached us. The toolCallId
+ * stands in as the name until a START or a titled update supplies one.
+ */
+const ensureToolRow = (
+  messages: ReadonlyArray<LiveMessage>,
+  toolCallId: string | undefined,
+  toolName?: string,
+): ReadonlyArray<LiveMessage> => {
+  if (toolCallId === undefined || messages.some((m) => m.id === toolCallId)) return messages;
+  return [
+    ...messages,
+    {
+      id: toolCallId,
+      role: "tool",
+      toolName: toolName ?? toolCallId,
+      content: "",
+      done: false,
+    },
+  ];
+};
+
 const num = (v: unknown): number | undefined =>
   typeof v === "number" && Number.isFinite(v) ? v : undefined;
 
@@ -228,29 +251,56 @@ export function applyAguiEvent(
       return update(messages, messageId, (m) => ({ ...m, content: m.content + delta }));
     case "REASONING_MESSAGE_END":
       return update(messages, messageId, (m) => ({ ...m, done: true }));
-    case "TOOL_CALL_START":
+    case "TOOL_CALL_START": {
+      const id = toolCallId ?? `tool-${messages.length}`;
+      const toolCallName = typeof event.toolCallName === "string" ? event.toolCallName : undefined;
+      const existing = messages.find((m) => m.id === id);
+      if (existing !== undefined) {
+        // The row was synthesized by a mid-attach update — the late START
+        // supplies the real name and any snapshot fields.
+        if (existing.role !== "tool") return messages.slice();
+        return update(messages, id, (m) => ({
+          ...m,
+          ...(toolCallName === undefined ? {} : { toolName: toolCallName }),
+          ...snapshotFields(event),
+        }));
+      }
       return append(messages, {
-        id: toolCallId ?? `tool-${messages.length}`,
+        id,
         role: "tool",
-        toolName: typeof event.toolCallName === "string" ? event.toolCallName : undefined,
+        toolName: toolCallName,
         content: "",
         done: false,
         ...snapshotFields(event),
       });
-    case "TOOL_CALL_ARGS":
-      return update(messages, toolCallId, (m) => ({ ...m, args: (m.args ?? "") + delta }));
+    }
+    case "TOOL_CALL_ARGS": {
+      const toolCallName = nonEmpty(event.toolCallName);
+      return update(ensureToolRow(messages, toolCallId, toolCallName), toolCallId, (m) => ({
+        ...m,
+        args: (m.args ?? "") + delta,
+        ...(toolCallName === undefined ? {} : { toolName: toolCallName }),
+      }));
+    }
     case "TOOL_CALL_RESULT": {
+      const toolCallName = nonEmpty(event.toolCallName);
       const content =
         typeof event.content === "string" ? event.content : JSON.stringify(event.content ?? "");
-      return update(messages, toolCallId, (m) => ({ ...m, content: m.content + content }));
+      return update(ensureToolRow(messages, toolCallId, toolCallName), toolCallId, (m) => ({
+        ...m,
+        content: m.content + content,
+        ...(toolCallName === undefined ? {} : { toolName: toolCallName }),
+      }));
     }
     case "TOOL_CALL_END": {
+      const toolCallName = nonEmpty(event.toolCallName);
       const toolStatus = toolStatusOf(event.toolStatus ?? event.status);
       const exitCode = num(event.exitCode);
       const durationMs = num(event.durationMs);
-      return update(messages, toolCallId, (m) => ({
+      return update(ensureToolRow(messages, toolCallId, toolCallName), toolCallId, (m) => ({
         ...m,
         done: true,
+        ...(toolCallName === undefined ? {} : { toolName: toolCallName }),
         ...(toolStatus !== undefined ? { toolStatus } : {}),
         ...(exitCode !== undefined ? { exitCode } : {}),
         ...(durationMs !== undefined ? { durationMs } : {}),
@@ -259,13 +309,18 @@ export function applyAguiEvent(
     }
     case "CUSTOM": {
       // The Translator's mid-call file/content carrier — `{toolCallId,
-      // locations?, diffs?, contents?}` — lands while the tool event stream
-      // is still open.
+      // title?, locations?, diffs?, contents?}` — lands while the tool
+      // event stream is still open.
       if (event.name !== "acp:tool_call_update") return messages.slice();
       const value = record(event.value);
       const id = nonEmpty(value?.["toolCallId"]);
       if (value === undefined || id === undefined) return messages.slice();
-      return update(messages, id, (m) => ({ ...m, ...snapshotFields(value) }));
+      const toolCallName = nonEmpty(value["title"]);
+      return update(ensureToolRow(messages, id, toolCallName), id, (m) => ({
+        ...m,
+        ...(toolCallName === undefined ? {} : { toolName: toolCallName }),
+        ...snapshotFields(value),
+      }));
     }
     default:
       return messages.slice();

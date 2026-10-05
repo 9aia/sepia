@@ -14,6 +14,7 @@ import { defaultSidebarSections } from "../lib/sidebar";
 const settings = (keybinds: Record<string, string | null>): SepiaSettings => ({
   defaultAgent: null,
   defaultCwd: null,
+  localNodeName: null,
   models: {},
   keybinds,
   notifications: { enabled: false, done: true, permission: true },

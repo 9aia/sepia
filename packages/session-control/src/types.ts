@@ -280,7 +280,7 @@ export class ControlError extends Schema.TaggedError<ControlError>()("ControlErr
 }) {}
 
 export interface ControlPlaneService {
-  /** Sessions from the sepia IR store; `withLocks` also asks the default agent for live lock state. */
+  /** Sessions from the sepia IR store; `withLocks` also probes every registered agent that can answer `session/list` for live lock state. */
   readonly listSessions: (options?: {
     readonly withLocks?: boolean;
   }) => Effect.Effect<ReadonlyArray<SessionSummary>, ControlError>;

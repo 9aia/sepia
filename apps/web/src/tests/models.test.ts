@@ -6,6 +6,7 @@ import { defaultSidebarSections } from "../lib/sidebar";
 const settings = (models: SepiaSettings["models"]): SepiaSettings => ({
   defaultAgent: null,
   defaultCwd: null,
+  localNodeName: null,
   models,
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },

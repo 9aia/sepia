@@ -206,6 +206,67 @@ test("a mid-call file update rides a custom event", () => {
   ]);
 });
 
+test("only the first update for an unknown call synthesizes a start", () => {
+  const translator = createTranslator({ threadId: "t", runId: "r", messageId: "m" });
+  // Mid-attach: a running call's snapshot update rides the custom event,
+  // preceded by the synthesized START.
+  const first = translator.translate({
+    kind: "tool_call_update",
+    toolCallId: "call-1",
+    status: "in_progress",
+    locations: [{ path: "/a" }],
+  });
+  expect(types(first)).toEqual([EventType.TOOL_CALL_START, EventType.CUSTOM]);
+  expect(first[1]).toMatchObject({
+    name: "acp:tool_call_update",
+    value: { toolCallId: "call-1", locations: [{ path: "/a" }] },
+  });
+  // The call is open now — further updates don't start it again, and the
+  // terminal update closes it.
+  const second = translator.translate({
+    kind: "tool_call_update",
+    toolCallId: "call-1",
+    status: "in_progress",
+    diffs: [{ path: "/a", newText: "x" }],
+  });
+  expect(types(second)).toEqual([EventType.CUSTOM]);
+  expect(
+    types(
+      translator.translate({
+        kind: "tool_call_update",
+        toolCallId: "call-1",
+        status: "completed",
+      }),
+    ),
+  ).toEqual([EventType.TOOL_CALL_END]);
+});
+
+test("a title on an update rides the emitted frames", () => {
+  const translator = createTranslator({ threadId: "t", runId: "r", messageId: "m" });
+  const events = translator.translate({
+    kind: "tool_call_update",
+    toolCallId: "call-1",
+    status: "in_progress",
+    title: "read_file",
+    rawInput: { path: "/a" },
+    locations: [{ path: "/a" }],
+  });
+  expect(events).toEqual([
+    { type: EventType.TOOL_CALL_START, toolCallId: "call-1", toolCallName: "read_file" },
+    {
+      type: EventType.TOOL_CALL_ARGS,
+      toolCallId: "call-1",
+      delta: JSON.stringify({ path: "/a" }),
+      toolCallName: "read_file",
+    },
+    {
+      type: EventType.CUSTOM,
+      name: "acp:tool_call_update",
+      value: { toolCallId: "call-1", title: "read_file", locations: [{ path: "/a" }] },
+    },
+  ]);
+});
+
 test("startRun resets state so a second run mints fresh ids", () => {
   const translator = createTranslator({ threadId: "t", runId: "r", messageId: "m" });
   translator.translate({ kind: "agent_message_chunk", text: "one" });

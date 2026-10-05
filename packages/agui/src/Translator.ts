@@ -124,18 +124,32 @@ export function createTranslator(options?: {
       }
       case "tool_call_update": {
         const events: Event[] = [];
+        if (!openToolCalls.has(update.toolCallId)) {
+          // Attached mid-call (or an agent that skips `tool_call`) — the
+          // START fired before this translator existed. Synthesize it so
+          // the stream stays well-formed; `title` names the call when the
+          // update carries one, else the id stands in as a placeholder
+          // until a real START (or a later titled update) renames it.
+          events.push({
+            type: EventType.TOOL_CALL_START,
+            toolCallId: update.toolCallId,
+            toolCallName: update.title ?? update.toolCallId,
+          } as Event);
+          openToolCalls.add(update.toolCallId);
+        }
+        // A title riding an update is forwarded on each emitted frame so a
+        // placeholder-named row downstream can pick the real name up late.
+        const name = update.title === undefined ? {} : { toolCallName: update.title };
         if (update.rawInput !== undefined) {
           events.push({
             type: EventType.TOOL_CALL_ARGS,
             toolCallId: update.toolCallId,
             delta: toJson(update.rawInput),
-          });
+            ...name,
+          } as Event);
         }
         const { locations, diffs, contents } = update;
-        if (
-          (update.status === "completed" || update.status === "failed") &&
-          openToolCalls.has(update.toolCallId)
-        ) {
+        if (update.status === "completed" || update.status === "failed") {
           if (update.rawOutput !== undefined) {
             events.push({
               type: EventType.TOOL_CALL_RESULT,
@@ -144,24 +158,28 @@ export function createTranslator(options?: {
               content: toJson(update.rawOutput),
             });
           }
-          events.push({
+          // `status` (and the title/name + file payloads) aren't declared
+          // ToolCallEndEvent fields — build as a record so the passthrough
+          // extras still ride to the client (applyAguiEvent reads
+          // `event.toolStatus ?? event.status`).
+          const end: Record<string, unknown> = {
             type: EventType.TOOL_CALL_END,
             toolCallId: update.toolCallId,
             status: update.status,
+            ...name,
             ...(locations === undefined ? {} : { locations }),
             ...(diffs === undefined ? {} : { diffs }),
             ...(contents === undefined ? {} : { contents }),
-          } as Event);
+          };
+          events.push(end as Event);
           openToolCalls.delete(update.toolCallId);
-        } else if (
-          (locations !== undefined || diffs !== undefined || contents !== undefined) &&
-          openToolCalls.has(update.toolCallId)
-        ) {
+        } else if (locations !== undefined || diffs !== undefined || contents !== undefined) {
           // A mid-call file/content update has no AG-UI tool event to ride — a
           // named custom event carries it so the live row can fold it in.
           events.push(
             custom("acp:tool_call_update", {
               toolCallId: update.toolCallId,
+              ...(update.title === undefined ? {} : { title: update.title }),
               ...(locations === undefined ? {} : { locations }),
               ...(diffs === undefined ? {} : { diffs }),
               ...(contents === undefined ? {} : { contents }),

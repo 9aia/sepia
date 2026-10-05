@@ -56,6 +56,32 @@ interface LiveSession {
   idleSince: number | null;
 }
 
+/**
+ * One `session/list` fan-out across every registered agent. `merged` is the
+ * union keyed by session id — per-agent views can disagree on a colliding
+ * id, so `locked: true` in ANY agent's view counts as held. `byAgent` keeps
+ * each agent's own view so a caller can prefer the report from the agent
+ * that owns the session's backend (its lock-holder pid is the one a
+ * takeover must signal).
+ */
+interface LockProbe {
+  readonly merged: ReadonlyMap<string, AcpSessionInfo>;
+  readonly byAgent: ReadonlyMap<string, ReadonlyMap<string, AcpSessionInfo>>;
+}
+
+/**
+ * The owning agent's view of a session, falling back to the merged union
+ * when that agent did not list the id at all. A colliding id locked in a
+ * different agent's view still counts as held — it just can't supply the
+ * holder pid once the owning agent lists the session itself.
+ */
+const probeInfoFor = (
+  probe: LockProbe,
+  agentId: string,
+  sessionId: string,
+): AcpSessionInfo | undefined =>
+  probe.byAgent.get(agentId)?.get(sessionId) ?? probe.merged.get(sessionId);
+
 const DEFAULT_HISTORY_LIMIT = 500;
 const DEFAULT_LOCK_TTL_MS = 5_000;
 const DEFAULT_IDLE_TTL_MS = 600_000;
@@ -164,7 +190,7 @@ export const make = (
     const sweepMs = options.sweepMs ?? envNumber(process.env.SEPIA_SWEEP_MS, DEFAULT_SWEEP_MS);
     let lockCache: {
       readonly at: number;
-      readonly locks: ReadonlyMap<string, AcpSessionInfo>;
+      readonly probe: LockProbe;
     } | null = null;
 
     // The last `initialize` advertisement seen per agent, refreshed on every
@@ -198,40 +224,109 @@ export const make = (
         : undefined;
     };
 
-    // Reuse a live connection when one exists; otherwise spawn a throwaway agent
-    // and close it. The result is cached briefly so listing does not spawn per call.
-    const probeLocks = (cwd: string): Effect.Effect<ReadonlyArray<AcpSessionInfo>, never> => {
-      const live = [...liveSessions.values()][0];
-      if (live !== undefined) {
-        return tryAcp("Failed to list agent sessions", () => live.conn.listSessions()).pipe(
+    /**
+     * Can this agent answer a lock probe at all? `sessionList` is the RPC
+     * the probe calls; `loadSession` marks an agent that can hold the kind
+     * of lock a takeover would need to release — one that cannot load can
+     * never be that holder. `undefined` means no spawn has happened yet, so
+     * the capabilities are unknown — probe once and let the spawn learn them.
+     */
+    const probeable = (capabilities: AcpCapabilities | undefined): boolean =>
+      capabilities === undefined ||
+      (capabilities.sessionList === true && capabilities.loadSession === true);
+
+    /**
+     * One `session/list` per registered agent — a lock held under a backend
+     * the default agent can't see (e.g. a cline session held by a running
+     * cline process during a devin probe) still surfaces. A live attach's
+     * connection is reused for its own agent; `borrowed` covers a connection
+     * about to go live, so attach's lock check doubles as that agent's probe.
+     * Every other agent gets a throwaway spawn that is closed after listing.
+     * An agent already probed as incapable is skipped — no spawn, no RPC.
+     * The probes run in parallel — each is a subprocess spawn — and a
+     * failing probe contributes an empty view.
+     */
+    const probeLocks = (
+      cwd: string,
+      borrowed?: { readonly agentId: string; readonly conn: AcpConnection },
+    ): Effect.Effect<LockProbe, never> => {
+      const listOn = (conn: AcpConnection): Effect.Effect<ReadonlyArray<AcpSessionInfo>, never> =>
+        tryAcp("Failed to list agent sessions", () => conn.listSessions()).pipe(
           Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AcpSessionInfo>)),
         );
-      }
-      const agent = pickAgent(options.agents, options.defaultAgentId);
-      if (agent === undefined) return Effect.succeed([]);
-      return Effect.gen(function* () {
-        const conn = yield* spawn(agent, "Failed to spawn agent for lock check", { cwd });
-        return yield* tryAcp("Failed to list agent sessions", () => conn.listSessions()).pipe(
-          Effect.ensuring(
-            tryAcp("Failed to close agent connection", () => conn.close()).pipe(Effect.ignore),
-          ),
-          Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AcpSessionInfo>)),
+      const empty = (
+        agentId: string,
+      ): { readonly agentId: string; readonly infos: ReadonlyArray<AcpSessionInfo> } => ({
+        agentId,
+        infos: [],
+      });
+      const probeOne = (
+        agent: AgentRuntime,
+      ): Effect.Effect<
+        { readonly agentId: string; readonly infos: ReadonlyArray<AcpSessionInfo> },
+        never
+      > => {
+        const reusable =
+          borrowed?.agentId === agent.id
+            ? borrowed.conn
+            : [...liveSessions.values()].find((live) => live.agentId === agent.id)?.conn;
+        if (reusable !== undefined) {
+          if (!probeable(reusable.capabilities)) return Effect.succeed(empty(agent.id));
+          return Effect.map(listOn(reusable), (infos) => ({ agentId: agent.id, infos }));
+        }
+        if (!probeable(probedCapabilities.get(agent.id))) {
+          return Effect.succeed(empty(agent.id));
+        }
+        return Effect.gen(function* () {
+          const conn = yield* spawn(agent, "Failed to spawn agent for lock check", { cwd });
+          // The throwaway spawn doubles as the capability probe — an agent
+          // that turns out incapable has nothing to list this round either.
+          const list = probeable(conn.capabilities)
+            ? listOn(conn)
+            : Effect.succeed([] as ReadonlyArray<AcpSessionInfo>);
+          return yield* list.pipe(
+            Effect.ensuring(
+              tryAcp("Failed to close agent connection", () => conn.close()).pipe(Effect.ignore),
+            ),
+          );
+        }).pipe(
+          Effect.map((infos) => ({ agentId: agent.id, infos })),
+          Effect.catchAll(() => Effect.succeed(empty(agent.id))),
         );
-      }).pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AcpSessionInfo>)));
+      };
+      return Effect.all(options.agents.map(probeOne), { concurrency: "unbounded" }).pipe(
+        Effect.map((probes) => {
+          const byAgent = new Map<string, Map<string, AcpSessionInfo>>();
+          const merged = new Map<string, AcpSessionInfo>();
+          for (const { agentId, infos } of probes) {
+            const view = new Map<string, AcpSessionInfo>();
+            byAgent.set(agentId, view);
+            for (const info of infos) {
+              view.set(info.sessionId, info);
+              const current = merged.get(info.sessionId);
+              // A session locked in any agent's view counts as held.
+              if (current === undefined || (info.locked === true && current.locked !== true)) {
+                merged.set(info.sessionId, info);
+              }
+            }
+          }
+          return { merged, byAgent };
+        }),
+      );
     };
 
     const lockState = (
       cwd: string,
       force = false,
-    ): Effect.Effect<ReadonlyMap<string, AcpSessionInfo>, never> =>
+      borrowed?: { readonly agentId: string; readonly conn: AcpConnection },
+    ): Effect.Effect<LockProbe, never> =>
       Effect.gen(function* () {
         const now = Date.now();
         const ttl = envNumber(process.env.SEPIA_LOCK_TTL_MS, DEFAULT_LOCK_TTL_MS);
-        if (!force && lockCache !== null && now - lockCache.at < ttl) return lockCache.locks;
-        const infos = yield* probeLocks(cwd);
-        const locks = new Map(infos.map((info) => [info.sessionId, info]));
-        lockCache = { at: Date.now(), locks };
-        return locks;
+        if (!force && lockCache !== null && now - lockCache.at < ttl) return lockCache.probe;
+        const probe = yield* probeLocks(cwd, borrowed);
+        lockCache = { at: Date.now(), probe };
+        return probe;
       });
 
     const liveSummary = (id: string, live: LiveSession): SessionSummary => ({
@@ -260,12 +355,20 @@ export const make = (
           .map(([id, live]) => liveSummary(id, live));
         const all = [...summaries, ...synthesized];
         if (listOptions?.withLocks !== true) return all;
-        const locks = yield* lockState(probeCwd);
+        const probe = yield* lockState(probeCwd);
         return all.map((summary) => {
-          const lock = locks.get(summary.id);
-          return lock === undefined
-            ? summary
-            : { ...summary, locked: lock.locked, lockHolderPid: lock.lockHolderPid };
+          const lock = probe.merged.get(summary.id);
+          if (lock === undefined) return summary;
+          // `locked` is the union — held in any agent's view counts — but
+          // the holder pid prefers the report from the agent owning the
+          // session's backend: a pid from a colliding id in another agent's
+          // list names a holder that is not holding this session.
+          const holder = probeInfoFor(probe, summary.agent, summary.id);
+          return {
+            ...summary,
+            locked: lock.locked,
+            lockHolderPid: lock.locked === true ? (holder?.lockHolderPid ?? null) : null,
+          };
         });
       }).pipe(Effect.withSpan("sepia.control.list_sessions"));
 
@@ -435,6 +538,9 @@ export const make = (
           }
         });
         if (!signaled) return;
+        // No `session/list` means the release can never be observed — let
+        // the load attempt arbitrate instead of polling a missing RPC.
+        if (conn.capabilities.sessionList !== true) return;
         const deadline = Date.now() + TAKEOVER_SETTLE_MS;
         while (Date.now() < deadline) {
           yield* Effect.sleep(TAKEOVER_POLL_MS);
@@ -507,10 +613,15 @@ export const make = (
           const teardown = Effect.sync(() => {
             for (const unsub of live.unsubs) unsub();
           });
-          const infos = yield* tryAcp("Failed to list agent sessions", () =>
-            conn.listSessions(),
-          ).pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AcpSessionInfo>)));
-          const info = infos.find((candidate) => candidate.sessionId === id);
+          // The lock check fans out to every registered agent — a session a
+          // different backend's runtime holds is still seen — with this
+          // attach's fresh connection standing in for its own agent's probe,
+          // so the holder pid is the one the owning agent reported.
+          const probe = yield* lockState(session.workingDirectory, true, {
+            agentId: agent.id,
+            conn,
+          });
+          const info = probeInfoFor(probe, agent.id, id);
           if (info?.locked === true) {
             if (!takeover) {
               yield* teardown;
@@ -542,15 +653,16 @@ export const make = (
             yield* close;
             emit(live, translator.endTurn());
             // A load failure is authoritative: re-probe once, treating a lock as read-only.
-            const locks = yield* lockState(session.workingDirectory, true);
-            if (locks.get(id)?.locked === true) {
+            const reprobe = yield* lockState(session.workingDirectory, true);
+            const held = probeInfoFor(reprobe, agent.id, id);
+            if (held?.locked === true) {
               // A takeover that still sees the lock held failed — report it
               // instead of quietly degrading to read-only, which callers
               // cannot tell apart from "never tried". Name the holder pid
               // when the agent reported one so the UI can say what wouldn't
               // let go.
               if (takeover) {
-                const heldPid = locks.get(id)?.lockHolderPid ?? info?.lockHolderPid ?? null;
+                const heldPid = held.lockHolderPid ?? info?.lockHolderPid ?? null;
                 return yield* Effect.fail(
                   controlError(
                     "locked",
@@ -1235,8 +1347,8 @@ export const make = (
         // same lock rule attach enforces. Our own live attach is the holder
         // we're checking through, so only probe when nothing is live here.
         if (live === undefined) {
-          const locks = yield* lockState(session.workingDirectory);
-          const lock = locks.get(id);
+          const probe = yield* lockState(session.workingDirectory);
+          const lock = probeInfoFor(probe, agentForBackend(session.backendType), id);
           if (lock?.locked === true) {
             const pid = lock.lockHolderPid;
             return yield* Effect.fail(
@@ -1297,8 +1409,8 @@ export const make = (
           );
         }
         if (live === undefined) {
-          const locks = yield* lockState(session.workingDirectory);
-          const lock = locks.get(id);
+          const probe = yield* lockState(session.workingDirectory);
+          const lock = probeInfoFor(probe, agentForBackend(session.backendType), id);
           if (lock?.locked === true) {
             const pid = lock.lockHolderPid;
             return yield* Effect.fail(
