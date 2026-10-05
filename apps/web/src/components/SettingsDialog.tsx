@@ -415,6 +415,19 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   Spawn-time model per agent — applied when the session&apos;s agent starts. Auto
                   mode also sends the fallback list (devin&apos;s refusal-fallback).
                 </p>
+                {agents.length === 0 ? (
+                  <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
+                    <span className="text-sm font-medium">No agents</span>
+                    <span className="text-xs text-muted-foreground">
+                      Agents come from connected nodes — connect one to see what it can run.
+                    </span>
+                    <div>
+                      <Button variant="secondary" size="xs" onClick={() => scrollTo("nodes")}>
+                        Add a node
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
                 {agents.map((agent) => {
                   const pref: AgentModelPref = settings.models[agent.id] ?? {
                     model: "",

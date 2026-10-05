@@ -567,7 +567,7 @@ export function NodesSection() {
               key={localName ?? self?.name ?? ""}
               className="h-7 w-44 max-w-full text-sm font-medium"
               defaultValue={localName ?? ""}
-              placeholder={self?.name ?? "This machine"}
+              placeholder={self?.name ?? (isLocalAccess() ? "This machine" : "Hostname")}
               aria-label="Nickname for this machine"
               title="Nickname for this machine"
               onBlur={(e) => setSettings({ localNodeName: e.currentTarget.value.trim() || null })}
