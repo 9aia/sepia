@@ -427,15 +427,15 @@ function NodeAddForm() {
         {(field) => (
           <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1">
-              <span className="block text-sm">Route through this node</span>
+              <span className="block text-sm">Gateway mode</span>
               <span className="block text-xs text-muted-foreground">
-                Gateway mode — for peers this browser can&apos;t reach directly.
+                For peers this client can&apos;t reach directly.
               </span>
             </div>
             <Switch
               checked={field.state.value}
               onCheckedChange={(value) => field.handleChange(value)}
-              aria-label="Route through this node"
+              aria-label="Gateway mode"
             />
           </div>
         )}
@@ -509,7 +509,7 @@ const viaDescription = (peer: PeerNode, viaGateway: boolean): string => {
   if (peer.via === "gateway") {
     return "Calls go straight from the browser — the stored credential is removed, so pick a credential above if the peer needs one.";
   }
-  return "Gateway mode — for peers this browser can't reach directly.";
+  return "For peers this client can't reach directly.";
 };
 
 /** Gateway-mode secret field's placeholder — mask means "keep stored". */
@@ -647,7 +647,7 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
         {(field) => (
           <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1">
-              <span className="block text-sm">Route through this node</span>
+              <span className="block text-sm">Gateway mode</span>
               <span className="block text-xs text-muted-foreground">
                 {viaDescription(peer, field.state.value)}
               </span>
@@ -655,7 +655,7 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
             <Switch
               checked={field.state.value}
               onCheckedChange={(value) => field.handleChange(value)}
-              aria-label="Route through this node"
+              aria-label="Gateway mode"
             />
           </div>
         )}
