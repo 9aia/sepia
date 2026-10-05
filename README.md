@@ -118,12 +118,20 @@ the token-injecting reverse-proxy topology and the full env reference.
 ```bash
 bun apps/sepia/src/main.ts list --db ~/.local/share/devin/cli/sessions.db
 bun apps/sepia/src/main.ts import ~/.cline/data/sessions/<id> --db <db>
-bun apps/sepia/src/main.ts export <devin-session-id> ./out --db <db>
+bun apps/sepia/src/main.ts export <session-id> ./out.json --db <db>
 bun apps/sepia/src/main.ts install <devin-session-id> --db <db> --data-dir ~/.cline/data
+bun apps/sepia/src/main.ts list --claude-dir ~/.claude
+bun apps/sepia/src/main.ts install <id> --from claude --to cursor --cursor-dir ~/.cursor
 ```
 
-`import`/`export` convert between Cline and Devin session formats; `install`
-places a Devin session into the Cline store so `cline --id <id>` resumes it.
+Every verb works across the four stores — devin (`--db`), cline
+(`--data-dir`), claude (`--claude-dir`), cursor (`--cursor-dir`) — selected
+by `--from`/`--to` or inferred from a `--*-dir` flag. `list` reads a store;
+`export` writes the session IR JSON (`--format cline` writes Cline session
+files instead); `import` reads a Cline session dir, a Claude `.jsonl`
+transcript or a session JSON into a store (devin by default); `install`
+copies a stored session into a store ready to resume (cline by default, so
+`cline --id <id>` picks it up); `delete` removes a session.
 
 ## Development
 

@@ -1,13 +1,21 @@
 import * as Path from "@effect/platform/Path";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { Effect, Layer, Option } from "effect";
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import * as ClaudeCode from "../src/ClaudeCode.js";
 import * as ClaudeCodeRepository from "../src/ClaudeCodeRepository.js";
-import type { Session } from "../src/Domain.js";
+import { Session } from "../src/Domain.js";
 
 const line = (entry: Record<string, unknown>): string => JSON.stringify(entry);
 
@@ -932,6 +940,37 @@ const mainTranscript = [
   line(userEntry("u1", null, "main prompt")),
 ].join("\n");
 
+/** `session` re-keyed — make() needs plain props, not a class spread. */
+const rekey = (
+  session: Session,
+  over: {
+    readonly id?: string;
+    readonly parentSessionId?: Option.Option<string>;
+    readonly agentId?: Option.Option<string>;
+  },
+): Session =>
+  Session.make({
+    id: over.id ?? session.id,
+    title: session.title,
+    workingDirectory: session.workingDirectory,
+    backendType: session.backendType,
+    agentMode: session.agentMode,
+    model: session.model,
+    createdAt: session.createdAt,
+    lastActivityAt: session.lastActivityAt,
+    mainChainId: session.mainChainId,
+    shellLastSeenIndex: session.shellLastSeenIndex,
+    cogsJson: session.cogsJson,
+    workspaceDirs: session.workspaceDirs,
+    hidden: session.hidden,
+    parentSessionId: over.parentSessionId ?? session.parentSessionId,
+    agentId: over.agentId ?? session.agentId,
+    checkpoints: session.checkpoints,
+    metadata: session.metadata,
+    nodes: session.nodes,
+    promptHistory: session.promptHistory,
+  });
+
 const subagentTranscript = [
   line({
     type: "user",
@@ -1060,15 +1099,178 @@ test("repository list and hasSession fail when the root cannot be listed", async
   );
 });
 
-test("repository is read-only", async () => {
-  const repo = ClaudeCodeRepository.makeClaudeCodeSessionRepository({
-    projectsDir: "/unused",
-  });
-  await expect(Effect.runPromise(repo.save({} as never))).rejects.toThrow(
-    "Claude repository is read-only",
+test("toJsonl writes a transcript fromJsonl reads back", () => {
+  const original = ClaudeCode.fromJsonl(
+    [
+      line({ type: "summary", summary: "Fix the login bug", leafUuid: "u4" }),
+      line(userEntry("u1", null, "fix the login bug please")),
+      line(
+        assistantEntry("u2", "u1", [
+          { type: "thinking", thinking: "look at auth", signature: "sig-1" },
+          { type: "text", text: "I'll check the auth module" },
+          { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "/src/a.ts" } },
+        ]),
+      ),
+      line(
+        userEntry("u3", "u2", [
+          { type: "tool_result", tool_use_id: "toolu_1", content: "file contents" },
+        ]),
+      ),
+      line(
+        assistantEntry("u4", "u3", [{ type: "text", text: "done" }], {
+          usage: { input_tokens: 5, output_tokens: 2 },
+        }),
+      ),
+    ].join("\n"),
+    { id: "sess-1" },
   );
-  await expect(Effect.runPromise(repo.delete("x"))).rejects.toThrow(
-    "Claude repository is read-only",
+
+  const written = ClaudeCode.toJsonl(original);
+  // every line is a parseable entry with a uuid chain
+  const entries = written
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  expect(entries[0].type).toBe("summary");
+  expect(entries[0].summary).toBe("Fix the login bug");
+  const uuids = entries.filter((e) => e.type !== "summary").map((e) => e.uuid);
+  expect(new Set(uuids).size).toBe(uuids.length);
+
+  const reread = ClaudeCode.fromJsonl(written, { id: "sess-1" });
+  expect(reread.title).toBe("Fix the login bug");
+  expect(reread.workingDirectory).toBe("/work/proj");
+  expect(reread.model).toBe("claude-opus-4-5");
+  expect(reread.nodes.map((n) => n.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+
+  const [user, assistant, tool, last] = reread.nodes;
+  expect(user.content).toBe("fix the login bug please");
+  expect(Option.isNone(user.parentNodeId)).toBe(true);
+  // recorded uuids survive, so the parent links are identical
+  expect((user.metadata as any).uuid).toBe("u1");
+  expect((assistant.metadata as any).uuid).toBe("u2");
+  expect(Option.getOrUndefined(assistant.parentNodeId)).toBe(user.nodeId);
+  expect(Option.getOrUndefined(assistant.thinking)).toBe("look at auth");
+  expect(Option.getOrUndefined(assistant.thinkingSignature)).toBe("sig-1");
+  expect(assistant.toolCalls[0]).toMatchObject({
+    id: "toolu_1",
+    name: "Read",
+    arguments: { file_path: "/src/a.ts" },
+  });
+  expect(Option.getOrUndefined(assistant.usage)).toEqual({
+    input: 100,
+    output: 40,
+    cacheRead: 12,
+    cacheWrite: 8,
+  });
+  expect(tool.role).toBe("tool");
+  expect(Option.getOrUndefined(tool.toolCallId)).toBe("toolu_1");
+  expect(tool.content).toBe("file contents");
+  expect(Option.getOrUndefined(last.usage)).toEqual({ input: 5, output: 2 });
+  expect(reread.promptHistory.map((p) => p.content)).toEqual(["fix the login bug please"]);
+});
+
+test("toJsonl marks subagent sessions isSidechain with the parent sessionId", async () => {
+  const projectsDir = makeStore({ "-work-proj/sess-1.jsonl": mainTranscript });
+  const sub = await Effect.runPromise(
+    ClaudeCode.fromFile(join(projectsDir, "-work-proj/sess-1.jsonl")).pipe(
+      Effect.provide(Layer.merge(BunFileSystem.layer, Path.layer)),
+    ),
+  );
+  const subagent = rekey(sub, {
+    id: "agent-9",
+    parentSessionId: Option.some("sess-1"),
+    agentId: Option.some("agent-9"),
+  });
+  const entries = ClaudeCode.toJsonl(subagent)
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  for (const entry of entries) {
+    if (entry.type === "summary") continue;
+    expect(entry.isSidechain).toBe(true);
+    expect(entry.sessionId).toBe("sess-1");
+    expect(entry.agentId).toBe("agent-9");
+  }
+});
+
+test("toJsonl drops unsigned thinking; a redacted marker echoes its blob", () => {
+  const unsigned = ClaudeCode.fromJsonl(
+    [
+      line(userEntry("u1", null, "go")),
+      line(
+        assistantEntry("u2", "u1", [
+          { type: "thinking", thinking: "unsigned plan" },
+          { type: "text", text: "answer" },
+        ]),
+      ),
+    ].join("\n"),
+    { id: "s" },
+  );
+  const assistant = ClaudeCode.toJsonl(unsigned)
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+    .find((e) => e.type === "assistant");
+  // no signature on the node — the thinking block can't replay, so it drops
+  expect(assistant).toBeDefined();
+  expect((assistant as { message: { content: unknown } }).message.content).toEqual([
+    { type: "text", text: "answer" },
+  ]);
+
+  const redacted = ClaudeCode.fromJsonl(
+    [
+      line(userEntry("u1", null, "go")),
+      line(
+        assistantEntry("u2", "u1", [
+          { type: "redacted_thinking", data: "opaque-blob" },
+          { type: "text", text: "answer" },
+        ]),
+      ),
+    ].join("\n"),
+    { id: "s" },
+  );
+  const sealed = ClaudeCode.toJsonl(redacted)
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+    .find((e) => e.type === "assistant");
+  expect(sealed).toBeDefined();
+  expect((sealed as { message: { content: unknown } }).message.content).toEqual([
+    { type: "redacted_thinking", data: "opaque-blob" },
+    { type: "text", text: "answer" },
+  ]);
+});
+
+test("repository save writes the canonical layout and delete removes it", async () => {
+  const projectsDir = makeStore({ "-work-proj/sess-1.jsonl": mainTranscript });
+  const repo = ClaudeCodeRepository.makeClaudeCodeSessionRepository({ projectsDir });
+  const layer = Layer.merge(BunFileSystem.layer, Path.layer);
+  const session = await Effect.runPromise(
+    ClaudeCode.fromFile(join(projectsDir, "-work-proj/sess-1.jsonl")).pipe(Effect.provide(layer)),
+  );
+
+  const copy = rekey(session, { id: "sess-copy" });
+  await Effect.runPromise(repo.save(copy));
+  const written = join(projectsDir, "-work-proj/sess-copy.jsonl");
+  expect(existsSync(written)).toBe(true);
+  await expect(Effect.runPromise(repo.hasSession("sess-copy"))).resolves.toBe(true);
+
+  // a subagent lands under its parent's dir
+  const subagent = rekey(session, {
+    id: "agent-99",
+    parentSessionId: Option.some("sess-1"),
+  });
+  await Effect.runPromise(repo.save(subagent));
+  expect(existsSync(join(projectsDir, "-work-proj/sess-1/subagents/agent-99.jsonl"))).toBe(true);
+
+  // delete removes the transcript and its subagents dir
+  await Effect.runPromise(repo.delete("sess-1"));
+  expect(existsSync(join(projectsDir, "-work-proj/sess-1.jsonl"))).toBe(false);
+  expect(existsSync(join(projectsDir, "-work-proj/sess-1"))).toBe(false);
+  await expect(Effect.runPromise(repo.hasSession("agent-99"))).resolves.toBe(false);
+
+  await expect(Effect.runPromise(repo.save(rekey(session, { id: "a/b" })))).rejects.toThrow(
+    "not a safe file name",
   );
 });
 

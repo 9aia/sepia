@@ -336,6 +336,18 @@ describe("fan-out fetches", () => {
     expect(rows[1]?.projectIds).toEqual(["node_p:p2"]);
   });
 
+  it("listAllSessions requests lock state on every node and keeps it through tagging", async () => {
+    nodesStore.setState(() => ({ self: null, peers: [peer("node_p")] }));
+    mockedListSessions.mockResolvedValue([{ ...session("s1"), locked: true, lockHolderPid: 4242 }]);
+    const rows = await listAllSessions();
+    expect(mockedListSessions).toHaveBeenCalledTimes(2);
+    for (const call of mockedListSessions.mock.calls) {
+      expect(call[1]).toEqual({ withLocks: true });
+    }
+    // Lock fields ride the merge untouched on both local and peer rows.
+    expect(rows.every((row) => row.locked && row.lockHolderPid === 4242)).toBe(true);
+  });
+
   it("a dead peer contributes nothing; a dead local node propagates", async () => {
     nodesStore.setState(() => ({ self: null, peers: [peer("node_p")] }));
     mockedListSessions.mockImplementation(async (target) =>

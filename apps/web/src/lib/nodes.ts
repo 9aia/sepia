@@ -495,16 +495,25 @@ const tagSession = (session: SessionSummary, node: string | undefined): SessionS
 const tagProject = (project: Project, node: string | undefined): Project =>
   node === undefined ? project : { ...project, node };
 
+// `withLocks` rides every fan-out leg so rows can show held state. Each leg
+// costs the node one `session/list` probe — a throwaway agent spawn per
+// agent with no live connection — but the server's lockCache TTL
+// (SEPIA_LOCK_TTL_MS, ~5s) caps that at one probe round per TTL window, and
+// list refetches are event-driven (window focus, mutation invalidations),
+// not polled. Nodes too old to know the flag ignore it and report
+// `locked: false` rows.
 export const listAllSessions = async (): Promise<SessionSummary[]> => {
   // Disabled peers contribute nothing — same as if they weren't registered.
   const peers = nodesStore.state.peers.filter(isPeerEnabled);
   const multi = peers.length > 0;
-  const local = await listSessions(localTarget());
+  const local = await listSessions(localTarget(), { withLocks: true });
   const rows = local.map((s) => tagSession(s, multi ? LOCAL_NODE_ID : undefined));
   if (!multi) return rows;
   const settled = await Promise.allSettled(
     peers.map((peer) =>
-      listSessions(peerTarget(peer)).then((list) => list.map((s) => tagSession(s, peer.id))),
+      listSessions(peerTarget(peer), { withLocks: true }).then((list) =>
+        list.map((s) => tagSession(s, peer.id)),
+      ),
     ),
   );
   for (const result of settled) {

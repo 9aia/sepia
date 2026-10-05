@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
@@ -257,6 +265,126 @@ describeE2E("sepia cli", () => {
     ]);
     expect(forced.code).toBe(0);
     expect(forced.output).toContain("Installed session 1788000000001_guard");
+  });
+
+  test("claude store lists, exports and round-trips through install", () => {
+    const claudeDir = join(root, "claude");
+    const projectDir = join(claudeDir, "projects", "-work");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "sess-claude-1.jsonl"),
+      [
+        JSON.stringify({ type: "summary", summary: "Claude fixture", leafUuid: "u2" }),
+        JSON.stringify({
+          type: "user",
+          uuid: "u1",
+          parentUuid: null,
+          sessionId: "sess-claude-1",
+          cwd: "/work",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "user", content: "claude prompt" },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          uuid: "u2",
+          parentUuid: "u1",
+          sessionId: "sess-claude-1",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          message: {
+            role: "assistant",
+            model: "claude-opus-4-5",
+            content: [{ type: "text", text: "claude answer" }],
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const listed = run(root, ["list", "--claude-dir", claudeDir]);
+    expect(listed.code).toBe(0);
+    expect(listed.output).toContain("sess-claude-1");
+    expect(listed.output).toContain("Claude fixture");
+
+    const exported = run(root, ["export", "sess-claude-1", "--claude-dir", claudeDir]);
+    expect(exported.code).toBe(0);
+    const ansi = new RegExp(String.fromCharCode(27) + "\\[[0-9;]*m", "g");
+    const sessionJson = JSON.parse(exported.output.replace(ansi, ""));
+    expect(sessionJson.id).toBe("sess-claude-1");
+    expect(sessionJson.nodes.map((n: { role: string }) => n.role)).toEqual(["user", "assistant"]);
+
+    // devin → claude: install writes the canonical <slug>/<id>.jsonl
+    const installed = run(root, [
+      "install",
+      "1788000000000_e2e99",
+      "--db",
+      dbPath,
+      "--claude-dir",
+      claudeDir,
+      "--id",
+      "sess-installed",
+    ]);
+    expect(installed.code).toBe(0);
+    const writtenPath = join(claudeDir, "projects", "-work", "sess-installed.jsonl");
+    expect(existsSync(writtenPath)).toBe(true);
+    const firstEntry = JSON.parse(readFileSync(writtenPath, "utf-8").split("\n")[1]);
+    expect(firstEntry.sessionId).toBe("sess-installed");
+
+    const relisted = run(root, ["list", "--claude-dir", claudeDir]);
+    expect(relisted.output).toContain("sess-installed");
+
+    const deleted = run(root, ["delete", "sess-installed", "--claude-dir", claudeDir]);
+    expect(deleted.code).toBe(0);
+    expect(existsSync(writtenPath)).toBe(false);
+  });
+
+  test("cursor store installs through the canonical store.db write", () => {
+    const cursorDir = join(root, "cursor");
+    const installed = run(root, [
+      "install",
+      "1788000000000_e2e99",
+      "--db",
+      dbPath,
+      "--cursor-dir",
+      cursorDir,
+    ]);
+    expect(installed.code).toBe(0);
+    expect(installed.output).toContain("Installed session 1788000000000_e2e99");
+
+    // the canonical write: chats/<workspace-hash>/<id>/store.db exists
+    const wsHashes = readdirSync(join(cursorDir, "chats"));
+    expect(wsHashes).toHaveLength(1);
+    const chatDir = join(cursorDir, "chats", wsHashes[0], "1788000000000_e2e99");
+    expect(existsSync(join(chatDir, "store.db"))).toBe(true);
+    expect(existsSync(join(chatDir, "meta.json"))).toBe(true);
+
+    const listed = run(root, ["list", "--cursor-dir", cursorDir]);
+    expect(listed.code).toBe(0);
+    expect(listed.output).toContain("1788000000000_e2e99");
+
+    // re-installing refuses without --force
+    const refused = runExpectFailure(root, [
+      "install",
+      "1788000000000_e2e99",
+      "--db",
+      dbPath,
+      "--cursor-dir",
+      cursorDir,
+    ]);
+    expect(refused).toContain("already exists");
+  });
+
+  test("export writes session JSON; import reads it into another store", () => {
+    const outFile = join(root, "session.json");
+    const exported = run(root, ["export", "1788000000000_e2e99", outFile, "--db", dbPath]);
+    expect(exported.code).toBe(0);
+    const parsed = JSON.parse(readFileSync(outFile, "utf-8"));
+    expect(parsed.id).toBe("1788000000000_e2e99");
+    expect(parsed.nodes.length).toBeGreaterThan(0);
+
+    const cursorDir = join(root, "cursor-json");
+    const imported = run(root, ["import", outFile, "--cursor-dir", cursorDir]);
+    expect(imported.code).toBe(0);
+    const listed = run(root, ["list", "--cursor-dir", cursorDir]);
+    expect(listed.output).toContain("1788000000000_e2e99");
   });
 
   test("export refuses an unknown session id", () => {

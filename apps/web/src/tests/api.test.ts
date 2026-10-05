@@ -90,6 +90,16 @@ describe("GET wrappers", () => {
     expect(calls[0]?.url).toBe("/api/sessions");
   });
 
+  it("listSessions appends ?withLocks=1 when asked", async () => {
+    stubFetch(jsonOk({ sessions: [] }));
+    await listSessions(undefined, { withLocks: true });
+    expect(calls[0]?.url).toBe("/api/sessions?withLocks=1");
+
+    calls.length = 0;
+    await listSessions(undefined, { withLocks: false });
+    expect(calls[0]?.url).toBe("/api/sessions");
+  });
+
   it("getNode hits /api/node", async () => {
     stubFetch(jsonOk({ id: "node_1" }));
     await expect(getNode()).resolves.toEqual({ id: "node_1" });

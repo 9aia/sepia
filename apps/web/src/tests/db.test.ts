@@ -36,7 +36,7 @@ const installFetch = (rows: SessionSummary[], fail?: { patch?: boolean; del?: bo
     const method = init?.method ?? "GET";
     const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
     calls.push({ method, url, body });
-    if (method === "GET" && url === "/api/sessions") {
+    if (method === "GET" && (url === "/api/sessions" || url.startsWith("/api/sessions?"))) {
       return Response.json({ sessions: rows });
     }
     const match = /^\/api\/sessions\/([^?]+)(?:\?(.*))?$/.exec(url);

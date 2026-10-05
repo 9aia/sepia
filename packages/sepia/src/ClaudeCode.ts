@@ -26,9 +26,11 @@ import * as Devin from "./Devin.js";
  * (current layout) or as `agent-*.jsonl` siblings (legacy layout); every
  * entry in them carries `isSidechain: true` and the parent's `sessionId`.
  *
- * This module reads that format into the session IR. There is no writer:
- * Claude Code resumes sessions from its own files, and sepia treats the
- * store as read-only.
+ * This module reads that format into the session IR and writes it back via
+ * `toJsonl`: one entry per IR node, chained by `parentUuid`, so a written
+ * transcript resumes with `claude --resume <session-id>`. Sealed thinking
+ * (`signature`/`redacted_thinking data`) echoes back; unsigned thinking is
+ * dropped on write, matching the other writers.
  */
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -67,6 +69,13 @@ export const decodeProjectDir = (name: string): string => {
   const decoded = name.replaceAll("-", "/");
   return decoded.startsWith("/") ? decoded : `/${decoded}`;
 };
+
+/**
+ * The inverse of `decodeProjectDir` — the dir name a transcript for `cwd`
+ * lands under (`/home/me/proj` → `-home-me-proj`). Lossy the same way:
+ * `my proj` and `my-proj` collide.
+ */
+export const encodeProjectDir = (cwd: string): string => cwd.replace(/[^a-zA-Z0-9]/g, "-");
 
 /**
  * A `message.content` array item mapped onto the IR block union.
@@ -749,3 +758,239 @@ export const fromFile = (
           }),
     ),
   );
+
+/* ------------------------------------------------------------------ */
+/* writer                                                              */
+/* ------------------------------------------------------------------ */
+
+/** A field the reader stashed in `node.metadata`/`session.metadata`. */
+const metaField = (meta: unknown, key: string): unknown => (isObject(meta) ? meta[key] : undefined);
+
+const metaStr = (meta: unknown, key: string): string | undefined => {
+  const value = metaField(meta, key);
+  return typeof value === "string" ? value : undefined;
+};
+
+const metaFlag = (meta: unknown, key: string): true | undefined =>
+  metaField(meta, key) === true ? true : undefined;
+
+/** The IR `usage` back onto the entry's `message.usage` shape. */
+const usageToClaude = (usage: TokenUsage): Record<string, unknown> => ({
+  input_tokens: usage.input,
+  output_tokens: usage.output,
+  ...(usage.cacheRead === undefined ? {} : { cache_read_input_tokens: usage.cacheRead }),
+  ...(usage.cacheWrite === undefined ? {} : { cache_creation_input_tokens: usage.cacheWrite }),
+});
+
+/** An IR `Block` back onto a `message.content` array item. */
+const blockToClaude = (block: Block): Record<string, unknown> | undefined => {
+  switch (block.type) {
+    case "text":
+      return { type: "text", text: block.text };
+    case "image": {
+      if (block.data !== undefined) {
+        return {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: block.mimeType ?? "image/png",
+            data: block.data,
+          },
+        };
+      }
+      return block.uri === undefined
+        ? undefined
+        : { type: "image", source: { type: "url", url: block.uri } };
+    }
+    case "file": {
+      const title = block.name === undefined ? {} : { title: block.name };
+      if (block.text !== undefined) {
+        return {
+          type: "document",
+          source: {
+            type: "text",
+            media_type: block.mimeType ?? "text/plain",
+            text: block.text,
+          },
+          ...title,
+        };
+      }
+      if (block.data !== undefined) {
+        return {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: block.mimeType ?? "application/octet-stream",
+            data: block.data,
+          },
+          ...title,
+        };
+      }
+      return block.uri === undefined
+        ? undefined
+        : {
+            type: "document",
+            source: { type: "url", url: block.uri },
+            ...title,
+          };
+    }
+    default:
+      // `audio` has no Claude transcript slot.
+      return undefined;
+  }
+};
+
+/**
+ * One `Session` → the append-only JSONL transcript Claude Code resumes
+ * from. Every node becomes one entry carrying the common fields the reader
+ * collects meta from (`sessionId`/`cwd`/`timestamp`/`uuid`/`parentUuid`),
+ * so `fromJsonl(toJsonl(s))` rebuilds the same node tree.
+ *
+ * Role mapping: `tool` nodes write back as `user` entries holding
+ * `tool_result` blocks (where they came from); `assistant` nodes emit
+ * `thinking`/`redacted_thinking`/`text`/`tool_use` content — sealed
+ * thinking only, unsigned blocks are dropped like the Devin/Cline writers.
+ * Sub-agent sessions (`parentSessionId`) mark every entry `isSidechain`
+ * with `sessionId` naming the parent, the layout contract of
+ * `<uuid>/subagents/*.jsonl` files.
+ */
+export const toJsonl = (session: Session): string => {
+  const parentId = Option.getOrUndefined(session.parentSessionId);
+  const sessionMeta = session.metadata;
+  const gitBranch = metaStr(sessionMeta, "gitBranch");
+  const claudeVersion = metaStr(sessionMeta, "claudeVersion");
+  const slug = metaStr(sessionMeta, "slug");
+  const agentId = Option.getOrUndefined(session.agentId);
+
+  // A recorded `metadata.uuid` survives the round-trip; fresh sessions mint
+  // one per node so the parentUuid chain always resolves.
+  const uuids = session.nodes.map((node) => metaStr(node.metadata, "uuid") ?? crypto.randomUUID());
+  const parentUuidOf = (node: MessageNode): string | null => {
+    const parent = Option.getOrUndefined(node.parentNodeId);
+    return parent === undefined ? null : (uuids[parent] ?? null);
+  };
+
+  const common = (node: MessageNode, index: number): Record<string, unknown> => ({
+    parentUuid: parentUuidOf(node),
+    // Entries in a subagent file name the owning session, not the file.
+    sessionId: parentId ?? session.id,
+    timestamp: new Date(node.createdAt * 1000).toISOString(),
+    cwd: session.workingDirectory,
+    ...(parentId !== undefined || metaFlag(node.metadata, "isSidechain") === true
+      ? { isSidechain: true }
+      : {}),
+    userType: "external",
+    uuid: uuids[index],
+    ...(gitBranch === undefined ? {} : { gitBranch }),
+    ...(claudeVersion === undefined ? {} : { version: claudeVersion }),
+    ...(slug === undefined ? {} : { slug }),
+    ...(agentId === undefined ? {} : { agentId }),
+  });
+
+  const entryFor = (node: MessageNode, index: number): Record<string, unknown> => {
+    switch (node.role) {
+      case "user": {
+        const content =
+          node.blocks.length > 0
+            ? node.blocks.flatMap((block) => {
+                const item = blockToClaude(block);
+                return item === undefined ? [] : [item];
+              })
+            : node.content;
+        return {
+          type: "user",
+          ...common(node, index),
+          ...(metaFlag(node.metadata, "isMeta") === true ? { isMeta: true } : {}),
+          ...(metaFlag(node.metadata, "isCompactSummary") === true
+            ? { isCompactSummary: true }
+            : {}),
+          ...(metaFlag(node.metadata, "isVisibleInTranscriptOnly") === true
+            ? { isVisibleInTranscriptOnly: true }
+            : {}),
+          message: { role: "user", content },
+        };
+      }
+      case "tool": {
+        const toolUseResult = metaField(node.metadata, "toolUseResult");
+        return {
+          type: "user",
+          ...common(node, index),
+          ...(toolUseResult === undefined ? {} : { toolUseResult }),
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: Option.getOrUndefined(node.toolCallId) ?? "",
+                content: node.content,
+                is_error: Option.getOrUndefined(node.toolResult)?.status === "error",
+              },
+            ],
+          },
+        };
+      }
+      case "assistant": {
+        const content: Array<Record<string, unknown>> = [];
+        const thinking = Option.getOrUndefined(node.thinking);
+        const signature = Option.getOrUndefined(node.thinkingSignature);
+        if (thinking !== undefined && signature !== undefined) {
+          content.push(
+            thinking === REDACTED_THINKING
+              ? { type: "redacted_thinking", data: signature }
+              : { type: "thinking", thinking, signature },
+          );
+        }
+        if (node.content !== "") content.push({ type: "text", text: node.content });
+        for (const call of node.toolCalls) {
+          content.push({
+            type: "tool_use",
+            id: call.id,
+            name: call.name,
+            input: call.arguments ?? {},
+          });
+        }
+        const model = Option.getOrUndefined(node.model) ?? session.model;
+        const finishReason = Option.getOrUndefined(node.finishReason);
+        const usage = Option.getOrUndefined(node.usage);
+        const requestId = Option.getOrUndefined(node.requestId);
+        return {
+          type: "assistant",
+          ...common(node, index),
+          ...(requestId === undefined ? {} : { requestId }),
+          message: {
+            id: metaStr(node.metadata, "messageId") ?? `msg_${uuids[index]}`,
+            type: "message",
+            role: "assistant",
+            model,
+            content,
+            stop_reason: finishReason ?? (node.toolCalls.length > 0 ? "tool_use" : "end_turn"),
+            ...(usage === undefined ? {} : { usage: usageToClaude(usage) }),
+          },
+        };
+      }
+      case "system": {
+        return {
+          type: "system",
+          ...common(node, index),
+          subtype: metaStr(node.metadata, "subtype") ?? "init",
+          content: node.content,
+          ...(metaField(node.metadata, "level") === undefined
+            ? {}
+            : { level: metaField(node.metadata, "level") }),
+          ...(metaField(node.metadata, "compactMetadata") === undefined
+            ? {}
+            : { compactMetadata: metaField(node.metadata, "compactMetadata") }),
+        };
+      }
+    }
+  };
+
+  const entries = session.nodes.map(entryFor);
+  // The `summary` entry is how listings get a title — emit it whenever the
+  // session names one beyond its own id, pinned to the last message uuid.
+  const last = uuids[uuids.length - 1];
+  if (session.title !== "" && last !== undefined) {
+    entries.unshift({ type: "summary", summary: session.title, leafUuid: last });
+  }
+  return entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+};

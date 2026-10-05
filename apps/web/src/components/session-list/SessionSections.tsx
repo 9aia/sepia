@@ -75,6 +75,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Input } from "../ui/input";
+import { LockMark } from "./LockMark";
 import { NodeBadge } from "./NodeBadge";
 import { SessionActions } from "./SessionActions";
 import { SessionTree } from "./SessionTree";
@@ -106,7 +107,10 @@ function SectionSessionRow({
             }`}
             onClick={() => onSelect(sessionKey(session))}
           >
-            <span className="min-w-0 flex-1 truncate font-medium" title={session.title}>
+            <span
+              className={`min-w-0 flex-1 truncate font-medium ${session.locked ? "opacity-60" : ""}`}
+              title={session.title}
+            >
               {session.parentSessionId !== undefined && session.parentSessionId !== "" && (
                 <span className="text-muted-foreground" title="Sub-agent session">
                   ↳{" "}
@@ -114,6 +118,7 @@ function SectionSessionRow({
               )}
               {session.title}
             </span>
+            <LockMark session={session} />
             <NodeBadge node={session.node} />
             <span className="shrink-0 text-xs text-muted-foreground">
               {formatUpdated(session.updatedAt)}

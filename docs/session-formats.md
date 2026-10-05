@@ -328,7 +328,9 @@ the agent-CLI `store.db` messages are the canonical replay form.
 **Store**: `~/.claude/projects/<cwd-encoded>/<session-uuid>.jsonl` — one
 append-only JSONL file per session (no local data; schema from published
 references, Dec 2025). Sepia reads via `ClaudeCode.fromFile` /
-`ClaudeCodeRepository` (read-only overlay). Sub-agent transcripts live in
+`ClaudeCodeRepository` and writes via `ClaudeCode.toJsonl` /
+`ClaudeCodeRepository.save` (canonical `<slug>/<id>.jsonl` layout).
+Sub-agent transcripts live in
 `<session-uuid>/subagents/agent-<uuid>.jsonl` (current layout — every entry
 `isSidechain: true`, `sessionId` = parent's) or as `agent-*.jsonl` siblings
 (legacy). Sibling dirs: `todos/<sid>-agent-<sid>.json`,

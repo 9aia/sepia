@@ -26,6 +26,10 @@ const storageError = (prefix: string) => (cause: unknown) =>
     message: `${prefix}: ${cause instanceof Error ? cause.message : String(cause)}`,
   });
 
+/** Ids become path segments — no separators, NUL, or dot-dirs. */
+const isSafeFileName = (name: string): boolean =>
+  name !== "" && name !== "." && name !== ".." && !/[/\\\0]/.test(name);
+
 const JSONL = ".jsonl";
 
 /** Every transcript file under the projects root, with its provenance. */
@@ -79,13 +83,19 @@ const scanTranscriptFiles = (
   });
 
 /**
- * Read-only SessionRepository over Claude Code's on-disk transcripts. The
- * store has no manifest, so `list()` reads each `.jsonl` and summarizes it
- * without building nodes; `getById` parses the full transcript.
+ * SessionRepository over Claude Code's on-disk transcripts. The store has
+ * no manifest, so `list()` reads each `.jsonl` and summarizes it without
+ * building nodes; `getById` parses the full transcript.
  *
  * Layout handled: `<projects>/<slug>/<uuid>.jsonl` main sessions plus
  * sub-agent transcripts in `<uuid>/subagents/agent-*.jsonl` (current) and
  * `agent-*.jsonl` at the project root (legacy).
+ *
+ * `save` writes the canonical layout: a top-level session lands at
+ * `<projects>/<cwd-slug>/<id>.jsonl`; a session with `parentSessionId`
+ * lands at `<slug>/<parent>/subagents/<id>.jsonl` (reusing the project
+ * dir that already holds the parent when one exists). `delete` removes
+ * the transcript plus its `<id>/` subagents dir.
  */
 export const makeClaudeCodeSessionRepository = (
   options: ClaudeCodeRepositoryOptions,
@@ -141,8 +151,79 @@ export const makeClaudeCodeSessionRepository = (
         Effect.mapError(storageError("Failed to check claude session")),
       ),
 
-    save: () => Effect.fail(new StorageError({ message: "Claude repository is read-only" })),
-    delete: () => Effect.fail(new StorageError({ message: "Claude repository is read-only" })),
+    save: (session) =>
+      Effect.gen(function* () {
+        const fs = yield* Fs.FileSystem;
+        const path = yield* Path.Path;
+        const parentId = Option.getOrUndefined(session.parentSessionId);
+        for (const unsafe of [session.id, parentId]) {
+          if (unsafe !== undefined && !isSafeFileName(unsafe)) {
+            return yield* Effect.fail(
+              new StorageError({
+                message: `Claude session id is not a safe file name: ${JSON.stringify(unsafe)}`,
+              }),
+            );
+          }
+        }
+
+        let filePath: string;
+        if (parentId === undefined) {
+          // Canonical layout — `<projects>/<cwd-slug>/<id>.jsonl`.
+          const dir = path.join(
+            options.projectsDir,
+            ClaudeCode.encodeProjectDir(session.workingDirectory),
+          );
+          yield* fs.makeDirectory(dir, { recursive: true });
+          filePath = path.join(dir, `${session.id}${JSONL}`);
+        } else {
+          // A subagent transcript lives at `<slug>/<parent>/subagents/` —
+          // reuse the project that already holds the parent, else this
+          // session's own project.
+          let slug = ClaudeCode.encodeProjectDir(session.workingDirectory);
+          for (const candidate of yield* fs
+            .readDirectory(options.projectsDir)
+            .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>))) {
+            const held = yield* fs
+              .exists(path.join(options.projectsDir, candidate, `${parentId}${JSONL}`))
+              .pipe(Effect.orElseSucceed(() => false));
+            if (held) {
+              slug = candidate;
+              break;
+            }
+          }
+          const dir = path.join(options.projectsDir, slug, parentId, "subagents");
+          yield* fs.makeDirectory(dir, { recursive: true });
+          filePath = path.join(dir, `${session.id}${JSONL}`);
+        }
+        yield* fs.writeFileString(filePath, ClaudeCode.toJsonl(session));
+      }).pipe(
+        Effect.provide(fsLayer),
+        Effect.mapError(storageError("Failed to save claude session")),
+      ),
+
+    delete: (id) =>
+      Effect.gen(function* () {
+        const fs = yield* Fs.FileSystem;
+        const path = yield* Path.Path;
+        if (!isSafeFileName(id)) {
+          return yield* Effect.fail(
+            new StorageError({
+              message: `Claude session id is not a safe file name: ${JSON.stringify(id)}`,
+            }),
+          );
+        }
+        const file = (yield* transcriptFiles()).find((candidate) => candidate.id === id);
+        if (file === undefined) return;
+        yield* fs.remove(file.filePath);
+        // A main transcript's `<id>/` dir holds its subagents — remove it
+        // with the session; a subagent file has no dir of its own.
+        const sideDir = path.join(path.dirname(file.filePath), id);
+        const held = yield* fs.exists(sideDir).pipe(Effect.orElseSucceed(() => false));
+        if (held) yield* fs.remove(sideDir, { recursive: true });
+      }).pipe(
+        Effect.provide(fsLayer),
+        Effect.mapError(storageError("Failed to delete claude session")),
+      ),
   };
 };
 

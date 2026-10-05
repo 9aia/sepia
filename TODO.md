@@ -15,8 +15,9 @@ mobile polish, coverage, takeover, folder-by-node, live contents.
 
 - [ ] `sessionCapabilities`/`promptCapabilities` probing — attachments
       are sent blind; a peer's advertised capability isn't read
-- [ ] `sepia` CLI `import/export`/`install` for claude/cursor —
-      adapters have the IR but no CLI verbs wired
+- [x] `sepia` CLI `import/export`/`install`/`list`/`delete` for
+      claude/cursor — `--from`/`--to` + `--claude-dir`/`--cursor-dir`;
+      `ClaudeCode.toJsonl` writer added (the store was read-only)
 - [ ] `lockHolderPid` across agents — only the default agent's
       `session/list` is probed; a cline-held session's holder is
       invisible to the devin probe

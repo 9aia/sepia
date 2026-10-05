@@ -24,7 +24,6 @@ import { usePatchSessionMeta } from "../../hooks/query/useSessionMeta";
 import { useCreateProject } from "../../hooks/query/useProjects";
 import { useMultiNode, useNodeLabel } from "../../hooks/query/useNodes";
 import { useUiState } from "../../hooks/query/useConfig";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   ContextMenu,
@@ -55,6 +54,7 @@ import {
   MoreVerticalIcon,
 } from "@hugeicons/core-free-icons";
 import { SessionActions } from "./SessionActions";
+import { LockMark } from "./LockMark";
 import { NodeBadge } from "./NodeBadge";
 import { Tree, TreeItem, TreeItemLabel } from "../reui/tree";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -303,7 +303,10 @@ function SessionItemRow({
             <TreeItemLabel className="w-full items-start rounded-md bg-transparent hover:bg-accent/60 in-data-[selected=true]:ring-1 in-data-[selected=true]:ring-inset in-data-[selected=true]:ring-primary">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-semibold" title={session.title}>
+                  <span
+                    className={`truncate font-semibold ${session.locked ? "opacity-60" : ""}`}
+                    title={session.title}
+                  >
                     {session.parentSessionId !== undefined && session.parentSessionId !== "" && (
                       <span className="font-normal text-muted-foreground" title="Sub-agent session">
                         ↳{" "}
@@ -314,15 +317,8 @@ function SessionItemRow({
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <span>{formatUpdated(session.updatedAt)}</span>
+                  <LockMark session={session} />
                   <NodeBadge node={session.node} />
-                  {session.locked && (
-                    <Badge
-                      variant="destructive"
-                      title={`Locked by pid ${session.lockHolderPid ?? "unknown"}`}
-                    >
-                      locked
-                    </Badge>
-                  )}
                 </div>
               </div>
             </TreeItemLabel>
