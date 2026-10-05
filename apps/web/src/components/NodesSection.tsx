@@ -549,8 +549,8 @@ export function NodesSection() {
     <section data-spy="nodes" className="flex scroll-mt-2 flex-col gap-2">
       <h3 className="text-sm font-medium">Nodes</h3>
       <p className="text-xs text-muted-foreground">
-        Other machines running <code>sepia serve</code>. Their sessions, projects and chat merge
-        into this UI — actions go to the machine that owns each session.
+        Machines running <code>sepia serve</code>. Their sessions, projects and chat merge into
+        this client — actions go to the machine that holds each session's lock.
       </p>
       <div className="divide-y divide-border/50 rounded-lg border border-border">
         <div className="flex items-center gap-3 px-3 py-2.5">
