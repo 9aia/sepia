@@ -34,6 +34,7 @@ const SETTINGS: SepiaSettings = {
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
   localNodeName: null,
+  localNodeEnabled: true,
   sidebar: { sections: defaultSidebarSections() },
 };
 

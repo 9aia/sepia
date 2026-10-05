@@ -3,6 +3,7 @@ import {
   addGatewayPeer,
   addPeer,
   getPeers,
+  isLocalNodeEnabled,
   isMultiNode,
   isPeerEnabled,
   listAllAgents,
@@ -23,6 +24,7 @@ import {
   removePeer,
   removePeerById,
   removePeerEntry,
+  setLocalNodeEnabled,
   setPeerAlias,
   setPeerEnabled,
   updatePeerEntry,
@@ -30,6 +32,7 @@ import {
   type PeerNode,
 } from "../lib/nodes";
 import { addCredential, credentialById, credentialsStore } from "../lib/credentials";
+import { settingsStore } from "../lib/settings";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "../lib/api";
 import { createServer, deleteServer, listServers, SECRET_MASK, updateServer } from "../lib/servers";
 import { getToken } from "../lib/token";
@@ -108,6 +111,7 @@ beforeEach(() => {
   });
   nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [] }));
   credentialsStore.setState(() => []);
+  settingsStore.setState((prev) => ({ ...prev, localNodeEnabled: true, localNodeName: null }));
 });
 
 afterEach(() => {
@@ -988,6 +992,94 @@ describe("enabled peers", () => {
     expect(mockedListAgents.mock.calls.map(([target]) => target?.baseUrl)).not.toContain(
       "https://node_off.example",
     );
+  });
+});
+
+describe("disabled local node", () => {
+  it("isLocalNodeEnabled follows the settings pref and persists it", () => {
+    expect(isLocalNodeEnabled()).toBe(true);
+    setLocalNodeEnabled(false);
+    expect(isLocalNodeEnabled()).toBe(false);
+    expect(settingsStore.state.localNodeEnabled).toBe(false);
+    // The flag persists like every other settings pref.
+    expect(
+      (JSON.parse(store.get("sepia:settings") ?? "{}") as { localNodeEnabled?: boolean })
+        .localNodeEnabled,
+    ).toBe(false);
+    setLocalNodeEnabled(true);
+    expect(isLocalNodeEnabled()).toBe(true);
+  });
+
+  it("a disabled local runs no fan-out leg — peers keep listing untouched", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
+    setLocalNodeEnabled(false);
+    mockedListSessions.mockImplementation(async (target) =>
+      target?.baseUrl === "" ? [session("local-1")] : [session("peer-1")],
+    );
+    const rows = await listAllSessions();
+    // The local origin was never called — parked means no leg at all.
+    expect(mockedListSessions.mock.calls.map(([target]) => target?.baseUrl)).toEqual([
+      "https://node_p.example",
+    ]);
+    expect(rows).toEqual([expect.objectContaining({ id: "peer-1", node: "node_p" })]);
+    // The skipped leg doesn't move the local reachability marker — that's
+    // refreshSelf's job (the serving node may still be perfectly reachable).
+    expect(nodesStore.state.selfStatus).toBe("unknown");
+  });
+
+  it("a disabled local contributes nothing even with no peers", async () => {
+    setLocalNodeEnabled(false);
+    mockedListSessions.mockResolvedValue([session("local-1")]);
+    expect(await listAllSessions()).toEqual([]);
+    expect(mockedListSessions).not.toHaveBeenCalled();
+    expect(nodesStore.state.selfStatus).toBe("unknown");
+  });
+
+  it("listAllProjects and listAllAgents skip the local leg the same way", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
+    setLocalNodeEnabled(false);
+    mockedListProjects.mockImplementation(async (target) =>
+      target?.baseUrl === "" ? { projects: [{ id: "p1", name: "p1" }] } : { projects: [] },
+    );
+    await listAllProjects();
+    expect(mockedListProjects.mock.calls.map(([target]) => target?.baseUrl)).toEqual([
+      "https://node_p.example",
+    ]);
+
+    mockedListAgents.mockImplementation(async (target) =>
+      target?.baseUrl === "" ? [{ id: "devin", label: "Devin" }] : [],
+    );
+    await listAllAgents();
+    expect(mockedListAgents.mock.calls.map(([target]) => target?.baseUrl)).toEqual([
+      "https://node_p.example",
+    ]);
+  });
+
+  it("nodeTarget still resolves local — the origin is the transport, not a data source", () => {
+    setLocalNodeEnabled(false);
+    expect(nodeTarget(undefined)).toEqual({ baseUrl: "", token: getToken() });
+    expect(nodeTarget("local")).toEqual({ baseUrl: "", token: getToken() });
+  });
+
+  it("isMultiNode ignores the local flag — only enabled peers count", () => {
+    setLocalNodeEnabled(false);
+    expect(isMultiNode()).toBe(false);
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("b")] }));
+    expect(isMultiNode()).toBe(true);
+  });
+
+  it("re-enabling restores the local leg on the next fetch", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
+    setLocalNodeEnabled(false);
+    mockedListSessions.mockImplementation(async (target) =>
+      target?.baseUrl === "" ? [session("local-1")] : [session("peer-1")],
+    );
+    expect((await listAllSessions()).map((r) => r.id)).toEqual(["peer-1"]);
+    setLocalNodeEnabled(true);
+    expect((await listAllSessions()).map((r) => `${r.node}:${r.id}`)).toEqual([
+      "local:local-1",
+      "node_p:peer-1",
+    ]);
   });
 });
 

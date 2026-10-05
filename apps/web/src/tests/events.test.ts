@@ -9,6 +9,7 @@ import {
 } from "../lib/events";
 import { nodesStore } from "../lib/nodes";
 import { addCredential, credentialsStore } from "../lib/credentials";
+import { settingsStore } from "../lib/settings";
 import { setToken } from "../lib/token";
 
 const store = new Map<string, string>();
@@ -54,11 +55,13 @@ beforeEach(() => {
   vi.stubGlobal("EventSource", FakeEventSource);
   nodesStore.setState((prev) => ({ ...prev, peers: [] }));
   credentialsStore.setState(() => []);
+  settingsStore.setState((prev) => ({ ...prev, localNodeEnabled: true }));
 });
 
 afterEach(() => {
   nodesStore.setState((prev) => ({ ...prev, peers: [] }));
   credentialsStore.setState(() => []);
+  settingsStore.setState((prev) => ({ ...prev, localNodeEnabled: true }));
   vi.unstubAllGlobals();
 });
 
@@ -218,6 +221,17 @@ describe("startNodeEventFeeds", () => {
     setToken("fresh");
     expect(FakeEventSource.instances[0]?.closed).toBe(true);
     expect(FakeEventSource.instances[1]?.url).toBe("/api/events?access_token=fresh");
+    stop();
+  });
+
+  it("a disabled local node keeps no feed — the same skip as a peer", () => {
+    settingsStore.setState((prev) => ({ ...prev, localNodeEnabled: false }));
+    const stop = startNodeEventFeeds(client);
+    expect(FakeEventSource.instances).toEqual([]);
+
+    // Re-enabling opens the local feed without restarting the supervisor.
+    settingsStore.setState((prev) => ({ ...prev, localNodeEnabled: true }));
+    expect(FakeEventSource.instances.map((s) => s.url)).toEqual(["/api/events"]);
     stop();
   });
 

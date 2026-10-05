@@ -10,7 +10,7 @@ import {
   SECRET_MASK,
   updateServer,
 } from "./servers";
-import { settingsStore } from "./settings";
+import { setSettings, settingsStore } from "./settings";
 import { localTarget, type ApiTarget } from "./targets";
 import type { AgentInfo, NodeDescriptor, Project, SessionSummary } from "./types";
 
@@ -178,7 +178,27 @@ export const getPeers = (): ReadonlyArray<PeerNode> => nodesStore.state.peers;
 /** A disabled peer is parked, not removed — absent `enabled` reads as on. */
 export const isPeerEnabled = (peer: PeerNode): boolean => peer.enabled !== false;
 
-/** Whether any enabled peer is registered — gates every federation UI affordance. */
+/**
+ * The local node's park switch — a client pref (`settingsStore`), not node
+ * state, so it survives without any server round-trip. `false` stops this
+ * machine's sessions/projects/agents merging into the federated lists and
+ * closes its event feed — the same skip a disabled peer gets — but its API
+ * stays reachable: the origin is the transport every call lands on, so
+ * `nodeTarget`/`localTarget` are unaffected.
+ */
+export const isLocalNodeEnabled = (): boolean => settingsStore.state.localNodeEnabled;
+
+/** Set/clear the local node's parked state — re-enabling restores fan-out on the next refetch. */
+export const setLocalNodeEnabled = (enabled: boolean): void => {
+  setSettings({ localNodeEnabled: enabled });
+};
+
+/**
+ * Whether any enabled peer is registered — gates every federation UI
+ * affordance. The local node's own enable flag doesn't count: multi-node
+ * is about whether rows need a node tag and peers need probing/feed
+ * subscriptions, not about whether this machine contributes.
+ */
 export const isMultiNode = (): boolean => nodesStore.state.peers.some(isPeerEnabled);
 
 /** Normalize a user-entered address to an origin the API calls can prefix. */
@@ -707,9 +727,11 @@ export const peerTarget = (peer: PeerNode): ApiTarget => {
 
 /**
  * Resolve a row's `node` field to the API target that owns it. Local rows
- * (undefined/"local") hit the same-origin server; an unknown peer id — or a
- * peer the user disabled — yields a deliberately unreachable target so stale
- * rows fail instead of silently mutating the local machine.
+ * (undefined/"local") hit the same-origin server — a disabled local still
+ * resolves here since the origin is the transport, not just a data source;
+ * only its merge contribution is parked. An unknown peer id — or a peer the
+ * user disabled — yields a deliberately unreachable target so stale rows
+ * fail instead of silently mutating the local machine.
  */
 export const nodeTarget = (node: string | undefined): ApiTarget => {
   if (node === undefined || node === LOCAL_NODE_ID) return localTarget();
@@ -783,15 +805,19 @@ const tagProject = (project: Project, node: string | undefined): Project =>
   node === undefined ? project : { ...project, node };
 
 /**
- * Fold a fan-out's settled legs into rows — index 0 is always the local
- * node, the rest are the enabled peers in registry order. A rejected leg
- * contributes nothing; the local leg additionally drives `selfStatus`
- * (success → online, failure → offline). A local 401 still throws so the
- * caller's AuthError → TokenGate path keeps working.
+ * Fold a fan-out's settled legs into rows. `local` is the local node's leg —
+ * undefined when this machine is parked (its leg never ran, so `selfStatus`
+ * stays with whatever `refreshSelf` last saw); `peers` are the enabled
+ * peers' legs in registry order. A rejected leg contributes nothing; the
+ * local leg additionally drives `selfStatus` (success → online, failure →
+ * offline). A local 401 still throws so the caller's AuthError → TokenGate
+ * path keeps working.
  */
-const mergeFanOut = <T>(legs: ReadonlyArray<PromiseSettledResult<T[]>>): T[] => {
+const mergeFanOut = <T>(
+  local: PromiseSettledResult<T[]> | undefined,
+  peers: ReadonlyArray<PromiseSettledResult<T[]>>,
+): T[] => {
   const rows: T[] = [];
-  const [local, ...peers] = legs;
   if (local !== undefined) {
     if (local.status === "fulfilled") {
       setSelfStatus("online");
@@ -815,49 +841,62 @@ const mergeFanOut = <T>(legs: ReadonlyArray<PromiseSettledResult<T[]>>): T[] => 
 // not polled. Nodes too old to know the flag ignore it and report
 // `locked: false` rows.
 export const listAllSessions = async (): Promise<SessionSummary[]> => {
-  // Disabled peers contribute nothing — same as if they weren't registered.
+  // Disabled nodes contribute nothing — same as if they weren't registered.
+  // The local leg skips too when this machine is parked: its API stays
+  // reachable as the client's origin (the transport), only the merge stops.
+  const local = isLocalNodeEnabled();
   const peers = nodesStore.state.peers.filter(isPeerEnabled);
   const multi = peers.length > 0;
   const settled = await Promise.allSettled([
-    listSessions(localTarget(), { withLocks: true }).then((list) =>
-      list.map((s) => tagSession(s, multi ? LOCAL_NODE_ID : undefined)),
-    ),
+    ...(local
+      ? [
+          listSessions(localTarget(), { withLocks: true }).then((list) =>
+            list.map((s) => tagSession(s, multi ? LOCAL_NODE_ID : undefined)),
+          ),
+        ]
+      : []),
     ...peers.map((peer) =>
       listSessions(peerTarget(peer), { withLocks: true }).then((list) =>
         list.map((s) => tagSession(s, peer.id)),
       ),
     ),
   ]);
-  return mergeFanOut(settled);
+  return mergeFanOut(local ? settled[0] : undefined, settled.slice(local ? 1 : 0));
 };
 
 export const listAllProjects = async (): Promise<Project[]> => {
+  const local = isLocalNodeEnabled();
   const peers = nodesStore.state.peers.filter(isPeerEnabled);
   const multi = peers.length > 0;
   const settled = await Promise.allSettled([
-    listProjects(localTarget()).then((data) =>
-      data.projects.map((p) => tagProject(p, multi ? LOCAL_NODE_ID : undefined)),
-    ),
+    ...(local
+      ? [
+          listProjects(localTarget()).then((data) =>
+            data.projects.map((p) => tagProject(p, multi ? LOCAL_NODE_ID : undefined)),
+          ),
+        ]
+      : []),
     ...peers.map((peer) =>
       listProjects(peerTarget(peer)).then((data) =>
         data.projects.map((p) => tagProject(p, peer.id)),
       ),
     ),
   ]);
-  return mergeFanOut(settled);
+  return mergeFanOut(local ? settled[0] : undefined, settled.slice(local ? 1 : 0));
 };
 
 /** Union of agent rosters across nodes — deduped by agent id, local wins. */
 export const listAllAgents = async (): Promise<AgentInfo[]> => {
+  const local = isLocalNodeEnabled();
   const peers = nodesStore.state.peers.filter(isPeerEnabled);
   const settled = await Promise.allSettled([
-    listAgents(localTarget()),
+    ...(local ? [listAgents(localTarget())] : []),
     ...peers.map((peer) => listAgents(peerTarget(peer))),
   ]);
   // Rows merge local-first, so first-wins dedupe keeps this machine's
   // roster authoritative whenever the local leg answered.
   const merged = new Map<string, AgentInfo>();
-  for (const agent of mergeFanOut(settled)) {
+  for (const agent of mergeFanOut(local ? settled[0] : undefined, settled.slice(local ? 1 : 0))) {
     if (!merged.has(agent.id)) merged.set(agent.id, agent);
   }
   return [...merged.values()];

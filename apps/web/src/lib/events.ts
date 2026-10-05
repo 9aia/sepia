@@ -1,7 +1,8 @@
 import type { Query, QueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../hooks/query/keys";
 import { LOCAL_NODE_ID } from "./format";
-import { isPeerEnabled, nodesStore, peerTarget } from "./nodes";
+import { isLocalNodeEnabled, isPeerEnabled, nodesStore, peerTarget } from "./nodes";
+import { settingsStore } from "./settings";
 import { localTarget, type ApiTarget } from "./targets";
 import { onTokenChange } from "./token";
 
@@ -119,17 +120,18 @@ interface OpenFeed {
 const signature = (node: string, target: ApiTarget): string => `${node} ${target.token ?? ""}`;
 
 /**
- * Keeps one feed open per registered node: the local node (same origin)
- * plus each peer in `nodesStore`. Re-syncs when the registry or the local
- * token changes; returns a stop that closes every stream.
+ * Keeps one feed open per contributing node: the local node (same origin)
+ * plus each enabled peer in `nodesStore`. Re-syncs when the registry, the
+ * local enabled pref, or the local token changes; returns a stop that
+ * closes every stream.
  */
 export const startNodeEventFeeds = (client: QueryClient): (() => void) => {
   const feeds = new Map<string, OpenFeed>();
   const sync = (): void => {
     const wanted = new Map<string, ApiTarget>();
-    wanted.set(LOCAL_NODE_ID, localTarget());
+    // Disabled nodes keep no feed — the same skip as the fan-out lists.
+    if (isLocalNodeEnabled()) wanted.set(LOCAL_NODE_ID, localTarget());
     for (const peer of nodesStore.state.peers) {
-      // Disabled peers keep no feed — the same skip as the fan-out lists.
       if (isPeerEnabled(peer)) wanted.set(peer.id, peerTarget(peer));
     }
     for (const [node, feed] of feeds) {
@@ -149,9 +151,12 @@ export const startNodeEventFeeds = (client: QueryClient): (() => void) => {
   };
   sync();
   const storeSub = nodesStore.subscribe(() => sync());
+  // The local enable flag lives in settingsStore — resync when it flips.
+  const settingsSub = settingsStore.subscribe(() => sync());
   const tokenSub = onTokenChange(sync);
   return () => {
     storeSub.unsubscribe();
+    settingsSub.unsubscribe();
     tokenSub();
     for (const feed of feeds.values()) feed.close();
     feeds.clear();

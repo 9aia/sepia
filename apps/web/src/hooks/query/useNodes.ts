@@ -1,6 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import { getNode } from "../../lib/api";
+import { LOCAL_NODE_ID } from "../../lib/format";
 import { toastError, toastSuccess } from "../../lib/toast";
 import {
   addGatewayPeer,
@@ -13,6 +14,7 @@ import {
   peerTarget,
   refreshSelf,
   removePeerEntry,
+  setLocalNodeEnabled,
   setPeerEnabled,
   updatePeerEntry,
   type PeerCredentialSpec,
@@ -161,15 +163,17 @@ export const useUpdateNode = () => {
 };
 
 /**
- * The per-row enable switch. Toggling is synchronous store work, but the
- * merged lists/descriptors/event feeds must re-sync — hence a mutation that
- * just invalidates everything.
+ * The per-row enable switch — `LOCAL_NODE_ID` parks the local node (a
+ * settings pref), any other id parks a peer (registry). Toggling is
+ * synchronous store work, but the merged lists/descriptors/event feeds must
+ * re-sync — hence a mutation that just invalidates everything.
  */
 export const useSetNodeEnabled = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
-      setPeerEnabled(id, enabled);
+      if (id === LOCAL_NODE_ID) setLocalNodeEnabled(enabled);
+      else setPeerEnabled(id, enabled);
     },
     onSuccess: (_data, { enabled }) => {
       void queryClient.invalidateQueries();

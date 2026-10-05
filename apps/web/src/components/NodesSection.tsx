@@ -1,7 +1,8 @@
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useForm } from "@tanstack/react-form";
 import { useStore } from "@tanstack/react-store";
 import {
+  Copy01Icon,
   Delete02Icon,
   MonitorIcon,
   MoreVerticalIcon,
@@ -27,8 +28,11 @@ import {
   type PeerNode,
 } from "../lib/nodes";
 import { credentialsStore } from "../lib/credentials";
+import { LOCAL_NODE_ID } from "../lib/format";
 import { SECRET_MASK } from "../lib/servers";
 import { setSettings, settingsStore } from "../lib/settings";
+import { setSettingsOpen } from "../lib/store";
+import { toastSuccess } from "../lib/toast";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -657,30 +661,134 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
   );
 }
 
-// --- Section -----------------------------------------------------------------
+// --- Local-node edit dialog --------------------------------------------------
 
-const blurOnEnter = (event: KeyboardEvent<HTMLInputElement>): void => {
-  if (event.key === "Enter") event.currentTarget.blur();
+/** Copy helper — clipboard APIs can be absent on insecure origins. */
+const copy = (value: string): void => {
+  void navigator.clipboard?.writeText(value).then(
+    () => toastSuccess("Copied to clipboard"),
+    () => undefined,
+  );
 };
 
 /**
- * Settings → Nodes: the peer registry behind the federated lists. Each row
- * shows reachability, the display name and address, an enable switch
- * (disabled peers merge nothing and resolve to an unreachable target), and
- * a ⋮ menu with edit/remove — edit opens the dialog covering every peer
- * subfield (nickname, address, credential, routing), and remove confirms
- * first since a gateway peer's stored credential dies with it.
+ * The serving node's edit form — a slimmer `NodeEditForm`: only the
+ * nickname is writable (`localNodeName`, the peer `alias` equivalent). The
+ * address is `location.origin` — it's whatever URL the client was opened
+ * on, so it can't be edited here — and there's no credential or remove:
+ * the serving node is the transport, not an entry to delete. The client
+ * keypair row just links to Settings → Client.
+ */
+function LocalNodeEditForm({
+  selfName,
+  onClose,
+}: {
+  readonly selfName: string | undefined;
+  readonly onClose: () => void;
+}) {
+  const localName = useStore(settingsStore, (s) => s.localNodeName);
+  const [name, setName] = useState(localName ?? "");
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSettings({ localNodeName: name.trim() === "" ? null : name.trim() });
+        onClose();
+      }}
+      className="flex flex-col gap-3"
+    >
+      <div className="flex flex-col gap-1.5">
+        <FieldLabel>Nickname · optional</FieldLabel>
+        <Input
+          placeholder={selfName ?? "This machine"}
+          aria-label="Node nickname"
+          title="Nickname — shown instead of the node's name; empty reverts to the reported name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <FieldLabel>Address</FieldLabel>
+        <div className="flex items-center gap-2">
+          <Input
+            readOnly
+            value={location.origin}
+            aria-label="Node address"
+            title="The node serving this UI — its address is the URL you open the client on"
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Copy node address"
+            title="Copy node address"
+            onClick={() => copy(location.origin)}
+          >
+            <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
+          </Button>
+        </div>
+        <span className="text-xs text-muted-foreground">
+          Read-only — this is the URL you access the client on; point peers at it to add this
+          machine as a node.
+        </span>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <span className="block text-sm">Client identity</span>
+          <span className="block text-xs text-muted-foreground">
+            This browser&apos;s label and keypair live under Settings → Client.
+          </span>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => {
+            // Jump to the Client section inside the still-open settings dialog.
+            setSettingsOpen(true, "client");
+            onClose();
+          }}
+        >
+          Open
+        </Button>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button type="submit" variant="secondary">
+          Save
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// --- Section -----------------------------------------------------------------
+
+/**
+ * Settings → Nodes: the node registry behind the federated lists — the
+ * serving node first (same controls as a peer, minus remove), then each
+ * registered peer. Each row shows reachability, the display name and
+ * address, an enable switch (disabled nodes merge nothing; a disabled peer
+ * also resolves to an unreachable target), and an edit affordance — the
+ * local row's pencil opens its own dialog (nickname + read-only address),
+ * a peer's ⋮ menu covers every peer subfield (nickname, address,
+ * credential, routing) plus a confirmed remove since a gateway peer's
+ * stored credential dies with it.
  */
 export function NodesSection() {
   const { self, selfStatus, peers } = useNodes();
   const credentials = useStore(credentialsStore);
   const localName = useStore(settingsStore, (s) => s.localNodeName);
+  const localEnabled = useStore(settingsStore, (s) => s.localNodeEnabled);
   // Drives refreshSelf — populates self, selfStatus and the node alias.
   useSelfNode();
   const statuses = useNodeStatuses(peers);
   const removeNode = useRemoveNode();
   const setEnabled = useSetNodeEnabled();
   const [editing, setEditing] = useState<PeerNode | null>(null);
+  const [editingLocal, setEditingLocal] = useState(false);
   const [removing, setRemoving] = useState<PeerNode | null>(null);
 
   return (
@@ -693,25 +801,26 @@ export function NodesSection() {
       <div className="divide-y divide-border/50 rounded-lg border border-border">
         <div className="flex items-center gap-3 px-3 py-2.5">
           <StatusDot
-            ok={selfStatus === "unknown" ? undefined : selfStatus === "online"}
-            title={
-              selfStatus === "offline"
-                ? `Unreachable — run \`sepia serve\` on ${isLocalAccess() ? "this machine" : location.host}`
+            ok={
+              localEnabled
+                ? selfStatus === "unknown"
+                  ? undefined
+                  : selfStatus === "online"
                 : undefined
             }
+            title={
+              !localEnabled
+                ? "Disabled"
+                : selfStatus === "offline"
+                  ? `Unreachable — run \`sepia serve\` on ${isLocalAccess() ? "this machine" : location.host}`
+                  : undefined
+            }
           />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Input
-                key={localName ?? self?.name ?? ""}
-                className="h-7 w-44 max-w-full text-sm font-medium"
-                defaultValue={localName ?? ""}
-                placeholder={self?.name ?? (isLocalAccess() ? "This machine" : "Hostname")}
-                aria-label="Nickname for this machine"
-                title="Nickname for this machine"
-                onBlur={(e) => setSettings({ localNodeName: e.currentTarget.value.trim() || null })}
-                onKeyDown={blurOnEnter}
-              />
+          <div className={`min-w-0 flex-1${localEnabled ? "" : " opacity-60"}`}>
+            <span className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-medium">
+                {localName ?? self?.name ?? (isLocalAccess() ? "This machine" : location.host)}
+              </span>
               {isLocalAccess() && (
                 <Badge
                   variant="outline"
@@ -722,10 +831,33 @@ export function NodesSection() {
                   this machine
                 </Badge>
               )}
-            </div>
-            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {!localEnabled && (
+                <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">
+                  disabled
+                </Badge>
+              )}
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {localName !== null && self !== null ? `${self.name} — ` : ""}
               {location.origin}
             </span>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Switch
+              checked={localEnabled}
+              onCheckedChange={(value) => setEnabled.mutate({ id: LOCAL_NODE_ID, enabled: value })}
+              aria-label={`${localEnabled ? "Disable" : "Enable"} node ${self?.name ?? "this machine"}`}
+              title={localEnabled ? "Disable node" : "Enable node"}
+            />
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Edit this node"
+              title="Edit node"
+              onClick={() => setEditingLocal(true)}
+            >
+              <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} />
+            </Button>
           </div>
         </div>
         {peers.map((peer, index) => {
@@ -793,6 +925,18 @@ export function NodesSection() {
         })}
       </div>
       <NodeAddForm />
+      <Dialog open={editingLocal} onOpenChange={setEditingLocal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{`Edit ${localName ?? self?.name ?? "this node"}`}</DialogTitle>
+            <DialogDescription>
+              The node serving this UI — only the nickname is editable; its address follows the URL
+              you access the client on, and it can&apos;t be removed.
+            </DialogDescription>
+          </DialogHeader>
+          <LocalNodeEditForm selfName={self?.name} onClose={() => setEditingLocal(false)} />
+        </DialogContent>
+      </Dialog>
       <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>
           <DialogHeader>

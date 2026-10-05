@@ -28,6 +28,7 @@ const DEFAULTS: SepiaSettings = {
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
   localNodeName: null,
+  localNodeEnabled: true,
   sidebar: { sections: defaultSidebarSections() },
 };
 
@@ -156,6 +157,14 @@ describe("settings load", () => {
       }),
     );
     expect((await loadSettings()).keybinds).toEqual({ "app.sidebar": "Mod+P", x: null });
+  });
+
+  it("localNodeEnabled defaults on — only an explicit false parks the local node", async () => {
+    store.set("sepia:settings", JSON.stringify({ localNodeEnabled: false }));
+    expect((await loadSettings()).localNodeEnabled).toBe(false);
+    // Non-boolean legacy values read as enabled, same convention as peers.
+    store.set("sepia:settings", JSON.stringify({ localNodeEnabled: "no" }));
+    expect((await loadSettings()).localNodeEnabled).toBe(true);
   });
 
   it("notifications default per-field: only explicit false flips done/permission", async () => {

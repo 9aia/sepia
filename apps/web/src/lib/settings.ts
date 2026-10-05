@@ -43,6 +43,14 @@ export interface SepiaSettings {
   theme: "dark" | "light" | "system";
   /** Nickname for this machine — overrides the self-reported node name. */
   localNodeName: string | null;
+  /**
+   * Settings → Nodes' enable switch for this machine — the local equivalent
+   * of `PeerNode.enabled`. It's a client-local pref, not node state: `false`
+   * stops this machine's sessions/projects/agents merging into the federated
+   * lists (and closes its event feed), but its API stays reachable — the
+   * origin is the transport every call lands on, not just a data source.
+   */
+  localNodeEnabled: boolean;
   /** Sidebar sections — array order is the render order. */
   sidebar: { sections: SidebarSectionConfig[] };
 }
@@ -85,6 +93,7 @@ const defaultSettings = (): SepiaSettings => ({
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
   localNodeName: null,
+  localNodeEnabled: true,
   sidebar: { sections: defaultSidebarSections() },
 });
 
@@ -114,6 +123,9 @@ const load = (): SepiaSettings => {
         typeof parsed.localNodeName === "string" && parsed.localNodeName.trim() !== ""
           ? parsed.localNodeName.trim()
           : null,
+      // Absent (and any non-false legacy value) reads as enabled — same
+      // convention as `PeerNode.enabled`.
+      localNodeEnabled: parsed.localNodeEnabled !== false,
       sidebar: {
         sections: normalizeSidebarSections(
           typeof parsed.sidebar === "object" && parsed.sidebar !== null
