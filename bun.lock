@@ -153,6 +153,17 @@
         "typescript": "^7.0.2",
       },
     },
+    "packages/sepia-node": {
+      "name": "sepia-node",
+      "version": "0.0.0",
+      "bin": {
+        "sepia": "bin/sepia.js",
+      },
+    },
+    "packages/sepia-ui": {
+      "name": "sepia-ui",
+      "version": "0.0.0",
+    },
     "packages/session-control": {
       "name": "sepia-session-control",
       "version": "0.0.1",
@@ -1907,9 +1918,13 @@
 
     "sepia-core": ["sepia-core@workspace:packages/sepia"],
 
+    "sepia-node": ["sepia-node@workspace:packages/sepia-node"],
+
     "sepia-server": ["sepia-server@workspace:apps/server"],
 
     "sepia-session-control": ["sepia-session-control@workspace:packages/session-control"],
+
+    "sepia-ui": ["sepia-ui@workspace:packages/sepia-ui"],
 
     "sepia-web": ["sepia-web@workspace:apps/web"],
 

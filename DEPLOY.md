@@ -1,10 +1,11 @@
 # Deploying sepia
 
-Sepia is a self-hosted control plane for coding-agent sessions. The packaged
-form is a **single `bun --compile` binary** that serves the API and the web UI
-on one port — "one binary per machine, any machine hosts the UI" (see
-[Single binary](#single-binary)). For development the two halves still run
-side by side:
+Sepia is a self-hosted control plane for coding-agent sessions. Packaged
+forms: the **`sepia-node` npm package** (`npm i -g sepia-node` → `sepia
+serve`, see [npm packages](#npm-packages)) and a **single `bun --compile`
+binary** built from source (see [Single binary](#single-binary)). Both serve
+the API and the web UI on one port — "one binary per machine, any machine
+hosts the UI". For development the two halves still run side by side:
 
 - **API** (`sepia-server`, Bun, `:8787`) — REST + AG-UI SSE + AG-UI agent endpoint
   runtime. Spawns `devin acp` / `cline --acp` subprocesses that can read and
@@ -38,6 +39,50 @@ All `SEPIA_*` configuration applies unchanged. `SEPIA_UI=off` (or `0`/`false`)
 disables UI serving for API-only nodes; `SEPIA_UI_DIR=<dist dir>` serves a
 web bundle from disk instead of the embedded one — useful for trying a newer
 UI without rebuilding the binary.
+
+## npm packages
+
+The npm distribution is **source + dist**, not the compiled binary: a
+`bun --compile` artifact is ~106 MiB and per-platform, while the packages
+below are platform-neutral and a few MB. **Bun is the runtime dependency** —
+install it with `curl -fsSL https://bun.sh/install.sh | bash`.
+
+- **`sepia-node`** — the node + CLI. `bin/sepia` is a `#!/usr/bin/env bun`
+  shim that defaults `SEPIA_UI_DIR` to the packaged web bundle (`ui/`) and
+  hands off to `dist/cli.js` — one `bun build --target bun --minify` bundle
+  of `apps/sepia/src/main.ts` with every workspace dep inlined (no
+  `workspace:*` leaks into the manifest; `bun:*` builtins stay external).
+  `npm i -g sepia-node` → `sepia serve`; `sepia version` prints the stamp.
+
+- **`sepia-ui`** — the standalone web bundle at `dist/` for running the
+  client apart from the node: `npx serve dist` (with SPA fallback to
+  `index.html`), or point a node's `SEPIA_UI_DIR` at it.
+
+Release versioning is a continuous datetime stamp — `MAJOR.YYMMDD.HHMM` UTC
+(e.g. `0.261005.1330`; `0.x` = unstable, HHMM unpadded since semver forbids
+leading zeros). `vp run version:bump` (=`bun tools/version.ts`) writes the
+stamp into `VERSION` and every workspace `package.json`, then re-syncs
+`bun.lock`. `vp run build:npm` (=`bun tools/build-npm.ts`) builds the web
+bundle, bundles the CLI, and stages `packages/sepia-node/{bin,dist,ui}` and
+`packages/sepia-ui/dist`.
+
+```bash
+vp run version:bump      # stamp 0.YYMMDD.HHMM everywhere
+vp run build:npm         # build + stage both packages
+cd packages/sepia-node && bun pm pack --destination /tmp
+cd ../sepia-ui && bun pm pack --destination /tmp
+cd /tmp && npm publish sepia-node-*.tgz --access public
+npm publish sepia-ui-*.tgz --access public
+```
+
+Publishing from inside the workspace hits `EBADDEVENGINES` (the root
+manifest pins `devEngines.packageManager: bun`), so pack with `bun pm pack`
+and run `npm publish` on the tarballs from outside the repo.
+
+`.github/workflows/release.yml` automates exactly this (stamp → `bun run
+ready` → stage → `bun pm pack` → `npm publish --provenance`) on manual
+`workflow_dispatch` with an `NPM_TOKEN` secret — nothing publishes until it
+is dispatched.
 
 ## Security model — read this first
 

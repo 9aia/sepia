@@ -21,6 +21,9 @@ import { otelLayer } from "./telemetry";
 import { createUiAssets } from "./ui";
 
 export { parseEnv, type ServerEnv };
+// The release stamp (apps/server/package.json `version`, see tools/version.ts)
+// — re-exported so the CLI's `--version` reports the same stamp /api/node does.
+export { SEPIA_VERSION } from "./node";
 
 const isLoopback = (value: string): boolean =>
   value === "localhost" || value === "::1" || value === "[::1]" || value.startsWith("127.");

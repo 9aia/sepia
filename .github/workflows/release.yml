@@ -1,0 +1,60 @@
+name: release
+
+# Manual only — dispatch from the Actions tab to cut a release. Continuous
+# release: every run stamps a fresh MAJOR.YYMMDD.HHMM version, builds, and
+# publishes both npm packages. Requires an NPM_TOKEN secret (npm granular
+# access token with publish rights on sepia-node and sepia-ui).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm --provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      # npm publish needs Node on PATH; registry-url wires NODE_AUTH_TOKEN.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - run: bun install --frozen-lockfile
+
+      # Stamp MAJOR.YYMMDD.HHMM into VERSION + every package.json (the
+      # publishable manifests ship what this writes). The script re-runs
+      # `bun install` to keep bun.lock's workspace table in sync.
+      - run: bun tools/version.ts
+
+      # check + test + build — the web build produces apps/web/dist/client,
+      # which build-npm stages into both packages (--skip-web-build reuses it).
+      - run: bun run ready
+
+      - run: bun tools/build-npm.ts --skip-web-build
+
+      # Pack with bun (npm pack fails inside this repo — the root devEngines
+      # requires bun as packageManager), publish the tarballs with npm from a
+      # neutral directory so provenance signing still applies.
+      - name: Pack sepia-node
+        working-directory: packages/sepia-node
+        run: bun pm pack --destination "$RUNNER_TEMP"
+
+      - name: Pack sepia-ui
+        working-directory: packages/sepia-ui
+        run: bun pm pack --destination "$RUNNER_TEMP"
+
+      - name: Publish to npm
+        run: |
+          cd "$RUNNER_TEMP"
+          npm publish sepia-node-*.tgz --provenance --access public
+          npm publish sepia-ui-*.tgz --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

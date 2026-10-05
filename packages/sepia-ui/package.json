@@ -1,0 +1,28 @@
+{
+  "name": "sepia-ui",
+  "version": "0.0.0",
+  "description": "The Sepia web client as a standalone static bundle — serve it yourself, or point a sepia node's SEPIA_UI_DIR at it.",
+  "keywords": [
+    "acp",
+    "ag-ui",
+    "coding-agent",
+    "sepia",
+    "web-ui"
+  ],
+  "homepage": "https://github.com/9aia/sepia",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/9aia/sepia.git",
+    "directory": "packages/sepia-ui"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "bun ../../tools/build-npm.ts --only sepia-ui --skip-web-build"
+  }
+}

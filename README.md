@@ -71,7 +71,34 @@ _focus_ (`node · agent`) that drives session creation.
 | `apps/server`              | `sepia-server`          | Bun API: the node — REST + AG-UI SSE + events feed + gateway + push          |
 | `apps/web`                 | `sepia-web`             | TanStack Start client (PWA, AI Elements chat)                                |
 
-## Quickstart
+## Install
+
+Requires [Bun](https://bun.sh) ≥ 1.3
+(`curl -fsSL https://bun.sh/install.sh | bash`) and at least one
+authenticated agent CLI (`devin acp`, `cline --acp`, `claude-agent-acp`).
+
+```bash
+npm i -g sepia-node      # or: bunx sepia-node <command>
+sepia serve              # API + web UI on 127.0.0.1:8787
+```
+
+`sepia-node` is a bundled Bun entrypoint (`bin/sepia` → `dist/cli.js`) plus
+the web UI at `ui/` — platform-neutral, no compiled binary. `sepia-ui`
+publishes the client bundle on its own for self-hosters running the UI
+separately. A single `bun --compile` binary is still available from source
+via `vp run build:binary` (see `DEPLOY.md`).
+
+**Multi-node** — run `sepia serve` on each machine, then pair them:
+`sepia pair` on the remote mints a one-time code; enter it plus the node URL
+in Settings → Nodes → "Pair with code".
+
+**Versioning** — releases stamp `MAJOR.YYMMDD.HHMM` (UTC; `0.x` = unstable —
+the HHMM part is an integer since semver forbids leading zeros).
+`vp run version:bump` regenerates the stamp into `VERSION` + every
+`package.json` (`apps/server`'s feeds `GET /api/node` and
+`sepia --version`); the release workflow restamps on every run.
+
+## Develop
 
 Requires Bun ≥ 1.3 and `vp` (Vite+). The agent CLIs must be installed and
 authenticated (`devin acp`, `cline --acp`, `claude-agent-acp`).
@@ -89,10 +116,10 @@ vp run dev
 Open http://localhost:3000, pick a session, and chat. The "New session"
 form spawns an agent in a working directory you choose.
 
-For a single-machine deploy, `./sepia serve` (the compiled binary) serves
-client + API on one port; for multi-machine, run it on each machine and
-pair them from Settings → Nodes (`sepia pair` on the remote machine mints a
-one-time code).
+For a single-machine deploy, `sepia serve` (the npm package, or `./sepia`
+compiled binary) serves client + API on one port; for multi-machine, run it
+on each machine and pair them from Settings → Nodes (`sepia pair` on the
+remote machine mints a one-time code).
 
 ## How sessions behave
 

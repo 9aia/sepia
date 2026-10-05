@@ -16,3 +16,6 @@ probe-*.mjs
 repro-*.mjs
 /sepia
 apps/server/ui-dist/
+
+# npm package staging (tools/build-npm.ts) — dist/ is covered above
+packages/sepia-node/ui/

@@ -19,7 +19,7 @@ import {
   openSessionsDb,
   type SessionRepositoryService,
 } from "sepia-core";
-import { parseEnv, startServer, type ServerEnv } from "sepia-server/serve";
+import { parseEnv, SEPIA_VERSION, startServer, type ServerEnv } from "sepia-server/serve";
 import { PAIR_CODE_TTL_MS, writePairCodeFile } from "./pair";
 
 const defaultDbPath = `${homedir()}/.local/share/devin/cli/sessions.db`;
@@ -540,6 +540,12 @@ const serveCommand = Command.make(
   ),
 );
 
+// `sepia version` prints the release stamp (MAJOR.YYMMDD.HHMM — see
+// tools/version.ts); the same value /api/node reports.
+const versionCommand = Command.make("version", {}, () => Console.log(SEPIA_VERSION)).pipe(
+  Command.withDescription("Print the sepia version stamp"),
+);
+
 const sepia = Command.make("sepia").pipe(
   Command.withSubcommands([
     importCommand,
@@ -549,13 +555,14 @@ const sepia = Command.make("sepia").pipe(
     listCommand,
     pairCommand,
     serveCommand,
+    versionCommand,
   ]),
   Command.withDescription("Convert sessions between the Devin, Cline, Claude and Cursor stores"),
 );
 
 const cli = Command.run(sepia, {
   name: "sepia",
-  version: "0.0.1",
+  version: SEPIA_VERSION,
 });
 
 cli(process.argv).pipe(Effect.provide(BunContext.layer), BunRuntime.runMain);

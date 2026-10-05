@@ -14,6 +14,9 @@
     "prepare": "vp config",
     "coverage": "vp run -r coverage",
     "build:binary": "bun tools/build-binary.ts",
+    "build:npm": "bun tools/build-npm.ts",
+    "version": "bun tools/version.ts",
+    "version:bump": "bun tools/version.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "devDependencies": {
