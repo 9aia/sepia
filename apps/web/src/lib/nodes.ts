@@ -290,12 +290,20 @@ export const pairPeer = async (url: string, code: string): Promise<PeerNode> => 
 
 /**
  * What the Settings → Nodes edit form submits: an address change and/or a
- * credential change. `token: SECRET_MASK` echoes the form's masked field and
- * keeps the stored credential; "" clears it; anything else replaces it.
+ * credential change and/or a routing change. `token: SECRET_MASK` echoes the
+ * form's masked field and keeps the stored credential; "" clears it;
+ * anything else replaces it. `via` absent keeps the current routing.
  */
 export interface PeerEntryUpdate {
   readonly url?: string;
   readonly token?: string;
+  /**
+   * Routing target — absent keeps the current mode. Switching to "gateway"
+   * hands the credential to this node's managed registry (the entry is
+   * created when missing); switching to "direct" drops the managed entry
+   * and the browser resumes holding the token.
+   */
+  readonly via?: "direct" | "gateway";
 }
 
 /**
@@ -305,6 +313,13 @@ export interface PeerEntryUpdate {
  * entry is fetched first so untouched fields (label, SSH config, a masked
  * secret) round-trip instead of being clobbered by the PATCH's full-replace
  * semantics.
+ *
+ * A routing change moves the credential with it. Direct → gateway creates
+ * (or repairs) the managed entry carrying the effective token, then clears
+ * the browser's copy. Gateway → direct deletes the managed entry — the
+ * stored secret can't come back to the browser (the registry only ever
+ * returns masks), so the submitted token is the whole credential and a mask
+ * there means "none".
  */
 export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Promise<void> => {
   const peer = nodesStore.state.peers.find((p) => p.id === id);
@@ -312,43 +327,93 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
   const url = update.url === undefined ? peer.url : normalizeNodeUrl(update.url);
   const keepToken = update.token === undefined || update.token === SECRET_MASK;
   const secret = keepToken ? null : update.token?.trim() || null;
-  let token = peer.token;
-  if (peer.via === "gateway" && peer.serverId !== undefined) {
-    token = null;
-    const entry = (await listServers()).find((s) => s.id === peer.serverId);
-    // A peer whose managed entry vanished (removed via Settings → Servers)
-    // still gets the local url update — its calls will 404 either way.
-    if (entry !== undefined) {
-      const { scheme, host, port } = peerUrlParts(url);
-      await updateServer(entry.id, {
-        label: entry.label,
+  const { scheme, host, port } = peerUrlParts(url);
+  const toGateway =
+    update.via === "gateway" || (update.via === undefined && peer.via === "gateway");
+
+  if (toGateway) {
+    const entry =
+      peer.serverId === undefined
+        ? undefined
+        : (await listServers()).find((s) => s.id === peer.serverId);
+    if (entry === undefined) {
+      // Direct → gateway, or a gateway peer whose managed entry vanished
+      // (removed via Settings → Servers): (re)create the credential entry.
+      // A kept token submits the browser-held credential — on a transition
+      // it moves to the node's store; a cleared one means no auth upstream.
+      const created = await createServer({
+        label: peer.alias ?? peer.name,
         host,
         port,
         scheme,
         auth: keepToken
-          ? entry.auth === null
+          ? peer.token === null
             ? null
-            : { type: entry.auth.type, user: entry.auth.user, secret: SECRET_MASK }
+            : { type: "token", secret: peer.token }
           : secret === null
             ? null
             : { type: "token", secret },
-        ssh:
-          entry.ssh === null
-            ? null
-            : {
-                host: entry.ssh.host,
-                port: entry.ssh.port,
-                user: entry.ssh.user,
-                // A masked key keeps the stored material; a key path
-                // round-trips as itself.
-                key: entry.ssh.key,
-              },
+        ssh: null,
       });
+      commitPeers(
+        nodesStore.state.peers.map((p) =>
+          p.id !== id ? p : { ...p, url, token: null, via: "gateway", serverId: created.id },
+        ),
+      );
+      return;
     }
-  } else if (!keepToken) {
-    token = secret;
+    await updateServer(entry.id, {
+      label: entry.label,
+      host,
+      port,
+      scheme,
+      auth: keepToken
+        ? entry.auth === null
+          ? null
+          : { type: entry.auth.type, user: entry.auth.user, secret: SECRET_MASK }
+        : secret === null
+          ? null
+          : { type: "token", secret },
+      ssh:
+        entry.ssh === null
+          ? null
+          : {
+              host: entry.ssh.host,
+              port: entry.ssh.port,
+              user: entry.ssh.user,
+              // A masked key keeps the stored material; a key path
+              // round-trips as itself.
+              key: entry.ssh.key,
+            },
+    });
+    commitPeers(
+      nodesStore.state.peers.map((p) =>
+        p.id !== id ? p : { ...p, url, token: null, via: "gateway", serverId: entry.id },
+      ),
+    );
+    return;
   }
-  commitPeers(nodesStore.state.peers.map((p) => (p.id !== id ? p : { ...p, url, token })));
+
+  // Direct target. Leaving gateway drops the managed entry (best-effort —
+  // an unreachable node must not strand the switch) since the stored
+  // credential can't return to the browser.
+  const leavingGateway = peer.via === "gateway";
+  if (leavingGateway && peer.serverId !== undefined) {
+    await deleteServer(peer.serverId).catch(() => undefined);
+  }
+  const token = keepToken ? (leavingGateway ? null : peer.token) : secret;
+  commitPeers(
+    nodesStore.state.peers.map((p) =>
+      p.id !== id
+        ? p
+        : {
+            ...p,
+            url,
+            token,
+            ...(leavingGateway ? { via: undefined, serverId: undefined } : {}),
+          },
+    ),
+  );
 };
 
 // --- Gateway-mode peers (docs/protocol.md phase 3) ---------------------------

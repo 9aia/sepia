@@ -23,6 +23,16 @@ import {
 } from "../lib/nodes";
 import { parseServerHost, SECRET_MASK } from "../lib/servers";
 import { setSettings, settingsStore } from "../lib/settings";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -307,6 +317,8 @@ interface EditFormValues extends AddressFields {
   label: string;
   /** Seeded with SECRET_MASK when a credential exists — the mask means "keep". */
   token: string;
+  /** The `via` flag — checked means calls route through this node's server. */
+  viaGateway: boolean;
 }
 
 const editDefaults = (peer: PeerNode): EditFormValues => {
@@ -319,15 +331,42 @@ const editDefaults = (peer: PeerNode): EditFormValues => {
     // Gateway peers keep no token in the browser — the mask still seeds the
     // field and round-trips to "keep the stored credential" on save.
     token: peer.via === "gateway" ? SECRET_MASK : peer.token === null ? "" : SECRET_MASK,
+    viaGateway: peer.via === "gateway",
   };
+};
+
+/**
+ * The routing switch's subline — explains the current mode and warns on the
+ * transition each way: direct → gateway moves the credential into this
+ * node's store; gateway → direct drops it (the stored secret can't come
+ * back), so the token field becomes the whole credential.
+ */
+const viaDescription = (peer: PeerNode, viaGateway: boolean): string => {
+  if (viaGateway && peer.via === "gateway") {
+    return "Calls route through this node's server — SSH tunnel settings live under Settings → Servers.";
+  }
+  if (viaGateway) {
+    return "Calls route through this node's server — the token above moves to its encrypted store.";
+  }
+  if (peer.via === "gateway") {
+    return "Calls go straight from the browser — the stored credential is removed, so enter a token above if the peer needs one.";
+  }
+  return "Gateway mode — for peers this browser can't reach directly.";
+};
+
+const tokenPlaceholder = (peer: PeerNode, viaGateway: boolean): string => {
+  if (viaGateway) return "Bearer token (stored on this node — clear to remove)";
+  if (peer.via === "gateway") return "Bearer token — the stored credential doesn't carry over";
+  return "Bearer token — clear for none";
 };
 
 /**
  * Per-peer edit form, seeded from the row's peer (keyed remount on id).
  * Saves through `updatePeerEntry`: a direct peer updates in the browser
  * registry; a gateway peer's url/auth changes PATCH its managed-server entry
- * so the stored credential rides along. Label commits via `setPeerAlias` on
- * success.
+ * so the stored credential rides along; flipping the routing switch moves
+ * the credential between the browser and the node's store. Label commits
+ * via `setPeerAlias` on success.
  */
 function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () => void }) {
   const update = useUpdateNode();
@@ -341,7 +380,14 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
         return;
       }
       update.mutate(
-        { id: peer.id, update: { url, token: value.token } },
+        {
+          id: peer.id,
+          update: {
+            url,
+            token: value.token,
+            via: value.viaGateway ? ("gateway" as const) : ("direct" as const),
+          },
+        },
         {
           onSuccess: () => {
             setPeerAlias(peer.id, value.label);
@@ -419,28 +465,40 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
           )}
         </form.Field>
       </div>
-      <form.Field name="token">
+      <form.Subscribe selector={(state) => state.values.viaGateway}>
+        {(viaGateway) => (
+          <form.Field name="token">
+            {(field) => (
+              <Input
+                type="password"
+                placeholder={tokenPlaceholder(peer, viaGateway)}
+                aria-label="Node token"
+                autoComplete="new-password"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(event) => field.handleChange(event.target.value)}
+              />
+            )}
+          </form.Field>
+        )}
+      </form.Subscribe>
+      <form.Field name="viaGateway">
         {(field) => (
-          <Input
-            type="password"
-            placeholder={
-              peer.via === "gateway"
-                ? "Bearer token (stored on this node — clear to remove)"
-                : "Bearer token — clear for none"
-            }
-            aria-label="Node token"
-            autoComplete="new-password"
-            value={field.state.value}
-            onBlur={field.handleBlur}
-            onChange={(event) => field.handleChange(event.target.value)}
-          />
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <span className="block text-sm">Route through this node</span>
+              <span className="block text-xs text-muted-foreground">
+                {viaDescription(peer, field.state.value)}
+              </span>
+            </div>
+            <Switch
+              checked={field.state.value}
+              onCheckedChange={(value) => field.handleChange(value)}
+              aria-label="Route through this node"
+            />
+          </div>
         )}
       </form.Field>
-      {peer.via === "gateway" && (
-        <p className="text-xs text-muted-foreground">
-          Calls route through this node — SSH tunnel settings live under Settings → Servers.
-        </p>
-      )}
       {update.isError && (
         <p className="text-xs text-destructive">
           {update.error instanceof Error ? update.error.message : "Couldn't save the node"}
@@ -472,8 +530,9 @@ const blurOnEnter = (event: KeyboardEvent<HTMLInputElement>): void => {
  * Settings → Nodes: the peer registry behind the federated lists. Each row
  * shows reachability, the display name and address, an enable switch
  * (disabled peers merge nothing and resolve to an unreachable target), and
- * pencil/remove actions — the pencil opens the edit dialog for label,
- * address and credential.
+ * pencil/remove actions — the pencil opens the edit dialog covering every
+ * peer subfield (nickname, address, credential, routing), and remove
+ * confirms first since a gateway peer's stored credential dies with it.
  */
 export function NodesSection() {
   const { self, selfStatus, peers } = useNodes();
@@ -484,6 +543,7 @@ export function NodesSection() {
   const removeNode = useRemoveNode();
   const setEnabled = useSetNodeEnabled();
   const [editing, setEditing] = useState<PeerNode | null>(null);
+  const [removing, setRemoving] = useState<PeerNode | null>(null);
 
   return (
     <section data-spy="nodes" className="flex scroll-mt-2 flex-col gap-2">
@@ -527,15 +587,23 @@ export function NodesSection() {
             <div key={peer.id} className="flex items-center gap-3 px-3 py-2.5">
               <StatusDot ok={statuses[index]} title={enabled ? undefined : "Disabled"} />
               <div className={`min-w-0 flex-1${enabled ? "" : " opacity-60"}`}>
-                <span className="block truncate text-sm font-medium">
-                  {peer.alias ?? peer.name}
+                <span className="flex items-center gap-1.5">
+                  <span className="truncate text-sm font-medium">{peer.alias ?? peer.name}</span>
+                  {peer.via === "gateway" && (
+                    <Badge variant="secondary" className="h-4 shrink-0 px-1.5 text-[10px]">
+                      gateway
+                    </Badge>
+                  )}
+                  {!enabled && (
+                    <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">
+                      disabled
+                    </Badge>
+                  )}
                 </span>
                 <span className="block truncate text-xs text-muted-foreground">
                   {peer.alias !== undefined ? `${peer.name} — ` : ""}
                   {peer.url}
-                  {peer.via === "gateway" && " — via gateway"}
-                  {peer.token !== null && ` — token ${SECRET_MASK}`}
-                  {!enabled && " — disabled"}
+                  {peer.via !== "gateway" && peer.token !== null && ` — token ${SECRET_MASK}`}
                 </span>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -559,7 +627,7 @@ export function NodesSection() {
                   size="icon-xs"
                   aria-label={`Remove node ${peer.name}`}
                   title="Remove node"
-                  onClick={() => removeNode.mutate(peer.id)}
+                  onClick={() => setRemoving(peer)}
                 >
                   <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
                 </Button>
@@ -574,8 +642,8 @@ export function NodesSection() {
           <DialogHeader>
             <DialogTitle>{`Edit ${editing?.alias ?? editing?.name ?? "node"}`}</DialogTitle>
             <DialogDescription>
-              Address and credential for this peer. The masked token keeps the stored value — clear
-              it for no credential.
+              Nickname, address, credential and routing for this peer. The masked token keeps the
+              stored value — clear it for no credential.
             </DialogDescription>
           </DialogHeader>
           {editing !== null && (
@@ -583,6 +651,30 @@ export function NodesSection() {
           )}
         </DialogContent>
       </Dialog>
+      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove node?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`"${removing?.alias ?? removing?.name ?? ""}" leaves the peer list — its sessions, projects and chat stop merging into this UI.`}
+              {removing?.via === "gateway" &&
+                " The credential stored on this machine is removed too."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (removing !== null) removeNode.mutate(removing.id);
+                setRemoving(null);
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

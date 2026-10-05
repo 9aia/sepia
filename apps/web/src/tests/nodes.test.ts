@@ -942,7 +942,7 @@ describe("updatePeerEntry", () => {
     expect(mockedUpdateServer.mock.calls[1]?.[1].auth).toBeNull();
   });
 
-  it("a gateway peer whose managed entry is gone still updates locally", async () => {
+  it("a gateway peer whose managed entry is gone recreates it with the new url", async () => {
     const gw: PeerNode = {
       id: "node_gw",
       name: "gw",
@@ -953,13 +953,188 @@ describe("updatePeerEntry", () => {
     };
     nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gw] }));
     mockedListServers.mockResolvedValue([]);
+    mockedCreateServer.mockResolvedValue({
+      id: "srv_recreated",
+      label: "gw",
+      host: "remote.example",
+      port: 9999,
+      scheme: "http" as const,
+      auth: null,
+      ssh: null,
+    });
 
+    // `via` absent keeps gateway routing — and since the entry must exist
+    // for the routing to work, a vanished one is recreated rather than
+    // leaving a dead gateway hop.
     await updatePeerEntry("node_gw", { url: "http://remote.example:9999" });
     expect(mockedUpdateServer).not.toHaveBeenCalled();
+    expect(mockedCreateServer).toHaveBeenCalledWith({
+      label: "gw",
+      host: "remote.example",
+      port: 9999,
+      scheme: "http",
+      auth: null,
+      ssh: null,
+    });
     expect(getPeers()[0]?.url).toBe("http://remote.example:9999");
+    expect(getPeers()[0]?.serverId).toBe("srv_recreated");
+    expect(getPeers()[0]?.via).toBe("gateway");
   });
 
   it("an unknown peer id is a no-op", async () => {
     await expect(updatePeerEntry("ghost", { url: "http://x" })).resolves.toBeUndefined();
+  });
+});
+
+describe("updatePeerEntry routing transitions", () => {
+  const gwPeer = (): PeerNode => ({
+    id: "node_gw",
+    name: "gw",
+    url: "http://remote.example:8787",
+    token: null,
+    via: "gateway",
+    serverId: "srv_1",
+  });
+  const managed = {
+    id: "srv_1",
+    label: "remote.example",
+    host: "remote.example",
+    port: 8787,
+    scheme: "http" as const,
+    auth: { type: "token" as const, secret: SECRET_MASK },
+    ssh: null,
+  };
+
+  it("direct → gateway creates a managed entry carrying the browser-held token", async () => {
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [{ ...peer("a"), alias: "work laptop" }],
+    }));
+    mockedCreateServer.mockResolvedValue({ ...managed, id: "srv_new" });
+
+    await updatePeerEntry("a", { via: "gateway", token: SECRET_MASK });
+    // The kept (masked) credential moves from the browser into the node's
+    // store; the label comes from the peer's display name.
+    expect(mockedCreateServer).toHaveBeenCalledWith({
+      label: "work laptop",
+      host: "a.example",
+      port: 443,
+      scheme: "https",
+      auth: { type: "token", secret: "tok-a" },
+      ssh: null,
+    });
+    const updated = getPeers()[0];
+    expect(updated?.via).toBe("gateway");
+    expect(updated?.serverId).toBe("srv_new");
+    expect(updated?.token).toBeNull();
+    expect(peerTarget(updated!)).toEqual({
+      baseUrl: "/api/gateway/srv_new",
+      token: getToken(),
+      timeoutMs: 12_000,
+    });
+    const persisted = JSON.parse(store.get("sepia:nodes") ?? "[]") as PeerNode[];
+    expect(persisted[0]?.serverId).toBe("srv_new");
+  });
+
+  it("direct → gateway uses a freshly typed token, or stores no auth on empty", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("a")] }));
+    mockedCreateServer.mockResolvedValue(managed);
+
+    await updatePeerEntry("a", { via: "gateway", token: "new-secret" });
+    expect(mockedCreateServer.mock.calls[0]?.[0].auth).toEqual({
+      type: "token",
+      secret: "new-secret",
+    });
+
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("b")] }));
+    await updatePeerEntry("b", { via: "gateway", token: "  " });
+    expect(mockedCreateServer.mock.calls[1]?.[0].auth).toBeNull();
+  });
+
+  it("direct → gateway leaves the peer untouched when createServer fails", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("a")] }));
+    mockedCreateServer.mockRejectedValue(new Error("server is down"));
+
+    await expect(updatePeerEntry("a", { via: "gateway" })).rejects.toThrow("server is down");
+    expect(getPeers()[0]?.via).toBeUndefined();
+    expect(getPeers()[0]?.token).toBe("tok-a");
+  });
+
+  it("gateway → direct deletes the managed entry and keeps no browser credential on a mask", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gwPeer()] }));
+    mockedDeleteServer.mockResolvedValue(undefined);
+
+    await updatePeerEntry("node_gw", { via: "direct", token: SECRET_MASK });
+    expect(mockedDeleteServer).toHaveBeenCalledWith("srv_1");
+    const updated = getPeers()[0];
+    expect(updated?.via).toBeUndefined();
+    expect(updated?.serverId).toBeUndefined();
+    expect(updated?.token).toBeNull();
+    expect(peerTarget(updated!)).toEqual({
+      baseUrl: "http://remote.example:8787",
+      token: null,
+      timeoutMs: 3_000,
+    });
+    // The persisted record carries neither gateway field.
+    const persisted = JSON.parse(store.get("sepia:nodes") ?? "[]") as Record<string, unknown>[];
+    expect("via" in persisted[0]!).toBe(false);
+    expect("serverId" in persisted[0]!).toBe(false);
+  });
+
+  it("gateway → direct installs a freshly typed token for the browser to hold", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gwPeer()] }));
+    mockedDeleteServer.mockResolvedValue(undefined);
+
+    await updatePeerEntry("node_gw", { via: "direct", token: "browser-token" });
+    expect(getPeers()[0]?.token).toBe("browser-token");
+  });
+
+  it("gateway → direct still flips when the managed delete fails", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gwPeer()] }));
+    mockedDeleteServer.mockRejectedValue(new Error("Unknown server"));
+
+    await updatePeerEntry("node_gw", { via: "direct" });
+    expect(getPeers()[0]?.via).toBeUndefined();
+    expect(getPeers()[0]?.serverId).toBeUndefined();
+  });
+
+  it("staying gateway with a vanished managed entry recreates it", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gwPeer()] }));
+    mockedListServers.mockResolvedValue([]);
+    mockedCreateServer.mockResolvedValue({ ...managed, id: "srv_repaired" });
+
+    await updatePeerEntry("node_gw", { via: "gateway", token: "reissued" });
+    expect(mockedUpdateServer).not.toHaveBeenCalled();
+    expect(mockedCreateServer).toHaveBeenCalledWith({
+      label: "gw",
+      host: "remote.example",
+      port: 8787,
+      scheme: "http",
+      auth: { type: "token", secret: "reissued" },
+      ssh: null,
+    });
+    expect(getPeers()[0]?.serverId).toBe("srv_repaired");
+    expect(getPeers()[0]?.via).toBe("gateway");
+  });
+
+  it("staying gateway keeps PATCHing the entry when it still exists", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gwPeer()] }));
+    mockedListServers.mockResolvedValue([managed]);
+    mockedUpdateServer.mockResolvedValue(managed);
+
+    await updatePeerEntry("node_gw", { via: "gateway", url: "https://remote2.example" });
+    expect(mockedCreateServer).not.toHaveBeenCalled();
+    expect(mockedDeleteServer).not.toHaveBeenCalled();
+    expect(mockedUpdateServer).toHaveBeenCalledWith("srv_1", {
+      label: "remote.example",
+      host: "remote2.example",
+      port: 443,
+      scheme: "https",
+      auth: { type: "token", user: undefined, secret: SECRET_MASK },
+      ssh: null,
+    });
+    expect(getPeers()[0]?.via).toBe("gateway");
+    expect(getPeers()[0]?.serverId).toBe("srv_1");
   });
 });
