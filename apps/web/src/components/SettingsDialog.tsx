@@ -458,7 +458,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <div className="flex min-h-0 flex-1 gap-4 max-md:flex-col">
           <ScrollArea className="w-36 shrink-0 max-md:w-auto">
             <nav
-              className="flex flex-col gap-0.5 max-md:w-max max-md:min-w-full max-md:flex-row max-md:gap-1 max-md:pb-1"
+              className="flex flex-col gap-0.5 max-md:w-max max-md:min-w-full max-md:flex-row max-md:gap-1 max-md:pb-1 p-1"
               aria-label="Settings sections"
             >
               {SECTIONS.filter((s) => s.id !== "keyboard" || hasKeyboard).map((section) => (
@@ -479,7 +479,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </nav>
           </ScrollArea>
           <ScrollArea className="min-h-0 flex-1">
-            <div ref={contentRef} className="flex flex-col gap-8 pr-3">
+            {/* p-2 keeps outward focus rings inside the scroll bounds. */}
+            <div ref={contentRef} className="flex flex-col gap-8 p-2 pr-3">
               <section data-spy="general" className="flex scroll-mt-2 flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium" htmlFor="settings-theme">
