@@ -273,20 +273,19 @@ function KeyboardSection() {
                   >
                     {recording ? (recorder.recordedHotkey ?? "Press keys…") : "Change"}
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() =>
+                  <Switch
+                    checked={key !== null}
+                    onCheckedChange={(value) =>
                       setSettings({
                         keybinds: {
                           ...settings.keybinds,
-                          [keybind.id]: key === null ? keybind.def : null,
+                          [keybind.id]: value ? keybind.def : null,
                         },
                       })
                     }
-                  >
-                    {key === null ? "Enable" : "Disable"}
-                  </Button>
+                    aria-label={`${key === null ? "Enable" : "Disable"} ${keybind.label}`}
+                    title={key === null ? "Enable" : "Disable"}
+                  />
                 </div>
               );
             })}
