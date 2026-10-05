@@ -46,6 +46,7 @@ import type {
 } from "../lib/types";
 import { attachmentToPart, partToBlock, type PendingAttachment } from "../lib/attachments";
 import { attachmentViews } from "../lib/blocks";
+import { isModelEnabled } from "../lib/catalog";
 import { finishReasonLabel, formatUsage, usageLabel } from "../lib/format";
 import { nodeTarget, spanNodeLabel } from "../lib/nodes";
 import { ApiError, cancel, sendPrompt, type StreamStatus } from "../lib/api";
@@ -1047,13 +1048,20 @@ function ModelSelect({ sessionId, agent }: { readonly sessionId: string; readonl
   const session = sessions.find((s) => s.id === sessionId && s.agent === agent);
   if (session === undefined) return null;
   const pref = settings.models[session.agent];
+  // Parked models drop out of the picker — except the session's own stored
+  // pick, which stays visible (it just won't apply at the next spawn).
   const options = [
     ...new Set(
       [
         pref?.model,
         ...(pref?.fallbacks.split(",").map((f) => f.trim()) ?? []),
         session.model,
-      ].filter((m): m is string => typeof m === "string" && m !== ""),
+      ].filter(
+        (m): m is string =>
+          typeof m === "string" &&
+          m !== "" &&
+          (m === session.model || isModelEnabled(settings, session.node, session.agent, m)),
+      ),
     ),
   ];
   const value = session.model ?? "__default__";

@@ -11,6 +11,8 @@ const settings = (
   localNodeName: null,
   localNodeUrl: null,
   localNodeEnabled: true,
+  disabledAgents: [],
+  disabledModels: [],
   models,
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },

@@ -2,13 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useHotkeyRecorder } from "@tanstack/react-hotkeys";
 import { useHasKeyboard } from "../lib/keyboard";
 import { useStore } from "@tanstack/react-store";
-import {
-  settingsStore,
-  setDesktop,
-  setSettings,
-  type AgentModelPref,
-  type SepiaSettings,
-} from "../lib/settings";
+import { settingsStore, setDesktop, setSettings, type SepiaSettings } from "../lib/settings";
 import { LOCAL_NODE_ID } from "../lib/format";
 import { isPeerEnabled, type PeerNode } from "../lib/nodes";
 import { sepiaStore } from "../lib/store";
@@ -26,8 +20,10 @@ import {
 import { useAgents } from "../hooks/query/useAgents";
 import { useNodeLabel, useNodes, usePeerDescriptors, useSelfNode } from "../hooks/query/useNodes";
 import { NodesSection } from "./NodesSection";
+import { AgentsSection } from "./settings/AgentsSection";
 import { ClientSection } from "./settings/ClientSection";
 import { CredentialsSection } from "./settings/CredentialsSection";
+import { ModelsSection } from "./settings/ModelsSection";
 import { SidebarSection } from "./settings/SidebarSection";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -173,7 +169,7 @@ function DesktopSection() {
           }
         />
         <p className="text-xs text-muted-foreground">
-          Spawn-time model override; empty uses the agent&apos;s configured pref (Settings → Models)
+          Spawn-time model override; empty uses the agent&apos;s configured pref (Settings → Agents)
           or its own default.
         </p>
       </div>
@@ -415,6 +411,7 @@ const SECTIONS = [
   { id: "desktop", label: "Desktop" },
   { id: "sidebar", label: "Sidebar" },
   { id: "models", label: "Models" },
+  { id: "agents", label: "Agents" },
   { id: "nodes", label: "Nodes" },
   { id: "credentials", label: "Credentials" },
   { id: "keyboard", label: "Keyboard" },
@@ -425,7 +422,6 @@ const MOD_KEY = navigator.platform.toUpperCase().includes("MAC") ? "⌘" : "Ctrl
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const hasKeyboard = useHasKeyboard();
-  const { data: agents = [] } = useAgents();
   const settings = useStore(settingsStore);
   const settingsSection = useStore(sepiaStore, (state) => state.settingsSection);
   useEffect(() => {
@@ -532,73 +528,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               <ClientSection />
               <DesktopSection />
               <SidebarSection />
-              <section data-spy="models" className="flex scroll-mt-2 flex-col gap-2">
-                <h3 className="text-sm font-medium">Models</h3>
-                <p className="text-xs text-muted-foreground">
-                  Spawn-time model per agent — applied when the session&apos;s agent starts. Auto
-                  mode also sends the fallback list (devin&apos;s refusal-fallback).
-                </p>
-                {agents.length === 0 ? (
-                  <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
-                    <span className="text-sm font-medium">No agents</span>
-                    <span className="text-xs text-muted-foreground">
-                      Agents come from connected nodes — connect one to see what it can run.
-                    </span>
-                    <div>
-                      <Button variant="secondary" size="xs" onClick={() => scrollTo("nodes")}>
-                        Add a node
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-                {agents.map((agent) => {
-                  const pref: AgentModelPref = settings.models[agent.id] ?? {
-                    model: "",
-                    fallbacks: "",
-                    mode: "auto",
-                  };
-                  const update = (patch: Partial<AgentModelPref>): void =>
-                    setSettings({
-                      models: { ...settings.models, [agent.id]: { ...pref, ...patch } },
-                    });
-                  return (
-                    <div
-                      key={agent.id}
-                      className="flex flex-col gap-2 rounded-lg border border-border p-3"
-                    >
-                      <span className="text-sm font-medium">{agent.label}</span>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <Input
-                          placeholder="Model (empty = agent default)"
-                          aria-label={`${agent.label} model`}
-                          value={pref.model}
-                          onChange={(event) => update({ model: event.target.value })}
-                        />
-                        <Select
-                          value={pref.mode}
-                          onValueChange={(v) => update({ mode: v as AgentModelPref["mode"] })}
-                        >
-                          <SelectTrigger aria-label={`${agent.label} fallback mode`}>
-                            {pref.mode === "auto" ? "Auto fallback" : "Manual"}
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="auto">Auto fallback</SelectItem>
-                            <SelectItem value="manual">Manual</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      {pref.mode === "auto" && (
-                        <Input
-                          placeholder="Fallback models, comma-separated"
-                          aria-label={`${agent.label} fallback models`}
-                          value={pref.fallbacks}
-                          onChange={(event) => update({ fallbacks: event.target.value })}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </section>
+              <ModelsSection scrollTo={scrollTo} />
+              <AgentsSection scrollTo={scrollTo} />
               <NodesSection />
               <CredentialsSection />
               {hasKeyboard && <KeyboardSection />}

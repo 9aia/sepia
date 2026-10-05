@@ -1,5 +1,12 @@
 import { Store } from "@tanstack/react-store";
-import { LOCAL_NODE_ID, nodeKey } from "./format";
+import {
+  agentKey,
+  catalogKey,
+  LOCAL_NODE_ID,
+  nodeKey,
+  parseAgentKey,
+  parseCatalogKey,
+} from "./format";
 import {
   defaultSidebarSections,
   normalizeSidebarSections,
@@ -73,6 +80,23 @@ export interface SepiaSettings {
    * origin is the transport every call lands on, not just a data source.
    */
   localNodeEnabled: boolean;
+  /**
+   * Settings → Agents' park list — `nodeKey:agentId` catalog keys
+   * (`local:devin`, `node_x:cline`). A listed agent is "not offered on that
+   * node": the footer's pick menu skips it, and create/attach resolution
+   * treats a stored pick naming it as unset (the roster's next enabled
+   * agent takes over). The roster still lists it — parked, not removed —
+   * so the toggle can bring it back.
+   */
+  disabledAgents: string[];
+  /**
+   * Settings → Models' park list — `nodeKey:agentId:modelId` catalog keys
+   * (a null model id keys the agent-default entry as `…:auto`). A listed
+   * model is never emitted as a spawn-time `model`/`fallbacks` arg on that
+   * node+agent and drops out of model pickers; a stored pick naming it
+   * (session meta, `desktop.model`) still displays but isn't applied.
+   */
+  disabledModels: string[];
   /** Sidebar sections — array order is the render order. */
   sidebar: { sections: SidebarSectionConfig[] };
 }
@@ -145,6 +169,35 @@ const normalizeLocalNodeUrl = (value: unknown): string | null => {
   }
 };
 
+/**
+ * Stored park lists keep only well-formed entries, canonicalized and deduped:
+ * the node segment runs through `nodeKey` (the local alias collapses to
+ * "local") and the whole key is re-minted, so equivalent spellings fold to
+ * one entry. Malformed rows — wrong segment count, empty segments, non-
+ * strings — drop.
+ */
+const normalizeAgentKeys = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const keys = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const parsed = parseAgentKey(entry);
+    if (parsed !== null) keys.add(agentKey(parsed.node, parsed.agent));
+  }
+  return [...keys];
+};
+
+const normalizeModelKeys = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const keys = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const parsed = parseCatalogKey(entry);
+    if (parsed !== null) keys.add(catalogKey(parsed.node, parsed.agent, parsed.model));
+  }
+  return [...keys];
+};
+
 const defaultSettings = (): SepiaSettings => ({
   desktop: { node: null, agent: null, model: null, cwd: null },
   models: {},
@@ -154,6 +207,8 @@ const defaultSettings = (): SepiaSettings => ({
   localNodeName: null,
   localNodeUrl: null,
   localNodeEnabled: true,
+  disabledAgents: [],
+  disabledModels: [],
   sidebar: { sections: defaultSidebarSections() },
 });
 
@@ -189,6 +244,8 @@ const load = (): SepiaSettings => {
       // Absent (and any non-false legacy value) reads as enabled — same
       // convention as `PeerNode.enabled`.
       localNodeEnabled: parsed.localNodeEnabled !== false,
+      disabledAgents: normalizeAgentKeys(parsed.disabledAgents),
+      disabledModels: normalizeModelKeys(parsed.disabledModels),
       sidebar: {
         sections: normalizeSidebarSections(
           typeof parsed.sidebar === "object" && parsed.sidebar !== null

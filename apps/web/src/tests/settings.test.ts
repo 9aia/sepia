@@ -31,6 +31,8 @@ const DEFAULTS: SepiaSettings = {
   localNodeName: null,
   localNodeUrl: null,
   localNodeEnabled: true,
+  disabledAgents: [],
+  disabledModels: [],
   sidebar: { sections: defaultSidebarSections() },
 };
 

@@ -27,6 +27,7 @@ import { usePatchSessionMeta } from "../hooks/query/useSessionMeta";
 import { useCreateProject } from "../hooks/query/useProjects";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
+import { enabledAgentOr } from "../lib/catalog";
 import { modelArgsFor } from "../lib/models";
 import { bareProjectId, isLocalNode, projectKey, resolveSession, sessionKey } from "../lib/format";
 import { useNodesConnected } from "../hooks/query/useNodes";
@@ -129,9 +130,15 @@ export function SessionList() {
     // The desktop is the current working environment — it drives creates
     // that didn't name a node (the button, the hotkey, "+").
     const target = resolveCreateTarget(settings, node);
-    // Unset agent → the local node keeps the roster's first agent, while a
-    // peer gets no override and picks its own (a local-only id would fail).
-    const agent = target.agent ?? (isLocalNode(target.node) ? agents[0]?.id : undefined);
+    // Unset or parked agent → the local node keeps the roster's first
+    // enabled agent, while a peer gets no override and picks its own (a
+    // local-only id would fail).
+    const agent = enabledAgentOr(
+      settings,
+      target.node,
+      target.agent,
+      isLocalNode(target.node) ? agents.map((a) => a.id) : [],
+    );
     createMutation.mutate({
       cwd: dir,
       agent,

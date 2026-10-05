@@ -29,6 +29,7 @@ import {
   type PeerCredentialSpec,
   type PeerNode,
 } from "../lib/nodes";
+import { setAgentEnabled, type CatalogNode } from "../lib/catalog";
 import { credentialsStore } from "../lib/credentials";
 import { LOCAL_NODE_ID } from "../lib/format";
 import { SECRET_MASK, type ManagedServer } from "../lib/servers";
@@ -36,6 +37,8 @@ import { useServers } from "../hooks/query/useServers";
 import { setSettings, settingsStore } from "../lib/settings";
 import { setSettingsOpen } from "../lib/store";
 import { toastSuccess } from "../lib/toast";
+import { useCatalog } from "../hooks/useCatalog";
+import { CatalogRow, CountBadge, ModelList } from "./settings/CatalogRow";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1016,15 +1019,60 @@ function LocalNodeEditForm({
   );
 }
 
+/**
+ * A node row's expandable detail — the agents its catalog entry carries,
+ * each with its per-node model set and the per-`node:agent` switch (the
+ * same toggle Settings → Agents exposes). A parked node has no catalog
+ * entry; an enabled one with a still-unresolved roster shows the pending
+ * hint.
+ */
+function NodeAgentList({
+  catalogNode,
+  enabled,
+}: {
+  readonly catalogNode: CatalogNode | undefined;
+  readonly enabled: boolean;
+}) {
+  if (catalogNode === undefined || catalogNode.agents.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {enabled
+          ? "No agents reported — the node's roster hasn't landed yet."
+          : "Disabled — this node contributes no agents."}
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col divide-y divide-border/40">
+      {catalogNode.agents.map((agent) => (
+        <div key={agent.key} className="flex items-center gap-3 py-1.5">
+          <div className={`min-w-0 flex-1${agent.enabled ? "" : " opacity-60"}`}>
+            <span className="block text-xs font-medium">{agent.label}</span>
+            <ModelList models={agent.models} />
+          </div>
+          <Switch
+            checked={agent.enabled}
+            onCheckedChange={(value) => setAgentEnabled(agent.node, agent.id, value)}
+            aria-label={`${agent.enabled ? "Disable" : "Enable"} agent ${agent.label} on ${catalogNode.label}`}
+            title={agent.enabled ? "Disable agent" : "Enable agent"}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // --- Section -----------------------------------------------------------------
 
 /**
  * Settings → Nodes: the node registry behind the federated lists — the
  * local node first (the machine this client treats as its own; same
  * controls as a peer, minus credential/remove), then each registered peer.
- * Each row shows reachability, the display name and address, an enable
- * switch (disabled nodes merge nothing; a disabled peer also resolves to
- * an unreachable target), and an edit affordance — the local row's pencil
+ * Each row shows reachability, the display name and address, an agent-count
+ * badge, an enable switch (disabled nodes merge nothing; a disabled peer
+ * also resolves to an unreachable target), and an edit affordance — the
+ * expandable lists the node's catalog agents with their per-node model
+ * sets; the local row's pencil
  * opens its own dialog (nickname + address override), a peer's ⋮ menu
  * covers every peer subfield (nickname, address, credential, routing)
  * plus a confirmed remove since a gateway peer's stored credential dies
@@ -1032,6 +1080,7 @@ function LocalNodeEditForm({
  */
 export function NodesSection() {
   const { self, selfStatus, peers } = useNodes();
+  const catalog = useCatalog();
   const credentials = useStore(credentialsStore);
   const localName = useStore(settingsStore, (s) => s.localNodeName);
   const localEnabled = useStore(settingsStore, (s) => s.localNodeEnabled);
@@ -1049,6 +1098,8 @@ export function NodesSection() {
   const [editing, setEditing] = useState<PeerNode | null>(null);
   const [editingLocal, setEditingLocal] = useState(false);
   const [removing, setRemoving] = useState<PeerNode | null>(null);
+  // The catalog's local entry — absent while this machine is parked.
+  const localCatalog = catalog.nodes.find((entry) => entry.node === LOCAL_NODE_ID);
 
   return (
     <section data-spy="nodes" className="flex scroll-mt-2 flex-col gap-2">
@@ -1058,28 +1109,29 @@ export function NodesSection() {
         client — actions go to the machine that holds each session's lock.
       </p>
       <div className="divide-y divide-border/50 rounded-lg border border-border">
-        <div className="flex items-center gap-3 px-3 py-2.5">
-          <StatusDot
-            ok={
-              localEnabled
-                ? selfStatus === "unknown"
-                  ? undefined
-                  : selfStatus === "online"
-                : undefined
-            }
-            title={
-              !localEnabled
-                ? "Disabled"
-                : selfStatus === "offline"
-                  ? `Unreachable — run \`sepia serve\` on ${selfThisMachine ? "this machine" : selfHost}`
+        <CatalogRow
+          label={localName ?? self?.name ?? "this node"}
+          leading={
+            <StatusDot
+              ok={
+                localEnabled
+                  ? selfStatus === "unknown"
+                    ? undefined
+                    : selfStatus === "online"
                   : undefined
-            }
-          />
-          <div className={`min-w-0 flex-1${localEnabled ? "" : " opacity-60"}`}>
-            <span className="flex items-center gap-1.5">
-              <span className="truncate text-sm font-medium">
-                {localName ?? self?.name ?? (selfThisMachine ? "This machine" : selfHost)}
-              </span>
+              }
+              title={
+                !localEnabled
+                  ? "Disabled"
+                  : selfStatus === "offline"
+                    ? `Unreachable — run \`sepia serve\` on ${selfThisMachine ? "this machine" : selfHost}`
+                    : undefined
+              }
+            />
+          }
+          title={localName ?? self?.name ?? (selfThisMachine ? "This machine" : selfHost)}
+          badges={
+            <>
               {selfThisMachine && (
                 <Badge
                   variant="outline"
@@ -1090,43 +1142,53 @@ export function NodesSection() {
                   this machine
                 </Badge>
               )}
+              {localCatalog !== undefined && (
+                <CountBadge count={localCatalog.agents.length} title="Agents on this node" />
+              )}
               {!localEnabled && (
                 <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">
                   disabled
                 </Badge>
               )}
-            </span>
-            <span className="block truncate text-xs text-muted-foreground">
-              {localName !== null && self !== null ? `${self.name} — ` : ""}
-              {selfAddress}
-            </span>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Switch
-              checked={localEnabled}
-              onCheckedChange={(value) => setEnabled.mutate({ id: LOCAL_NODE_ID, enabled: value })}
-              aria-label={`${localEnabled ? "Disable" : "Enable"} node ${self?.name ?? "this machine"}`}
-              title={localEnabled ? "Disable node" : "Enable node"}
-            />
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Edit this node"
-              title="Edit node"
-              onClick={() => setEditingLocal(true)}
-            >
-              <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} />
-            </Button>
-          </div>
-        </div>
+            </>
+          }
+          subline={`${localName !== null && self !== null ? `${self.name} — ` : ""}${selfAddress}`}
+          dimmed={!localEnabled}
+          trailing={
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Switch
+                checked={localEnabled}
+                onCheckedChange={(value) =>
+                  setEnabled.mutate({ id: LOCAL_NODE_ID, enabled: value })
+                }
+                aria-label={`${localEnabled ? "Disable" : "Enable"} node ${self?.name ?? "this machine"}`}
+                title={localEnabled ? "Disable node" : "Enable node"}
+              />
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Edit this node"
+                title="Edit node"
+                onClick={() => setEditingLocal(true)}
+              >
+                <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} />
+              </Button>
+            </div>
+          }
+        >
+          <NodeAgentList catalogNode={localCatalog} enabled={localEnabled} />
+        </CatalogRow>
         {peers.map((peer, index) => {
           const enabled = isPeerEnabled(peer);
+          const catalogNode = catalog.nodes.find((entry) => entry.node === peer.id);
           return (
-            <div key={peer.id} className="flex items-center gap-3 px-3 py-2.5">
-              <StatusDot ok={statuses[index]} title={enabled ? undefined : "Disabled"} />
-              <div className={`min-w-0 flex-1${enabled ? "" : " opacity-60"}`}>
-                <span className="flex items-center gap-1.5">
-                  <span className="truncate text-sm font-medium">{peer.alias ?? peer.name}</span>
+            <CatalogRow
+              key={peer.id}
+              label={peer.alias ?? peer.name}
+              leading={<StatusDot ok={statuses[index]} title={enabled ? undefined : "Disabled"} />}
+              title={peer.alias ?? peer.name}
+              badges={
+                <>
                   {isThisMachine(peer.url) && (
                     <Badge
                       variant="outline"
@@ -1142,54 +1204,60 @@ export function NodesSection() {
                       gateway
                     </Badge>
                   )}
+                  {catalogNode !== undefined && (
+                    <CountBadge count={catalogNode.agents.length} title="Agents on this node" />
+                  )}
                   {!enabled && (
                     <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">
                       disabled
                     </Badge>
                   )}
-                </span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {peer.alias !== undefined ? `${peer.name} — ` : ""}
-                  {peer.url}
-                  {peer.via !== "gateway" &&
-                    peer.credentialId !== undefined &&
-                    ` — credential ${credentials.find((credential) => credential.id === peer.credentialId)?.label ?? "missing"} ${SECRET_MASK}`}
-                </span>
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Switch
-                  checked={enabled}
-                  onCheckedChange={(value) => setEnabled.mutate({ id: peer.id, enabled: value })}
-                  aria-label={`${enabled ? "Disable" : "Enable"} node ${peer.name}`}
-                  title={enabled ? "Disable node" : "Enable node"}
-                />
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={`Actions for node ${peer.name}`}
-                        title="Node actions"
-                      />
-                    }
-                  >
-                    <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => setEditing(peer)}>
-                      <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} />
-                      Edit node
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" onClick={() => setRemoving(peer)}>
-                      <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-                      Remove node
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </div>
+                </>
+              }
+              subline={`${peer.alias !== undefined ? `${peer.name} — ` : ""}${peer.url}${
+                peer.via !== "gateway" && peer.credentialId !== undefined
+                  ? ` — credential ${credentials.find((credential) => credential.id === peer.credentialId)?.label ?? "missing"} ${SECRET_MASK}`
+                  : ""
+              }`}
+              dimmed={!enabled}
+              trailing={
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Switch
+                    checked={enabled}
+                    onCheckedChange={(value) => setEnabled.mutate({ id: peer.id, enabled: value })}
+                    aria-label={`${enabled ? "Disable" : "Enable"} node ${peer.name}`}
+                    title={enabled ? "Disable node" : "Enable node"}
+                  />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={`Actions for node ${peer.name}`}
+                          title="Node actions"
+                        />
+                      }
+                    >
+                      <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => setEditing(peer)}>
+                        <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} />
+                        Edit node
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="destructive" onClick={() => setRemoving(peer)}>
+                        <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                        Remove node
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              }
+            >
+              <NodeAgentList catalogNode={catalogNode} enabled={enabled} />
+            </CatalogRow>
           );
         })}
       </div>

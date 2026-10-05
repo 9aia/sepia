@@ -141,6 +141,80 @@ export const bareProjectId = (ref: string): string => {
   return index === -1 ? ref : ref.slice(index + 1);
 };
 
+// --- Catalog keys -------------------------------------------------------------
+// Settings → Agents/Models/Nodes address offerings across the federation as
+// `node:agent` (agents) and `node:agent:model` (models) keys — the same
+// nodeKey-segment convention session/project keys use, so the local alias
+// and the "local" sentinel normalize identically.
+
+/**
+ * The model segment for "whatever the agent runs by default" — agents don't
+ * advertise a model roster on the wire, so the agent default is itself a
+ * catalog entry keyed under this sentinel id (e.g. `local:devin:auto`).
+ */
+export const AUTO_MODEL_ID = "auto";
+
+/** Agent catalog key — `<nodeKey>:<agentId>` (`local:devin`, `node_x:cline`). */
+export const agentKey = (node: string | undefined, agent: string): string =>
+  `${nodeKey(node)}:${agent}`;
+
+/**
+ * Model catalog key — `<nodeKey>:<agentId>:<modelId>`. A null/empty model id
+ * mints the agent-default entry (`AUTO_MODEL_ID`); a model id may itself
+ * carry colons — keys parse by taking the first two segments and joining
+ * the tail.
+ */
+export const catalogKey = (
+  node: string | undefined,
+  agent: string,
+  model: string | null | undefined,
+): string =>
+  `${agentKey(node, agent)}:${model === null || model === undefined || model === "" ? AUTO_MODEL_ID : model}`;
+
+/**
+ * Parse a `node:agent` catalog key. The node segment canonicalizes through
+ * `nodeKey` (local aliases collapse to "local"); a missing/empty segment
+ * fails — `null`, not a partial key.
+ */
+export const parseAgentKey = (key: string): { node: string; agent: string } | null => {
+  // Exactly `node:agent` — a longer catalog key must not parse as one.
+  const parts = key.split(":");
+  if (parts.length !== 2 || parts[0] === "" || parts[1] === "") return null;
+  return { node: nodeKey(parts[0]), agent: parts[1] };
+};
+
+/**
+ * Parse a `node:agent:model` catalog key — two segments minimum for
+ * node+agent; everything after the second colon is the model id (model ids
+ * may carry colons). Malformed keys return `null`.
+ */
+export const parseCatalogKey = (
+  key: string,
+): { node: string; agent: string; model: string } | null => {
+  const parts = key.split(":");
+  if (parts.length < 3) return null;
+  const [node, agent, ...rest] = parts;
+  const model = rest.join(":");
+  if (node === undefined || agent === undefined || model === "") return null;
+  return { node: nodeKey(node), agent, model };
+};
+
+/**
+ * Semantic equality for `node:agent:model` keys — node segments compare
+ * through `nodeKey` so a local-alias form matches the "local" sentinel.
+ */
+export const sameCatalogKey = (
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean => {
+  if (a === b) return true;
+  if (a === null || a === undefined || b === null || b === undefined) return false;
+  const ka = parseCatalogKey(a);
+  const kb = parseCatalogKey(b);
+  if (ka === null || kb === null) return false;
+  return ka.node === kb.node && ka.agent === kb.agent && ka.model === kb.model;
+};
+
 /**
  * Semantic equality for session keys. Several literal forms address one
  * row — `node:agent:id`, the local-implicit `agent:id`, and the

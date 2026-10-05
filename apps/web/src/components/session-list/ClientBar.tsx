@@ -13,6 +13,7 @@ import { sepiaStore, setSettingsOpen } from "../../lib/store";
 import { settingsStore } from "../../lib/settings";
 import { useClient } from "../../lib/client";
 import { clearFocus, setFocus, useFocus } from "../../lib/focus";
+import { isAgentEnabled, isModelEnabled } from "../../lib/catalog";
 import { isPeerEnabled, nodeName } from "../../lib/nodes";
 import { LOCAL_NODE_ID, nodeKey } from "../../lib/format";
 import { useAgents } from "../../hooks/query/useAgents";
@@ -78,6 +79,11 @@ export function ClientBar() {
   const client = useClient();
   const desktop = useFocus();
   const modelPrefs = useStore(settingsStore, (state) => state.models);
+  // Parked agents/models stay out of the pick menus — "not offered on that
+  // node". A stored-but-parked pick still displays in the summary (below);
+  // resolveCreateTarget/modelArgsFor skip applying it at spawn.
+  const disabledAgents = useStore(settingsStore, (state) => state.disabledAgents);
+  const disabledModels = useStore(settingsStore, (state) => state.disabledModels);
   const { self, selfStatus, peers } = useNodes();
   const statuses = useNodeStatuses(peers);
   const descriptors = usePeerDescriptors(peers);
@@ -89,11 +95,14 @@ export function ClientBar() {
 
   // The merged roster stands in for a node whose descriptor hasn't landed.
   const fallbackIds = agents.map((agent) => agent.id);
+  const flagStore = { disabledAgents, disabledModels };
   const entries: DesktopEntry[] = [
     {
       node: LOCAL_NODE_ID,
       label: nodeName(undefined),
-      agents: self?.agents ?? fallbackIds,
+      agents: (self?.agents ?? fallbackIds).filter((id) =>
+        isAgentEnabled(flagStore, LOCAL_NODE_ID, id),
+      ),
       reachable: selfStatus !== "offline",
     },
     ...peers.flatMap((peer, index) =>
@@ -102,7 +111,9 @@ export function ClientBar() {
             {
               node: peer.id,
               label: peer.alias ?? peer.name,
-              agents: descriptors[index]?.agents ?? fallbackIds,
+              agents: (descriptors[index]?.agents ?? fallbackIds).filter((id) =>
+                isAgentEnabled(flagStore, peer.id, id),
+              ),
               reachable: statuses[index],
             },
           ]
@@ -117,7 +128,13 @@ export function ClientBar() {
   const focusedKey = nodeKey(desktop.node ?? undefined);
   const entry = entries.find((e) => e.node === focusedKey);
   const nodeMissing = desktop.node !== null && entry === undefined;
-  const agentId = desktop.agent ?? (focusedKey === LOCAL_NODE_ID ? (agents[0]?.id ?? null) : null);
+  // A parked stored pick still displays (the summary reads what was picked);
+  // only the roster fallback skips parked agents.
+  const agentId =
+    desktop.agent ??
+    (focusedKey === LOCAL_NODE_ID
+      ? (agents.map((a) => a.id).find((id) => isAgentEnabled(flagStore, LOCAL_NODE_ID, id)) ?? null)
+      : null);
   // Disabled peers drop out of `entries`, so a desktop aimed at one reads
   // as missing; a probed-and-failed peer is the other unreachable case.
   const unreachable = nodeMissing || entry?.reachable === false;
@@ -157,15 +174,24 @@ export function ClientBar() {
   const modelText = desktop.model ?? configuredModel ?? "agent default";
 
   // The Model submenu lists the agent's known models — the configured
-  // pref plus its comma-separated fallbacks (Settings → Models); a pick
-  // outside that list still shows so its check mark stays visible.
+  // pref plus its comma-separated fallbacks (Settings → Models), minus the
+  // parked ones; a pick outside that list still shows so its check mark
+  // stays visible (a stored-but-parked pick included — it just doesn't
+  // apply at spawn).
   const knownModels = [
     ...new Set(
       [agentPref?.model, ...(agentPref?.fallbacks.split(",") ?? [])]
         .map((model) => model?.trim())
-        .filter((model): model is string => model !== undefined && model !== ""),
+        .filter(
+          (model): model is string =>
+            model !== undefined &&
+            model !== "" &&
+            isModelEnabled(flagStore, focusedKey, agentId ?? "", model),
+        ),
     ),
   ];
+  // Parking the `auto` entry hides the "Agent default" affordance.
+  const autoEnabled = isModelEnabled(flagStore, focusedKey, agentId ?? "", null);
   const modelItems =
     desktop.model !== null && !knownModels.includes(desktop.model)
       ? [desktop.model, ...knownModels]
@@ -317,10 +343,12 @@ export function ClientBar() {
                 </span>
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-52">
-                <DropdownMenuItem onClick={() => setFocus({ model: null })}>
-                  Agent default
-                  {desktop.model === null && <Check />}
-                </DropdownMenuItem>
+                {autoEnabled && (
+                  <DropdownMenuItem onClick={() => setFocus({ model: null })}>
+                    Agent default
+                    {desktop.model === null && <Check />}
+                  </DropdownMenuItem>
+                )}
                 {modelItems.length > 0 && <DropdownMenuSeparator />}
                 {modelItems.map((model) => (
                   <DropdownMenuItem key={model} onClick={() => setFocus({ model })}>

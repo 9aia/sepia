@@ -16,6 +16,8 @@ const settings = (keybinds: Record<string, string | null>): SepiaSettings => ({
   localNodeName: null,
   localNodeUrl: null,
   localNodeEnabled: true,
+  disabledAgents: [],
+  disabledModels: [],
   models: {},
   keybinds,
   notifications: { enabled: false, done: true, permission: true },

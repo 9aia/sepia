@@ -21,6 +21,7 @@ import { useCreateSession } from "../../hooks/query/useCreateSession";
 import { useNodeLabel, useNodes, useNodesConnected } from "../../hooks/query/useNodes";
 import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
+import { enabledAgentOr } from "../../lib/catalog";
 import { resolveCreateTarget, useFocus } from "../../lib/focus";
 import { desktopAgentFor, desktopCwdFor, recentCwdFor, settingsStore } from "../../lib/settings";
 import { sidebarSectionLabel, sidebarSectionLimit } from "../../lib/sidebar";
@@ -457,11 +458,14 @@ function ProjectsSection({
       recentCwdFor(sessions, project.node) ??
       (nodeKey(project.node) === focusedKey ? resolvedCwd : "/");
     // The desktop's agent wins when the project sits on the desktop's node —
-    // unset → local keeps the roster's first agent, while a peer gets no
-    // override and picks its own.
-    const agent =
-      desktopAgentFor(settings, project.node) ??
-      (isLocalNode(project.node) ? agents[0]?.id : undefined);
+    // unset or parked → local keeps the roster's first enabled agent, while
+    // a peer gets no override and picks its own.
+    const agent = enabledAgentOr(
+      settings,
+      project.node,
+      desktopAgentFor(settings, project.node),
+      isLocalNode(project.node) ? agents.map((a) => a.id) : [],
+    );
     void createSession
       .mutateAsync({
         cwd,
@@ -833,8 +837,12 @@ export function SessionSections({
                       // The recents "+" targets the desktop, same as the
                       // main button — resolvedCwd is already resolved for it.
                       const target = resolveCreateTarget(settings, undefined);
-                      const agent =
-                        target.agent ?? (isLocalNode(target.node) ? agents[0]?.id : undefined);
+                      const agent = enabledAgentOr(
+                        settings,
+                        target.node,
+                        target.agent,
+                        isLocalNode(target.node) ? agents.map((a) => a.id) : [],
+                      );
                       createSession.mutate({
                         cwd: resolvedCwd,
                         agent,
