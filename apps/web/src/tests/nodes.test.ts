@@ -16,6 +16,7 @@ import {
   normalizePeer,
   pairGatewayPeer,
   pairPeer,
+  peerSecret,
   peerTarget,
   peerUrlParts,
   refreshSelf,
@@ -28,6 +29,7 @@ import {
   upsertPeer,
   type PeerNode,
 } from "../lib/nodes";
+import { addCredential, credentialById, credentialsStore } from "../lib/credentials";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "../lib/api";
 import { createServer, deleteServer, listServers, SECRET_MASK, updateServer } from "../lib/servers";
 import { getToken } from "../lib/token";
@@ -66,11 +68,13 @@ const mockedListServers = vi.mocked(listServers);
 
 const store = new Map<string, string>();
 
+// A peer fixture linked to a freshly filed credential — the credentialId
+// → secret resolution mirrors what a stored registry produces on load.
 const peer = (id: string, name = id): PeerNode => ({
   id,
   name,
   url: `https://${id}.example`,
-  token: `tok-${id}`,
+  credentialId: addCredential({ label: name, secret: `tok-${id}` }).id,
 });
 
 const session = (id: string, projectIds: string[] = []): SessionSummary => ({
@@ -103,6 +107,7 @@ beforeEach(() => {
     },
   });
   nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [] }));
+  credentialsStore.setState(() => []);
 });
 
 afterEach(() => {
@@ -138,9 +143,7 @@ describe("peer list helpers", () => {
     ]);
     // Same url, different id → the old url's owner is evicted.
     expect(
-      upsertPeer(base, { id: "z", name: "z", url: "https://a.example", token: null }).map(
-        (p) => p.id,
-      ),
+      upsertPeer(base, { id: "z", name: "z", url: "https://a.example" }).map((p) => p.id),
     ).toEqual(["b", "z"]);
   });
 
@@ -160,12 +163,19 @@ describe("addPeer / removePeer / refreshSelf", () => {
       agents: [],
       capabilities: [],
     });
-    const added = await addPeer("https://thinkpad.example/", " secret ");
+    const added = await addPeer("https://thinkpad.example/", { secret: " secret " });
     expect(added).toEqual({
       id: "node_1",
       name: "thinkpad",
       url: "https://thinkpad.example",
+      credentialId: expect.any(String),
+    });
+    // The secret moved into the credential store — peerTarget resolves it.
+    expect(peerSecret(added)).toBe("secret");
+    expect(peerTarget(added)).toEqual({
+      baseUrl: "https://thinkpad.example",
       token: "secret",
+      timeoutMs: 3_000,
     });
     expect(getPeers()).toHaveLength(1);
     expect(isMultiNode()).toBe(true);
@@ -177,7 +187,7 @@ describe("addPeer / removePeer / refreshSelf", () => {
     expect(JSON.parse(store.get("sepia:nodes") ?? "[]")).toEqual([]);
   });
 
-  it("a blank token normalizes to null", async () => {
+  it("a blank or missing secret links no credential", async () => {
     mockedGetNode.mockResolvedValue({
       id: "n",
       name: "n",
@@ -186,7 +196,53 @@ describe("addPeer / removePeer / refreshSelf", () => {
       agents: [],
       capabilities: [],
     });
-    expect((await addPeer("http://h", "   ")).token).toBeNull();
+    expect((await addPeer("http://h", { secret: "   " })).credentialId).toBeUndefined();
+    mockedGetNode.mockResolvedValue({
+      id: "n2",
+      name: "n2",
+      version: "1",
+      protocol: 1,
+      agents: [],
+      capabilities: [],
+    });
+    expect((await addPeer("http://h2", null)).credentialId).toBeUndefined();
+    // A dangling credential id (deleted between pick and submit) links nothing.
+    mockedGetNode.mockResolvedValue({
+      id: "n3",
+      name: "n3",
+      version: "1",
+      protocol: 1,
+      agents: [],
+      capabilities: [],
+    });
+    const added = await addPeer("http://h3", { credentialId: "cred_gone" });
+    expect(added.credentialId).toBeUndefined();
+    expect(mockedGetNode).toHaveBeenLastCalledWith({
+      baseUrl: "http://h3",
+      token: null,
+      timeoutMs: 5_000,
+    });
+  });
+
+  it("addPeer links an existing credential and probes with its secret", async () => {
+    const shared = addCredential({ label: "shared", secret: "shared-secret" });
+    mockedGetNode.mockResolvedValue({
+      id: "n",
+      name: "n",
+      version: "1",
+      protocol: 1,
+      agents: [],
+      capabilities: [],
+    });
+    const added = await addPeer("http://h", { credentialId: shared.id });
+    expect(added.credentialId).toBe(shared.id);
+    expect(mockedGetNode).toHaveBeenCalledWith({
+      baseUrl: "http://h",
+      token: "shared-secret",
+      timeoutMs: 5_000,
+    });
+    // The store gains no duplicate credential for a relink.
+    expect(credentialsStore.state).toEqual([shared]);
   });
 
   it("pairPeer redeems the code for a token, then registers like addPeer", async () => {
@@ -209,8 +265,12 @@ describe("addPeer / removePeer / refreshSelf", () => {
       id: "node_1",
       name: "thinkpad",
       url: "http://thinkpad:8787",
-      token: "sepia_issued",
+      credentialId: expect.any(String),
     });
+    // The issued token files into the credential store under the node's name.
+    const credential = credentialById(added.credentialId);
+    expect(credential?.secret).toBe("sepia_issued");
+    expect(credential?.label).toBe("thinkpad");
     expect(getPeers()).toHaveLength(1);
   });
 
@@ -241,7 +301,7 @@ describe("addPeer / removePeer / refreshSelf", () => {
       },
       peers: [],
     }));
-    await expect(addPeer("http://x", "")).rejects.toThrow("already in the list");
+    await expect(addPeer("http://x", null)).rejects.toThrow("already in the list");
     expect(getPeers()).toEqual([]);
   });
 
@@ -504,7 +564,6 @@ describe("gateway peers (via: gateway)", () => {
     id: "node_remote",
     name: "remote-box",
     url: "http://remote.example:8787",
-    token: null,
     via: "gateway",
     serverId: "srv_1",
   });
@@ -551,6 +610,28 @@ describe("gateway peers (via: gateway)", () => {
     expect(normalizePeer({ id: "n", url: "http://h", token: "t" })?.via).toBeUndefined();
   });
 
+  it("normalizePeer passes credentialId through and ignores the legacy inline token", () => {
+    expect(normalizePeer({ id: "n", url: "http://h", credentialId: "cred_1" })?.credentialId).toBe(
+      "cred_1",
+    );
+    // `token` doesn't read onto the peer — loadPeers upgrades it into the
+    // credential store (see credentials.test.ts).
+    expect(normalizePeer({ id: "n", url: "http://h", token: "t" })?.credentialId).toBeUndefined();
+    expect(
+      normalizePeer({ id: "n", url: "http://h", credentialId: "" })?.credentialId,
+    ).toBeUndefined();
+    expect(
+      normalizePeer({ id: "n", url: "http://h", credentialId: 5 })?.credentialId,
+    ).toBeUndefined();
+  });
+
+  it("peerTarget resolves the linked credential's secret and fails safe on a dangling link", () => {
+    const linked = peer("node_p");
+    expect(peerTarget(linked).token).toBe("tok-node_p");
+    // The credential was deleted out from under the link — no auth, no stale secret.
+    expect(peerTarget({ ...linked, credentialId: "cred_gone" }).token).toBeNull();
+  });
+
   it("addGatewayPeer registers the credential server-side, then probes through the gateway", async () => {
     mockedCreateServer.mockResolvedValue(managed);
     mockedGetNode.mockResolvedValue(descriptor);
@@ -574,7 +655,6 @@ describe("gateway peers (via: gateway)", () => {
       id: "node_remote",
       name: "remote-box",
       url: "http://remote.example:8787",
-      token: null,
       via: "gateway",
       serverId: "srv_1",
     });
@@ -856,22 +936,36 @@ describe("enabled peers", () => {
 });
 
 describe("updatePeerEntry", () => {
-  it("updates a direct peer's url and token in place", async () => {
+  it("updates a direct peer's url and files a fresh secret as a credential", async () => {
     nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("a")] }));
-    await updatePeerEntry("a", { url: "https://new.example:9000", token: "fresh" });
+    const before = getPeers()[0];
+    await updatePeerEntry("a", {
+      url: "https://new.example:9000",
+      credential: { secret: "fresh" },
+    });
     const updated = getPeers()[0];
     expect(updated?.url).toBe("https://new.example:9000");
-    expect(updated?.token).toBe("fresh");
+    expect(peerSecret(updated!)).toBe("fresh");
+    // A new secret files a NEW credential — the old link is replaced.
+    expect(updated?.credentialId).not.toBe(before?.credentialId);
+    expect(credentialById(updated?.credentialId)?.label).toBe("a");
     expect(mockedListServers).not.toHaveBeenCalled();
     expect(mockedUpdateServer).not.toHaveBeenCalled();
   });
 
-  it("keeps the stored token on the mask, clears it on empty", async () => {
+  it("keeps the link by default, clears on null, relinks a stored credential", async () => {
     nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("a")] }));
-    await updatePeerEntry("a", { token: SECRET_MASK });
-    expect(getPeers()[0]?.token).toBe("tok-a");
-    await updatePeerEntry("a", { token: "   " });
-    expect(getPeers()[0]?.token).toBeNull();
+    const original = getPeers()[0]?.credentialId;
+    await updatePeerEntry("a", {});
+    expect(getPeers()[0]?.credentialId).toBe(original);
+    await updatePeerEntry("a", { credential: null });
+    expect(getPeers()[0]?.credentialId).toBeUndefined();
+    expect(peerSecret(getPeers()[0]!)).toBeNull();
+
+    const shared = addCredential({ label: "shared", secret: "s2" });
+    await updatePeerEntry("a", { credential: { credentialId: shared.id } });
+    expect(getPeers()[0]?.credentialId).toBe(shared.id);
+    expect(peerTarget(getPeers()[0]!).token).toBe("s2");
   });
 
   it("routes a gateway peer's edits through updateServer, preserving the stored credential", async () => {
@@ -888,7 +982,6 @@ describe("updatePeerEntry", () => {
       id: "node_gw",
       name: "gw",
       url: "http://remote.example:8787",
-      token: null,
       via: "gateway",
       serverId: "srv_1",
     };
@@ -906,9 +999,9 @@ describe("updatePeerEntry", () => {
       auth: { type: "token", user: undefined, secret: SECRET_MASK },
       ssh: { host: "bastion", port: 22, user: "ops", key: "/keys/id" },
     });
-    // The peer record itself keeps token: null — the browser never holds it.
+    // The peer record keeps no credential link — the browser never holds it.
     expect(getPeers()[0]?.url).toBe("https://remote2.example");
-    expect(getPeers()[0]?.token).toBeNull();
+    expect(getPeers()[0]?.credentialId).toBeUndefined();
   });
 
   it("a new token on a gateway peer replaces the managed credential; empty clears it", async () => {
@@ -925,7 +1018,6 @@ describe("updatePeerEntry", () => {
       id: "node_gw",
       name: "gw",
       url: "http://remote.example:8787",
-      token: null,
       via: "gateway",
       serverId: "srv_1",
     };
@@ -947,7 +1039,6 @@ describe("updatePeerEntry", () => {
       id: "node_gw",
       name: "gw",
       url: "http://remote.example:8787",
-      token: null,
       via: "gateway",
       serverId: "srv_gone",
     };
@@ -991,7 +1082,6 @@ describe("updatePeerEntry routing transitions", () => {
     id: "node_gw",
     name: "gw",
     url: "http://remote.example:8787",
-    token: null,
     via: "gateway",
     serverId: "srv_1",
   });
@@ -1005,7 +1095,7 @@ describe("updatePeerEntry routing transitions", () => {
     ssh: null,
   };
 
-  it("direct → gateway creates a managed entry carrying the browser-held token", async () => {
+  it("direct → gateway creates a managed entry carrying the linked credential", async () => {
     nodesStore.setState(() => ({
       self: null,
       selfStatus: "unknown",
@@ -1027,7 +1117,9 @@ describe("updatePeerEntry routing transitions", () => {
     const updated = getPeers()[0];
     expect(updated?.via).toBe("gateway");
     expect(updated?.serverId).toBe("srv_new");
-    expect(updated?.token).toBeNull();
+    // The browser link is cleared — the credential now lives server-side
+    // (the credential record itself stays in the store for other peers).
+    expect(updated?.credentialId).toBeUndefined();
     expect(peerTarget(updated!)).toEqual({
       baseUrl: "/api/gateway/srv_new",
       token: getToken(),
@@ -1058,19 +1150,21 @@ describe("updatePeerEntry routing transitions", () => {
 
     await expect(updatePeerEntry("a", { via: "gateway" })).rejects.toThrow("server is down");
     expect(getPeers()[0]?.via).toBeUndefined();
-    expect(getPeers()[0]?.token).toBe("tok-a");
+    expect(peerSecret(getPeers()[0]!)).toBe("tok-a");
   });
 
-  it("gateway → direct deletes the managed entry and keeps no browser credential on a mask", async () => {
+  it("gateway → direct deletes the managed entry and keeps no credential when none submitted", async () => {
     nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gwPeer()] }));
     mockedDeleteServer.mockResolvedValue(undefined);
 
-    await updatePeerEntry("node_gw", { via: "direct", token: SECRET_MASK });
+    await updatePeerEntry("node_gw", { via: "direct" });
     expect(mockedDeleteServer).toHaveBeenCalledWith("srv_1");
     const updated = getPeers()[0];
     expect(updated?.via).toBeUndefined();
     expect(updated?.serverId).toBeUndefined();
-    expect(updated?.token).toBeNull();
+    // The managed secret can't come back — absent `credential` on the switch
+    // links nothing, and calls go out unauthenticated.
+    expect(updated?.credentialId).toBeUndefined();
     expect(peerTarget(updated!)).toEqual({
       baseUrl: "http://remote.example:8787",
       token: null,
@@ -1082,12 +1176,31 @@ describe("updatePeerEntry routing transitions", () => {
     expect("serverId" in persisted[0]!).toBe(false);
   });
 
-  it("gateway → direct installs a freshly typed token for the browser to hold", async () => {
+  it("gateway → direct files a freshly typed secret as a credential for the browser to hold", async () => {
     nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gwPeer()] }));
     mockedDeleteServer.mockResolvedValue(undefined);
 
-    await updatePeerEntry("node_gw", { via: "direct", token: "browser-token" });
-    expect(getPeers()[0]?.token).toBe("browser-token");
+    await updatePeerEntry("node_gw", {
+      via: "direct",
+      credential: { secret: "browser-token" },
+    });
+    const updated = getPeers()[0];
+    expect(peerSecret(updated!)).toBe("browser-token");
+    expect(credentialById(updated?.credentialId)?.label).toBe("gw");
+  });
+
+  it("gateway → direct can relink a credential already in the store", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gwPeer()] }));
+    mockedDeleteServer.mockResolvedValue(undefined);
+    const stored = addCredential({ label: "shared", secret: "s-shared" });
+
+    await updatePeerEntry("node_gw", {
+      via: "direct",
+      credential: { credentialId: stored.id },
+    });
+    const updated = getPeers()[0];
+    expect(updated?.credentialId).toBe(stored.id);
+    expect(peerTarget(updated!).token).toBe("s-shared");
   });
 
   it("gateway → direct still flips when the managed delete fails", async () => {

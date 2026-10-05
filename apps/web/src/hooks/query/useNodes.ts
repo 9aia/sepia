@@ -15,6 +15,7 @@ import {
   removePeerEntry,
   setPeerEnabled,
   updatePeerEntry,
+  type PeerCredentialSpec,
   type PeerEntryUpdate,
   type PeerNode,
 } from "../../lib/nodes";
@@ -92,12 +93,26 @@ export const usePeerDescriptors = (peers: ReadonlyArray<PeerNode>) =>
 /** How the browser reaches the peer — directly, or through this node's gateway. */
 export type PeerVia = "direct" | "gateway";
 
-/** Add + validate a peer, then refetch every merged list so it appears. */
+/**
+ * Add + validate a peer, then refetch every merged list so it appears. A
+ * direct add takes a `PeerCredentialSpec` (stored link or fresh secret —
+ * the store files it under the node's name); a gateway add takes the raw
+ * `token` for the managed registry.
+ */
 export const useAddNode = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ url, token, via }: { url: string; token: string; via?: PeerVia }) =>
-      via === "gateway" ? addGatewayPeer(url, token) : addPeer(url, token),
+    mutationFn: ({
+      url,
+      credential,
+      token,
+      via,
+    }: {
+      url: string;
+      credential?: PeerCredentialSpec | null;
+      token?: string;
+      via?: PeerVia;
+    }) => (via === "gateway" ? addGatewayPeer(url, token ?? "") : addPeer(url, credential ?? null)),
     onSuccess: () => {
       void queryClient.invalidateQueries();
       toastSuccess("Node added");

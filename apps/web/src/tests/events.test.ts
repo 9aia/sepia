@@ -8,6 +8,7 @@ import {
   subscribeNodeFeed,
 } from "../lib/events";
 import { nodesStore } from "../lib/nodes";
+import { addCredential, credentialsStore } from "../lib/credentials";
 import { setToken } from "../lib/token";
 
 const store = new Map<string, string>();
@@ -52,10 +53,12 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", storage);
   vi.stubGlobal("EventSource", FakeEventSource);
   nodesStore.setState((prev) => ({ ...prev, peers: [] }));
+  credentialsStore.setState(() => []);
 });
 
 afterEach(() => {
   nodesStore.setState((prev) => ({ ...prev, peers: [] }));
+  credentialsStore.setState(() => []);
   vi.unstubAllGlobals();
 });
 
@@ -185,9 +188,17 @@ describe("startNodeEventFeeds", () => {
     const stop = startNodeEventFeeds(client);
     expect(FakeEventSource.instances.map((s) => s.url)).toEqual(["/api/events"]);
 
+    const credential = addCredential({ label: "peer", secret: "ptok" });
     nodesStore.setState((prev) => ({
       ...prev,
-      peers: [{ id: "node_peer", name: "peer", url: "https://peer.example", token: "ptok" }],
+      peers: [
+        {
+          id: "node_peer",
+          name: "peer",
+          url: "https://peer.example",
+          credentialId: credential.id,
+        },
+      ],
     }));
     expect(FakeEventSource.instances.map((s) => s.url)).toEqual([
       "/api/events",

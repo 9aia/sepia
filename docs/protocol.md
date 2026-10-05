@@ -167,9 +167,9 @@ bearer tokens that authenticate exactly like `SEPIA_TOKEN`; they persist as
 sha256 hashes in `$SEPIA_HOME/tokens.json`, so deleting that file revokes
 them.
 
-Credentials are stored per-node in the UI's `node → token` map
-(`localStorage`/OS keychain later). CORS allows the serving origin + any
-registered peer origins.
+Credentials live in the UI's credential store (`localStorage`; peers link
+one by `credentialId` — OS keychain later). CORS allows the serving origin +
+any registered peer origins.
 
 ## Safety boundary
 

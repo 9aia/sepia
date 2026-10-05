@@ -19,8 +19,10 @@ import {
   isPeerEnabled,
   peerUrlParts,
   setPeerAlias,
+  type PeerCredentialSpec,
   type PeerNode,
 } from "../lib/nodes";
+import { credentialsStore } from "../lib/credentials";
 import { parseServerHost, SECRET_MASK } from "../lib/servers";
 import { setSettings, settingsStore } from "../lib/settings";
 import {
@@ -94,11 +96,89 @@ interface AddressFields {
   port: string;
 }
 
+// --- Credential picker -------------------------------------------------------
+// Direct peers link a stored credential (Settings → Credentials) instead of
+// holding a raw token — the picker lists the store plus "none"/"new" exits.
+// Gateway-routed peers still take a raw secret (it lands in the managed
+// registry server-side), so the forms keep the password field for that mode.
+
+const CREDENTIAL_NONE = "__none__";
+const CREDENTIAL_NEW = "__new__";
+
+/** Map the picker's value to the spec the node ops take. */
+const credentialSpec = (
+  picker: string,
+  newSecret: string,
+  label: string,
+): PeerCredentialSpec | null =>
+  picker === CREDENTIAL_NONE
+    ? null
+    : picker === CREDENTIAL_NEW
+      ? { secret: newSecret, label: label.trim() === "" ? undefined : label.trim() }
+      : { credentialId: picker };
+
+/** Select of stored credentials + "No credential"/"New credential…" exits. */
+function CredentialSelect({
+  value,
+  onChange,
+  onBlur,
+}: {
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly onBlur?: () => void;
+}) {
+  const credentials = useStore(credentialsStore);
+  const label =
+    value === CREDENTIAL_NONE
+      ? "No credential"
+      : value === CREDENTIAL_NEW
+        ? "New credential…"
+        : (credentials.find((credential) => credential.id === value)?.label ??
+          "Missing credential");
+  return (
+    <Select value={value} onValueChange={(v) => onChange(v ?? CREDENTIAL_NONE)}>
+      <SelectTrigger aria-label="Node credential" className="w-full" onBlur={onBlur}>
+        {label}
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={CREDENTIAL_NONE}>No credential</SelectItem>
+        {credentials.map((credential) => (
+          <SelectItem key={credential.id} value={credential.id}>
+            {credential.label}
+          </SelectItem>
+        ))}
+        <SelectItem value={CREDENTIAL_NEW}>New credential…</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * The "new credential" secret field — required only while the picker is on
+ * "New credential…" (the field unmounts otherwise, but the check keeps a
+ * stale value from blocking a submit).
+ */
+const newSecretValidator = ({
+  value,
+  fieldApi,
+}: {
+  value: string;
+  fieldApi: { form: { state: { values: { credential: string } } } };
+}): string | undefined =>
+  fieldApi.form.state.values.credential === CREDENTIAL_NEW && value.trim() === ""
+    ? "Enter the token for the new credential"
+    : undefined;
+
 // --- Add form ----------------------------------------------------------------
 
 interface AddFormValues extends AddressFields {
   label: string;
   code: string;
+  /** Direct peers: picker value — "__none__", "__new__", or a credential id. */
+  credential: string;
+  /** Secret for a "__new__" pick — filed in the credential store on save. */
+  newSecret: string;
+  /** Gateway peers only: the raw secret submitted to the managed registry. */
   token: string;
   viaGateway: boolean;
 }
@@ -109,14 +189,18 @@ const ADD_FORM_DEFAULTS: AddFormValues = {
   host: "",
   port: "8787",
   code: "",
+  credential: CREDENTIAL_NONE,
+  newSecret: "",
   token: "",
   viaGateway: false,
 };
 
 /**
  * Bottom-of-section add form (TanStack Form): label + scheme/host/port
- * address fields, auth via pairing code or bearer token, and the gateway
- * switch. The auth-mode toggle is presentational React state — the code
+ * address fields, auth via pairing code or a credential (a stored pick, a
+ * fresh secret filed in the credential store, or — gateway mode — a raw
+ * secret for the managed registry), and the gateway switch. The auth-mode
+ * toggle is presentational React state — the code
  * field's validator reads it — while every submitted value lives on the
  * form. Submission still goes through `useAddNode`/`usePairNode` — a wrong
  * address or credential fails the probe before the peer can poison the
@@ -143,8 +227,17 @@ function NodeAddForm() {
       };
       if (mode === "code") {
         pairNode.mutate({ url, code: value.code, via }, { onSuccess });
-      } else {
+      } else if (via === "gateway") {
         addNode.mutate({ url, token: value.token, via }, { onSuccess });
+      } else {
+        addNode.mutate(
+          {
+            url,
+            credential: credentialSpec(value.credential, value.newSecret, value.label),
+            via,
+          },
+          { onSuccess },
+        );
       }
     },
   });
@@ -255,25 +348,61 @@ function NodeAddForm() {
           )}
         </form.Field>
       ) : (
-        // The gateway flag swaps the placeholder — subscribe just this field.
-        <form.Subscribe selector={(state) => state.values.viaGateway}>
-          {(viaGateway) => (
-            <form.Field name="token">
-              {(field) => (
-                <Input
-                  type="password"
-                  placeholder={
-                    viaGateway ? "Bearer token (stored on this node)" : "Bearer token (if required)"
-                  }
-                  aria-label="Node token"
-                  autoComplete="new-password"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                />
-              )}
-            </form.Field>
-          )}
+        // Gateway routing keeps the raw-secret field (it goes to the managed
+        // registry); direct peers pick a stored credential instead.
+        <form.Subscribe
+          selector={(state) => [state.values.viaGateway, state.values.credential] as const}
+        >
+          {([viaGateway, credential]) =>
+            viaGateway ? (
+              <form.Field name="token">
+                {(field) => (
+                  <Input
+                    type="password"
+                    placeholder="Bearer token (stored on this node)"
+                    aria-label="Node token"
+                    autoComplete="new-password"
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                  />
+                )}
+              </form.Field>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <form.Field name="credential">
+                  {(field) => (
+                    <CredentialSelect
+                      value={field.state.value}
+                      onChange={field.handleChange}
+                      onBlur={field.handleBlur}
+                    />
+                  )}
+                </form.Field>
+                {credential === CREDENTIAL_NEW && (
+                  <form.Field
+                    name="newSecret"
+                    validators={{ onChange: newSecretValidator, onSubmit: newSecretValidator }}
+                  >
+                    {(field) => (
+                      <div className="flex flex-col gap-1">
+                        <Input
+                          type="password"
+                          placeholder="Bearer token — filed in Credentials"
+                          aria-label="New credential secret"
+                          autoComplete="new-password"
+                          value={field.state.value}
+                          onBlur={field.handleBlur}
+                          onChange={(event) => field.handleChange(event.target.value)}
+                        />
+                        <FieldError errors={field.state.meta.errors} />
+                      </div>
+                    )}
+                  </form.Field>
+                )}
+              </div>
+            )
+          }
         </form.Subscribe>
       )}
       <form.Field name="viaGateway">
@@ -315,7 +444,18 @@ function NodeAddForm() {
 
 interface EditFormValues extends AddressFields {
   label: string;
-  /** Seeded with SECRET_MASK when a credential exists — the mask means "keep". */
+  /**
+   * Direct-peer credential picker — "__none__", "__new__", or a credential
+   * id. Seeded with the peer's current link so an untouched save keeps it.
+   */
+  credential: string;
+  /** Secret for a "__new__" pick — filed in the credential store on save. */
+  newSecret: string;
+  /**
+   * Gateway-mode raw secret — seeded with SECRET_MASK, which round-trips to
+   * "keep the stored credential" (on a direct → gateway switch it moves the
+   * peer's linked credential into the managed registry).
+   */
   token: string;
   /** The `via` flag — checked means calls route through this node's server. */
   viaGateway: boolean;
@@ -328,37 +468,36 @@ const editDefaults = (peer: PeerNode): EditFormValues => {
     scheme,
     host,
     port: String(port),
-    // Gateway peers keep no token in the browser — the mask still seeds the
-    // field and round-trips to "keep the stored credential" on save.
-    token: peer.via === "gateway" ? SECRET_MASK : peer.token === null ? "" : SECRET_MASK,
+    credential: peer.credentialId ?? CREDENTIAL_NONE,
+    newSecret: "",
+    // Gateway peers keep no credential in the browser — the mask still seeds
+    // the field and round-trips to "keep the stored credential" on save.
+    token: SECRET_MASK,
     viaGateway: peer.via === "gateway",
   };
 };
 
 /**
  * The routing switch's subline — explains the current mode and warns on the
- * transition each way: direct → gateway moves the credential into this
- * node's store; gateway → direct drops it (the stored secret can't come
- * back), so the token field becomes the whole credential.
+ * transition each way: direct → gateway moves the linked credential into
+ * this node's store; gateway → direct drops it (the stored secret can't
+ * come back), so the picked credential becomes the whole credential.
  */
 const viaDescription = (peer: PeerNode, viaGateway: boolean): string => {
   if (viaGateway && peer.via === "gateway") {
     return "Calls route through this node's server — SSH tunnel settings live under Settings → Servers.";
   }
   if (viaGateway) {
-    return "Calls route through this node's server — the token above moves to its encrypted store.";
+    return "Calls route through this node's server — the linked credential moves to its encrypted store.";
   }
   if (peer.via === "gateway") {
-    return "Calls go straight from the browser — the stored credential is removed, so enter a token above if the peer needs one.";
+    return "Calls go straight from the browser — the stored credential is removed, so pick a credential above if the peer needs one.";
   }
   return "Gateway mode — for peers this browser can't reach directly.";
 };
 
-const tokenPlaceholder = (peer: PeerNode, viaGateway: boolean): string => {
-  if (viaGateway) return "Bearer token (stored on this node — clear to remove)";
-  if (peer.via === "gateway") return "Bearer token — the stored credential doesn't carry over";
-  return "Bearer token — clear for none";
-};
+/** Gateway-mode secret field's placeholder — mask means "keep stored". */
+const GATEWAY_TOKEN_PLACEHOLDER = "Bearer token (stored on this node — clear to remove)";
 
 /**
  * Per-peer edit form, seeded from the row's peer (keyed remount on id).
@@ -384,8 +523,14 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
           id: peer.id,
           update: {
             url,
-            token: value.token,
             via: value.viaGateway ? ("gateway" as const) : ("direct" as const),
+            // Gateway routing submits the raw secret to the managed
+            // registry; direct routing relinks/creates a stored credential.
+            ...(value.viaGateway
+              ? { token: value.token }
+              : {
+                  credential: credentialSpec(value.credential, value.newSecret, value.label),
+                }),
           },
         },
         {
@@ -465,22 +610,59 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
           )}
         </form.Field>
       </div>
-      <form.Subscribe selector={(state) => state.values.viaGateway}>
-        {(viaGateway) => (
-          <form.Field name="token">
-            {(field) => (
-              <Input
-                type="password"
-                placeholder={tokenPlaceholder(peer, viaGateway)}
-                aria-label="Node token"
-                autoComplete="new-password"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
-              />
-            )}
-          </form.Field>
-        )}
+      <form.Subscribe
+        selector={(state) => [state.values.viaGateway, state.values.credential] as const}
+      >
+        {([viaGateway, credential]) =>
+          viaGateway ? (
+            <form.Field name="token">
+              {(field) => (
+                <Input
+                  type="password"
+                  placeholder={GATEWAY_TOKEN_PLACEHOLDER}
+                  aria-label="Node token"
+                  autoComplete="new-password"
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                />
+              )}
+            </form.Field>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <form.Field name="credential">
+                {(field) => (
+                  <CredentialSelect
+                    value={field.state.value}
+                    onChange={field.handleChange}
+                    onBlur={field.handleBlur}
+                  />
+                )}
+              </form.Field>
+              {credential === CREDENTIAL_NEW && (
+                <form.Field
+                  name="newSecret"
+                  validators={{ onChange: newSecretValidator, onSubmit: newSecretValidator }}
+                >
+                  {(field) => (
+                    <div className="flex flex-col gap-1">
+                      <Input
+                        type="password"
+                        placeholder="Bearer token — filed in Credentials"
+                        aria-label="New credential secret"
+                        autoComplete="new-password"
+                        value={field.state.value}
+                        onBlur={field.handleBlur}
+                        onChange={(event) => field.handleChange(event.target.value)}
+                      />
+                      <FieldError errors={field.state.meta.errors} />
+                    </div>
+                  )}
+                </form.Field>
+              )}
+            </div>
+          )
+        }
       </form.Subscribe>
       <form.Field name="viaGateway">
         {(field) => (
@@ -536,6 +718,7 @@ const blurOnEnter = (event: KeyboardEvent<HTMLInputElement>): void => {
  */
 export function NodesSection() {
   const { self, selfStatus, peers } = useNodes();
+  const credentials = useStore(credentialsStore);
   const localName = useStore(settingsStore, (s) => s.localNodeName);
   // Drives refreshSelf — populates self, selfStatus and the node alias.
   useSelfNode();
@@ -549,8 +732,8 @@ export function NodesSection() {
     <section data-spy="nodes" className="flex scroll-mt-2 flex-col gap-2">
       <h3 className="text-sm font-medium">Nodes</h3>
       <p className="text-xs text-muted-foreground">
-        Machines running <code>sepia serve</code>. Their sessions, projects and chat merge into
-        this client — actions go to the machine that holds each session's lock.
+        Machines running <code>sepia serve</code>. Their sessions, projects and chat merge into this
+        client — actions go to the machine that holds each session's lock.
       </p>
       <div className="divide-y divide-border/50 rounded-lg border border-border">
         <div className="flex items-center gap-3 px-3 py-2.5">
@@ -605,7 +788,9 @@ export function NodesSection() {
                 <span className="block truncate text-xs text-muted-foreground">
                   {peer.alias !== undefined ? `${peer.name} — ` : ""}
                   {peer.url}
-                  {peer.via !== "gateway" && peer.token !== null && ` — token ${SECRET_MASK}`}
+                  {peer.via !== "gateway" &&
+                    peer.credentialId !== undefined &&
+                    ` — credential ${credentials.find((credential) => credential.id === peer.credentialId)?.label ?? "missing"} ${SECRET_MASK}`}
                 </span>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -644,8 +829,8 @@ export function NodesSection() {
           <DialogHeader>
             <DialogTitle>{`Edit ${editing?.alias ?? editing?.name ?? "node"}`}</DialogTitle>
             <DialogDescription>
-              Nickname, address, credential and routing for this peer. The masked token keeps the
-              stored value — clear it for no credential.
+              Nickname, address, credential and routing for this peer. Direct nodes link a stored
+              credential; gateway routing stores the secret on this node (the mask keeps it).
             </DialogDescription>
           </DialogHeader>
           {editing !== null && (

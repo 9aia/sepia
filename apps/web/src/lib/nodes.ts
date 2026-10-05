@@ -1,5 +1,6 @@
 import { Store } from "@tanstack/react-store";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "./api";
+import { addCredential, credentialById } from "./credentials";
 import { LOCAL_NODE_ID, setLocalNodeAlias } from "./format";
 import {
   createServer,
@@ -16,9 +17,9 @@ import type { AgentInfo, NodeDescriptor, Project, SessionSummary } from "./types
 
 /**
  * The node registry (docs/protocol.md): the local node is implicit — it is
- * whichever server is serving this UI — and peers are `{url, token}` pairs
- * the user adds in Settings. Peers persist in localStorage; the rest of the
- * app reads `nodesStore.state` for fan-out and routing.
+ * whichever server is serving this UI — and peers are `{url, credentialId}`
+ * pairs the user adds in Settings. Peers persist in localStorage; the rest
+ * of the app reads `nodesStore.state` for fan-out and routing.
  */
 
 export interface PeerNode {
@@ -30,11 +31,14 @@ export interface PeerNode {
   /** Origin of the peer's API, e.g. `https://thinkpad:8787` — no trailing slash. */
   readonly url: string;
   /**
-   * The peer's bearer token — held by the browser for direct peers, null for
-   * `via: "gateway"` peers (the credential lives server-side in the managed
-   * registry and never enters the browser… beyond the one add-time submit).
+   * The peer's credential — a reference into the browser credential store
+   * (lib/credentials.ts) for direct peers, absent for `via: "gateway"`
+   * peers (the credential lives server-side in the managed registry and
+   * never enters the browser… beyond the one add-time submit). A dangling
+   * id — its credential was deleted — resolves to no auth, so the peer's
+   * calls fail instead of silently sending a stale secret.
    */
-  readonly token: string | null;
+  readonly credentialId?: string;
   /**
    * "gateway" → this node's server forwards to the peer (docs/protocol.md
    * phase 3): the browser can't reach `url` directly, so calls go through
@@ -88,12 +92,31 @@ export const normalizePeer = (value: unknown): PeerNode | null => {
     id: raw.id,
     name: typeof raw.name === "string" && raw.name !== "" ? raw.name : raw.url,
     url: raw.url,
-    token: typeof raw.token === "string" && raw.token !== "" ? raw.token : null,
+    // A legacy inline `token` is deliberately not read here — loadPeers
+    // upgrades it into the credential store (see upgradeLegacyToken).
+    ...(typeof raw.credentialId === "string" && raw.credentialId !== ""
+      ? { credentialId: raw.credentialId }
+      : {}),
     ...(typeof raw.alias === "string" && raw.alias !== "" ? { alias: raw.alias } : {}),
     // Absent (and any non-false legacy value) reads as enabled.
     ...(raw.enabled === false ? { enabled: false as const } : {}),
     ...(gateway ? { via: "gateway" as const, serverId: raw.serverId as string } : {}),
   };
+};
+
+/**
+ * One-time upgrade for pre-credentials peer records: an inline `token`
+ * becomes a managed credential named after the peer, linked by
+ * `credentialId`, and the raw secret never persists on the peer again.
+ * Gateway peers are skipped — their credential was never browser-held.
+ */
+const upgradeLegacyToken = (record: unknown, peer: PeerNode): PeerNode => {
+  if (typeof record !== "object" || record === null) return peer;
+  if (peer.credentialId !== undefined || peer.via === "gateway") return peer;
+  const token = (record as Record<string, unknown>).token;
+  if (typeof token !== "string" || token === "") return peer;
+  const credential = addCredential({ label: peer.alias ?? peer.name, secret: token });
+  return { ...peer, credentialId: credential.id };
 };
 
 const loadPeers = (): PeerNode[] => {
@@ -102,7 +125,20 @@ const loadPeers = (): PeerNode[] => {
     if (raw === null) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.map(normalizePeer).filter((peer): peer is PeerNode => peer !== null);
+    let migrated = false;
+    const peers = parsed
+      .map((record) => {
+        const peer = normalizePeer(record);
+        if (peer === null) return null;
+        const upgraded = upgradeLegacyToken(record, peer);
+        if (upgraded !== peer) migrated = true;
+        return upgraded;
+      })
+      .filter((peer): peer is PeerNode => peer !== null);
+    // Rewrite the store when a legacy token moved into a credential so the
+    // secret lives at exactly one place from here on.
+    if (migrated) persistPeers(peers);
+    return peers;
   } catch {
     return [];
   }
@@ -234,11 +270,55 @@ const commitPeers = (peers: ReadonlyArray<PeerNode>): void => {
   nodesStore.setState((prev) => ({ ...prev, peers }));
 };
 
+/**
+ * What a node form submits for a direct peer's credential — a link to a
+ * stored credential (`credentialId`), or a fresh secret to file under the
+ * peer's name in the credential store.
+ */
+export type PeerCredentialSpec =
+  | { readonly credentialId: string }
+  | { readonly secret: string; readonly label?: string };
+
+/**
+ * The secret a spec resolves to — a stored credential's secret, the typed
+ * secret, or null. A dangling `credentialId` (deleted between render and
+ * submit) resolves to null so the peer registers credential-less rather
+ * than pointing at nothing.
+ */
+const specSecret = (spec: PeerCredentialSpec | null): string | null => {
+  if (spec === null) return null;
+  if ("credentialId" in spec) return credentialById(spec.credentialId)?.secret ?? null;
+  const secret = spec.secret.trim();
+  return secret === "" ? null : secret;
+};
+
+/**
+ * File the peer's credential in the store when the spec carried a fresh
+ * secret; a stored-credential spec just relinks. Returns the credentialId
+ * to persist on the peer, or undefined for no auth.
+ */
+const linkCredential = (
+  spec: PeerCredentialSpec | null,
+  secret: string | null,
+  fallbackLabel: string,
+): string | undefined => {
+  if (secret === null) return undefined;
+  if (spec !== null && "credentialId" in spec) return spec.credentialId;
+  const label = spec !== null && "label" in spec ? spec.label : undefined;
+  return addCredential({
+    label: label?.trim() === "" || label === undefined ? fallbackLabel : label,
+    secret,
+  }).id;
+};
+
 /** Fetch + validate a peer, then register it. Throws on unreachable/401. */
-export const addPeer = async (url: string, token: string): Promise<PeerNode> => {
+export const addPeer = async (
+  url: string,
+  credential: PeerCredentialSpec | null,
+): Promise<PeerNode> => {
   const target: ApiTarget = {
     baseUrl: normalizeNodeUrl(url),
-    token: token.trim() === "" ? null : token.trim(),
+    token: specSecret(credential),
     timeoutMs: PROBE_TIMEOUT_MS,
   };
   const descriptor = await getNode(target);
@@ -246,11 +326,12 @@ export const addPeer = async (url: string, token: string): Promise<PeerNode> => 
   if (self !== null && descriptor.id === self.id) {
     throw new Error("That's this machine — it's already in the list");
   }
+  const credentialId = linkCredential(credential, target.token, descriptor.name);
   const peer: PeerNode = {
     id: descriptor.id,
     name: descriptor.name,
     url: target.baseUrl,
-    token: target.token,
+    ...(credentialId !== undefined ? { credentialId } : {}),
   };
   commitPeers(upsertPeer(nodesStore.state.peers, peer));
   return peer;
@@ -285,41 +366,58 @@ export const pairPeer = async (url: string, code: string): Promise<PeerNode> => 
     token: null,
     timeoutMs: PROBE_TIMEOUT_MS,
   });
-  return addPeer(baseUrl, token);
+  return addPeer(baseUrl, { secret: token });
 };
+
+/** The secret a peer's credential link resolves to — null when unlinked or dangling. */
+export const peerSecret = (peer: PeerNode): string | null =>
+  credentialById(peer.credentialId)?.secret ?? null;
 
 /**
  * What the Settings → Nodes edit form submits: an address change and/or a
- * credential change and/or a routing change. `token: SECRET_MASK` echoes the
- * form's masked field and keeps the stored credential; "" clears it;
- * anything else replaces it. `via` absent keeps the current routing.
+ * credential change and/or a routing change. `via` absent keeps the current
+ * routing.
  */
 export interface PeerEntryUpdate {
   readonly url?: string;
+  /**
+   * Direct-peer credential — absent keeps the current link; `null` clears
+   * it; `{credentialId}` links a stored credential; `{secret, label?}`
+   * files a new one in the credential store and links it. Only applies
+   * when the resulting routing is direct.
+   */
+  readonly credential?: PeerCredentialSpec | null;
+  /**
+   * Gateway credential — the raw secret submitted to this node's managed
+   * registry. `SECRET_MASK` echoes the form's masked field and keeps the
+   * stored credential; "" clears it; anything else replaces it. Only
+   * applies when the resulting routing is gateway.
+   */
   readonly token?: string;
   /**
    * Routing target — absent keeps the current mode. Switching to "gateway"
    * hands the credential to this node's managed registry (the entry is
    * created when missing); switching to "direct" drops the managed entry
-   * and the browser resumes holding the token.
+   * and the browser resumes holding the credential.
    */
   readonly via?: "direct" | "gateway";
 }
 
 /**
- * Apply an edit-form save to a peer. A direct peer's url/token update in the
- * browser registry; a `via: "gateway"` peer's credential lives in the managed
- * registry, so url + auth changes go through `updateServer` — the existing
- * entry is fetched first so untouched fields (label, SSH config, a masked
- * secret) round-trip instead of being clobbered by the PATCH's full-replace
- * semantics.
+ * Apply an edit-form save to a peer. A direct peer's url/credentialId update
+ * in the browser registry; a `via: "gateway"` peer's credential lives in the
+ * managed registry, so url + auth changes go through `updateServer` — the
+ * existing entry is fetched first so untouched fields (label, SSH config, a
+ * masked secret) round-trip instead of being clobbered by the PATCH's
+ * full-replace semantics.
  *
  * A routing change moves the credential with it. Direct → gateway creates
- * (or repairs) the managed entry carrying the effective token, then clears
- * the browser's copy. Gateway → direct deletes the managed entry — the
- * stored secret can't come back to the browser (the registry only ever
- * returns masks), so the submitted token is the whole credential and a mask
- * there means "none".
+ * (or repairs) the managed entry carrying the resolved credential secret,
+ * then unlinks the browser's copy (the credential itself stays in the
+ * store — other peers may share it). Gateway → direct deletes the managed
+ * entry — the stored secret can't come back to the browser (the registry
+ * only ever returns masks), so the submitted credential spec is the whole
+ * credential.
  */
 export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Promise<void> => {
   const peer = nodesStore.state.peers.find((p) => p.id === id);
@@ -339,17 +437,19 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
     if (entry === undefined) {
       // Direct → gateway, or a gateway peer whose managed entry vanished
       // (removed via Settings → Servers): (re)create the credential entry.
-      // A kept token submits the browser-held credential — on a transition
-      // it moves to the node's store; a cleared one means no auth upstream.
+      // A kept token submits the peer's resolved credential — on a
+      // transition it moves to the node's store; a cleared one means no
+      // auth upstream.
+      const kept = peerSecret(peer);
       const created = await createServer({
         label: peer.alias ?? peer.name,
         host,
         port,
         scheme,
         auth: keepToken
-          ? peer.token === null
+          ? kept === null
             ? null
-            : { type: "token", secret: peer.token }
+            : { type: "token", secret: kept }
           : secret === null
             ? null
             : { type: "token", secret },
@@ -357,7 +457,9 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
       });
       commitPeers(
         nodesStore.state.peers.map((p) =>
-          p.id !== id ? p : { ...p, url, token: null, via: "gateway", serverId: created.id },
+          p.id !== id
+            ? p
+            : { ...p, url, credentialId: undefined, via: "gateway", serverId: created.id },
         ),
       );
       return;
@@ -388,7 +490,9 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
     });
     commitPeers(
       nodesStore.state.peers.map((p) =>
-        p.id !== id ? p : { ...p, url, token: null, via: "gateway", serverId: entry.id },
+        p.id !== id
+          ? p
+          : { ...p, url, credentialId: undefined, via: "gateway", serverId: entry.id },
       ),
     );
     return;
@@ -396,12 +500,19 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
 
   // Direct target. Leaving gateway drops the managed entry (best-effort —
   // an unreachable node must not strand the switch) since the stored
-  // credential can't return to the browser.
+  // credential can't return to the browser — the submitted credential spec
+  // (or none) is the whole link from here on.
   const leavingGateway = peer.via === "gateway";
   if (leavingGateway && peer.serverId !== undefined) {
     await deleteServer(peer.serverId).catch(() => undefined);
   }
-  const token = keepToken ? (leavingGateway ? null : peer.token) : secret;
+  const spec = update.credential;
+  const credentialId =
+    spec === undefined
+      ? leavingGateway
+        ? undefined
+        : peer.credentialId
+      : linkCredential(spec, specSecret(spec), peer.alias ?? peer.name);
   commitPeers(
     nodesStore.state.peers.map((p) =>
       p.id !== id
@@ -409,7 +520,7 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
         : {
             ...p,
             url,
-            token,
+            credentialId,
             ...(leavingGateway ? { via: undefined, serverId: undefined } : {}),
           },
     ),
@@ -440,7 +551,6 @@ const registerGatewayPeer = async (baseUrl: string, serverId: string): Promise<P
     id: descriptor.id,
     name: descriptor.name,
     url: baseUrl,
-    token: null,
     via: "gateway",
     serverId,
   };
@@ -527,7 +637,7 @@ export const refreshSelf = async (): Promise<NodeDescriptor> => {
  * API target for a registered peer. A `via: "gateway"` peer resolves to this
  * node's `/api/gateway/<serverId>` forward — every call site (fan-out lists,
  * session actions, SSE streams) routes through it unchanged; a direct peer
- * resolves to its own origin + browser-held token.
+ * resolves to its own origin + the linked credential's secret.
  */
 export const peerTarget = (peer: PeerNode): ApiTarget => {
   // A disabled peer resolves to the same deliberately-unreachable sentinel
@@ -539,7 +649,7 @@ export const peerTarget = (peer: PeerNode): ApiTarget => {
   if (peer.via === "gateway" && peer.serverId !== undefined) {
     return gatewayTarget(peer.serverId);
   }
-  return { baseUrl: peer.url, token: peer.token, timeoutMs: PEER_TIMEOUT_MS };
+  return { baseUrl: peer.url, token: peerSecret(peer), timeoutMs: PEER_TIMEOUT_MS };
 };
 
 /**

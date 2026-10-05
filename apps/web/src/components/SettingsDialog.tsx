@@ -28,6 +28,7 @@ import {
 import { useAgents } from "../hooks/query/useAgents";
 import { useNodeLabel, useNodes, usePeerDescriptors, useSelfNode } from "../hooks/query/useNodes";
 import { NodesSection } from "./NodesSection";
+import { CredentialsSection } from "./settings/CredentialsSection";
 import { ServersSection } from "./settings/ServersSection";
 import { SidebarSection } from "./settings/SidebarSection";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -388,6 +389,7 @@ const SECTIONS = [
   { id: "sidebar", label: "Sidebar" },
   { id: "models", label: "Models" },
   { id: "nodes", label: "Nodes" },
+  { id: "credentials", label: "Credentials" },
   { id: "servers", label: "Servers" },
   { id: "keyboard", label: "Keyboard" },
   { id: "notifications", label: "Notifications" },
@@ -570,6 +572,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 })}
               </section>
               <NodesSection />
+              <CredentialsSection />
               <ServersSection />
               {hasKeyboard && <KeyboardSection />}
               <NotificationsSection />
