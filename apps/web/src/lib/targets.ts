@@ -26,6 +26,10 @@ export interface ApiTarget {
  * absolute origin instead of the UI host. That's the seam for pointing the
  * client at a different node than the one serving the page; the serving
  * origin is only ever the default, not an identity.
+ *
+ * The token is bound to the address it was entered for (lib/token.ts): a
+ * repointed override yields `token: null` — the node's own credential must
+ * be re-entered, and this origin's token is never sent to a different host.
  */
 export const localTarget = (): ApiTarget => ({
   baseUrl: settingsStore.state.localNodeUrl ?? "",

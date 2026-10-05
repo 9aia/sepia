@@ -1246,6 +1246,47 @@ describe("createApp", () => {
     expect(lines[0]).toMatch(/^GET \/api\/sessions 200 \d+ms$/);
   });
 
+  it("honors ?access_token only on the SSE routes EventSource needs", async () => {
+    const { plane } = makeFakePlane();
+    const app = createApp(plane, { token: "secret", keepAliveMs: 0 });
+
+    // The two SSE GETs accept the query credential.
+    const events = await app(get("/api/events?access_token=secret"));
+    expect(events.status).toBe(200);
+    await events.body?.cancel();
+    const stream = await app(get("/api/sessions/sess-1/stream?access_token=secret"));
+    expect(stream.status).toBe(200);
+    await stream.body?.cancel();
+
+    // Everywhere else the query param is ignored — header or 401.
+    expect((await app(get("/api/sessions?access_token=secret"))).status).toBe(401);
+    expect((await app(get("/api/node?access_token=secret"))).status).toBe(401);
+    expect((await app(get("/api/sessions/sess-1/history?access_token=secret"))).status).toBe(401);
+  });
+
+  it("requires the bearer token on push endpoints too", async () => {
+    const { plane } = makeFakePlane();
+    const dir = mkdtempSync(join(tmpdir(), "sepia-meta-"));
+    const app = createApp(plane, {
+      token: "secret",
+      meta: createMetaStore(join(dir, "meta.json")),
+    });
+
+    expect((await app(get("/api/push/vapid"))).status).toBe(401);
+    expect(
+      (
+        await app(
+          post("/api/push/subscribe", {
+            endpoint: "https://push.example/sub",
+            keys: { auth: "a", p256dh: "p" },
+          }),
+        )
+      ).status,
+    ).toBe(401);
+    // …and authenticating works.
+    expect((await app(authed("/api/push/vapid", "secret"))).status).toBe(200);
+  });
+
   it("rejects an unauthenticated create without touching the plane", async () => {
     const { plane, created } = makeFakePlane();
     const response = await createApp(plane, { token: "secret" })(

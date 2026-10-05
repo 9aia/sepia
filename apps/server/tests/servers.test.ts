@@ -69,6 +69,9 @@ describe("validateServerInput", () => {
     [{ label: "", host: "h", port: 1 }, "label"],
     [{ label: "x", host: "bad host", port: 1 }, "host"],
     [{ label: "x", host: "http://h", port: 1 }, "host"],
+    [{ label: "x", host: "user@host", port: 1 }, "host"],
+    [{ label: "x", host: "host:8787", port: 1 }, "host"],
+    [{ label: "x", host: "%31%36%39.254.169.254", port: 1 }, "host"],
     [{ label: "x", host: "h", port: 0 }, "port"],
     [{ label: "x", host: "h", port: 70000 }, "port"],
     [{ label: "x", host: "h", port: 1, scheme: "ftp" }, "scheme"],
@@ -76,10 +79,35 @@ describe("validateServerInput", () => {
     [{ label: "x", host: "h", port: 1, auth: { type: "oauth" } }, "auth.type"],
     [{ label: "x", host: "h", port: 1, auth: { type: "token" } }, "auth.secret"],
     [{ label: "x", host: "h", port: 1, ssh: { host: "b" } }, "ssh.user"],
+    // ssh.user feeds one argv element (`user@host`) — a leading `-` or option
+    // syntax would be parsed as ssh flags, so the charset is a login name.
+    [{ label: "x", host: "h", port: 1, ssh: { host: "b", user: "-oProxyCommand=x" } }, "ssh.user"],
+    [{ label: "x", host: "h", port: 1, ssh: { host: "b", user: "a b" } }, "ssh.user"],
+    [{ label: "x", host: "h", port: 1, ssh: { host: "bad@host", user: "u" } }, "ssh.host"],
   ])("rejects %o", (body, fragment) => {
     const parsed = validateServerInput(body);
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.error).toContain(fragment as string);
+  });
+
+  it.each([
+    "0.0.0.0",
+    "[::]",
+    "169.254.169.254", // cloud metadata
+    "169.254.169.254.", // trailing-dot spelling
+    "2851995648", // 169.254.169.254 as one decimal int
+    "metadata.google.internal",
+    "[fe80::1]", // v6 link-local
+  ])("refuses a reserved upstream host %s", (host) => {
+    const parsed = validateServerInput({ label: "x", host, port: 8787 });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error).toContain("reserved");
+  });
+
+  it("still accepts loopback and private LAN hosts — managed nodes live there", () => {
+    for (const host of ["127.0.0.1", "localhost", "192.168.1.10", "[::1]", "thinkpad.local"]) {
+      expect(validateServerInput({ label: "x", host, port: 8787 }).ok).toBe(true);
+    }
   });
 });
 

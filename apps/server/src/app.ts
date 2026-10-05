@@ -145,14 +145,28 @@ const tokenMatches = (provided: string, expected: string): boolean =>
     createHash("sha256").update(expected).digest(),
   );
 
+/**
+ * `?access_token` exists only because EventSource can't set headers, so the
+ * query credential is honored on just the two SSE GET routes — the node
+ * event feed and the per-session stream — including under their
+ * `/api/gateway/:id` and `/api/servers/:id/proxy` mounts. Everywhere else
+ * needs the bearer header: keeping query auth off non-SSE paths shrinks the
+ * surface where a token can end up persisted in a URL (browser history,
+ * proxy and access logs).
+ */
+const QUERY_TOKEN_PATH = /\/api\/(?:events|sessions\/[^/]+\/stream)$/;
+
 const isAuthorized = (request: Request, token: string | undefined, pairing?: Pairing): boolean => {
   if (token === undefined || token === "") return true;
   const header = request.headers.get("authorization");
-  // EventSource cannot set headers, so /stream clients authenticate via query.
-  // The access log only records url.pathname, never query params.
-  const provided = header?.startsWith("Bearer ")
-    ? header.slice("Bearer ".length)
-    : new URL(request.url).searchParams.get("access_token");
+  let provided = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
+  if (provided === null && request.method === "GET") {
+    // The access log only records url.pathname, never query params.
+    const url = new URL(request.url);
+    if (QUERY_TOKEN_PATH.test(url.pathname)) {
+      provided = url.searchParams.get("access_token");
+    }
+  }
   if (provided === null || provided === undefined) return false;
   // Paired credentials are checked by hash — equivalent privilege to the
   // env token, but revocable-by-file-deletion and never stored in plaintext.
@@ -654,6 +668,41 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
     // session-scoped routes accept `?agent=<id>` to scope the store lookup.
     const agentParam = url.searchParams.get("agent") ?? undefined;
 
+    if (method === "GET" && segmentsEqual(segments, ["api", "health"])) {
+      return healthResponse(run, plane, cors);
+    }
+
+    // Pairing (docs/protocol.md): deliberately unauthenticated — this IS the
+    // credential bootstrap. The code, not a bearer token, authorizes it.
+    if (method === "POST" && segmentsEqual(segments, ["api", "pair"])) {
+      const pairing = options.pairing;
+      if (pairing === undefined) {
+        return jsonResponse({ error: "Pairing is not configured on this server" }, 501, cors);
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(request);
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
+      }
+      if (!isRecord(body) || typeof body.code !== "string" || body.code.trim() === "") {
+        return jsonResponse({ error: "code is required" }, 400, cors);
+      }
+      const token = pairing.redeem(body.code);
+      // One 404 for unknown/expired/used — don't leak which case it was.
+      if (token === null) {
+        return jsonResponse({ error: "Invalid or expired pairing code" }, 404, cors);
+      }
+      return jsonResponse({ token }, 200, cors);
+    }
+
+    if (segments[0] === "api" && !isAuthorized(request, options.token, options.pairing)) {
+      return unauthorizedResponse(cors);
+    }
+
+    // Push subscription management — authenticated like every other /api
+    // route: an open subscribe endpoint would let anyone on the network
+    // register their own endpoint and receive notification payloads.
     if (method === "GET" && segmentsEqual(segments, ["api", "push", "vapid"])) {
       return push === null
         ? jsonResponse({ error: "Meta store unavailable" }, 501, cors)
@@ -698,38 +747,6 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
       } catch {
         return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
       }
-    }
-
-    if (method === "GET" && segmentsEqual(segments, ["api", "health"])) {
-      return healthResponse(run, plane, cors);
-    }
-
-    // Pairing (docs/protocol.md): deliberately unauthenticated — this IS the
-    // credential bootstrap. The code, not a bearer token, authorizes it.
-    if (method === "POST" && segmentsEqual(segments, ["api", "pair"])) {
-      const pairing = options.pairing;
-      if (pairing === undefined) {
-        return jsonResponse({ error: "Pairing is not configured on this server" }, 501, cors);
-      }
-      let body: unknown;
-      try {
-        body = await readJsonBody(request);
-      } catch {
-        return jsonResponse({ error: "Invalid JSON body" }, 400, cors);
-      }
-      if (!isRecord(body) || typeof body.code !== "string" || body.code.trim() === "") {
-        return jsonResponse({ error: "code is required" }, 400, cors);
-      }
-      const token = pairing.redeem(body.code);
-      // One 404 for unknown/expired/used — don't leak which case it was.
-      if (token === null) {
-        return jsonResponse({ error: "Invalid or expired pairing code" }, 404, cors);
-      }
-      return jsonResponse({ token }, 200, cors);
-    }
-
-    if (segments[0] === "api" && !isAuthorized(request, options.token, options.pairing)) {
-      return unauthorizedResponse(cors);
     }
 
     if (method === "POST" && segmentsEqual(segments, ["api", "agent"])) {

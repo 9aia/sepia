@@ -64,7 +64,10 @@ bun apps/sepia/src/main.ts list --db ~/.local/share/devin/cli/sessions.db
 values. Highlights — the full reference lives in `DEPLOY.md`:
 
 - `SEPIA_HOST` (default `127.0.0.1`) — non-loopback binds require `SEPIA_TOKEN`.
-- `SEPIA_TOKEN` — bearer auth on every `/api/*` route except `GET /api/health`.
+- `SEPIA_TOKEN` — bearer auth on every `/api/*` route except `GET /api/health`
+  and `POST /api/pair` (the credential bootstrap — the one-time code
+  authorizes it). `?access_token` authenticates only on the two SSE GETs
+  (`/api/events`, `/api/sessions/:id/stream`).
 - `SEPIA_DB` — Devin store path; opened **read-only** (`layerReadonly`).
 - `SEPIA_CLINE_DIR` (default `~/.cline/data`) — Cline session dirs merged into
   `GET /api/sessions` via `ClineRepository` (read-only overlay).

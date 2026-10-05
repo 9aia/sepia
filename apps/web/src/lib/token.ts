@@ -1,17 +1,69 @@
+import { settingsStore } from "./settings";
+
 /**
- * Local node's bearer token, stored in localStorage (see TokenGate). Pulled
- * out of api.ts so the node registry can resolve the local target without
- * importing the whole API surface (which tests mock wholesale).
+ * The local node's bearer token, stored in localStorage (see TokenGate).
+ * Pulled out of api.ts so the node registry can resolve the local target
+ * without importing the whole API surface (which tests mock wholesale).
+ *
+ * Tokens are bound to the node address they were entered for: the store is
+ * a map of `{ baseUrl: token }` where `""` is the serving origin (the
+ * default — relative calls) and an origin like `https://thinkpad:8787` is a
+ * `settings.localNodeUrl` override. `getToken()` only ever returns the
+ * token whose key matches the CURRENT effective local address — a repointed
+ * override resolves no token (calls 401 → the gate re-prompts), so the
+ * credential can never be shipped to a host it wasn't issued for.
  */
 const TOKEN_KEY = "sepia:token";
 
-export const getToken = (): string | null => {
+type TokenMap = Record<string, string>;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The address a token entered right now would authenticate. */
+const localBase = (): string => settingsStore.state.localNodeUrl ?? "";
+
+const writeTokens = (tokens: TokenMap): void => {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    if (Object.keys(tokens).length === 0) localStorage.removeItem(TOKEN_KEY);
+    else localStorage.setItem(TOKEN_KEY, JSON.stringify(tokens));
   } catch {
-    return null;
+    // Storage unavailable (private mode); the gate keeps asking.
   }
 };
+
+const readTokens = (): TokenMap => {
+  try {
+    const raw = localStorage.getItem(TOKEN_KEY);
+    if (raw === null) return {};
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Pre-binding stores held the bare token string.
+      parsed = raw;
+    }
+    if (typeof parsed === "string") {
+      if (parsed === "") return {};
+      // Migrate by pinning the legacy token to the address the client is
+      // pointed at RIGHT NOW — persist it, or the slot would follow a later
+      // `localNodeUrl` change and carry the credential to a new host.
+      const migrated: TokenMap = { [localBase()]: parsed };
+      writeTokens(migrated);
+      return migrated;
+    }
+    if (!isRecord(parsed)) return {};
+    const tokens: TokenMap = {};
+    for (const [base, token] of Object.entries(parsed)) {
+      if (typeof token === "string" && token !== "") tokens[base] = token;
+    }
+    return tokens;
+  } catch {
+    return {};
+  }
+};
+
+export const getToken = (): string | null => readTokens()[localBase()] ?? null;
 
 const listeners = new Set<() => void>();
 
@@ -27,11 +79,9 @@ export const onTokenChange = (listener: () => void): (() => void) => {
 };
 
 export const setToken = (token: string | null): void => {
-  try {
-    if (token === null || token === "") localStorage.removeItem(TOKEN_KEY);
-    else localStorage.setItem(TOKEN_KEY, token);
-  } catch {
-    // Storage unavailable (private mode); the gate keeps asking.
-  }
+  const tokens = readTokens();
+  if (token === null || token === "") delete tokens[localBase()];
+  else tokens[localBase()] = token;
+  writeTokens(tokens);
   for (const listener of listeners) listener();
 };

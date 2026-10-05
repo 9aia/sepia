@@ -52,12 +52,17 @@ Treat network access to the API as remote code execution.
   `Authorization: Bearer <token>` when forwarding `/api`, so the token never
   reaches the client (see `docker-compose.yml` + `Caddyfile`).
 - Deployments without a token-injecting proxy still work: the web UI shows a
-  token gate on 401 and stores the token in `localStorage` (`sepia:token`).
+  token gate on 401 and stores the token in `localStorage` (`sepia:token`,
+  bound to the node address it was entered for — repointing the client at a
+  different node re-prompts rather than replaying the credential elsewhere).
   It is sent as `Authorization: Bearer` on API calls and as `?access_token=`
-  on the SSE stream (EventSource cannot set headers). The access log only
-  records `url.pathname`, so the token never appears in logs.
+  on the two SSE streams (`/api/events`, `/api/sessions/:id/stream` —
+  EventSource cannot set headers, and the server only honors the query
+  credential on those GETs). The access log only records `url.pathname`, so
+  the token never appears in logs.
 - CORS is not the gate — it only affects browsers. Auth applies to every
-  `/api/*` route except `GET /api/health`.
+  `/api/*` route except `GET /api/health` and `POST /api/pair` (the pairing
+  bootstrap, authorized by the one-time code).
 - The server opens the Devin store **read-only**; session writes happen inside
   the agent CLIs, not sepia.
 

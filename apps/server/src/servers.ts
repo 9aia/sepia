@@ -66,6 +66,36 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isPort = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 
+/**
+ * Legal host characters: DNS names, IPv4 literals and (bracketed) IPv6.
+ * Everything else — `@`, `:`, `?`, `#`, `%`, whitespace — is URL/argv
+ * syntax that could smuggle userinfo into the upstream URL or extra
+ * arguments into `ssh` invocations.
+ */
+const isHostLiteral = (host: string): boolean =>
+  /^[A-Za-z0-9._-]+$/.test(host) || /^\[[0-9A-Fa-f:.]+\]$/.test(host);
+
+/**
+ * Hosts a managed entry may never point at — checked on the URL-NORMALIZED
+ * hostname so odd spellings (decimal `2851995648`, hex, `169.254.169.254.`,
+ * percent-encoded) collapse before the compare: unspecified addresses and
+ * the link-local block that holds cloud metadata endpoints
+ * (169.254.169.254, metadata.google.internal) are not sepia nodes.
+ * Loopback and private ranges stay legal — pointing at LAN and on-machine
+ * nodes is the feature, and the injected credential is the caller's own.
+ */
+const isDeniedHost = (normalizedHostname: string): boolean => {
+  const host = normalizedHostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    host === "" ||
+    host === "0.0.0.0" ||
+    host === "::" ||
+    host.startsWith("169.254.") ||
+    host.startsWith("fe80:") ||
+    host === "metadata.google.internal"
+  );
+};
+
 /** PEM pasted inline — everything else is treated as a filesystem path. */
 export const isInlineKey = (key: string): boolean => key.includes("-----") || key.includes("\n");
 
@@ -97,11 +127,19 @@ const parseSsh = (value: unknown): { ok: true; ssh: ServerSsh } | { ok: false; e
   if (typeof value.host !== "string" || value.host.trim() === "") {
     return { ok: false, error: "ssh.host is required" };
   }
-  if (value.host.includes(" ")) {
-    return { ok: false, error: "ssh.host must not contain spaces" };
+  const host = value.host.trim();
+  if (!isHostLiteral(host)) {
+    return { ok: false, error: "ssh.host must be a hostname or IP literal" };
   }
   if (typeof value.user !== "string" || value.user.trim() === "") {
     return { ok: false, error: "ssh.user is required" };
+  }
+  // `ssh.user@ssh.host` lands as one argv element — but a user starting with
+  // `-` (or containing option syntax) would be parsed as ssh flags, so the
+  // charset is a login name, not a free string.
+  const user = value.user.trim();
+  if (!/^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(user)) {
+    return { ok: false, error: "ssh.user must be a valid login name" };
   }
   if (value.key !== undefined && typeof value.key !== "string") {
     return { ok: false, error: "ssh.key must be a path or PEM string" };
@@ -120,9 +158,11 @@ const parseSsh = (value: unknown): { ok: true; ssh: ServerSsh } | { ok: false; e
 };
 
 /**
- * Validate a request body into a ServerInput. Hostnames are restricted to
- * non-whitespace so they can't smuggle extra args into `ssh -L` specs or the
- * upstream URL.
+ * Validate a request body into a ServerInput. Hostnames are restricted to a
+ * literal charset so they can't smuggle URL syntax (userinfo, query,
+ * percent-decoding) into the upstream URL or extra args into `ssh` — the
+ * checks run on the URL-normalized host as well so exotic IP spellings
+ * can't disguise a denied address.
  */
 export const validateServerInput = (
   value: unknown,
@@ -138,11 +178,25 @@ export const validateServerInput = (
   if (host.includes(" ") || host.includes("/")) {
     return { ok: false, error: "host must be a hostname or IP, not a URL" };
   }
+  if (!isHostLiteral(host)) {
+    return { ok: false, error: "host must be a hostname or IP literal" };
+  }
   if (!isPort(value.port)) return { ok: false, error: "port must be an integer 1-65535" };
   // Additive field: absent (legacy clients, pre-scheme stored entries) → http.
   const scheme = value.scheme === undefined ? "http" : value.scheme;
   if (scheme !== "http" && scheme !== "https") {
     return { ok: false, error: "scheme must be 'http' or 'https'" };
+  }
+  // Denylist runs on the normalized hostname — `new URL` collapses numeric
+  // and percent oddities (decimal IPv4, trailing dots, IDN) before compare.
+  let normalized: string;
+  try {
+    normalized = new URL(`${scheme}://${host}:${value.port}`).hostname;
+  } catch {
+    return { ok: false, error: "host must be a hostname or IP literal" };
+  }
+  if (isDeniedHost(normalized)) {
+    return { ok: false, error: "host points at a reserved address" };
   }
 
   let auth: ServerAuth | null = null;

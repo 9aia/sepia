@@ -1,4 +1,5 @@
 import { getToken } from "./api";
+import { localTarget } from "./targets";
 
 /** Notification categories the user can toggle independently. */
 export interface NotificationPrefs {
@@ -34,15 +35,22 @@ export const pushState = async (): Promise<PushState> => {
   return subscription == null ? "granted" : "subscribed";
 };
 
-const headers = (): Record<string, string> => ({
-  "content-type": "application/json",
-  ...(getToken() !== null ? { authorization: `Bearer ${getToken()}` } : {}),
-});
+// Push calls land on the local node — a `localNodeUrl` override repoints
+// them like every other local call, and the bound token is the one that
+// node's address resolves.
+const pushFetch = (path: string, init?: RequestInit): Promise<Response> =>
+  fetch(`${localTarget().baseUrl}${path}`, {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      ...(getToken() !== null ? { authorization: `Bearer ${getToken()}` } : {}),
+    },
+  });
 
 /** Subscribe this browser and register the subscription server-side. */
 export const subscribePush = async (prefs: NotificationPrefs): Promise<boolean> => {
   if (!isPushSupported()) return false;
-  const vapidRes = await fetch("/api/push/vapid", { headers: headers() });
+  const vapidRes = await pushFetch("/api/push/vapid");
   if (!vapidRes.ok) return false;
   const { publicKey } = (await vapidRes.json()) as { publicKey: string };
   const registration = await navigator.serviceWorker.ready;
@@ -50,9 +58,8 @@ export const subscribePush = async (prefs: NotificationPrefs): Promise<boolean> 
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
   });
-  const res = await fetch("/api/push/subscribe", {
+  const res = await pushFetch("/api/push/subscribe", {
     method: "POST",
-    headers: headers(),
     body: JSON.stringify({ ...subscription.toJSON(), prefs }),
   });
   return res.ok;
@@ -68,9 +75,8 @@ export const unsubscribePush = async (): Promise<void> => {
   const registration = await navigator.serviceWorker.ready;
   const subscription = await registration.pushManager.getSubscription();
   if (subscription !== null) {
-    await fetch("/api/push/subscribe", {
+    await pushFetch("/api/push/subscribe", {
       method: "DELETE",
-      headers: headers(),
       body: JSON.stringify({ endpoint: subscription.endpoint }),
     }).catch(() => {});
     await subscription.unsubscribe();

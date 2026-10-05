@@ -77,6 +77,24 @@ const proxy = async (
       deps.cors,
     );
   }
+  // The proxy exists to reach the managed node's sepia API — constrain the
+  // forwarded path to /api/* on the entry's own origin. Building through
+  // `new URL` normalizes `..` segments and `//host` smuggling before the
+  // check, so a crafted path can't escape to other routes (or hosts) on the
+  // managed port.
+  let target: InstanceType<typeof URL>;
+  try {
+    target = new URL(`${base}${path}${url.search}`);
+  } catch {
+    return json({ error: "Invalid upstream path" }, 400, deps.cors);
+  }
+  if (
+    target.origin !== new URL(base).origin ||
+    !(target.pathname === "/api" || target.pathname.startsWith("/api/"))
+  ) {
+    return json({ error: "Only /api/* paths can be proxied" }, 400, deps.cors);
+  }
+
   const headers: Record<string, string> = {};
   const contentType = request.headers.get("content-type");
   if (contentType !== null) headers["content-type"] = contentType;
@@ -86,7 +104,10 @@ const proxy = async (
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   let upstream: Response;
   try {
-    upstream = await fetchImpl(`${base}${path}${url.search}`, {
+    // `${base}${normalized path}${query}` — keeps the entry's explicit port
+    // (URL.toString would elide scheme-default ports like https :443) while
+    // the origin/path checks above already pinned the request to /api/*.
+    upstream = await fetchImpl(`${base}${target.pathname}${target.search}`, {
       method: request.method,
       headers,
       // request.signal so a client disconnect cancels upstream too — needed

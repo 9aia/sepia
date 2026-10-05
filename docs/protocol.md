@@ -108,8 +108,12 @@ ANY    /api/gateway/:server/*           gateway mode — forward to a managed
                                         credential injected; the caller's own
                                         token (incl. ?access_token) is
                                         consumed by the node and never
-                                        forwarded. SSE-safe: the client
-                                        disconnect cancels upstream.
+                                        forwarded. Only /api/* paths on the
+                                        upstream origin forward (checked on
+                                        the normalized URL — `..` escapes
+                                        and non-API paths are refused).
+                                        SSE-safe: the client disconnect
+                                        cancels upstream.
 ```
 
 `?agent=` disambiguates a bare `:id` across agent stores on one node.
@@ -170,6 +174,40 @@ them.
 Credentials live in the UI's credential store (`localStorage`; peers link
 one by `credentialId` — OS keychain later). CORS allows the serving origin +
 any registered peer origins.
+
+Hardening notes:
+
+- **`?access_token` is SSE-only.** EventSource can't set headers, so the
+  query credential is accepted only on GET `/api/events` and GET
+  `/api/sessions/:id/stream` (including under the gateway/proxy mounts).
+  Every other endpoint requires `Authorization: Bearer` — a token can never
+  authenticate its way into a URL on a path where it's avoidable, which
+  keeps it out of browser history and proxy logs there. The server access
+  log records only `url.pathname`, never the query.
+- **Client tokens are origin-bound.** `sepia:token` in localStorage is a map
+  of `{node address → token}` — a token entered for one node is never sent
+  to another, so repointing `settings.localNodeUrl` at a different machine
+  can't exfiltrate the serving origin's credential (the new node just 401s
+  and the gate re-prompts for _its_ token).
+- **The client keypair is not a store key.** `sepia:client`'s `secretKey`
+  lives in the same localStorage as the values it could encrypt — using it
+  as an encryption root would be obfuscation, not protection, against anyone
+  who can read the profile. The credential store is deliberately plaintext
+  until a scheme with a real key boundary (OS keychain, or a non-extractable
+  IndexedDB key + async hydration) lands — see TODO.md.
+- **Push endpoints are authenticated.** `GET /api/push/vapid` and
+  `POST/DELETE /api/push/subscribe` require the bearer like everything else
+  — an open subscribe would let a network peer register its own endpoint
+  and receive notification payloads.
+- **Managed-server hosts are validated.** Registry entries accept only
+  hostname/IP literals (no `@`, `:`, `%`, whitespace — nothing that smuggles
+  URL syntax or ssh argv), and the URL-normalized host is denied if it's
+  unspecified (`0.0.0.0`, `::`) or link-local (incl. `169.254.169.254` and
+  `metadata.google.internal`). Loopback/private stays legal — managed nodes
+  legitimately live there; the residual SSRF shape is in TODO.md.
+- **`ssh.user`/`ssh.host` are login-name/hostname charsets.** Both land in
+  the `ssh` argv (`user@host`, `-L` spec); a leading `-` or embedded
+  punctuation would parse as option flags.
 
 ## Safety boundary
 

@@ -172,6 +172,34 @@ describe("handleGatewayRoute", () => {
     expect(await res?.text()).toBe("event: heartbeat\ndata: {}\n\n");
   });
 
+  it("refuses non-/api paths and dot-segment escapes", async () => {
+    const { store, entry } = makeStore();
+    let fetched = false;
+    const fetchImpl: typeof fetch = () => {
+      fetched = true;
+      return Promise.resolve(new Response("ok"));
+    };
+    const deps = makeDeps(store, fetchImpl);
+
+    const outside = await handleGatewayRoute(
+      req(`/api/gateway/${entry.id}/admin`),
+      [entry.id, "admin"],
+      deps,
+    );
+    expect(outside?.status).toBe(400);
+
+    // `%2e%2e` decodes to `..` — the check runs on the normalized URL, so
+    // the escape resolves to /node before the /api prefix is required.
+    const escape = await handleGatewayRoute(
+      req(`/api/gateway/${entry.id}/api/%2e%2e/node`),
+      [entry.id, "api", "%2e%2e", "node"],
+      deps,
+    );
+    expect(escape?.status).toBe(400);
+
+    expect(fetched).toBe(false);
+  });
+
   it("returns 404 for an unknown peer and 400 for a missing path", async () => {
     const { store, entry } = makeStore();
     const deps = makeDeps(store);
@@ -227,9 +255,12 @@ describe("app /api/gateway integration", () => {
     const denied = await app(req("/api/gateway/srv_x/api/node"));
     expect(denied.status).toBe(401);
 
-    // …and the query-token form used by EventSource counts too.
-    const allowed = await app(req("/api/gateway/srv_unknown/api/node?access_token=node-token"));
-    expect(allowed.status).toBe(404); // unknown peer — auth passed, lookup failed
+    // …and the query-token form counts, but only on the SSE routes
+    // EventSource needs it for — a non-SSE path can't authenticate via URL.
+    const sse = await app(req("/api/gateway/srv_unknown/api/events?access_token=node-token"));
+    expect(sse.status).toBe(404); // unknown peer — auth passed, lookup failed
+    const nonSse = await app(req("/api/gateway/srv_x/api/node?access_token=node-token"));
+    expect(nonSse.status).toBe(401);
   });
 
   it("is 501 when the server registry isn't configured", async () => {

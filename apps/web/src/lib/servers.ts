@@ -71,13 +71,19 @@ const friendlyHttpError = (status: number): string => {
 
 /** Same contract as api.ts's request(), scoped to the local node. */
 const serversFetch = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  // The managed registry lives on whichever node this client treats as
+  // local — the `localNodeUrl` override repoints these calls just like the
+  // /api/gateway hops below — and the token it resolves is bound to that
+  // address, so a repointed local node can never receive another node's
+  // credential.
+  const target = localTarget();
   let res: Response;
   try {
-    res = await fetch(path, {
+    res = await fetch(`${target.baseUrl}${path}`, {
       ...init,
       headers: {
         ...(init?.body !== undefined ? { "content-type": "application/json" } : undefined),
-        ...(getToken() !== null ? { authorization: `Bearer ${getToken()}` } : undefined),
+        ...(target.token !== null ? { authorization: `Bearer ${target.token}` } : undefined),
       },
     });
   } catch {
@@ -125,7 +131,7 @@ export const deleteServer = (id: string): Promise<void> =>
  * any `api.ts` call's `target` argument, e.g. `getNode(serverTarget(srv))`.
  */
 export const serverTarget = (server: ManagedServer): ApiTarget => ({
-  baseUrl: `/api/servers/${encodeURIComponent(server.id)}/proxy`,
+  baseUrl: `${localTarget().baseUrl}/api/servers/${encodeURIComponent(server.id)}/proxy`,
   token: getToken(),
   // Generous: an SSH tunnel cold-start is folded into the first proxied call.
   timeoutMs: 12_000,
