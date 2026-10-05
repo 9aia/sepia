@@ -397,4 +397,81 @@ describeE2E("sepia cli", () => {
     ]);
     expect(missing).toContain("Session not found: no-such-session");
   });
+
+  test("config verbs list, export, install and diff between agent stores", () => {
+    // A scratch .claude dir: skill + memory + hook + command.
+    const claudeDir = join(root, "cfg", ".claude");
+    mkdirSync(join(claudeDir, "skills", "pnpm"), { recursive: true });
+    mkdirSync(join(claudeDir, "commands"), { recursive: true });
+    writeFileSync(
+      join(claudeDir, "skills", "pnpm", "SKILL.md"),
+      "---\nname: pnpm\ndescription: use pnpm\n---\nUse pnpm.\n",
+    );
+    writeFileSync(join(claudeDir, "CLAUDE.md"), "memory\n");
+    writeFileSync(join(claudeDir, "commands", "go.md"), "Do it.\n");
+    writeFileSync(
+      join(claudeDir, "settings.json"),
+      JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ type: "command", command: "done.sh" }] }] },
+      }),
+    );
+
+    const listed = run(root, ["config", "list", "--claude-dir", claudeDir]);
+    expect(listed.code).toBe(0);
+    expect(listed.output).toContain("pnpm");
+    expect(listed.output).toContain("go");
+    expect(listed.output).toContain("Stop");
+
+    const outFile = join(root, "cfg.json");
+    const exported = run(root, ["config", "export", outFile, "--claude-dir", claudeDir]);
+    expect(exported.code).toBe(0);
+    const ir = JSON.parse(readFileSync(outFile, "utf-8"));
+    expect(ir.version).toBe(1);
+    expect(ir.skills[0].name).toBe("pnpm");
+
+    // claude → cursor install: rules dir + hooks.json land in cursor shape.
+    const cursorDir = join(root, "cfg-cursor");
+    const installed = run(root, [
+      "config",
+      "install",
+      "--from",
+      "claude",
+      "--to",
+      "cursor",
+      "--claude-dir",
+      claudeDir,
+      "--cursor-dir",
+      cursorDir,
+    ]);
+    expect(installed.code).toBe(0);
+    expect(installed.output).toContain("Installed claude config into cursor");
+    expect(existsSync(join(cursorDir, "rules", "claude.md"))).toBe(true);
+    expect(existsSync(join(cursorDir, "skills", "pnpm", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(cursorDir, "commands", "go.md"))).toBe(true);
+    const cursorHooks = JSON.parse(readFileSync(join(cursorDir, "hooks.json"), "utf-8"));
+    expect(cursorHooks.hooks.stop).toEqual([{ command: "done.sh" }]);
+
+    // A config JSON import writes the devin store shape.
+    const devinDir = join(root, "cfg-devin");
+    const imported = run(root, ["config", "import", outFile, "--devin-dir", devinDir]);
+    expect(imported.code).toBe(0);
+    expect(existsSync(join(devinDir, "workflows", "go.md"))).toBe(true);
+    expect(existsSync(join(devinDir, "hooks.v1.json"))).toBe(true);
+
+    // diff reports the delta between the two installed stores.
+    const diffed = run(root, [
+      "config",
+      "diff",
+      "--from",
+      "cursor",
+      "--to",
+      "devin",
+      "--cursor-dir",
+      cursorDir,
+      "--devin-dir",
+      devinDir,
+    ]);
+    expect(diffed.code).toBe(0);
+    expect(diffed.output).toContain("# cursor → devin");
+  });
 });

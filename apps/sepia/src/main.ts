@@ -20,6 +20,7 @@ import {
   type SessionRepositoryService,
 } from "sepia-core";
 import { parseEnv, SEPIA_VERSION, startServer, type ServerEnv } from "sepia-server/serve";
+import { configGroup } from "./config-commands";
 import { nodeCommands, promptCommand } from "./node-commands";
 import { PAIR_CODE_TTL_MS, writePairCodeFile } from "./pair";
 
@@ -569,6 +570,8 @@ const sepia = Command.make("sepia").pipe(
     // SEPIA_NODE_URL/SEPIA_TOKEN).
     ...nodeCommands,
     promptCommand,
+    // Config ops — agent config IR over skills/rules/commands/hooks.
+    configGroup,
     // Store ops — the original local-store verbs, kept top-level.
     storeGroup,
     listCommand,

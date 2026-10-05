@@ -1,6 +1,12 @@
 export * from "./Domain.js";
+export * from "./AgentConfig.js";
 export * from "./Storage.js";
 export * as ClaudeCode from "./ClaudeCode.js";
+export * as ClaudeConfig from "./ClaudeConfig.js";
+export * as ClineConfig from "./ClineConfig.js";
+export * as CursorConfig from "./CursorConfig.js";
+export * as DevinConfig from "./DevinConfig.js";
+export * as Frontmatter from "./Frontmatter.js";
 export * as ClaudeCodeRepository from "./ClaudeCodeRepository.js";
 export * as Cline from "./Cline.js";
 export * as ClineIndex from "./ClineIndex.js";

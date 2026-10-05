@@ -37,6 +37,37 @@ export default defineConfig({
           functions: 100,
           branches: 100,
         },
+        "src/AgentConfig.ts": { lines: 99, statements: 98, functions: 97, branches: 92 },
+        "src/Frontmatter.ts": {
+          lines: 100,
+          statements: 95,
+          functions: 100,
+          branches: 93,
+        },
+        "src/ClaudeConfig.ts": {
+          lines: 100,
+          statements: 100,
+          functions: 100,
+          branches: 88,
+        },
+        "src/ClineConfig.ts": {
+          lines: 100,
+          statements: 100,
+          functions: 100,
+          branches: 89,
+        },
+        "src/CursorConfig.ts": {
+          lines: 100,
+          statements: 100,
+          functions: 100,
+          branches: 86,
+        },
+        "src/DevinConfig.ts": {
+          lines: 100,
+          statements: 100,
+          functions: 100,
+          branches: 84,
+        },
         "src/ClaudeCode.ts": { lines: 100, statements: 100, functions: 100, branches: 99 },
         "src/ClaudeCodeRepository.ts": {
           lines: 100,
