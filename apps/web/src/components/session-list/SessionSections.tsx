@@ -16,12 +16,12 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { Project, SessionSummary } from "../../lib/types";
-import { formatUpdated, nodeKey, projectKey, sessionKey } from "../../lib/format";
+import { formatUpdated, isLocalNode, nodeKey, projectKey, sessionKey } from "../../lib/format";
 import { useCreateSession } from "../../hooks/query/useCreateSession";
 import { useNodeLabel, useNodes } from "../../hooks/query/useNodes";
 import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
-import { settingsStore } from "../../lib/settings";
+import { defaultAgentFor, defaultCwdFor, recentCwdFor, settingsStore } from "../../lib/settings";
 import { sidebarSectionLabel, sidebarSectionLimit } from "../../lib/sidebar";
 import { modelArgsFor } from "../../lib/models";
 import { useStore } from "@tanstack/react-store";
@@ -442,11 +442,20 @@ function ProjectsSection({
   }, [sessions]);
 
   const newSessionIn = (project: Project, members: ReadonlyArray<SessionSummary>): void => {
-    // Spawn in the newest member's cwd — or the resolved fallback when the
-    // project is still empty — on the node that owns the project, then
-    // enroll the session via its namespaced project key.
-    const cwd = members[0]?.cwd ?? resolvedCwd;
-    const agent = settings.defaultAgent ?? agents[0]?.id;
+    // Spawn in the newest member's cwd — falling back to the owning node's
+    // configured default, then its most recent session's dir — on the node
+    // that owns the project, then enroll the session via its namespaced
+    // project key.
+    const cwd =
+      members[0]?.cwd ??
+      defaultCwdFor(settings, project.node) ??
+      recentCwdFor(sessions, project.node) ??
+      resolvedCwd;
+    // Unset node default → local keeps the roster's first agent, a peer
+    // gets no override and picks its own (a local-only id would fail).
+    const agent =
+      defaultAgentFor(settings, project.node) ??
+      (isLocalNode(project.node) ? agents[0]?.id : undefined);
     void createSession
       .mutateAsync({
         cwd,
@@ -807,7 +816,9 @@ export function SessionSections({
                     aria-label="New session"
                     title="New session"
                     onClick={() => {
-                      const agent = settings.defaultAgent ?? agents[0]?.id;
+                      // The recents "+" creates on the local node, same as
+                      // the main button — resolvedCwd is already local.
+                      const agent = defaultAgentFor(settings, undefined) ?? agents[0]?.id;
                       createSession.mutate({
                         cwd: resolvedCwd,
                         agent,

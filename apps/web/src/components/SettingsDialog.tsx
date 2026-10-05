@@ -5,9 +5,14 @@ import { useStore } from "@tanstack/react-store";
 import {
   settingsStore,
   setSettings,
+  defaultAgentFor,
+  defaultCwdFor,
+  withNodeDefault,
   type AgentModelPref,
   type SepiaSettings,
 } from "../lib/settings";
+import { LOCAL_NODE_ID } from "../lib/format";
+import { isPeerEnabled, type PeerNode } from "../lib/nodes";
 import { sepiaStore } from "../lib/store";
 import { KEYBINDS, formatKey, keybindConflicts, resolveKey } from "../lib/keybinds";
 import { Kbd } from "./ui/kbd";
@@ -21,6 +26,7 @@ import {
   updatePushPrefs,
 } from "../lib/push";
 import { useAgents } from "../hooks/query/useAgents";
+import { useNodeLabel, useNodes, usePeerDescriptors, useSelfNode } from "../hooks/query/useNodes";
 import { NodesSection } from "./NodesSection";
 import { ServersSection } from "./settings/ServersSection";
 import { SidebarSection } from "./settings/SidebarSection";
@@ -32,6 +38,139 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 interface SettingsDialogProps {
   readonly open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+/** Display label for a node option — nicknames win, then reported names. */
+const peerLabel = (peer: PeerNode | undefined, id: string): string =>
+  peer === undefined ? id : (peer.alias ?? peer.name);
+
+/**
+ * "Default agent" + "Default directory" — both scoped to the node new
+ * sessions spawn on (`settings.defaultAgent`/`defaultCwd` are
+ * `Record<nodeKey, value>`). Registered peers add a node switcher above
+ * the pair; single-node renders the same two fields against "local", so
+ * nothing changes for a one-machine user. Mounted only while the dialog
+ * is open, so the self/peer roster probes don't run in the background.
+ */
+function SessionDefaults() {
+  const settings = useStore(settingsStore);
+  const { data: agents = [] } = useAgents();
+  const { self, peers } = useNodes();
+  useSelfNode();
+  const descriptors = usePeerDescriptors(peers);
+  const enabledPeers = peers.filter(isPeerEnabled);
+  const multi = enabledPeers.length > 0;
+  const [scope, setScope] = useState<string>(LOCAL_NODE_ID);
+  // A peer disabled or removed while the dialog is open drops the scope
+  // back to the local node.
+  const node =
+    scope !== LOCAL_NODE_ID && !enabledPeers.some((p) => p.id === scope) ? LOCAL_NODE_ID : scope;
+  const localLabel = useNodeLabel(undefined);
+  const nodeLabel = (id: string): string =>
+    id === LOCAL_NODE_ID
+      ? localLabel
+      : peerLabel(
+          peers.find((p) => p.id === id),
+          id,
+        );
+  // The agent roster of the scoped node — the local descriptor knows its
+  // own, a peer's comes from its /api/node probe; until either lands the
+  // merged roster stands in.
+  const fallbackIds = agents.map((agent) => agent.id);
+  const peerIndex = peers.findIndex((peer) => peer.id === node);
+  const rosterIds =
+    node === LOCAL_NODE_ID
+      ? (self?.agents ?? fallbackIds)
+      : (descriptors[peerIndex]?.agents ?? fallbackIds);
+  const agentLabel = (id: string): string => agents.find((agent) => agent.id === id)?.label ?? id;
+  const agent = defaultAgentFor(settings, node);
+  // A stored id missing from the node's roster still shows — clearing it
+  // is the user's call, not the select's.
+  const agentOptions =
+    agent !== null && !rosterIds.includes(agent) ? [...rosterIds, agent] : rosterIds;
+  const cwd = defaultCwdFor(settings, node);
+  return (
+    <>
+      {multi && (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium" htmlFor="settings-node">
+            Node
+          </label>
+          <Select value={node} onValueChange={(value) => setScope(value ?? LOCAL_NODE_ID)}>
+            <SelectTrigger id="settings-node" aria-label="Defaults node" className="w-full">
+              {nodeLabel(node)}
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={LOCAL_NODE_ID}>{localLabel}</SelectItem>
+              {enabledPeers.map((peer) => (
+                <SelectItem key={peer.id} value={peer.id}>
+                  {peerLabel(peer, peer.id)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            The agent and directory defaults below apply to {nodeLabel(node)}.
+          </p>
+        </div>
+      )}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium" htmlFor="settings-agent">
+          Default agent{multi ? ` for ${nodeLabel(node)}` : ""}
+        </label>
+        <Select
+          value={agent ?? "__server__"}
+          onValueChange={(value) =>
+            setSettings({
+              defaultAgent: withNodeDefault(
+                settings.defaultAgent,
+                node,
+                value === "__server__" ? null : value,
+              ),
+            })
+          }
+        >
+          <SelectTrigger id="settings-agent" aria-label="Default agent">
+            {agent === null ? "Node default" : agentLabel(agent)}
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__server__">Node default</SelectItem>
+            {agentOptions.map((id) => (
+              <SelectItem key={id} value={id}>
+                {agentLabel(id)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Preselected when creating a session — unset means the node picks.
+        </p>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium" htmlFor="settings-cwd">
+          Default directory{multi ? ` for ${nodeLabel(node)}` : ""}
+        </label>
+        <Input
+          id="settings-cwd"
+          placeholder="Most recent session's directory"
+          value={cwd ?? ""}
+          onChange={(event) =>
+            setSettings({
+              defaultCwd: withNodeDefault(
+                settings.defaultCwd,
+                node,
+                event.target.value.trim() === "" ? null : event.target.value,
+              ),
+            })
+          }
+        />
+        <p className="text-xs text-muted-foreground">
+          Prefilled working directory; empty uses your most recent session&apos;s
+          {multi ? " on that node" : ""}.
+        </p>
+      </div>
+    </>
+  );
 }
 
 /** Keyboard shortcuts — record a new sequence, disable, or restore defaults. */
@@ -360,53 +499,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium" htmlFor="settings-agent">
-                    Default agent
-                  </label>
-                  <Select
-                    value={settings.defaultAgent ?? "__server__"}
-                    onValueChange={(value) =>
-                      setSettings({ defaultAgent: value === "__server__" ? null : value })
-                    }
-                  >
-                    <SelectTrigger id="settings-agent" aria-label="Default agent">
-                      {settings.defaultAgent === null
-                        ? "Server default"
-                        : (agents.find((a) => a.id === settings.defaultAgent)?.label ??
-                          settings.defaultAgent)}
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__server__">Server default</SelectItem>
-                      {agents.map((agent) => (
-                        <SelectItem key={agent.id} value={agent.id}>
-                          {agent.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Preselected when creating a session.
-                  </p>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium" htmlFor="settings-cwd">
-                    Default directory
-                  </label>
-                  <Input
-                    id="settings-cwd"
-                    placeholder="Most recent session's directory"
-                    value={settings.defaultCwd ?? ""}
-                    onChange={(event) =>
-                      setSettings({
-                        defaultCwd: event.target.value.trim() === "" ? null : event.target.value,
-                      })
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Prefilled working directory; empty uses your most recent session's.
-                  </p>
-                </div>
+                <SessionDefaults />
               </section>
               <SidebarSection />
               <section data-spy="models" className="flex scroll-mt-2 flex-col gap-2">

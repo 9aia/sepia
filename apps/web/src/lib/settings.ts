@@ -1,4 +1,5 @@
 import { Store } from "@tanstack/react-store";
+import { LOCAL_NODE_ID, nodeKey } from "./format";
 import {
   defaultSidebarSections,
   normalizeSidebarSections,
@@ -21,10 +22,17 @@ export interface AgentModelPref {
 }
 
 export interface SepiaSettings {
-  /** Agent id preselected when creating sessions; null = server default. */
-  defaultAgent: string | null;
-  /** cwd prefilled when creating sessions; null = most recent session's. */
-  defaultCwd: string | null;
+  /**
+   * Agent id preselected when creating sessions, keyed by `nodeKey` —
+   * "local" or a peer id. An absent key means the node's own default (the
+   * create goes out with no agent override and the node picks).
+   */
+  defaultAgent: Record<string, string>;
+  /**
+   * cwd prefilled when creating sessions, keyed by `nodeKey`. An absent
+   * key falls back to the most recent session's dir on that node.
+   */
+  defaultCwd: Record<string, string>;
   /** Per-agent model prefs keyed by agent id. */
   models: Record<string, AgentModelPref>;
   /** Keybind overrides by action id — string = custom key, null = disabled. */
@@ -54,9 +62,24 @@ const sanitizeKeybinds = (value: unknown): Record<string, string | null> => {
   return keybinds;
 };
 
+/**
+ * Node-scoped defaults load as `Record<nodeKey, value>`; a stored scalar
+ * (pre-federation settings) migrates onto the local key so the pref
+ * survives, and non-string entries drop.
+ */
+const normalizeNodeMap = (value: unknown): Record<string, string> => {
+  if (typeof value === "string") return value === "" ? {} : { [LOCAL_NODE_ID]: value };
+  if (typeof value !== "object" || value === null) return {};
+  const map: Record<string, string> = {};
+  for (const [node, entry] of Object.entries(value)) {
+    if (typeof entry === "string" && entry !== "") map[node] = entry;
+  }
+  return map;
+};
+
 const defaultSettings = (): SepiaSettings => ({
-  defaultAgent: null,
-  defaultCwd: null,
+  defaultAgent: {},
+  defaultCwd: {},
   models: {},
   keybinds: {},
   notifications: { enabled: false, done: true, permission: true },
@@ -71,8 +94,8 @@ const load = (): SepiaSettings => {
     if (raw === null) return defaultSettings();
     const parsed = JSON.parse(raw) as Partial<SepiaSettings>;
     return {
-      defaultAgent: typeof parsed.defaultAgent === "string" ? parsed.defaultAgent : null,
-      defaultCwd: typeof parsed.defaultCwd === "string" ? parsed.defaultCwd : null,
+      defaultAgent: normalizeNodeMap(parsed.defaultAgent),
+      defaultCwd: normalizeNodeMap(parsed.defaultCwd),
       models:
         typeof parsed.models === "object" && parsed.models !== null
           ? (parsed.models as Record<string, AgentModelPref>)
@@ -120,4 +143,46 @@ export const setSettings = (patch: Partial<SepiaSettings>): void => {
     persist(next);
     return next;
   });
+};
+
+// --- Node-scoped creation defaults --------------------------------------------
+// `node` is the creation target's node field — undefined/"local"/the issued
+// local id all normalize through `nodeKey`, so a peer id and the local row
+// forms resolve to the same slot.
+
+/** The configured default agent for `node` — null = the node picks. */
+export const defaultAgentFor = (settings: SepiaSettings, node: string | undefined): string | null =>
+  settings.defaultAgent[nodeKey(node)] ?? null;
+
+/** The configured spawn dir for `node` — null = fall back to recents/home. */
+export const defaultCwdFor = (settings: SepiaSettings, node: string | undefined): string | null =>
+  settings.defaultCwd[nodeKey(node)] ?? null;
+
+/**
+ * Write one node's entry in a node-scoped defaults map. `null`/`""` removes
+ * the key — an unset slot falls back rather than storing an explicit empty.
+ */
+export const withNodeDefault = (
+  map: Record<string, string>,
+  node: string | undefined,
+  value: string | null,
+): Record<string, string> => {
+  const key = nodeKey(node);
+  const next = { ...map };
+  if (value === null || value === "") delete next[key];
+  else next[key] = value;
+  return next;
+};
+
+/**
+ * The most recent session's cwd on `node`. The input list is newest-first
+ * (`useSessions` orders by updatedAt desc), so the first node match is the
+ * latest — a peer's paths are never a valid local spawn fallback.
+ */
+export const recentCwdFor = (
+  sessions: ReadonlyArray<{ readonly cwd: string; readonly node?: string }>,
+  node: string | undefined,
+): string | null => {
+  const key = nodeKey(node);
+  return sessions.find((session) => nodeKey(session.node) === key)?.cwd ?? null;
 };

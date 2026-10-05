@@ -12,8 +12,8 @@ import type { SepiaSettings } from "../lib/settings";
 import { defaultSidebarSections } from "../lib/sidebar";
 
 const settings = (keybinds: Record<string, string | null>): SepiaSettings => ({
-  defaultAgent: null,
-  defaultCwd: null,
+  defaultAgent: {},
+  defaultCwd: {},
   localNodeName: null,
   models: {},
   keybinds,

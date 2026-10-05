@@ -4,8 +4,8 @@ import type { SepiaSettings } from "../lib/settings";
 import { defaultSidebarSections } from "../lib/sidebar";
 
 const settings = (models: SepiaSettings["models"]): SepiaSettings => ({
-  defaultAgent: null,
-  defaultCwd: null,
+  defaultAgent: {},
+  defaultCwd: {},
   localNodeName: null,
   models,
   keybinds: {},

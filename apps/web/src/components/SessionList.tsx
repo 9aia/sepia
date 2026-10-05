@@ -43,7 +43,7 @@ import {
   type SortKey,
   type StatusFilter,
 } from "./session-list/FilterBar";
-import { settingsStore } from "../lib/settings";
+import { defaultAgentFor, defaultCwdFor, recentCwdFor, settingsStore } from "../lib/settings";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
 import { ListEmptyState } from "./session-list/ListEmptyState";
 import { ProjectNameDialog, SessionSections } from "./session-list/SessionSections";
@@ -109,12 +109,22 @@ export function SessionList() {
   useEffect(() => {
     if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
   }, []);
-  // The dir new sessions spawn in: explicit pick > settings default >
-  // most recent session's > home.
-  const resolvedCwd = cwd ?? settings.defaultCwd ?? sessions[0]?.cwd ?? user?.homedir ?? "/";
+  // The dir new sessions spawn in — the button targets the local node, so
+  // the chain resolves locally: explicit pick > this node's settings
+  // default > most recent local session's > home.
+  const resolvedCwd =
+    cwd ??
+    defaultCwdFor(settings, undefined) ??
+    recentCwdFor(sessions, undefined) ??
+    user?.homedir ??
+    "/";
   const create = (dir: string, node?: string): void => {
     if (isMobile) setOpenMobile(false);
-    const agent = settings.defaultAgent ?? agents[0]?.id;
+    // The configured default is scoped to the target node; when it's unset
+    // the local node keeps the roster's first agent, while a peer gets no
+    // override and picks its own default (a local-only id would just fail).
+    const agent =
+      defaultAgentFor(settings, node) ?? (isLocalNode(node) ? agents[0]?.id : undefined);
     createMutation.mutate({
       cwd: dir,
       agent,
@@ -264,7 +274,11 @@ export function SessionList() {
                     </span>
                     <CwdPicker
                       value={resolvedCwd}
-                      dirs={[...new Set(sessions.map((s) => s.cwd))]}
+                      // The picker feeds the local create button — a peer's
+                      // paths aren't valid local dirs.
+                      dirs={[
+                        ...new Set(sessions.filter((s) => isLocalNode(s.node)).map((s) => s.cwd)),
+                      ]}
                       onChange={setCwd}
                     />
                   </div>
