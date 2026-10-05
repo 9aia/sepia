@@ -29,6 +29,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Switch } from "./ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
 /** Reachability dot — undefined while the first probe is in flight. */
 function StatusDot({ ok, title }: { readonly ok: boolean | undefined; readonly title?: string }) {
@@ -144,25 +145,14 @@ function NodeAddForm() {
         event.preventDefault();
         void form.handleSubmit();
       }}
-      className="flex flex-col gap-2"
+      className="flex flex-col gap-3 rounded-lg border border-border p-3"
     >
-      <div className="flex gap-1">
-        <Button
-          type="button"
-          variant={mode === "code" ? "secondary" : "ghost"}
-          size="xs"
-          onClick={() => setMode("code")}
-        >
-          Pairing code
-        </Button>
-        <Button
-          type="button"
-          variant={mode === "token" ? "secondary" : "ghost"}
-          size="xs"
-          onClick={() => setMode("token")}
-        >
-          Token
-        </Button>
+      <div>
+        <span className="block text-sm font-medium">Add a node</span>
+        <span className="block text-xs text-muted-foreground">
+          Pair with a code from <code>sepia pair</code> on that machine, or add it with its bearer
+          token.
+        </span>
       </div>
       <form.Field name="label">
         {(field) => (
@@ -175,14 +165,16 @@ function NodeAddForm() {
           />
         )}
       </form.Field>
-      <div className="grid gap-2 sm:grid-cols-[5.5rem_1fr_5.5rem]">
+      <div className="grid grid-cols-[6rem_minmax(0,1fr)_4.5rem] items-start gap-2">
         <form.Field name="scheme">
           {(field) => (
             <Select
               value={field.state.value}
               onValueChange={(value) => field.handleChange(value as "http" | "https")}
             >
-              <SelectTrigger aria-label="Scheme">{field.state.value}://</SelectTrigger>
+              <SelectTrigger aria-label="Scheme" className="w-full">
+                {field.state.value}://
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="http">http://</SelectItem>
                 <SelectItem value="https">https://</SelectItem>
@@ -221,6 +213,16 @@ function NodeAddForm() {
           )}
         </form.Field>
       </div>
+      <Tabs value={mode} onValueChange={(value) => setMode(value as "code" | "token")}>
+        <TabsList className="w-full" aria-label="Auth method">
+          <TabsTrigger value="code" className="flex-1">
+            Pairing code
+          </TabsTrigger>
+          <TabsTrigger value="token" className="flex-1">
+            Token
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
       {mode === "code" ? (
         <form.Field
           name="code"
@@ -266,14 +268,19 @@ function NodeAddForm() {
       )}
       <form.Field name="viaGateway">
         {(field) => (
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <span className="block text-sm">Route through this node</span>
+              <span className="block text-xs text-muted-foreground">
+                Gateway mode — for peers this browser can&apos;t reach directly.
+              </span>
+            </div>
             <Switch
               checked={field.state.value}
               onCheckedChange={(value) => field.handleChange(value)}
               aria-label="Route through this node"
             />
-            Route through this node (gateway) — for peers the browser can't reach directly
-          </label>
+          </div>
         )}
       </form.Field>
       {active.isError && (
@@ -281,13 +288,15 @@ function NodeAddForm() {
           {active.error instanceof Error ? active.error.message : "Couldn't reach that node"}
         </p>
       )}
-      <form.Subscribe selector={(state) => state.canSubmit}>
-        {(canSubmit) => (
-          <Button type="submit" variant="secondary" disabled={!canSubmit || active.isPending}>
-            {active.isPending ? "Checking…" : mode === "code" ? "Pair node" : "Add node"}
-          </Button>
-        )}
-      </form.Subscribe>
+      <div className="flex justify-end">
+        <form.Subscribe selector={(state) => state.canSubmit}>
+          {(canSubmit) => (
+            <Button type="submit" variant="secondary" disabled={!canSubmit || active.isPending}>
+              {active.isPending ? "Checking…" : mode === "code" ? "Pair node" : "Add node"}
+            </Button>
+          )}
+        </form.Subscribe>
+      </div>
     </form>
   );
 }
@@ -363,14 +372,16 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
           />
         )}
       </form.Field>
-      <div className="grid gap-2 sm:grid-cols-[5.5rem_1fr_5.5rem]">
+      <div className="grid grid-cols-[6rem_minmax(0,1fr)_4.5rem] items-start gap-2">
         <form.Field name="scheme">
           {(field) => (
             <Select
               value={field.state.value}
               onValueChange={(value) => field.handleChange(value as "http" | "https")}
             >
-              <SelectTrigger aria-label="Scheme">{field.state.value}://</SelectTrigger>
+              <SelectTrigger aria-label="Scheme" className="w-full">
+                {field.state.value}://
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="http">http://</SelectItem>
                 <SelectItem value="https">https://</SelectItem>
@@ -492,7 +503,7 @@ export function NodesSection() {
           <div className="min-w-0 flex-1">
             <Input
               key={localName ?? self?.name ?? ""}
-              className="h-7 w-44 text-sm font-medium"
+              className="h-7 w-44 max-w-full text-sm font-medium"
               defaultValue={localName ?? ""}
               placeholder={self?.name ?? "This machine"}
               aria-label="Nickname for this machine"
@@ -527,30 +538,32 @@ export function NodesSection() {
                   {!enabled && " — disabled"}
                 </span>
               </div>
-              <Switch
-                checked={enabled}
-                onCheckedChange={(value) => setEnabled.mutate({ id: peer.id, enabled: value })}
-                aria-label={`${enabled ? "Disable" : "Enable"} node ${peer.name}`}
-                title={enabled ? "Disable node" : "Enable node"}
-              />
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`Edit node ${peer.name}`}
-                title="Edit node"
-                onClick={() => setEditing(peer)}
-              >
-                <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`Remove node ${peer.name}`}
-                title="Remove node"
-                onClick={() => removeNode.mutate(peer.id)}
-              >
-                <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-              </Button>
+              <div className="flex shrink-0 items-center gap-2">
+                <Switch
+                  checked={enabled}
+                  onCheckedChange={(value) => setEnabled.mutate({ id: peer.id, enabled: value })}
+                  aria-label={`${enabled ? "Disable" : "Enable"} node ${peer.name}`}
+                  title={enabled ? "Disable node" : "Enable node"}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Edit node ${peer.name}`}
+                  title="Edit node"
+                  onClick={() => setEditing(peer)}
+                >
+                  <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Remove node ${peer.name}`}
+                  title="Remove node"
+                  onClick={() => removeNode.mutate(peer.id)}
+                >
+                  <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                </Button>
+              </div>
             </div>
           );
         })}
