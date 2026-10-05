@@ -3,7 +3,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { dirname } from "node:path";
 
 /**
- * Managed-server registry (Settings → Servers). Each entry is a sepia node the
+ * Managed-server registry — the credential + SSH store behind gateway peers
+ * (`via: "gateway"` in the web client's node registry) and `/api/gateway`
+ * proxying. Each entry is a sepia node the
  * UI can reach through this server: either directly (`scheme://host:port`) or
  * via an SSH local port-forward when `ssh` is configured. `scheme` marks
  * whether the upstream port is plain HTTP or TLS-terminated — entries written

@@ -145,9 +145,9 @@ agents) and, on a federated client, routes to the session's node.
   → take-over-and-send.
 - **Settings** — General (theme, per-node creation defaults), Client (label +
   keypair), Sidebar section, Models (per-agent prefs), Nodes (peer registry:
-  add/pair/edit/enable/gateway), Credentials (labeled token store nodes
-  reference), Servers (managed credential vault + SSH tunnels), Keyboard,
-  Notifications.
+  add/pair/edit/enable/gateway — a gateway node's edit dialog carries its
+  managed credential's secret + SSH tunnel), Credentials (labeled token
+  store nodes reference), Keyboard, Notifications.
 - **Focus** — the footer's `node · agent` pick drives what "new session"
   means; per-node defaults apply per machine since agent ids and cwds are
   local to it.

@@ -432,7 +432,7 @@ export const removePeer = (id: string): void => {
 /**
  * Remove a peer and, for `via: "gateway"` peers, the managed-server entry
  * holding its credential. The managed delete is best-effort — an already-gone
- * entry (removed via Settings → Servers) must not strand the peer row.
+ * entry (deleted server-side, or never created) must not strand the peer row.
  */
 export const removePeerEntry = async (id: string): Promise<void> => {
   const peer = nodesStore.state.peers.find((p) => p.id === id);
@@ -489,6 +489,19 @@ export interface PeerEntryUpdate {
    * and the browser resumes holding the credential.
    */
   readonly via?: "direct" | "gateway";
+  /**
+   * SSH tunnel config on the managed entry — absent keeps the stored
+   * tunnel, `null` clears it, an object replaces it. `key` follows the
+   * masked-secret convention: `SECRET_MASK` keeps the stored key material,
+   * absent removes it. Only applies while the resulting routing is
+   * gateway.
+   */
+  readonly ssh?: {
+    readonly host: string;
+    readonly port: number;
+    readonly user: string;
+    readonly key?: string;
+  } | null;
 }
 
 /**
@@ -524,10 +537,9 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
         : (await listServers()).find((s) => s.id === peer.serverId);
     if (entry === undefined) {
       // Direct → gateway, or a gateway peer whose managed entry vanished
-      // (removed via Settings → Servers): (re)create the credential entry.
-      // A kept token submits the peer's resolved credential — on a
-      // transition it moves to the node's store; a cleared one means no
-      // auth upstream.
+      // (deleted server-side): (re)create the credential entry. A kept
+      // token submits the peer's resolved credential — on a transition it
+      // moves to the node's store; a cleared one means no auth upstream.
       const kept = peerSecret(peer);
       const created = await createServer({
         label: peer.alias ?? peer.name,
@@ -541,7 +553,18 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
           : secret === null
             ? null
             : { type: "token", secret },
-        ssh: null,
+        // A submitted SSH config (the edit form's tunnel fields) carries
+        // into the fresh entry — minus a masked key, which has no stored
+        // material to keep against.
+        ssh:
+          update.ssh == null
+            ? null
+            : {
+                host: update.ssh.host,
+                port: update.ssh.port,
+                user: update.ssh.user,
+                key: update.ssh.key === SECRET_MASK ? undefined : update.ssh.key,
+              },
       });
       commitPeers(
         nodesStore.state.peers.map((p) =>
@@ -565,16 +588,18 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
           ? null
           : { type: "token", secret },
       ssh:
-        entry.ssh === null
-          ? null
-          : {
-              host: entry.ssh.host,
-              port: entry.ssh.port,
-              user: entry.ssh.user,
-              // A masked key keeps the stored material; a key path
-              // round-trips as itself.
-              key: entry.ssh.key,
-            },
+        update.ssh === undefined
+          ? entry.ssh === null
+            ? null
+            : {
+                host: entry.ssh.host,
+                port: entry.ssh.port,
+                user: entry.ssh.user,
+                // A masked key keeps the stored material; a key path
+                // round-trips as itself.
+                key: entry.ssh.key,
+              }
+          : update.ssh,
     });
     commitPeers(
       nodesStore.state.peers.map((p) =>

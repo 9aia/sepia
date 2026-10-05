@@ -3,12 +3,14 @@ import { getToken } from "./token";
 import { localTarget, type ApiTarget } from "./targets";
 
 /**
- * Managed servers (Settings → Servers) — the server-side registry behind
- * `/api/servers`. Unlike peers in `lib/nodes.ts` (browser-local, public URL +
- * token the browser holds), managed entries keep credentials on the node
- * serving this UI, encrypted at rest, and support SSH-tunnelled upstreams.
- * Every call reaches the managed node through `/api/servers/:id/proxy`, so
- * secrets never enter the browser.
+ * Managed servers — the server-side registry behind `/api/servers`, surfaced
+ * in the UI only as the credential + SSH store of `via: "gateway"` peers
+ * (lib/nodes.ts): the entry a gateway peer points at IS its server-side
+ * credential, edited through the node's edit dialog. Unlike peers
+ * (browser-local, public URL + token the browser holds), managed entries
+ * keep credentials on the node serving this UI, encrypted at rest, and
+ * support SSH-tunnelled upstreams. Every call reaches the managed node
+ * through `/api/servers/:id/proxy`, so secrets never enter the browser.
  */
 
 /** What GET /api/servers returns — `secret` is always the mask, never real. */

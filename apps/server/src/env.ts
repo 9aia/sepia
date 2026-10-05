@@ -12,7 +12,7 @@ export interface ServerEnv {
   readonly nodePath: string;
   /** Display name reported by GET /api/node; defaults to the hostname. */
   readonly nodeName: string;
-  /** Encrypted managed-server registry (Settings → Servers). */
+  /** Encrypted managed-server registry (gateway peers' credentials). */
   readonly serversPath: string;
   /** 256-bit hex key file encrypting serversPath (SEPIA_SERVERS_KEY overrides). */
   readonly serversKeyPath: string;

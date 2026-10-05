@@ -31,7 +31,8 @@ import {
 } from "../lib/nodes";
 import { credentialsStore } from "../lib/credentials";
 import { LOCAL_NODE_ID } from "../lib/format";
-import { SECRET_MASK } from "../lib/servers";
+import { SECRET_MASK, type ManagedServer } from "../lib/servers";
+import { useServers } from "../hooks/query/useServers";
 import { setSettings, settingsStore } from "../lib/settings";
 import { setSettingsOpen } from "../lib/store";
 import { toastSuccess } from "../lib/toast";
@@ -59,6 +60,7 @@ import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Switch } from "./ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+import { Textarea } from "./ui/textarea";
 
 /** Reachability dot — undefined while the first probe is in flight. */
 function StatusDot({ ok, title }: { readonly ok: boolean | undefined; readonly title?: string }) {
@@ -224,6 +226,35 @@ const newSecretValidator = ({
   fieldApi.form.state.values.credential === CREDENTIAL_NEW && value.trim() === ""
     ? "Enter the token for the new credential"
     : undefined;
+
+// --- SSH tunnel fields -------------------------------------------------------
+// A gateway peer's SSH config lives on its managed-server entry — the edit
+// form seeds from it and the save PATCHes it via `updatePeerEntry`'s `ssh`.
+
+/**
+ * Gate an SSH field's validator on the tunnel switch — the detail fields
+ * unmount when it's off, and the check keeps a stale value from blocking a
+ * submit (same pattern as `newSecretValidator`).
+ */
+const sshFieldValidator =
+  (validate: (value: string) => string | undefined) =>
+  ({
+    value,
+    fieldApi,
+  }: {
+    value: string;
+    fieldApi: { form: { state: { values: { sshEnabled: boolean } } } };
+  }): string | undefined =>
+    fieldApi.form.state.values.sshEnabled ? validate(value) : undefined;
+
+const sshRequiredValidator = (message: string) =>
+  sshFieldValidator((value) => (value.trim() === "" ? message : undefined));
+
+const sshPortValidator = sshFieldValidator((value) =>
+  Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 65535
+    ? undefined
+    : "Port must be a number from 1 to 65535",
+);
 
 // --- Add form ----------------------------------------------------------------
 
@@ -479,9 +510,15 @@ interface EditFormValues {
   token: string;
   /** The `via` flag — checked means calls route through this node's server. */
   viaGateway: boolean;
+  /** SSH tunnel switch + fields — PATCH the managed entry's `ssh`. */
+  sshEnabled: boolean;
+  sshHost: string;
+  sshPort: string;
+  sshUser: string;
+  sshKey: string;
 }
 
-const editDefaults = (peer: PeerNode): EditFormValues => ({
+const editDefaults = (peer: PeerNode, server?: ManagedServer): EditFormValues => ({
   label: peer.alias ?? "",
   // The canonical origin round-trips through parseNodeAddress unchanged.
   host: peer.url,
@@ -491,6 +528,14 @@ const editDefaults = (peer: PeerNode): EditFormValues => ({
   // the field and round-trips to "keep the stored credential" on save.
   token: SECRET_MASK,
   viaGateway: peer.via === "gateway",
+  // Seeded from the managed entry's stored tunnel — the key comes back as
+  // a filesystem path or the mask (a stored inline PEM), both of which
+  // round-trip to "keep the stored key".
+  sshEnabled: server?.ssh != null,
+  sshHost: server?.ssh?.host ?? "",
+  sshPort: String(server?.ssh?.port ?? 22),
+  sshUser: server?.ssh?.user ?? "",
+  sshKey: server?.ssh?.key ?? "",
 });
 
 /**
@@ -501,7 +546,7 @@ const editDefaults = (peer: PeerNode): EditFormValues => ({
  */
 const viaDescription = (peer: PeerNode, viaGateway: boolean): string => {
   if (viaGateway && peer.via === "gateway") {
-    return "Calls route through this node's server — SSH tunnel settings live under Settings → Servers.";
+    return "Calls route through this node's server — its SSH tunnel is configured above.";
   }
   if (viaGateway) {
     return "Calls route through this node's server — the linked credential moves to its encrypted store.";
@@ -518,15 +563,25 @@ const GATEWAY_TOKEN_PLACEHOLDER = "Stored on this node — clear to remove";
 /**
  * Per-peer edit form, seeded from the row's peer (keyed remount on id).
  * Saves through `updatePeerEntry`: a direct peer updates in the browser
- * registry; a gateway peer's url/auth changes PATCH its managed-server entry
- * so the stored credential rides along; flipping the routing switch moves
- * the credential between the browser and the node's store. Label commits
- * via `setPeerAlias` on success.
+ * registry; a gateway peer's url/auth/SSH changes PATCH its managed-server
+ * entry so the stored credential and key material ride along; flipping the
+ * routing switch moves the credential between the browser and the node's
+ * store. `server` is the peer's managed entry — present for gateway peers
+ * (the dialog gates the form on it loading) so the SSH fields can seed.
+ * Label commits via `setPeerAlias` on success.
  */
-function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () => void }) {
+function NodeEditForm({
+  peer,
+  server,
+  onClose,
+}: {
+  readonly peer: PeerNode;
+  readonly server?: ManagedServer;
+  readonly onClose: () => void;
+}) {
   const update = useUpdateNode();
   const form = useForm({
-    defaultValues: editDefaults(peer),
+    defaultValues: editDefaults(peer, server),
     onSubmit: ({ value }) => {
       const parsed = parseNodeAddress(value.host);
       if (!parsed.ok) return;
@@ -540,7 +595,19 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
             // Gateway routing submits the raw secret to the managed
             // registry; direct routing relinks/creates a stored credential.
             ...(value.viaGateway
-              ? { token: value.token }
+              ? {
+                  token: value.token,
+                  ssh: value.sshEnabled
+                    ? {
+                        host: value.sshHost.trim(),
+                        port: Number(value.sshPort),
+                        user: value.sshUser.trim(),
+                        // Blank drops the key; a path or the mask (a stored
+                        // inline PEM) round-trips to "keep the stored key".
+                        ...(value.sshKey.trim() === "" ? {} : { key: value.sshKey }),
+                      }
+                    : null,
+                }
               : {
                   credential: credentialSpec(value.credential, value.newSecret, value.label),
                 }),
@@ -586,26 +653,124 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
         {(field) => <AddressField field={field} />}
       </form.Field>
       <form.Subscribe
-        selector={(state) => [state.values.viaGateway, state.values.credential] as const}
+        selector={(state) =>
+          [state.values.viaGateway, state.values.credential, state.values.sshEnabled] as const
+        }
       >
-        {([viaGateway, credential]) =>
+        {([viaGateway, credential, sshEnabled]) =>
           viaGateway ? (
-            <form.Field name="token">
-              {(field) => (
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>Bearer token</FieldLabel>
-                  <Input
-                    type="password"
-                    placeholder={GATEWAY_TOKEN_PLACEHOLDER}
-                    aria-label="Node token"
-                    autoComplete="new-password"
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(event) => field.handleChange(event.target.value)}
-                  />
+            <>
+              <form.Field name="token">
+                {(field) => (
+                  <div className="flex flex-col gap-1.5">
+                    <FieldLabel>Bearer token</FieldLabel>
+                    <Input
+                      type="password"
+                      placeholder={GATEWAY_TOKEN_PLACEHOLDER}
+                      aria-label="Node token"
+                      autoComplete="new-password"
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                    />
+                  </div>
+                )}
+              </form.Field>
+              <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <span className="block text-sm">SSH tunnel</span>
+                  <span className="block text-xs text-muted-foreground">
+                    This node reaches the peer through an SSH local port-forward.
+                  </span>
                 </div>
+                <form.Field name="sshEnabled">
+                  {(field) => (
+                    <Switch
+                      checked={field.state.value}
+                      onCheckedChange={(value) => field.handleChange(value)}
+                      aria-label="SSH tunnel"
+                    />
+                  )}
+                </form.Field>
+              </div>
+              {sshEnabled && (
+                <>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_5rem_1fr]">
+                    <form.Field
+                      name="sshHost"
+                      validators={{
+                        onChange: sshRequiredValidator("SSH host is required"),
+                        onSubmit: sshRequiredValidator("SSH host is required"),
+                      }}
+                    >
+                      {(field) => (
+                        <div className="flex flex-col gap-1">
+                          <Input
+                            placeholder="SSH host"
+                            aria-label="SSH host"
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(event) => field.handleChange(event.target.value)}
+                          />
+                          <FieldError errors={field.state.meta.errors} />
+                        </div>
+                      )}
+                    </form.Field>
+                    <form.Field
+                      name="sshPort"
+                      validators={{ onChange: sshPortValidator, onSubmit: sshPortValidator }}
+                    >
+                      {(field) => (
+                        <div className="flex flex-col gap-1">
+                          <Input
+                            placeholder="22"
+                            aria-label="SSH port"
+                            inputMode="numeric"
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(event) => field.handleChange(event.target.value)}
+                          />
+                          <FieldError errors={field.state.meta.errors} />
+                        </div>
+                      )}
+                    </form.Field>
+                    <form.Field
+                      name="sshUser"
+                      validators={{
+                        onChange: sshRequiredValidator("SSH user is required"),
+                        onSubmit: sshRequiredValidator("SSH user is required"),
+                      }}
+                    >
+                      {(field) => (
+                        <div className="flex flex-col gap-1">
+                          <Input
+                            placeholder="SSH user"
+                            aria-label="SSH user"
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(event) => field.handleChange(event.target.value)}
+                          />
+                          <FieldError errors={field.state.meta.errors} />
+                        </div>
+                      )}
+                    </form.Field>
+                  </div>
+                  <form.Field name="sshKey">
+                    {(field) => (
+                      <Textarea
+                        placeholder="Key path (~/.ssh/id_ed25519) or paste a private key"
+                        aria-label="SSH key"
+                        rows={3}
+                        className="font-mono text-xs"
+                        value={field.state.value}
+                        onBlur={field.handleBlur}
+                        onChange={(event) => field.handleChange(event.target.value)}
+                      />
+                    )}
+                  </form.Field>
+                </>
               )}
-            </form.Field>
+            </>
           ) : (
             <div className="flex flex-col gap-1.5">
               <FieldLabel>Credential</FieldLabel>
@@ -678,6 +843,41 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
         </form.Subscribe>
       </div>
     </form>
+  );
+}
+
+/**
+ * A gateway peer's edit dialog mounts on its managed-server entry — the
+ * SSH tunnel fields seed from the stored config, and `useForm` reads
+ * defaultValues once, so the form waits for the registry query. A missing
+ * entry (deleted server-side) just means the SSH fields start empty —
+ * `updatePeerEntry` recreates the entry on save.
+ */
+function GatewayNodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () => void }) {
+  const servers = useServers();
+  if (servers.isPending) {
+    return <p className="text-xs text-muted-foreground">Loading the stored connection…</p>;
+  }
+  if (servers.isError) {
+    return (
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-destructive">
+          {servers.error instanceof Error
+            ? servers.error.message
+            : "Couldn't load the stored connection"}
+        </p>
+        <Button type="button" variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <NodeEditForm
+      peer={peer}
+      server={servers.data.find((s) => s.id === peer.serverId)}
+      onClose={onClose}
+    />
   );
 }
 
@@ -1012,12 +1212,20 @@ export function NodesSection() {
             <DialogTitle>{`Edit ${editing?.alias ?? editing?.name ?? "node"}`}</DialogTitle>
             <DialogDescription>
               Nickname, address, credential and routing for this peer. Direct nodes link a stored
-              credential; gateway routing stores the secret on this node (the mask keeps it).
+              credential; gateway routing keeps the secret — and any SSH tunnel — on this node
+              (masked fields keep the stored values).
             </DialogDescription>
           </DialogHeader>
-          {editing !== null && (
-            <NodeEditForm key={editing.id} peer={editing} onClose={() => setEditing(null)} />
-          )}
+          {editing !== null &&
+            (editing.via === "gateway" ? (
+              <GatewayNodeEditForm
+                key={editing.id}
+                peer={editing}
+                onClose={() => setEditing(null)}
+              />
+            ) : (
+              <NodeEditForm key={editing.id} peer={editing} onClose={() => setEditing(null)} />
+            ))}
         </DialogContent>
       </Dialog>
       <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>

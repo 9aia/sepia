@@ -1310,6 +1310,80 @@ describe("updatePeerEntry", () => {
     expect(mockedUpdateServer.mock.calls[1]?.[1].auth).toBeNull();
   });
 
+  it("an ssh object replaces the managed entry's tunnel; null clears it", async () => {
+    const managed = {
+      id: "srv_1",
+      label: "remote.example",
+      host: "remote.example",
+      port: 8787,
+      scheme: "http" as const,
+      auth: { type: "token" as const, secret: SECRET_MASK },
+      ssh: { host: "bastion", port: 22, user: "ops", key: "/keys/id" },
+    };
+    const gw: PeerNode = {
+      id: "node_gw",
+      name: "gw",
+      url: "http://remote.example:8787",
+      via: "gateway",
+      serverId: "srv_1",
+    };
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gw] }));
+    mockedListServers.mockResolvedValue([managed]);
+    mockedUpdateServer.mockResolvedValue(managed);
+
+    await updatePeerEntry("node_gw", {
+      ssh: { host: "jump.example", port: 2222, user: "deploy" },
+    });
+    expect(mockedUpdateServer.mock.calls[0]?.[1].ssh).toEqual({
+      host: "jump.example",
+      port: 2222,
+      user: "deploy",
+    });
+    // url/auth untouched — the submitted ssh is the only change.
+    expect(mockedUpdateServer.mock.calls[0]?.[1].host).toBe("remote.example");
+    expect(mockedUpdateServer.mock.calls[0]?.[1].auth).toEqual({
+      type: "token",
+      user: undefined,
+      secret: SECRET_MASK,
+    });
+
+    await updatePeerEntry("node_gw", { ssh: null });
+    expect(mockedUpdateServer.mock.calls[1]?.[1].ssh).toBeNull();
+  });
+
+  it("a masked ssh key passes through — the server keeps the stored material", async () => {
+    const managed = {
+      id: "srv_1",
+      label: "remote.example",
+      host: "remote.example",
+      port: 8787,
+      scheme: "http" as const,
+      auth: null,
+      // GET masks an inline PEM — the form echoes it back untouched.
+      ssh: { host: "bastion", port: 22, user: "ops", key: SECRET_MASK },
+    };
+    const gw: PeerNode = {
+      id: "node_gw",
+      name: "gw",
+      url: "http://remote.example:8787",
+      via: "gateway",
+      serverId: "srv_1",
+    };
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gw] }));
+    mockedListServers.mockResolvedValue([managed]);
+    mockedUpdateServer.mockResolvedValue(managed);
+
+    await updatePeerEntry("node_gw", {
+      ssh: { host: "bastion", port: 22, user: "ops", key: SECRET_MASK },
+    });
+    expect(mockedUpdateServer).toHaveBeenCalledWith(
+      "srv_1",
+      expect.objectContaining({
+        ssh: { host: "bastion", port: 22, user: "ops", key: SECRET_MASK },
+      }),
+    );
+  });
+
   it("a gateway peer whose managed entry is gone recreates it with the new url", async () => {
     const gw: PeerNode = {
       id: "node_gw",
@@ -1505,6 +1579,36 @@ describe("updatePeerEntry routing transitions", () => {
     });
     expect(getPeers()[0]?.serverId).toBe("srv_repaired");
     expect(getPeers()[0]?.via).toBe("gateway");
+  });
+
+  it("direct → gateway carries a submitted ssh config into the new entry", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("a")] }));
+    mockedCreateServer.mockResolvedValue(managed);
+
+    await updatePeerEntry("a", {
+      via: "gateway",
+      token: SECRET_MASK,
+      ssh: { host: "bastion", port: 2222, user: "ops", key: "/keys/id" },
+    });
+    expect(mockedCreateServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ssh: { host: "bastion", port: 2222, user: "ops", key: "/keys/id" },
+      }),
+    );
+
+    // A masked key on the create path has no stored material to keep —
+    // it's dropped rather than written as a literal.
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("b")] }));
+    await updatePeerEntry("b", {
+      via: "gateway",
+      token: SECRET_MASK,
+      ssh: { host: "bastion", port: 22, user: "ops", key: SECRET_MASK },
+    });
+    expect(mockedCreateServer.mock.calls[1]?.[0].ssh).toEqual({
+      host: "bastion",
+      port: 22,
+      user: "ops",
+    });
   });
 
   it("staying gateway keeps PATCHing the entry when it still exists", async () => {

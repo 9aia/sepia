@@ -171,12 +171,12 @@ export const usePairNode = () => {
 };
 
 /**
- * Save the Settings → Nodes edit form: url/token/routing changes
+ * Save the Settings → Nodes edit form: url/token/routing/SSH changes
  * (`PeerEntryUpdate`) — the alias is committed separately via `setPeerAlias`
  * in the caller since it needs no async work. A gateway peer's credential
- * rides `updateServer` inside `updatePeerEntry`, which also moves the
- * credential between the browser and the managed registry when `via`
- * flips.
+ * and SSH tunnel ride `updateServer` inside `updatePeerEntry`, which also
+ * moves the credential between the browser and the managed registry when
+ * `via` flips.
  */
 export const useUpdateNode = () => {
   const queryClient = useQueryClient();
