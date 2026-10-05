@@ -20,6 +20,7 @@ import {
   type SessionRepositoryService,
 } from "sepia-core";
 import { parseEnv, SEPIA_VERSION, startServer, type ServerEnv } from "sepia-server/serve";
+import { nodeCommands, promptCommand } from "./node-commands";
 import { PAIR_CODE_TTL_MS, writePairCodeFile } from "./pair";
 
 const defaultDbPath = `${homedir()}/.local/share/devin/cli/sessions.db`;
@@ -546,18 +547,43 @@ const versionCommand = Command.make("version", {}, () => Console.log(SEPIA_VERSI
   Command.withDescription("Print the sepia version stamp"),
 );
 
-const sepia = Command.make("sepia").pipe(
+// The local-store verbs under an explicit group — same command objects as
+// the top-level aliases, kept both for backwards compatibility (`sepia
+// list …`) and discoverability (`sepia store list`).
+const storeGroup = Command.make("store").pipe(
   Command.withSubcommands([
-    importCommand,
+    listCommand,
     exportCommand,
+    importCommand,
     installCommand,
     deleteCommand,
+  ]),
+  Command.withDescription(
+    "Store ops — read and write local agent stores directly (no running node needed)",
+  ),
+);
+
+const sepia = Command.make("sepia").pipe(
+  Command.withSubcommands([
+    // Node ops — hit a running node's REST API (--node/--token,
+    // SEPIA_NODE_URL/SEPIA_TOKEN).
+    ...nodeCommands,
+    promptCommand,
+    // Store ops — the original local-store verbs, kept top-level.
+    storeGroup,
     listCommand,
+    exportCommand,
+    importCommand,
+    installCommand,
+    deleteCommand,
+    // Node lifecycle + pairing.
     pairCommand,
     serveCommand,
     versionCommand,
   ]),
-  Command.withDescription("Convert sessions between the Devin, Cline, Claude and Cursor stores"),
+  Command.withDescription(
+    "Drive a sepia node over its API, or convert sessions between the Devin, Cline, Claude and Cursor stores",
+  ),
 );
 
 const cli = Command.run(sepia, {
