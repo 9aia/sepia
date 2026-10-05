@@ -450,13 +450,13 @@ describe("isThisMachine", () => {
   });
 
   it("the serving origin counts only under local access", () => {
-    // Browser on this machine — a node at exactly the UI's origin qualifies.
+    // Client on this machine — a node at exactly the UI's origin qualifies.
     vi.stubGlobal("location", { hostname: "localhost", origin: "http://localhost:3000" });
     expect(isThisMachine("http://localhost:3000")).toBe(true);
 
-    // Browser on a phone, UI served by a laptop over LAN: the origin is NOT
+    // Client on a phone, UI served by a laptop over LAN: the origin is NOT
     // this machine (isLocalAccess gates the origin clause), but a peer at
-    // localhost is — loopback follows the browser's device, not the origin.
+    // localhost is — loopback follows the client's device, not the origin.
     vi.stubGlobal("location", { hostname: "192.168.1.5", origin: "http://192.168.1.5:3000" });
     expect(isThisMachine("http://192.168.1.5:3000")).toBe(false);
     expect(isThisMachine("http://localhost:8787")).toBe(true);
@@ -706,7 +706,7 @@ describe("gateway peers (via: gateway)", () => {
       token: getToken(),
       timeoutMs: 12_000,
     });
-    // The peer's browser-held token is never used — calls authenticate with
+    // The peer's client-held token is never used — calls authenticate with
     // the local node's token and the server injects the stored one upstream.
   });
 
@@ -1275,7 +1275,7 @@ describe("updatePeerEntry", () => {
       auth: { type: "token", user: undefined, secret: SECRET_MASK },
       ssh: { host: "bastion", port: 22, user: "ops", key: "/keys/id" },
     });
-    // The peer record keeps no credential link — the browser never holds it.
+    // The peer record keeps no credential link — the client never holds it.
     expect(getPeers()[0]?.url).toBe("https://remote2.example");
     expect(getPeers()[0]?.credentialId).toBeUndefined();
   });
@@ -1454,7 +1454,7 @@ describe("updatePeerEntry routing transitions", () => {
     mockedCreateServer.mockResolvedValue({ ...managed, id: "srv_new" });
 
     await updatePeerEntry("a", { via: "gateway", token: SECRET_MASK });
-    // The kept (masked) credential moves from the browser into the node's
+    // The kept (masked) credential moves from the client into the node's
     // store; the label comes from the peer's display name.
     expect(mockedCreateServer).toHaveBeenCalledWith({
       label: "work laptop",
@@ -1467,7 +1467,7 @@ describe("updatePeerEntry routing transitions", () => {
     const updated = getPeers()[0];
     expect(updated?.via).toBe("gateway");
     expect(updated?.serverId).toBe("srv_new");
-    // The browser link is cleared — the credential now lives server-side
+    // The client link is cleared — the credential now lives server-side
     // (the credential record itself stays in the store for other peers).
     expect(updated?.credentialId).toBeUndefined();
     expect(peerTarget(updated!)).toEqual({
@@ -1526,16 +1526,16 @@ describe("updatePeerEntry routing transitions", () => {
     expect("serverId" in persisted[0]!).toBe(false);
   });
 
-  it("gateway → direct files a freshly typed secret as a credential for the browser to hold", async () => {
+  it("gateway → direct files a freshly typed secret as a credential for the client to hold", async () => {
     nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gwPeer()] }));
     mockedDeleteServer.mockResolvedValue(undefined);
 
     await updatePeerEntry("node_gw", {
       via: "direct",
-      credential: { secret: "browser-token" },
+      credential: { secret: "client-token" },
     });
     const updated = getPeers()[0];
-    expect(peerSecret(updated!)).toBe("browser-token");
+    expect(peerSecret(updated!)).toBe("client-token");
     expect(credentialById(updated?.credentialId)?.label).toBe("gw");
   });
 

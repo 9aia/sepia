@@ -50,7 +50,7 @@ function CredentialAddForm() {
       <div>
         <span className="block text-sm font-medium">Add a credential</span>
         <span className="block text-xs text-muted-foreground">
-          A named bearer token nodes can link — secrets stay in this browser.
+          A named bearer token nodes can link — secrets stay on this client.
         </span>
       </div>
       <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
@@ -78,7 +78,7 @@ function CredentialAddForm() {
 }
 
 /**
- * Settings → Credentials: the browser-local secret store behind
+ * Settings → Credentials: the client-local secret store behind
  * `PeerNode.credentialId`. Each row shows the (inline-editable) label, the
  * masked secret, and the nodes linking it; remove confirms first and names
  * the referencing nodes — the link stays dangling on the peer, whose calls
@@ -96,7 +96,7 @@ export function CredentialsSection() {
     <section data-spy="credentials" className="flex scroll-mt-2 flex-col gap-2">
       <h3 className="text-sm font-medium">Credentials</h3>
       <p className="text-xs text-muted-foreground">
-        Bearer tokens this browser holds for direct nodes — pick them when adding or editing a node
+        Bearer tokens this client holds for direct nodes — pick them when adding or editing a node
         instead of re-typing secrets. Gateway-routed nodes keep theirs in the managed server
         registry instead.
       </p>
@@ -144,7 +144,7 @@ export function CredentialsSection() {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove credential?</AlertDialogTitle>
             <AlertDialogDescription>
-              {`"${removing?.label ?? ""}" is removed from this browser.`}
+              {`"${removing?.label ?? ""}" is removed from this client.`}
               {removingRefs.length === 0
                 ? ""
                 : ` ${removingRefs.length} node${removingRefs.length === 1 ? "" : "s"} (${removingRefs.join(", ")}) use${removingRefs.length === 1 ? "s" : ""} this credential — its calls will fail auth until you link another.`}

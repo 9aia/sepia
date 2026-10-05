@@ -7,10 +7,10 @@ between machines and agents: stop on one, resume on another.
 
 ```
 ┌─ Sepia Client (apps/web — TanStack Start PWA) ────────────────┐
-│  browser, any device. holds the peer registry + a client      │
-│  identity (label + keypair). merges every connected node's     │
-│  sessions/projects/agents; actions go to the node that holds   │
-│  each session's lock.                                          │
+│  runs in a browser, on any device. holds the peer registry +   │
+│  a client identity (label + keypair). merges every connected   │
+│  node's sessions/projects/agents; actions go to the node that  │
+│  holds each session's lock.                                    │
 └───────┬───────────────┬───────────────┬───────────────────────┘
         │ HTTP+SSE      │ HTTP+SSE      │ HTTP+SSE (direct or gateway)
         ▼               ▼               ▼
@@ -49,7 +49,7 @@ and agent runtimes on that machine. Bundles to a single `bun --compile`
 binary that serves the client too. Each node has an id, name, agent roster
 and capabilities (`GET /api/node`); it owns session locks, emits `/api/events`,
 stores managed-server credentials encrypted (AES-256-GCM), and can gateway
-calls to peers the browser can't reach.
+calls to peers the client can't reach.
 
 **Sepia Client** — the web UI (`apps/web`): a client container, not a node.
 It holds the node registry (localStorage), a client identity (label +

@@ -30,7 +30,7 @@ const copy = (value: string): void => {
 };
 
 /**
- * Settings → Client: this browser's identity — the label + keypair other
+ * Settings → Client: this client's identity — the label + keypair other
  * clients will know it by once pairing/sync exists. The public key is
  * shareable (truncated display + copy); the secret stays masked and local;
  * Regenerate re-keys under the same id, behind a confirm since it changes
@@ -44,8 +44,8 @@ export function ClientSection() {
     <section data-spy="client" className="flex scroll-mt-2 flex-col gap-2">
       <h3 className="text-sm font-medium">Client</h3>
       <p className="text-xs text-muted-foreground">
-        This browser&apos;s identity — the label and keypair that name this device. The public key
-        is shareable; the secret never leaves this browser.
+        This client&apos;s identity — the label and keypair that name this device. The public key is
+        shareable; the secret never leaves this client.
       </p>
       {client === null ? (
         <p className="text-xs text-muted-foreground">Generating keys…</p>

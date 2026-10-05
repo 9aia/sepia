@@ -1,12 +1,12 @@
 import { Store } from "@tanstack/react-store";
 
 /**
- * Browser-held peer credentials (Settings → Credentials) — the managed
+ * Client-held peer credentials (Settings → Credentials) — the managed
  * store behind `PeerNode.credentialId`. Secrets live only in localStorage
  * and render masked everywhere in the UI; they never leave the machine
  * except as the bearer header on calls to the peer that owns them.
  *
- * This is the browser-local store for direct peers only. `via: "gateway"`
+ * This is the client-local store for direct peers only. `via: "gateway"`
  * peers keep no credential here — theirs lives in the node's managed-server
  * registry (lib/servers.ts), encrypted at rest server-side.
  */

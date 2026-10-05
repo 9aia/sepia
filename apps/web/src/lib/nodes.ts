@@ -33,18 +33,18 @@ export interface PeerNode {
   /** Origin of the peer's API, e.g. `https://thinkpad:8787` — no trailing slash. */
   readonly url: string;
   /**
-   * The peer's credential — a reference into the browser credential store
+   * The peer's credential — a reference into the client credential store
    * (lib/credentials.ts) for direct peers, absent for `via: "gateway"`
    * peers (the credential lives server-side in the managed registry and
-   * never enters the browser… beyond the one add-time submit). A dangling
+   * never enters the client… beyond the one add-time submit). A dangling
    * id — its credential was deleted — resolves to no auth, so the peer's
    * calls fail instead of silently sending a stale secret.
    */
   readonly credentialId?: string;
   /**
    * "gateway" → this node's server forwards to the peer (docs/protocol.md
-   * phase 3): the browser can't reach `url` directly, so calls go through
-   * `/api/gateway/<serverId>` instead. Absent → direct browser→peer calls.
+   * phase 3): the client can't reach `url` directly, so calls go through
+   * `/api/gateway/<serverId>` instead. Absent → direct client→peer calls.
    */
   readonly via?: "gateway";
   /** Managed-server registry id holding the peer's url + credential. */
@@ -110,7 +110,7 @@ export const normalizePeer = (value: unknown): PeerNode | null => {
  * One-time upgrade for pre-credentials peer records: an inline `token`
  * becomes a managed credential named after the peer, linked by
  * `credentialId`, and the raw secret never persists on the peer again.
- * Gateway peers are skipped — their credential was never browser-held.
+ * Gateway peers are skipped — their credential was never client-held.
  */
 const upgradeLegacyToken = (record: unknown, peer: PeerNode): PeerNode => {
   if (typeof record !== "object" || record === null) return peer;
@@ -486,7 +486,7 @@ export interface PeerEntryUpdate {
    * Routing target — absent keeps the current mode. Switching to "gateway"
    * hands the credential to this node's managed registry (the entry is
    * created when missing); switching to "direct" drops the managed entry
-   * and the browser resumes holding the credential.
+   * and the client resumes holding the credential.
    */
   readonly via?: "direct" | "gateway";
   /**
@@ -506,7 +506,7 @@ export interface PeerEntryUpdate {
 
 /**
  * Apply an edit-form save to a peer. A direct peer's url/credentialId update
- * in the browser registry; a `via: "gateway"` peer's credential lives in the
+ * in the client registry; a `via: "gateway"` peer's credential lives in the
  * managed registry, so url + auth changes go through `updateServer` — the
  * existing entry is fetched first so untouched fields (label, SSH config, a
  * masked secret) round-trip instead of being clobbered by the PATCH's
@@ -514,9 +514,9 @@ export interface PeerEntryUpdate {
  *
  * A routing change moves the credential with it. Direct → gateway creates
  * (or repairs) the managed entry carrying the resolved credential secret,
- * then unlinks the browser's copy (the credential itself stays in the
+ * then unlinks the client's copy (the credential itself stays in the
  * store — other peers may share it). Gateway → direct deletes the managed
- * entry — the stored secret can't come back to the browser (the registry
+ * entry — the stored secret can't come back to the client (the registry
  * only ever returns masks), so the submitted credential spec is the whole
  * credential.
  */
@@ -613,7 +613,7 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
 
   // Direct target. Leaving gateway drops the managed entry (best-effort —
   // an unreachable node must not strand the switch) since the stored
-  // credential can't return to the browser — the submitted credential spec
+  // credential can't return to the client — the submitted credential spec
   // (or none) is the whole link from here on.
   const leavingGateway = peer.via === "gateway";
   if (leavingGateway && peer.serverId !== undefined) {
@@ -642,11 +642,11 @@ export const updatePeerEntry = async (id: string, update: PeerEntryUpdate): Prom
 
 // --- Gateway-mode peers (docs/protocol.md phase 3) ---------------------------
 //
-// A `via: "gateway"` peer keeps no credential in the browser: the add flow
+// A `via: "gateway"` peer keeps no credential in the client: the add flow
 // registers the peer in this node's managed-server registry (`/api/servers`,
 // encrypted at rest) and every call rides `ANY /api/gateway/<serverId>`,
 // where the server injects the stored credential. Probing goes *through* the
-// gateway — a peer the browser can't reach directly is exactly the case
+// gateway — a peer the client can't reach directly is exactly the case
 // gateway mode exists for, so direct probes would always fail.
 
 /**
@@ -673,7 +673,7 @@ const registerGatewayPeer = async (baseUrl: string, serverId: string): Promise<P
 
 /**
  * Token add-path for a gateway peer: the submitted token goes to the managed
- * registry (it never persists in the browser), then the peer is probed and
+ * registry (it never persists in the client), then the peer is probed and
  * registered through the gateway. On failure the managed entry is dropped so
  * a rejected add leaves no orphaned credential behind.
  */
@@ -785,7 +785,7 @@ export const nodeTarget = (node: string | undefined): ApiTarget => {
  * resolves loopback per RFC 6761), the whole 127.0.0.0/8 block, and `::1`
  * (URL hostnames arrive bracketed — `[::1]` — so the brackets are stripped
  * before comparing). A node addressed by any of these lives on the device
- * the browser runs on.
+ * the client runs on.
  */
 const isLoopbackHost = (hostname: string): boolean => {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -798,7 +798,7 @@ const isLoopbackHost = (hostname: string): boolean => {
 };
 
 /**
- * Whether the browser is on the machine hosting the UI — loopback origin
+ * Whether the client is on the machine hosting the UI — loopback origin
  * means "this machine" labels are honest; a LAN/remote origin (a phone on
  * the network) is a different machine and must not claim it.
  */
@@ -816,8 +816,8 @@ export const localNodeAddress = (): string =>
   (typeof location === "undefined" ? "" : (location.origin ?? ""));
 
 /**
- * Whether `url` addresses a node on the device this browser runs on — a
- * loopback host (the browser's own machine), or exactly the serving origin
+ * Whether `url` addresses a node on the device this client runs on — a
+ * loopback host (the client's own machine), or exactly the serving origin
  * while the client itself is loopback-served. Applies to any node row: the
  * self row when its effective address is local, AND a peer — a phone that
  * registers its own node as `localhost:8787` gets the same "this machine"

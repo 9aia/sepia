@@ -9,7 +9,7 @@ side by side:
 - **API** (`sepia-server`, Bun, `:8787`) — REST + AG-UI SSE + AG-UI agent endpoint
   runtime. Spawns `devin acp` / `cline --acp` subprocesses that can read and
   modify files in session working directories.
-- **Web** (`sepia-web`, TanStack Start, `:3000`) — the browser UI. Proxies
+- **Web** (`sepia-web`, TanStack Start, `:3000`) — the client UI. Proxies
   `/api` to the API.
 
 Both processes must run under **Bun ≥ 1.3**: `sepia-core` imports `bun:sqlite`
@@ -50,7 +50,7 @@ Treat network access to the API as remote code execution.
 - Always set `SEPIA_TOKEN` and keep it server-side. The intended topology is a
   reverse proxy that terminates TLS and injects
   `Authorization: Bearer <token>` when forwarding `/api`, so the token never
-  reaches the browser (see `docker-compose.yml` + `Caddyfile`).
+  reaches the client (see `docker-compose.yml` + `Caddyfile`).
 - Deployments without a token-injecting proxy still work: the web UI shows a
   token gate on 401 and stores the token in `localStorage` (`sepia:token`).
   It is sent as `Authorization: Bearer` on API calls and as `?access_token=`

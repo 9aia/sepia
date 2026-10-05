@@ -479,7 +479,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>Browser-local preferences for this Sepia instance.</DialogDescription>
+          <DialogDescription>Client-local preferences for this Sepia instance.</DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 flex-1 gap-4 max-md:flex-col">
           <ScrollArea className="w-36 shrink-0 max-md:w-auto">

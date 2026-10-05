@@ -1,5 +1,5 @@
 # Serves the sepia UI and proxies /api to the API service, injecting the bearer
-# token so it never reaches the browser. Put TLS in front of this (Caddy
+# token so it never reaches the client. Put TLS in front of this (Caddy
 # automatic HTTPS on a real domain, or your existing reverse proxy).
 :80 {
 	handle /api/* {

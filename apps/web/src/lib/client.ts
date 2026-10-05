@@ -2,12 +2,13 @@ import { useEffect } from "react";
 import { Store, useStore } from "@tanstack/react-store";
 
 /**
- * This browser's client identity — the UI is a client container, so each
- * browser/device running it is a labeled *client* with its own keypair.
- * The record persists in localStorage (`sepia:client`) and is foundational
- * for client-side pairing/sync: `publicKey` is the shareable, displayable
- * half; `secretKey` is the private material — it never leaves this browser
- * and renders masked everywhere.
+ * This client's identity — the UI is a client container, so each
+ * device/runtime running it (a browser profile today) is a labeled
+ * *client* with its own keypair. The record persists in localStorage
+ * (`sepia:client`) and is foundational for client-side pairing/sync:
+ * `publicKey` is the shareable, displayable half; `secretKey` is the
+ * private material — it never leaves this client and renders masked
+ * everywhere.
  *
  * Keys generate lazily via WebCrypto (`ensureClient` — the API is async, so
  * the store starts empty on first run and fills once generation settles).

@@ -7,10 +7,10 @@ import { localTarget, type ApiTarget } from "./targets";
  * in the UI only as the credential + SSH store of `via: "gateway"` peers
  * (lib/nodes.ts): the entry a gateway peer points at IS its server-side
  * credential, edited through the node's edit dialog. Unlike peers
- * (browser-local, public URL + token the browser holds), managed entries
+ * (client-local, public URL + token the client holds), managed entries
  * keep credentials on the node serving this UI, encrypted at rest, and
  * support SSH-tunnelled upstreams. Every call reaches the managed node
- * through `/api/servers/:id/proxy`, so secrets never enter the browser.
+ * through `/api/servers/:id/proxy`, so secrets never enter the client.
  */
 
 /** What GET /api/servers returns — `secret` is always the mask, never real. */
@@ -135,7 +135,7 @@ export const serverTarget = (server: ManagedServer): ApiTarget => ({
  * Gateway mode (docs/protocol.md phase 3): an ApiTarget that reaches a
  * managed-server registry entry through `ANY /api/gateway/:id/*` — the same
  * credential-injecting forward as `:id/proxy`, mounted for `via: "gateway"`
- * peers in the node registry (lib/nodes.ts). The browser authenticates with
+ * peers in the node registry (lib/nodes.ts). The client authenticates with
  * the local node's token; the peer only ever sees its stored credential.
  */
 export const gatewayTarget = (serverId: string): ApiTarget => ({

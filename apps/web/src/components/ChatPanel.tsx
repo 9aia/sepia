@@ -62,7 +62,7 @@ export function ChatPanel() {
   const selfOffline = useStore(nodesStore, (state) => state.selfStatus === "offline");
   const nodesConnected = useNodesConnected();
   // The node serving this UI — "this machine" on loopback, its nickname or
-  // "local" for a remote browser. Drives the unreachable-node empty state.
+  // "local" for a remote client. Drives the unreachable-node empty state.
   const originLabel = useNodeLabel(undefined);
   const { data: sessions = [], isLoading: sessionsLoading } = useSessions();
   const session = resolveSession(sessions, selectedId) ?? null;

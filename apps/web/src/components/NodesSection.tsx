@@ -524,7 +524,7 @@ const editDefaults = (peer: PeerNode, server?: ManagedServer): EditFormValues =>
   host: peer.url,
   credential: peer.credentialId ?? CREDENTIAL_NONE,
   newSecret: "",
-  // Gateway peers keep no credential in the browser — the mask still seeds
+  // Gateway peers keep no credential in the client — the mask still seeds
   // the field and round-trips to "keep the stored credential" on save.
   token: SECRET_MASK,
   viaGateway: peer.via === "gateway",
@@ -552,7 +552,7 @@ const viaDescription = (peer: PeerNode, viaGateway: boolean): string => {
     return "Calls route through this node's server — the linked credential moves to its encrypted store.";
   }
   if (peer.via === "gateway") {
-    return "Calls go straight from the browser — the stored credential is removed, so pick a credential above if the peer needs one.";
+    return "Calls go straight from this client — the stored credential is removed, so pick a credential above if the peer needs one.";
   }
   return "For peers this client can't reach directly.";
 };
@@ -562,10 +562,10 @@ const GATEWAY_TOKEN_PLACEHOLDER = "Stored on this node — clear to remove";
 
 /**
  * Per-peer edit form, seeded from the row's peer (keyed remount on id).
- * Saves through `updatePeerEntry`: a direct peer updates in the browser
+ * Saves through `updatePeerEntry`: a direct peer updates in the client
  * registry; a gateway peer's url/auth/SSH changes PATCH its managed-server
  * entry so the stored credential and key material ride along; flipping the
- * routing switch moves the credential between the browser and the node's
+ * routing switch moves the credential between the client and the node's
  * store. `server` is the peer's managed entry — present for gateway peers
  * (the dialog gates the form on it loading) so the SSH fields can seed.
  * Label commits via `setPeerAlias` on success.
@@ -988,7 +988,7 @@ function LocalNodeEditForm({
         <div className="min-w-0 flex-1">
           <span className="block text-sm">Client identity</span>
           <span className="block text-xs text-muted-foreground">
-            This browser&apos;s label and keypair live under Settings → Client.
+            This client&apos;s label and keypair live under Settings → Client.
           </span>
         </div>
         <Button
@@ -1084,7 +1084,7 @@ export function NodesSection() {
                 <Badge
                   variant="outline"
                   className="shrink-0 text-muted-foreground"
-                  title="This node runs on the device this browser is on"
+                  title="This node runs on the device this client is on"
                 >
                   <HugeiconsIcon icon={MonitorIcon} strokeWidth={2} data-icon="inline-start" />
                   this machine
@@ -1131,7 +1131,7 @@ export function NodesSection() {
                     <Badge
                       variant="outline"
                       className="shrink-0 text-muted-foreground"
-                      title="This node runs on the device this browser is on"
+                      title="This node runs on the device this client is on"
                     >
                       <HugeiconsIcon icon={MonitorIcon} strokeWidth={2} data-icon="inline-start" />
                       this machine

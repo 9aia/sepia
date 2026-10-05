@@ -121,7 +121,7 @@ export const usePeerDescriptors = (peers: ReadonlyArray<PeerNode>) =>
     return peer === undefined || !isPeerEnabled(peer) ? undefined : result.data;
   });
 
-/** How the browser reaches the peer — directly, or through this node's gateway. */
+/** How the client reaches the peer — directly, or through this node's gateway. */
 export type PeerVia = "direct" | "gateway";
 
 /**
@@ -175,7 +175,7 @@ export const usePairNode = () => {
  * (`PeerEntryUpdate`) — the alias is committed separately via `setPeerAlias`
  * in the caller since it needs no async work. A gateway peer's credential
  * and SSH tunnel ride `updateServer` inside `updatePeerEntry`, which also
- * moves the credential between the browser and the managed registry when
+ * moves the credential between the client and the managed registry when
  * `via` flips.
  */
 export const useUpdateNode = () => {

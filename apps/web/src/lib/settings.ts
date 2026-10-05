@@ -9,7 +9,7 @@ import {
 /**
  * Client-side preferences, persisted to localStorage. Server-side
  * configuration (agents, spawn env) stays in `apps/server` env vars — these
- * are per-browser UI defaults only.
+ * are per-client UI defaults only.
  */
 /** Per-agent model preferences — spawn-time flags, not a live switch. */
 export interface AgentModelPref {

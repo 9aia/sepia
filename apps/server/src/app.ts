@@ -818,7 +818,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
 
     // Gateway mode (docs/protocol.md phase 3): `ANY /api/gateway/:peer/*`
     // proxies a managed-server registry entry with its stored credential
-    // injected — the federated UI's route to peers the browser can't reach
+    // injected — the federated UI's route to peers the client can't reach
     // directly. Behind the same bearer check as every other /api route.
     if (segments[0] === "api" && segments[1] === "gateway") {
       const store = options.servers;

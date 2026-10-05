@@ -20,7 +20,7 @@ import type { TunnelManager } from "./ssh";
  *                                      phase-3 gateway path (docs/protocol.md)
  *                                      — see handleGatewayRoute below
  *
- * The proxy is what keeps secrets server-side: the browser calls
+ * The proxy is what keeps secrets server-side: the client calls
  * `/api/servers/x/proxy/api/node` and this route injects the stored
  * Authorization header. The caller's own bearer token is never forwarded.
  */
@@ -89,7 +89,7 @@ const proxy = async (
     upstream = await fetchImpl(`${base}${path}${url.search}`, {
       method: request.method,
       headers,
-      // request.signal so a browser disconnect cancels upstream too — needed
+      // request.signal so a client disconnect cancels upstream too — needed
       // for the long-lived /stream SSE passthrough.
       signal: request.signal,
       body: hasBody ? await request.arrayBuffer() : undefined,
@@ -195,7 +195,7 @@ export const handleServersRoute = async (
  * Handle `ANY /api/gateway/:peer/*` — gateway mode (docs/protocol.md phase
  * 3). `:peer` is a managed-server registry id: the route resolves it to the
  * entry's url + stored credential and forwards exactly like `/:id/proxy/*`,
- * SSH tunnel included. The browser talks only to this node (its bearer is
+ * SSH tunnel included. The client talks only to this node (its bearer is
  * consumed by the node's own auth check); the peer sees just its stored
  * credential. `segments` are the path parts after "gateway": [peerId,
  * ...upstreamPath]. Returns undefined for shapes that don't match.

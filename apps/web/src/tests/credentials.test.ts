@@ -168,7 +168,7 @@ describe("peer token → credential migration", () => {
     expect(migrated).toMatchObject({ label: "desk", secret: "t1" });
     // n2 already linked — no duplicate credential, link untouched.
     expect(peers[1]?.credentialId).toBe("cred_x");
-    // n3 is gateway — its credential was never browser-held; nothing created.
+    // n3 is gateway — its credential was never client-held; nothing created.
     expect(peers[2]?.credentialId).toBeUndefined();
     // n4 has no secret to migrate.
     expect(peers[3]?.credentialId).toBeUndefined();
