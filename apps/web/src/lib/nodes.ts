@@ -7,7 +7,6 @@ import {
   deleteServer,
   gatewayTarget,
   listServers,
-  parseServerHost,
   SECRET_MASK,
   updateServer,
 } from "./servers";
@@ -204,25 +203,79 @@ export const peerUrlParts = (
 };
 
 /**
- * Compose the add/edit form's split address fields into a peer origin. The
- * host field also accepts a pasted `http(s)://…` address — a scheme or
- * `:port` it carries wins over the dedicated fields, matching the Servers
- * form's paste-a-URL affordance.
+ * The port a node address with no `:port` lands on — `sepia serve`'s default.
+ * Peers are sepia nodes first, so a bare `http` address means :8787, not :80;
+ * https keeps the web default (443) since TLS front ends sit on it.
  */
-export const buildPeerFromForm = (form: {
+export const NODE_DEFAULT_PORTS = { http: 8787, https: 443 } as const;
+
+/** A successfully parsed node address — the canonical origin plus its parts. */
+export interface ParsedNodeAddress {
+  /** Canonical origin (no trailing slash, default ports elided). */
+  readonly url: string;
   readonly scheme: "http" | "https";
   readonly host: string;
-  readonly port: string;
-}): string => {
-  const parsed = parseServerHost(form.host);
-  if (parsed === null) throw new Error("Enter a hostname or an http(s) address");
-  const hasScheme = /^https?:\/\//i.test(form.host.trim());
-  const port = parsed.port ?? Number(form.port);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("Port must be a number from 1 to 65535");
+  readonly port: number;
+}
+
+export type NodeAddressParse =
+  | { readonly ok: true; readonly address: ParsedNodeAddress }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * The unified node-address field's parser — a bare `host`, a `host:port`
+ * pair, or a full `http(s)://…` address (a pasted URL's path/userinfo is
+ * dropped; the registry stores origins). An address with no `:port` lands on
+ * the scheme's sepia default (NODE_DEFAULT_PORTS), so `thinkpad`,
+ * `http://thinkpad` and `thinkpad:8787` all mean the same node. Pure —
+ * returns the parts or a field-validator message, never throws.
+ */
+export const parseNodeAddress = (input: string): NodeAddressParse => {
+  const trimmed = input.trim();
+  if (trimmed === "") return { ok: false, error: "Address is required" };
+  if (/\s/.test(trimmed)) {
+    return { ok: false, error: "Enter a hostname or an http(s) address" };
   }
-  const scheme = hasScheme ? parsed.scheme : form.scheme;
-  return normalizeNodeUrl(`${scheme}://${parsed.host}:${port}`);
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+  if (hasScheme && !/^https?:\/\//i.test(trimmed)) {
+    return { ok: false, error: "Only http:// and https:// addresses are supported" };
+  }
+  // The authority substring — scheme, userinfo and path/query peeled off —
+  // so an explicit `:port` survives detection even when it's a URL-default
+  // port (`new URL("http://h:80").port` elides to "", same as no port).
+  const authority = trimmed
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+    .split(/[/?#]/, 1)[0]
+    ?.split("@")
+    .pop();
+  if (authority === undefined || authority === "") {
+    return { ok: false, error: "Host is required" };
+  }
+  const explicitPort = /:(\d+)$/.exec(authority)?.[1];
+  let url: URL;
+  try {
+    // `sepia://` stands in for "no scheme given" — non-special schemes still
+    // split authority/port but don't imply a protocol of their own.
+    url = new URL(hasScheme ? trimmed : `sepia://${trimmed}`);
+  } catch {
+    return { ok: false, error: "Enter a hostname or an http(s) address" };
+  }
+  if (url.hostname === "") return { ok: false, error: "Host is required" };
+  const scheme = url.protocol === "https:" ? ("https" as const) : ("http" as const);
+  const port =
+    url.port !== ""
+      ? Number(url.port)
+      : explicitPort !== undefined
+        ? Number(explicitPort)
+        : NODE_DEFAULT_PORTS[scheme];
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { ok: false, error: "Port must be a number from 1 to 65535" };
+  }
+  // Rebuild through a special-scheme URL so the origin canonicalizes —
+  // default ports elide (`https://h` stays port-less, `http://h:80` too).
+  const canonical = new URL(`${scheme}://${url.hostname}`);
+  canonical.port = String(port);
+  return { ok: true, address: { url: canonical.origin, scheme, host: url.hostname, port } };
 };
 
 /**

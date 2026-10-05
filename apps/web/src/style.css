@@ -104,9 +104,9 @@ html.light {
    * menu/tree-item role already has its mechanism; stacking a second
    * indicator on top reads as two outlines. Inset so it can't clip against
    * overflow-hidden scroll containers. */
-  *:focus-visible:not([class*="focus"]):not([class*="data-["]):not(
-      [role="menuitem"]
-    ):not([role="option"]):not([data-slot$="-item"]) {
+  *:focus-visible:not([class*="focus"]):not([class*="data-["]):not([role="menuitem"]):not(
+      [role="option"]
+    ):not([data-slot$="-item"]) {
     box-shadow: inset 0 0 0 2px var(--ring);
   }
 }

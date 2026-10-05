@@ -1,7 +1,12 @@
-import { useState, type KeyboardEvent } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { useForm } from "@tanstack/react-form";
 import { useStore } from "@tanstack/react-store";
-import { Delete02Icon, PencilEdit01Icon } from "@hugeicons/core-free-icons";
+import {
+  Delete02Icon,
+  MonitorIcon,
+  MoreVerticalIcon,
+  PencilEdit01Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   useAddNode,
@@ -14,16 +19,15 @@ import {
   useUpdateNode,
 } from "../hooks/query/useNodes";
 import {
-  buildPeerFromForm,
   isLocalAccess,
   isPeerEnabled,
-  peerUrlParts,
+  parseNodeAddress,
   setPeerAlias,
   type PeerCredentialSpec,
   type PeerNode,
 } from "../lib/nodes";
 import { credentialsStore } from "../lib/credentials";
-import { parseServerHost, SECRET_MASK } from "../lib/servers";
+import { SECRET_MASK } from "../lib/servers";
 import { setSettings, settingsStore } from "../lib/settings";
 import {
   AlertDialog,
@@ -38,6 +42,13 @@ import {
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./ui/select";
 import { Switch } from "./ui/switch";
@@ -59,17 +70,10 @@ function StatusDot({ ok, title }: { readonly ok: boolean | undefined; readonly t
 // Every validator returns a message or undefined; fields validate onChange
 // (live re-check while fixing) and onSubmit (untouched fields report too).
 
-const hostValidator = ({ value }: { value: string }): string | undefined => {
-  if (value.trim() === "") return "Host is required";
-  if (parseServerHost(value) === null) return "Enter a hostname or an http(s) address";
-  return undefined;
-};
-
-const portValidator = ({ value }: { value: string }): string | undefined => {
-  const port = Number(value);
-  return Number.isInteger(port) && port >= 1 && port <= 65535
-    ? undefined
-    : "Port must be a number from 1 to 65535";
+/** The unified address field — one input for host, host:port or a full URL. */
+const addressValidator = ({ value }: { value: string }): string | undefined => {
+  const parsed = parseNodeAddress(value);
+  return parsed.ok ? undefined : parsed.error;
 };
 
 const requiredValidator =
@@ -89,11 +93,39 @@ function FieldError({ errors }: { readonly errors: ReadonlyArray<unknown> }) {
   return message === null ? null : <span className="text-xs text-destructive">{message}</span>;
 }
 
-/** The split address fields — shared by the add form and the edit dialog. */
-interface AddressFields {
-  scheme: "http" | "https";
-  host: string;
-  port: string;
+/** Small muted caption above a form control — keeps the card's grid readable. */
+function FieldLabel({ children }: { readonly children: ReactNode }) {
+  return <span className="text-xs font-medium text-muted-foreground">{children}</span>;
+}
+
+/**
+ * The unified address field shared by the add form and the edit dialog —
+ * one input covering `host`, `host:port` and `http(s)://…` forms. The parsed
+ * scheme rides inside the value; there's no separate scheme/port control.
+ */
+function AddressField({
+  field,
+}: {
+  readonly field: {
+    state: { value: string; meta: { errors: ReadonlyArray<unknown> } };
+    handleBlur: () => void;
+    handleChange: (value: string) => void;
+  };
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <FieldLabel>Address</FieldLabel>
+      <Input
+        placeholder="hostname, host:port or https://…"
+        aria-label="Node address"
+        title="A bare host (defaults to http://…:8787), a host:port pair, or a full http(s):// address"
+        value={field.state.value}
+        onBlur={field.handleBlur}
+        onChange={(event) => field.handleChange(event.target.value)}
+      />
+      <FieldError errors={field.state.meta.errors} />
+    </div>
+  );
 }
 
 // --- Credential picker -------------------------------------------------------
@@ -171,8 +203,10 @@ const newSecretValidator = ({
 
 // --- Add form ----------------------------------------------------------------
 
-interface AddFormValues extends AddressFields {
+interface AddFormValues {
   label: string;
+  /** Unified address — host, host:port or a full http(s):// URL. */
+  host: string;
   code: string;
   /** Direct peers: picker value — "__none__", "__new__", or a credential id. */
   credential: string;
@@ -185,9 +219,7 @@ interface AddFormValues extends AddressFields {
 
 const ADD_FORM_DEFAULTS: AddFormValues = {
   label: "",
-  scheme: "http",
   host: "",
-  port: "8787",
   code: "",
   credential: CREDENTIAL_NONE,
   newSecret: "",
@@ -196,15 +228,14 @@ const ADD_FORM_DEFAULTS: AddFormValues = {
 };
 
 /**
- * Bottom-of-section add form (TanStack Form): label + scheme/host/port
- * address fields, auth via pairing code or a credential (a stored pick, a
- * fresh secret filed in the credential store, or — gateway mode — a raw
- * secret for the managed registry), and the gateway switch. The auth-mode
- * toggle is presentational React state — the code
- * field's validator reads it — while every submitted value lives on the
- * form. Submission still goes through `useAddNode`/`usePairNode` — a wrong
- * address or credential fails the probe before the peer can poison the
- * merged lists.
+ * Bottom-of-section add form (TanStack Form): nickname + a unified address
+ * field, auth via pairing code or a credential (a stored pick, a fresh
+ * secret filed in the credential store, or — gateway mode — a raw secret
+ * for the managed registry), and the gateway switch. The auth-mode toggle
+ * is presentational React state — the code field's validator reads it —
+ * while every submitted value lives on the form. Submission still goes
+ * through `useAddNode`/`usePairNode` — a wrong address or credential fails
+ * the probe before the peer can poison the merged lists.
  */
 function NodeAddForm() {
   const addNode = useAddNode();
@@ -214,12 +245,9 @@ function NodeAddForm() {
   const form = useForm({
     defaultValues: ADD_FORM_DEFAULTS,
     onSubmit: ({ value }) => {
-      let url: string;
-      try {
-        url = buildPeerFromForm(value);
-      } catch {
-        return; // Field validators normally catch this first.
-      }
+      const parsed = parseNodeAddress(value.host);
+      if (!parsed.ok) return; // The field validator normally catches this first.
+      const url = parsed.address.url;
       const via = value.viaGateway ? ("gateway" as const) : ("direct" as const);
       const onSuccess = (peer: PeerNode): void => {
         if (value.label.trim() !== "") setPeerAlias(peer.id, value.label);
@@ -259,63 +287,24 @@ function NodeAddForm() {
       </div>
       <form.Field name="label">
         {(field) => (
-          <Input
-            placeholder="Nickname (optional)"
-            aria-label="Node nickname"
-            value={field.state.value}
-            onBlur={field.handleBlur}
-            onChange={(event) => field.handleChange(event.target.value)}
-          />
+          <div className="flex flex-col gap-1.5">
+            <FieldLabel>Nickname · optional</FieldLabel>
+            <Input
+              placeholder="Shown instead of the node's name"
+              aria-label="Node nickname"
+              value={field.state.value}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.value)}
+            />
+          </div>
         )}
       </form.Field>
-      <div className="grid grid-cols-[6rem_minmax(0,1fr)_4.5rem] items-start gap-2">
-        <form.Field name="scheme">
-          {(field) => (
-            <Select
-              value={field.state.value}
-              onValueChange={(value) => field.handleChange(value as "http" | "https")}
-            >
-              <SelectTrigger aria-label="Scheme" className="w-full">
-                {field.state.value}://
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="http">http://</SelectItem>
-                <SelectItem value="https">https://</SelectItem>
-              </SelectContent>
-            </Select>
-          )}
-        </form.Field>
-        <form.Field name="host" validators={{ onChange: hostValidator, onSubmit: hostValidator }}>
-          {(field) => (
-            <div className="flex flex-col gap-1">
-              <Input
-                placeholder="hostname or https://host:port"
-                aria-label="Node host"
-                title="A bare host, or a full http(s):// address — a scheme or :port it carries wins over the other fields"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
-              />
-              <FieldError errors={field.state.meta.errors} />
-            </div>
-          )}
-        </form.Field>
-        <form.Field name="port" validators={{ onChange: portValidator, onSubmit: portValidator }}>
-          {(field) => (
-            <div className="flex flex-col gap-1">
-              <Input
-                placeholder="Port"
-                aria-label="Node port"
-                inputMode="numeric"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
-              />
-              <FieldError errors={field.state.meta.errors} />
-            </div>
-          )}
-        </form.Field>
-      </div>
+      <form.Field
+        name="host"
+        validators={{ onChange: addressValidator, onSubmit: addressValidator }}
+      >
+        {(field) => <AddressField field={field} />}
+      </form.Field>
       <Tabs value={mode} onValueChange={(value) => setMode(value as "code" | "token")}>
         <TabsList className="w-full" aria-label="Auth method">
           <TabsTrigger value="code" className="flex-1">
@@ -335,7 +324,8 @@ function NodeAddForm() {
           }}
         >
           {(field) => (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel>Pairing code</FieldLabel>
               <Input
                 placeholder="Code from `sepia pair` (e.g. 7K2M-9PQX)"
                 aria-label="Pairing code"
@@ -357,19 +347,23 @@ function NodeAddForm() {
             viaGateway ? (
               <form.Field name="token">
                 {(field) => (
-                  <Input
-                    type="password"
-                    placeholder="Bearer token (stored on this node)"
-                    aria-label="Node token"
-                    autoComplete="new-password"
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(event) => field.handleChange(event.target.value)}
-                  />
+                  <div className="flex flex-col gap-1.5">
+                    <FieldLabel>Bearer token</FieldLabel>
+                    <Input
+                      type="password"
+                      placeholder="Stored on this node"
+                      aria-label="Node token"
+                      autoComplete="new-password"
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                    />
+                  </div>
                 )}
               </form.Field>
             ) : (
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>Credential</FieldLabel>
                 <form.Field name="credential">
                   {(field) => (
                     <CredentialSelect
@@ -442,8 +436,10 @@ function NodeAddForm() {
 
 // --- Edit dialog -------------------------------------------------------------
 
-interface EditFormValues extends AddressFields {
+interface EditFormValues {
   label: string;
+  /** Unified address — seeded with the peer's canonical origin. */
+  host: string;
   /**
    * Direct-peer credential picker — "__none__", "__new__", or a credential
    * id. Seeded with the peer's current link so an untouched save keeps it.
@@ -461,21 +457,17 @@ interface EditFormValues extends AddressFields {
   viaGateway: boolean;
 }
 
-const editDefaults = (peer: PeerNode): EditFormValues => {
-  const { scheme, host, port } = peerUrlParts(peer.url);
-  return {
-    label: peer.alias ?? "",
-    scheme,
-    host,
-    port: String(port),
-    credential: peer.credentialId ?? CREDENTIAL_NONE,
-    newSecret: "",
-    // Gateway peers keep no credential in the browser — the mask still seeds
-    // the field and round-trips to "keep the stored credential" on save.
-    token: SECRET_MASK,
-    viaGateway: peer.via === "gateway",
-  };
-};
+const editDefaults = (peer: PeerNode): EditFormValues => ({
+  label: peer.alias ?? "",
+  // The canonical origin round-trips through parseNodeAddress unchanged.
+  host: peer.url,
+  credential: peer.credentialId ?? CREDENTIAL_NONE,
+  newSecret: "",
+  // Gateway peers keep no credential in the browser — the mask still seeds
+  // the field and round-trips to "keep the stored credential" on save.
+  token: SECRET_MASK,
+  viaGateway: peer.via === "gateway",
+});
 
 /**
  * The routing switch's subline — explains the current mode and warns on the
@@ -497,7 +489,7 @@ const viaDescription = (peer: PeerNode, viaGateway: boolean): string => {
 };
 
 /** Gateway-mode secret field's placeholder — mask means "keep stored". */
-const GATEWAY_TOKEN_PLACEHOLDER = "Bearer token (stored on this node — clear to remove)";
+const GATEWAY_TOKEN_PLACEHOLDER = "Stored on this node — clear to remove";
 
 /**
  * Per-peer edit form, seeded from the row's peer (keyed remount on id).
@@ -512,12 +504,9 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
   const form = useForm({
     defaultValues: editDefaults(peer),
     onSubmit: ({ value }) => {
-      let url: string;
-      try {
-        url = buildPeerFromForm(value);
-      } catch {
-        return;
-      }
+      const parsed = parseNodeAddress(value.host);
+      if (!parsed.ok) return;
+      const url = parsed.address.url;
       update.mutate(
         {
           id: peer.id,
@@ -553,63 +542,25 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
     >
       <form.Field name="label">
         {(field) => (
-          <Input
-            placeholder={peer.name}
-            aria-label="Node nickname"
-            title="Nickname — shown instead of the node's name; empty reverts to the reported name"
-            value={field.state.value}
-            onBlur={field.handleBlur}
-            onChange={(event) => field.handleChange(event.target.value)}
-          />
+          <div className="flex flex-col gap-1.5">
+            <FieldLabel>Nickname · optional</FieldLabel>
+            <Input
+              placeholder={peer.name}
+              aria-label="Node nickname"
+              title="Nickname — shown instead of the node's name; empty reverts to the reported name"
+              value={field.state.value}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.value)}
+            />
+          </div>
         )}
       </form.Field>
-      <div className="grid grid-cols-[6rem_minmax(0,1fr)_4.5rem] items-start gap-2">
-        <form.Field name="scheme">
-          {(field) => (
-            <Select
-              value={field.state.value}
-              onValueChange={(value) => field.handleChange(value as "http" | "https")}
-            >
-              <SelectTrigger aria-label="Scheme" className="w-full">
-                {field.state.value}://
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="http">http://</SelectItem>
-                <SelectItem value="https">https://</SelectItem>
-              </SelectContent>
-            </Select>
-          )}
-        </form.Field>
-        <form.Field name="host" validators={{ onChange: hostValidator, onSubmit: hostValidator }}>
-          {(field) => (
-            <div className="flex flex-col gap-1">
-              <Input
-                placeholder="hostname or https://host:port"
-                aria-label="Node host"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
-              />
-              <FieldError errors={field.state.meta.errors} />
-            </div>
-          )}
-        </form.Field>
-        <form.Field name="port" validators={{ onChange: portValidator, onSubmit: portValidator }}>
-          {(field) => (
-            <div className="flex flex-col gap-1">
-              <Input
-                placeholder="Port"
-                aria-label="Node port"
-                inputMode="numeric"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
-              />
-              <FieldError errors={field.state.meta.errors} />
-            </div>
-          )}
-        </form.Field>
-      </div>
+      <form.Field
+        name="host"
+        validators={{ onChange: addressValidator, onSubmit: addressValidator }}
+      >
+        {(field) => <AddressField field={field} />}
+      </form.Field>
       <form.Subscribe
         selector={(state) => [state.values.viaGateway, state.values.credential] as const}
       >
@@ -617,19 +568,23 @@ function NodeEditForm({ peer, onClose }: { readonly peer: PeerNode; onClose: () 
           viaGateway ? (
             <form.Field name="token">
               {(field) => (
-                <Input
-                  type="password"
-                  placeholder={GATEWAY_TOKEN_PLACEHOLDER}
-                  aria-label="Node token"
-                  autoComplete="new-password"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                />
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>Bearer token</FieldLabel>
+                  <Input
+                    type="password"
+                    placeholder={GATEWAY_TOKEN_PLACEHOLDER}
+                    aria-label="Node token"
+                    autoComplete="new-password"
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                  />
+                </div>
               )}
             </form.Field>
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel>Credential</FieldLabel>
               <form.Field name="credential">
                 {(field) => (
                   <CredentialSelect
@@ -712,9 +667,9 @@ const blurOnEnter = (event: KeyboardEvent<HTMLInputElement>): void => {
  * Settings → Nodes: the peer registry behind the federated lists. Each row
  * shows reachability, the display name and address, an enable switch
  * (disabled peers merge nothing and resolve to an unreachable target), and
- * pencil/remove actions — the pencil opens the edit dialog covering every
- * peer subfield (nickname, address, credential, routing), and remove
- * confirms first since a gateway peer's stored credential dies with it.
+ * a ⋮ menu with edit/remove — edit opens the dialog covering every peer
+ * subfield (nickname, address, credential, routing), and remove confirms
+ * first since a gateway peer's stored credential dies with it.
  */
 export function NodesSection() {
   const { self, selfStatus, peers } = useNodes();
@@ -746,23 +701,30 @@ export function NodesSection() {
             }
           />
           <div className="min-w-0 flex-1">
-            <Input
-              key={localName ?? self?.name ?? ""}
-              className="h-7 w-44 max-w-full text-sm font-medium"
-              defaultValue={localName ?? ""}
-              placeholder={self?.name ?? (isLocalAccess() ? "This machine" : "Hostname")}
-              aria-label="Nickname for this machine"
-              title="Nickname for this machine"
-              onBlur={(e) => setSettings({ localNodeName: e.currentTarget.value.trim() || null })}
-              onKeyDown={blurOnEnter}
-            />
-            <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-              <span className="truncate">{location.origin}</span>
+            <div className="flex items-center gap-2">
+              <Input
+                key={localName ?? self?.name ?? ""}
+                className="h-7 w-44 max-w-full text-sm font-medium"
+                defaultValue={localName ?? ""}
+                placeholder={self?.name ?? (isLocalAccess() ? "This machine" : "Hostname")}
+                aria-label="Nickname for this machine"
+                title="Nickname for this machine"
+                onBlur={(e) => setSettings({ localNodeName: e.currentTarget.value.trim() || null })}
+                onKeyDown={blurOnEnter}
+              />
               {isLocalAccess() && (
-                <Badge variant="secondary" className="h-4 shrink-0 px-1.5 text-[10px]">
+                <Badge
+                  variant="outline"
+                  className="shrink-0 text-muted-foreground"
+                  title="The node serving this UI"
+                >
+                  <HugeiconsIcon icon={MonitorIcon} strokeWidth={2} data-icon="inline-start" />
                   this machine
                 </Badge>
               )}
+            </div>
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {location.origin}
             </span>
           </div>
         </div>
@@ -793,31 +755,38 @@ export function NodesSection() {
                     ` — credential ${credentials.find((credential) => credential.id === peer.credentialId)?.label ?? "missing"} ${SECRET_MASK}`}
                 </span>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 items-center gap-1.5">
                 <Switch
                   checked={enabled}
                   onCheckedChange={(value) => setEnabled.mutate({ id: peer.id, enabled: value })}
                   aria-label={`${enabled ? "Disable" : "Enable"} node ${peer.name}`}
                   title={enabled ? "Disable node" : "Enable node"}
                 />
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={`Edit node ${peer.name}`}
-                  title="Edit node"
-                  onClick={() => setEditing(peer)}
-                >
-                  <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={`Remove node ${peer.name}`}
-                  title="Remove node"
-                  onClick={() => setRemoving(peer)}
-                >
-                  <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Actions for node ${peer.name}`}
+                        title="Node actions"
+                      />
+                    }
+                  >
+                    <HugeiconsIcon icon={MoreVerticalIcon} strokeWidth={2} />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setEditing(peer)}>
+                      <HugeiconsIcon icon={PencilEdit01Icon} strokeWidth={2} />
+                      Edit node
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" onClick={() => setRemoving(peer)}>
+                      <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                      Remove node
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           );

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   addGatewayPeer,
   addPeer,
-  buildPeerFromForm,
   getPeers,
   isMultiNode,
   isPeerEnabled,
@@ -16,6 +15,7 @@ import {
   normalizePeer,
   pairGatewayPeer,
   pairPeer,
+  parseNodeAddress,
   peerSecret,
   peerTarget,
   peerUrlParts,
@@ -806,31 +806,87 @@ describe("peer address helpers", () => {
     });
   });
 
-  it("buildPeerFromForm composes scheme+host+port into an origin", () => {
-    expect(buildPeerFromForm({ scheme: "https", host: "peer.example", port: "8787" })).toBe(
-      "https://peer.example:8787",
-    );
-    // The scheme's default port collapses out of the origin.
-    expect(buildPeerFromForm({ scheme: "http", host: "peer.example", port: "80" })).toBe(
-      "http://peer.example",
-    );
+  // Narrows the ok/error union — a reject fails the test with the message.
+  const parseOk = (input: string) => {
+    const parsed = parseNodeAddress(input);
+    if (!parsed.ok) throw new Error(`expected accept, got: ${parsed.error}`);
+    return parsed.address;
+  };
+
+  it("parseNodeAddress accepts a bare host and defaults to http + the sepia port", () => {
+    expect(parseOk("thinkpad")).toEqual({
+      url: "http://thinkpad:8787",
+      scheme: "http",
+      host: "thinkpad",
+      port: 8787,
+    });
+    expect(parseOk("  192.168.1.10  ")).toEqual({
+      url: "http://192.168.1.10:8787",
+      scheme: "http",
+      host: "192.168.1.10",
+      port: 8787,
+    });
   });
 
-  it("buildPeerFromForm lets a pasted URL's scheme and :port win", () => {
-    expect(
-      buildPeerFromForm({ scheme: "http", host: "https://peer.example:8443", port: "8787" }),
-    ).toBe("https://peer.example:8443");
-    // A pasted URL without :port uses the field.
-    expect(buildPeerFromForm({ scheme: "http", host: "https://peer.example", port: "8787" })).toBe(
-      "https://peer.example:8787",
-    );
+  it("parseNodeAddress accepts host:port and full http(s) addresses", () => {
+    expect(parseOk("thinkpad:9999")).toMatchObject({ url: "http://thinkpad:9999", port: 9999 });
+    // http with no :port lands on the sepia serve default, not 80.
+    expect(parseOk("http://peer.example")).toMatchObject({
+      url: "http://peer.example:8787",
+      scheme: "http",
+      port: 8787,
+    });
+    expect(parseOk("https://peer.example")).toMatchObject({
+      url: "https://peer.example",
+      scheme: "https",
+      port: 443,
+    });
+    expect(parseOk("https://peer.example:8443")).toMatchObject({
+      url: "https://peer.example:8443",
+      port: 8443,
+    });
+    // IPv6 keeps its brackets; uppercase schemes normalize.
+    expect(parseOk("http://[::1]:8787").url).toBe("http://[::1]:8787");
+    expect(parseOk("HTTPS://Peer.Example").url).toBe("https://peer.example");
   });
 
-  it("buildPeerFromForm rejects a bad host or port", () => {
-    expect(() => buildPeerFromForm({ scheme: "http", host: "", port: "8787" })).toThrow();
-    expect(() => buildPeerFromForm({ scheme: "http", host: "bad host", port: "8787" })).toThrow();
-    expect(() => buildPeerFromForm({ scheme: "http", host: "h", port: "abc" })).toThrow();
-    expect(() => buildPeerFromForm({ scheme: "http", host: "h", port: "70000" })).toThrow();
+  it("parseNodeAddress drops a pasted URL's path and elides URL-default ports", () => {
+    expect(parseOk("https://peer.example:8443/api?q=1").url).toBe("https://peer.example:8443");
+    expect(parseOk("http://peer.example:80").url).toBe("http://peer.example");
+    expect(parseOk("https://peer.example:443").url).toBe("https://peer.example");
+  });
+
+  it("parseNodeAddress treats a dangling colon as an empty port → scheme default", () => {
+    expect(parseOk("peer.example:")).toMatchObject({ url: "http://peer.example:8787", port: 8787 });
+    expect(parseOk("https://peer.example:")).toMatchObject({
+      url: "https://peer.example",
+      port: 443,
+    });
+  });
+
+  it("parseNodeAddress rejects non-http(s) schemes", () => {
+    for (const input of ["wss://peer.example", "ftp://peer.example", "ws://peer.example:8787"]) {
+      expect(parseNodeAddress(input)).toEqual({
+        ok: false,
+        error: "Only http:// and https:// addresses are supported",
+      });
+    }
+  });
+
+  it("parseNodeAddress rejects empty, unparseable and out-of-range input", () => {
+    expect(parseNodeAddress("")).toEqual({ ok: false, error: "Address is required" });
+    expect(parseNodeAddress("   ")).toEqual({ ok: false, error: "Address is required" });
+    expect(parseNodeAddress("http://")).toEqual({ ok: false, error: "Host is required" });
+    expect(parseNodeAddress("bad host")).toEqual({
+      ok: false,
+      error: "Enter a hostname or an http(s) address",
+    });
+    expect(parseNodeAddress("host:notaport").ok).toBe(false);
+    expect(parseNodeAddress("host:99999").ok).toBe(false);
+    expect(parseNodeAddress("host:0")).toEqual({
+      ok: false,
+      error: "Port must be a number from 1 to 65535",
+    });
   });
 });
 
