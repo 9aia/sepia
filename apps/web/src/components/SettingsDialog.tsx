@@ -407,12 +407,12 @@ function NotificationsSection() {
 const SECTIONS = [
   { id: "general", label: "General" },
   { id: "client", label: "Client" },
+  { id: "credentials", label: "Credentials" },
+  { id: "nodes", label: "Nodes" },
+  { id: "agents", label: "Agents" },
+  { id: "models", label: "Models" },
   { id: "desktop", label: "Desktop" },
   { id: "sidebar", label: "Sidebar" },
-  { id: "models", label: "Models" },
-  { id: "agents", label: "Agents" },
-  { id: "nodes", label: "Nodes" },
-  { id: "credentials", label: "Credentials" },
   { id: "keyboard", label: "Keyboard" },
   { id: "notifications", label: "Notifications" },
 ] as const;
@@ -525,12 +525,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 </div>
               </section>
               <ClientSection />
+              <CredentialsSection />
+              <NodesSection />
+              <AgentsSection scrollTo={scrollTo} />
+              <ModelsSection scrollTo={scrollTo} />
               <DesktopSection />
               <SidebarSection />
-              <ModelsSection scrollTo={scrollTo} />
-              <AgentsSection scrollTo={scrollTo} />
-              <NodesSection />
-              <CredentialsSection />
               {hasKeyboard && <KeyboardSection />}
               <NotificationsSection />
             </div>
