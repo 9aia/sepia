@@ -21,6 +21,7 @@ import { useCreateSession } from "../../hooks/query/useCreateSession";
 import { useNodeLabel, useNodes } from "../../hooks/query/useNodes";
 import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
+import { focusNode, resolveCreateTarget, useFocus } from "../../lib/focus";
 import { defaultAgentFor, defaultCwdFor, recentCwdFor, settingsStore } from "../../lib/settings";
 import { sidebarSectionLabel, sidebarSectionLimit } from "../../lib/sidebar";
 import { modelArgsFor } from "../../lib/models";
@@ -425,6 +426,10 @@ function ProjectsSection({
   const patchSession = usePatchSessionMeta();
   const { data: agents = [] } = useAgents();
   const settings = useStore(settingsStore);
+  const focus = useFocus();
+  // resolvedCwd belongs to the focused node — a project elsewhere can only
+  // fall back to a dir that exists there, so cross-node falls to "/".
+  const focusedKey = nodeKey(focusNode(focus));
 
   // Bucket members per project in one pass instead of filtering `sessions`
   // once per project row on every render. Keys are node-namespaced
@@ -450,10 +455,14 @@ function ProjectsSection({
       members[0]?.cwd ??
       defaultCwdFor(settings, project.node) ??
       recentCwdFor(sessions, project.node) ??
-      resolvedCwd;
-    // Unset node default → local keeps the roster's first agent, a peer
-    // gets no override and picks its own (a local-only id would fail).
+      (nodeKey(project.node) === focusedKey ? resolvedCwd : "/");
+    // The focused agent wins when the project sits on the focused node;
+    // else the node's configured default — unset → local keeps the roster's
+    // first agent, while a peer gets no override and picks its own.
+    const focusedAgent =
+      focus !== null && nodeKey(project.node) === focusedKey ? focus.agent : null;
     const agent =
+      focusedAgent ??
       defaultAgentFor(settings, project.node) ??
       (isLocalNode(project.node) ? agents[0]?.id : undefined);
     void createSession
@@ -731,6 +740,7 @@ export function SessionSections({
   const { data: agents = [] } = useAgents();
   const createSession = useCreateSession();
   const settings = useStore(settingsStore);
+  const focus = useFocus();
   // Membership comes from a live-query view the engine maintains
   // incrementally — it only re-derives when a session's `pinned` actually
   // flips. The `sessions` prop still supplies ordering + UI filters.
@@ -816,12 +826,15 @@ export function SessionSections({
                     aria-label="New session"
                     title="New session"
                     onClick={() => {
-                      // The recents "+" creates on the local node, same as
-                      // the main button — resolvedCwd is already local.
-                      const agent = defaultAgentFor(settings, undefined) ?? agents[0]?.id;
+                      // The recents "+" targets the focus, same as the main
+                      // button — resolvedCwd is already resolved for it.
+                      const target = resolveCreateTarget(focus, settings, undefined);
+                      const agent =
+                        target.agent ?? (isLocalNode(target.node) ? agents[0]?.id : undefined);
                       createSession.mutate({
                         cwd: resolvedCwd,
                         agent,
+                        node: target.node,
                         ...modelArgsFor(agent ?? "", null, settings),
                       });
                     }}

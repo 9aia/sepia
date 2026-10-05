@@ -28,6 +28,7 @@ import {
 import { useAgents } from "../hooks/query/useAgents";
 import { useNodeLabel, useNodes, usePeerDescriptors, useSelfNode } from "../hooks/query/useNodes";
 import { NodesSection } from "./NodesSection";
+import { ClientSection } from "./settings/ClientSection";
 import { CredentialsSection } from "./settings/CredentialsSection";
 import { ServersSection } from "./settings/ServersSection";
 import { SidebarSection } from "./settings/SidebarSection";
@@ -386,6 +387,7 @@ function NotificationsSection() {
 
 const SECTIONS = [
   { id: "general", label: "General" },
+  { id: "client", label: "Client" },
   { id: "sidebar", label: "Sidebar" },
   { id: "models", label: "Models" },
   { id: "nodes", label: "Nodes" },
@@ -504,6 +506,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 </div>
                 <SessionDefaults />
               </section>
+              <ClientSection />
               <SidebarSection />
               <section data-spy="models" className="flex scroll-mt-2 flex-col gap-2">
                 <h3 className="text-sm font-medium">Models</h3>

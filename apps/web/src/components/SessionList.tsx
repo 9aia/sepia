@@ -43,12 +43,13 @@ import {
   type SortKey,
   type StatusFilter,
 } from "./session-list/FilterBar";
-import { defaultAgentFor, defaultCwdFor, recentCwdFor, settingsStore } from "../lib/settings";
+import { settingsStore } from "../lib/settings";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
 import { ListEmptyState } from "./session-list/ListEmptyState";
 import { ProjectNameDialog, SessionSections } from "./session-list/SessionSections";
 import { getRecents } from "../lib/recents";
-import { UserProfile } from "./session-list/UserProfile";
+import { ClientBar } from "./session-list/ClientBar";
+import { focusNode, resolveCreateCwd, resolveCreateTarget } from "../lib/focus";
 
 const DATE_CUTOFFS: Record<Exclude<DateFilter, "all">, number> = {
   day: 24 * 60 * 60 * 1000,
@@ -96,6 +97,7 @@ export function SessionList() {
   const createCwd = useStore(sepiaStore, (state) => state.createCwd);
   const createNode = useStore(sepiaStore, (state) => state.createNode);
   const cwd = useStore(sepiaStore, (state) => state.cwd);
+  const focus = useStore(sepiaStore, (state) => state.focus);
   const { data: user } = useUserInfo();
   const { isMobile, setOpenMobile } = useSidebar();
   const selectAndClose = (key: string): void => {
@@ -109,26 +111,28 @@ export function SessionList() {
   useEffect(() => {
     if (navigator.platform.toUpperCase().includes("MAC")) setModKey("⌘");
   }, []);
-  // The dir new sessions spawn in — the button targets the local node, so
-  // the chain resolves locally: explicit pick > this node's settings
-  // default > most recent local session's > home.
-  const resolvedCwd =
-    cwd ??
-    defaultCwdFor(settings, undefined) ??
-    recentCwdFor(sessions, undefined) ??
-    user?.homedir ??
-    "/";
+  // The dir new sessions spawn in — resolved against the focus target:
+  // a focused peer uses its own default/recent dirs (local paths wouldn't
+  // exist there); unset or local focus keeps the local chain — explicit
+  // pick > this node's settings default > most recent local session's > home.
+  const resolvedCwd = resolveCreateCwd(focus, {
+    picked: cwd,
+    settings,
+    sessions,
+    homedir: user?.homedir,
+  });
   const create = (dir: string, node?: string): void => {
     if (isMobile) setOpenMobile(false);
-    // The configured default is scoped to the target node; when it's unset
-    // the local node keeps the roster's first agent, while a peer gets no
-    // override and picks its own default (a local-only id would just fail).
-    const agent =
-      defaultAgentFor(settings, node) ?? (isLocalNode(node) ? agents[0]?.id : undefined);
+    // The focus is an explicit pick — it overrides the per-node defaults
+    // for creates that didn't name a node (the button, the hotkey, "+").
+    const target = resolveCreateTarget(focus, settings, node);
+    // Unset agent → the local node keeps the roster's first agent, while a
+    // peer gets no override and picks its own (a local-only id would fail).
+    const agent = target.agent ?? (isLocalNode(target.node) ? agents[0]?.id : undefined);
     createMutation.mutate({
       cwd: dir,
       agent,
-      node,
+      node: target.node,
       ...modelArgsFor(agent ?? "", null, settings),
     });
   };
@@ -272,15 +276,26 @@ export function SessionList() {
                     <span className="px-1 text-xs font-medium text-muted-foreground">
                       Working directory
                     </span>
-                    <CwdPicker
-                      value={resolvedCwd}
-                      // The picker feeds the local create button — a peer's
-                      // paths aren't valid local dirs.
-                      dirs={[
-                        ...new Set(sessions.filter((s) => isLocalNode(s.node)).map((s) => s.cwd)),
-                      ]}
-                      onChange={setCwd}
-                    />
+                    {focusNode(focus) === undefined ? (
+                      <CwdPicker
+                        value={resolvedCwd}
+                        // The picker feeds the local create button — a peer's
+                        // paths aren't valid local dirs.
+                        dirs={[
+                          ...new Set(sessions.filter((s) => isLocalNode(s.node)).map((s) => s.cwd)),
+                        ]}
+                        onChange={setCwd}
+                      />
+                    ) : (
+                      <>
+                        <span className="block truncate px-1 font-mono text-xs" title={resolvedCwd}>
+                          {resolvedCwd}
+                        </span>
+                        <span className="px-1 text-xs text-muted-foreground">
+                          Set a default directory for the focused node in Settings.
+                        </span>
+                      </>
+                    )}
                   </div>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -357,7 +372,7 @@ export function SessionList() {
           }}
         />
       )}
-      <UserProfile />
+      <ClientBar />
     </Sidebar>
   );
 }
