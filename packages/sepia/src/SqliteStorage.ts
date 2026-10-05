@@ -371,9 +371,33 @@ export const make = (
  * `message_nodes`, and `node_id` is a contiguous per-session sequence, so
  * a suffix delete leaves no dangling `parent_node_id`.
  *
- * `prompt_history` is left alone — it is the user's input log, not
- * conversation state. `rendered_commits` is likewise left: it keys rows by
- * `sequence_number`, which has no reliable join to node ids.
+ * `prompt_history` is left alone — deliberately, on two grounds.
+ * Schema: its rows are `(id, content, timestamp, session_id, is_shell)`,
+ * so there is no `node_id`/`sequence_number` key to join the removed
+ * nodes on. `timestamp` is the submit clock, not `created_at` (real
+ * rows differ by hours), and `content` joins non-bijectively: devin
+ * re-emits the same user message under fresh `node_id`s every time the
+ * chain re-roots (one prompt-history row matches several nodes), so a
+ * content delete would drop log entries whose prompts still live in
+ * kept nodes. Semantics: devin itself only reads the table as
+ * `SELECT content, is_shell ... ORDER BY timestamp, rowid` — it is the
+ * input-recall log, not conversation state, which is also why
+ * `Rewind.rewindSession` keeps `promptHistory` intact.
+ *
+ * `rendered_commits(session_id, sequence_number, rendered_html,
+ * created_at)` is left for a harder reason: no join exists at all.
+ * `message_nodes` carries no `sequence_number` — the V5 `message_forest`
+ * migration dropped the whole `messages` table (the only sequence the
+ * store ever had) when it introduced `node_id` — and `rendered_commits`
+ * itself has no `node_id`/`message_id` column either. What
+ * `sequence_number` counts is unverifiable from here: the CLI binary
+ * contains only the table DDL and the session-delete cascade (no
+ * INSERT/SELECT — it is written by the server-side renderer the DDL
+ * comment calls "HTML strings for session restore"), real stores carry
+ * zero rows, and the plausible readings
+ * (forest `node_id`, main-chain position, monotonic commit counter) each
+ * imply a different delete. Guessing wrong erases renders of surviving
+ * states — worse than stale cache rows.
  */
 export const truncateSessionNodes = (
   dbPath: string,

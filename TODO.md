@@ -22,8 +22,9 @@ mobile polish, coverage, takeover, folder-by-node, live contents.
       invisible to the devin probe
 - [ ] Mid-attach replay — attaching mid-tool-call drops args (no
       TOOL_CALL_START → the row gets no accumulated args)
-- [ ] Devin `prompt_history`/`rendered_commits` on rewind — the input
-      log and render cache aren't truncated (no reliable join)
+- [x] Devin `prompt_history`/`rendered_commits` on rewind — investigated:
+      no reliable join to `message_nodes` exists for either table, so they
+      stay; rationale documented on `SqliteStorage.truncateSessionNodes`
 
 ### Housekeeping
 

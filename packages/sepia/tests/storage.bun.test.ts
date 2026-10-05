@@ -11,6 +11,7 @@ import { Effect, Either, Layer, Option } from "effect";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "vite-plus/test";
 import * as ClineIndex from "../src/ClineIndex.js";
 import * as ClineRepository from "../src/ClineRepository.js";
@@ -148,15 +149,79 @@ describe("SqliteStorage (real bun:sqlite)", () => {
       });
       await Effect.runPromise(repo.save(full));
 
+      // A live devin store carries extra tables sepia's schema never
+      // creates; seed them so the truncate covers every join that exists
+      // (and leaves the ones that don't).
+      const seed = new Database(dbPath);
+      try {
+        seed.run(`CREATE TABLE tool_call_state (
+          session_id TEXT NOT NULL, tool_call_id TEXT NOT NULL,
+          tool_call_json TEXT, tool_call_update_json TEXT,
+          PRIMARY KEY (session_id, tool_call_id))`);
+        seed.run(`CREATE TABLE subagent_heads (
+          session_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+          chain_node_id INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+          PRIMARY KEY (session_id, agent_id))`);
+        seed.run(`CREATE TABLE rendered_commits (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
+          sequence_number INTEGER NOT NULL, rendered_html TEXT NOT NULL,
+          created_at INTEGER NOT NULL)`);
+        seed.run(
+          "INSERT INTO tool_call_state VALUES ('s1', 'call-keep', '{}', '{}'), ('s1', 'call-drop', '{}', '{}')",
+        );
+        seed.run(
+          "INSERT INTO subagent_heads VALUES ('s1', 'agent-keep', 1, 0), ('s1', 'agent-drop', 3, 0)",
+        );
+        seed.run(
+          "INSERT INTO rendered_commits (session_id, sequence_number, rendered_html, created_at) " +
+            "VALUES ('s1', 0, '<p>a</p>', 0), ('s1', 3, '<p>b</p>', 0)",
+        );
+      } finally {
+        seed.close();
+      }
+
       // In-place rewind: delete nodes 2..3, point the session row at node 1.
       await Effect.runPromise(
         SqliteStorage.truncateSessionNodes(dbPath, "s1", {
           removedNodeIds: [2, 3],
-          removedToolCallIds: [],
+          removedToolCallIds: ["call-drop"],
           lastActivityAt: 1_700_000_100,
           mainChainId: 1,
         }),
       );
+
+      // tool_call_state/subagent_heads join the removed ids; their kept
+      // rows survive. rendered_commits keys on `sequence_number`, which no
+      // column in message_nodes maps to (see truncateSessionNodes), so
+      // both rows stay — this test pins that decision deliberately.
+      const check = new Database(dbPath, { readonly: true });
+      try {
+        expect(
+          check
+            .query<{ tool_call_id: string }, []>(
+              "SELECT tool_call_id FROM tool_call_state WHERE session_id = 's1' ORDER BY tool_call_id",
+            )
+            .all()
+            .map((row) => row.tool_call_id),
+        ).toEqual(["call-keep"]);
+        expect(
+          check
+            .query<{ agent_id: string }, []>(
+              "SELECT agent_id FROM subagent_heads WHERE session_id = 's1' ORDER BY agent_id",
+            )
+            .all()
+            .map((row) => row.agent_id),
+        ).toEqual(["agent-keep"]);
+        expect(
+          check
+            .query<{ c: number }, []>(
+              "SELECT COUNT(*) c FROM rendered_commits WHERE session_id = 's1'",
+            )
+            .get()?.c,
+        ).toBe(2);
+      } finally {
+        check.close();
+      }
 
       // The server holds the store read-only; a second connection sees the cut.
       const ro = await Effect.runPromise(SqliteStorage.make(dbPath, { readonly: true }));
@@ -166,7 +231,8 @@ describe("SqliteStorage (real bun:sqlite)", () => {
         expect(found.value.nodes.map((node) => node.nodeId)).toEqual([0, 1]);
         expect(found.value.lastActivityAt).toBe(1_700_000_100);
         expect(found.value.mainChainId).toBe(1);
-        // prompt_history is the input log — it is not conversation state.
+        // prompt_history is the input log — it is not conversation state
+        // and has no node key to truncate by, so every row survives.
         expect(found.value.promptHistory.length).toBe(2);
       }
     }));

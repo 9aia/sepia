@@ -44,7 +44,10 @@ cogs_json, workspace_dirs, hidden, metadata)` — `metadata` carries
 - `message_nodes(row_id, session_id, node_id, parent_node_id, chat_message,
 created_at, metadata)` — `chat_message` is a JSON blob (below); `metadata`
   is row-level: `{summarized_from, num_tokens_preceding, is_system_prefix}`.
-- `prompt_history(id, content, timestamp, session_id, is_shell)`.
+- `prompt_history(id, content, timestamp, session_id, is_shell)` — pure
+  input-recall log (devin reads it `ORDER BY timestamp, rowid`); no node
+  key, and `timestamp`/`content` don't join `message_nodes` reliably, so
+  a rewind can't truncate it (see `truncateSessionNodes`).
 - **`tool_call_state(session_id, tool_call_id, tool_call_json,
 tool_call_update_json)`** — serialised **ACP** `ToolCall` /
   `ToolCallUpdate` objects (`title`, `kind`, `status`, `locations`,
@@ -57,7 +60,11 @@ tool_call_update_json)`** — serialised **ACP** `ToolCall` /
   marks which chain nodes spawn sub-agents (empty in this store but the
   schema exists).
 - `rendered_commits(session_id, sequence_number, rendered_html, created_at)` —
-  server-rendered HTML snapshots (0 rows here).
+  server-rendered HTML snapshots (0 rows here). `sequence_number` has no
+  counterpart column in `message_nodes` (the V5 forest migration dropped
+  the old `messages` table that owned sequence numbers) and the CLI never
+  writes the table — the writer is server-side — so a rewind can't map it
+  to removed nodes (see `truncateSessionNodes`).
 - `app_state(key, value)`.
 
 ### `chat_message` blob shape
