@@ -6,9 +6,11 @@ import {
   isLocalNodeEnabled,
   isMultiNode,
   isPeerEnabled,
+  isThisMachine,
   listAllAgents,
   listAllProjects,
   listAllSessions,
+  localNodeAddress,
   nodeName,
   nodesStore,
   nodeTarget,
@@ -25,6 +27,7 @@ import {
   removePeerById,
   removePeerEntry,
   setLocalNodeEnabled,
+  setLocalNodeUrl,
   setPeerAlias,
   setPeerEnabled,
   updatePeerEntry,
@@ -36,6 +39,7 @@ import { settingsStore } from "../lib/settings";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "../lib/api";
 import { createServer, deleteServer, listServers, SECRET_MASK, updateServer } from "../lib/servers";
 import { getToken } from "../lib/token";
+import { localTarget } from "../lib/targets";
 import type { Project, SessionSummary } from "../lib/types";
 
 vi.mock("../lib/api", () => ({
@@ -111,7 +115,12 @@ beforeEach(() => {
   });
   nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [] }));
   credentialsStore.setState(() => []);
-  settingsStore.setState((prev) => ({ ...prev, localNodeEnabled: true, localNodeName: null }));
+  settingsStore.setState((prev) => ({
+    ...prev,
+    localNodeEnabled: true,
+    localNodeName: null,
+    localNodeUrl: null,
+  }));
 });
 
 afterEach(() => {
@@ -363,7 +372,7 @@ describe("nodeTarget / nodeName", () => {
   });
 
   it("nodeName prefers the self name, falls back gracefully", () => {
-    vi.stubGlobal("location", { hostname: "localhost" });
+    vi.stubGlobal("location", { hostname: "localhost", origin: "http://localhost:3000" });
     expect(nodeName(undefined)).toBe("this machine");
     nodesStore.setState(() => ({
       selfStatus: "unknown",
@@ -408,6 +417,125 @@ describe("nodeTarget / nodeName", () => {
     expect(normalizePeer({ ...peer("a"), alias: "desk" })?.alias).toBe("desk");
     expect(normalizePeer({ ...peer("a"), alias: "" })?.alias).toBeUndefined();
     expect(normalizePeer({ ...peer("a"), alias: 5 })?.alias).toBeUndefined();
+  });
+});
+
+describe("isThisMachine", () => {
+  it("treats loopback hosts as this machine, wherever the UI is served", () => {
+    for (const url of [
+      "http://localhost:8787",
+      "https://localhost",
+      "http://127.0.0.1:8787",
+      // The whole 127/8 block is loopback, not just 127.0.0.1.
+      "http://127.1.2.3:8787",
+      "http://[::1]:8787",
+      // RFC 6761 — *.localhost resolves loopback.
+      "http://peer.localhost:8787",
+    ]) {
+      expect(isThisMachine(url)).toBe(true);
+    }
+  });
+
+  it("LAN and remote hosts are not this machine; unparseable input fails safe", () => {
+    vi.stubGlobal("location", { hostname: "localhost", origin: "http://localhost:3000" });
+    for (const url of [
+      "http://192.168.1.10:8787",
+      "https://thinkpad.example",
+      "http://10.0.0.5:8787",
+    ]) {
+      expect(isThisMachine(url)).toBe(false);
+    }
+    expect(isThisMachine("not a url")).toBe(false);
+    expect(isThisMachine("")).toBe(false);
+  });
+
+  it("the serving origin counts only under local access", () => {
+    // Browser on this machine — a node at exactly the UI's origin qualifies.
+    vi.stubGlobal("location", { hostname: "localhost", origin: "http://localhost:3000" });
+    expect(isThisMachine("http://localhost:3000")).toBe(true);
+
+    // Browser on a phone, UI served by a laptop over LAN: the origin is NOT
+    // this machine (isLocalAccess gates the origin clause), but a peer at
+    // localhost is — loopback follows the browser's device, not the origin.
+    vi.stubGlobal("location", { hostname: "192.168.1.5", origin: "http://192.168.1.5:3000" });
+    expect(isThisMachine("http://192.168.1.5:3000")).toBe(false);
+    expect(isThisMachine("http://localhost:8787")).toBe(true);
+  });
+});
+
+describe("local node address override", () => {
+  it("defaults to the relative same-origin target", () => {
+    expect(localTarget()).toEqual({ baseUrl: "", token: getToken() });
+    expect(nodeTarget(undefined).baseUrl).toBe("");
+    expect(nodeTarget("local").baseUrl).toBe("");
+  });
+
+  it("localNodeAddress falls back to the serving origin, then follows the override", () => {
+    vi.stubGlobal("location", { hostname: "localhost", origin: "http://localhost:3000" });
+    expect(localNodeAddress()).toBe("http://localhost:3000");
+    setLocalNodeUrl("http://thinkpad:8787");
+    expect(localNodeAddress()).toBe("http://thinkpad:8787");
+  });
+
+  it("localTarget/nodeTarget resolve the override's absolute origin + local token", () => {
+    setLocalNodeUrl("http://thinkpad:8787");
+    expect(localTarget()).toEqual({ baseUrl: "http://thinkpad:8787", token: getToken() });
+    expect(nodeTarget(undefined).baseUrl).toBe("http://thinkpad:8787");
+    expect(nodeTarget("local").baseUrl).toBe("http://thinkpad:8787");
+    // Peers resolve untouched — the override only moves the local leg.
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
+    expect(nodeTarget("node_p").baseUrl).toBe("https://node_p.example");
+  });
+
+  it("persists like every other pref, and clearing restores the default", () => {
+    setLocalNodeUrl("https://node.example");
+    expect(
+      (JSON.parse(store.get("sepia:settings") ?? "{}") as { localNodeUrl?: string }).localNodeUrl,
+    ).toBe("https://node.example");
+    setLocalNodeUrl(null);
+    expect(settingsStore.state.localNodeUrl).toBeNull();
+    expect(localTarget().baseUrl).toBe("");
+  });
+
+  it("parse → save round-trip: a typed address canonicalizes into the pref", () => {
+    const parsed = parseNodeAddress("  thinkpad  ");
+    if (!parsed.ok) throw new Error(`expected accept, got: ${parsed.error}`);
+    setLocalNodeUrl(parsed.address.url);
+    expect(settingsStore.state.localNodeUrl).toBe("http://thinkpad:8787");
+    expect(nodeTarget("local").baseUrl).toBe("http://thinkpad:8787");
+  });
+
+  it("fan-out's local leg and refreshSelf follow the override", async () => {
+    setLocalNodeUrl("http://thinkpad:8787");
+    mockedListSessions.mockResolvedValue([session("local-1")]);
+    await listAllSessions();
+    expect(mockedListSessions.mock.calls[0]?.[0]?.baseUrl).toBe("http://thinkpad:8787");
+
+    mockedGetNode.mockResolvedValue({
+      id: "node_thinkpad",
+      name: "thinkpad",
+      version: "1",
+      protocol: 1,
+      agents: [],
+      capabilities: [],
+    });
+    await refreshSelf();
+    expect(mockedGetNode).toHaveBeenCalledWith({
+      baseUrl: "http://thinkpad:8787",
+      token: getToken(),
+    });
+    expect(nodesStore.state.self?.id).toBe("node_thinkpad");
+  });
+
+  it("the name fallback follows the override's address, not the origin", () => {
+    // Override pointing at a remote host — "this machine" would be a lie
+    // even though the UI itself is loopback-served.
+    vi.stubGlobal("location", { hostname: "localhost", origin: "http://localhost:3000" });
+    setLocalNodeUrl("http://thinkpad:8787");
+    expect(nodeName(undefined)).toBe("local");
+    // …and a loopback override earns it back.
+    setLocalNodeUrl("http://localhost:8787");
+    expect(nodeName(undefined)).toBe("this machine");
   });
 });
 

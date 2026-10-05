@@ -28,6 +28,7 @@ const DEFAULTS: SepiaSettings = {
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
   localNodeName: null,
+  localNodeUrl: null,
   localNodeEnabled: true,
   sidebar: { sections: defaultSidebarSections() },
 };
@@ -157,6 +158,18 @@ describe("settings load", () => {
       }),
     );
     expect((await loadSettings()).keybinds).toEqual({ "app.sidebar": "Mod+P", x: null });
+  });
+
+  it("localNodeUrl keeps only a canonical http(s) origin — the rest reads as no override", async () => {
+    store.set("sepia:settings", JSON.stringify({ localNodeUrl: "http://thinkpad:8787" }));
+    expect((await loadSettings()).localNodeUrl).toBe("http://thinkpad:8787");
+    // A stored path is dropped — targets are origins, not endpoints.
+    store.set("sepia:settings", JSON.stringify({ localNodeUrl: "http://thinkpad:8787/api" }));
+    expect((await loadSettings()).localNodeUrl).toBe("http://thinkpad:8787");
+    for (const bad of ["", "not a url", "ws://thinkpad:8787", 42]) {
+      store.set("sepia:settings", JSON.stringify({ localNodeUrl: bad }));
+      expect((await loadSettings()).localNodeUrl).toBeNull();
+    }
   });
 
   it("localNodeEnabled defaults on — only an explicit false parks the local node", async () => {

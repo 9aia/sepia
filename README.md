@@ -32,7 +32,7 @@ between machines and agents: stop on one, resume on another.
   per-message token usage + cost, sub-agent lineage (`parentSessionId`),
   checkpoints (file diffs, git commits, Cline shadow-git refs), and the meta
   overlay (title/pin/projects/spans/tags — Sepia-side metadata the agent
-  stores can't carry). A *run span* `{agent, node, at}` marks which agent on
+  stores can't carry). A _run span_ `{agent, node, at}` marks which agent on
   which machine produced each stretch — a session is a container; agent and
   machine are provenance, not identity.
 - **The API** — REST + AG-UI SSE over `/api/*`: sessions
@@ -57,19 +57,19 @@ Ed25519/ECDSA keypair, regenerated on demand), and no session data of its
 own — sessions, projects and agents merge from every connected node; node
 keys (`node:agent:id`) keep ids collision-safe. A disconnected client shows
 "no nodes connected"; each node degrades independently. The footer picks a
-*focus* (`node · agent`) that drives session creation.
+_focus_ (`node · agent`) that drives session creation.
 
 ## Packages
 
-| Path                       | Package                 | Role                                                                          |
-| -------------------------- | ----------------------- | ----------------------------------------------------------------------------- |
-| `packages/sepia`           | `sepia-core`            | Session IR, Devin/Cline/Claude/Cursor stores, convert, restore, rewind        |
-| `packages/acp`             | `sepia-acp`             | Spawn an ACP agent over stdio; typed session ops + normalized updates         |
-| `packages/agui`            | `sepia-agui`            | Translate ACP session updates into AG-UI events; SSE encoding                 |
-| `packages/session-control` | `sepia-session-control` | Control plane: session registry, live-agent ownership, locks, restore exec    |
-| `apps/sepia`               | `sepia-cli`             | CLI (`list`, `export`, `import`, `install`, `delete`) across all four stores  |
-| `apps/server`              | `sepia-server`          | Bun API: the node — REST + AG-UI SSE + events feed + gateway + push           |
-| `apps/web`                 | `sepia-web`             | TanStack Start client (PWA, AI Elements chat)                                 |
+| Path                       | Package                 | Role                                                                         |
+| -------------------------- | ----------------------- | ---------------------------------------------------------------------------- |
+| `packages/sepia`           | `sepia-core`            | Session IR, Devin/Cline/Claude/Cursor stores, convert, restore, rewind       |
+| `packages/acp`             | `sepia-acp`             | Spawn an ACP agent over stdio; typed session ops + normalized updates        |
+| `packages/agui`            | `sepia-agui`            | Translate ACP session updates into AG-UI events; SSE encoding                |
+| `packages/session-control` | `sepia-session-control` | Control plane: session registry, live-agent ownership, locks, restore exec   |
+| `apps/sepia`               | `sepia-cli`             | CLI (`list`, `export`, `import`, `install`, `delete`) across all four stores |
+| `apps/server`              | `sepia-server`          | Bun API: the node — REST + AG-UI SSE + events feed + gateway + push          |
+| `apps/web`                 | `sepia-web`             | TanStack Start client (PWA, AI Elements chat)                                |
 
 ## Quickstart
 
@@ -107,7 +107,7 @@ one-time code).
   watchers (the node diffs it via the held-session watch).
 - **Prompt** — `POST /api/sessions/:id/prompt` accepts text + content blocks
   (images, files), gated by the agent's `promptCapabilities`. `POST
-  /api/agent?sessionId=<id>` is the AG-UI path the chat uses. Concurrent
+/api/agent?sessionId=<id>` is the AG-UI path the chat uses. Concurrent
   prompts on one session return `409 busy`.
 - **Cancel / permission** — `POST .../cancel` and `POST .../permission` route
   turn cancellation and tool-permission decisions.

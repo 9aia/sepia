@@ -16,9 +16,12 @@ import type { AgentInfo, NodeDescriptor, Project, SessionSummary } from "./types
 
 /**
  * The node registry (docs/protocol.md): the local node is implicit — it is
- * whichever server is serving this UI — and peers are `{url, credentialId}`
- * pairs the user adds in Settings. Peers persist in localStorage; the rest
- * of the app reads `nodesStore.state` for fan-out and routing.
+ * whichever node this client treats as its own, the origin serving this UI
+ * by default (`settings.localNodeUrl` overrides it — the client is not a
+ * node; the serving origin just happens to host one) — and peers are
+ * `{url, credentialId}` pairs the user adds in Settings. Peers persist in
+ * localStorage; the rest of the app reads `nodesStore.state` for fan-out
+ * and routing.
  */
 
 export interface PeerNode {
@@ -191,6 +194,18 @@ export const isLocalNodeEnabled = (): boolean => settingsStore.state.localNodeEn
 /** Set/clear the local node's parked state — re-enabling restores fan-out on the next refetch. */
 export const setLocalNodeEnabled = (enabled: boolean): void => {
   setSettings({ localNodeEnabled: enabled });
+};
+
+/**
+ * Set/clear the local node's address override (`settings.localNodeUrl`).
+ * `null` restores the default — the serving origin via relative calls, the
+ * transport the vite dev proxy relies on. A value (canonical origin, e.g.
+ * `parseNodeAddress`'s `address.url`) repoints every local call — fan-out
+ * legs, session actions, the events feed — to that absolute origin: the
+ * client stops treating the UI host as its node.
+ */
+export const setLocalNodeUrl = (url: string | null): void => {
+  setSettings({ localNodeUrl: url });
 };
 
 /**
@@ -741,15 +756,58 @@ export const nodeTarget = (node: string | undefined): ApiTarget => {
 };
 
 /**
+ * Loopback hostnames — `localhost` (and any `*.localhost` subdomain, which
+ * resolves loopback per RFC 6761), the whole 127.0.0.0/8 block, and `::1`
+ * (URL hostnames arrive bracketed — `[::1]` — so the brackets are stripped
+ * before comparing). A node addressed by any of these lives on the device
+ * the browser runs on.
+ */
+const isLoopbackHost = (hostname: string): boolean => {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "::1" ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+  );
+};
+
+/**
  * Whether the browser is on the machine hosting the UI — loopback origin
  * means "this machine" labels are honest; a LAN/remote origin (a phone on
  * the network) is a different machine and must not claim it.
  */
 export const isLocalAccess = (): boolean =>
-  typeof location !== "undefined" &&
-  (location.hostname === "localhost" ||
-    location.hostname === "127.0.0.1" ||
-    location.hostname === "[::1]");
+  typeof location !== "undefined" && isLoopbackHost(location.hostname);
+
+/**
+ * The local node's effective address — the `localNodeUrl` override when
+ * set, else the origin serving this UI ("" when there's no `location`, e.g.
+ * tests). Display + "this machine" semantics use this; transport resolution
+ * is `localTarget`'s job.
+ */
+export const localNodeAddress = (): string =>
+  settingsStore.state.localNodeUrl ??
+  (typeof location === "undefined" ? "" : (location.origin ?? ""));
+
+/**
+ * Whether `url` addresses a node on the device this browser runs on — a
+ * loopback host (the browser's own machine), or exactly the serving origin
+ * while the client itself is loopback-served. Applies to any node row: the
+ * self row when its effective address is local, AND a peer — a phone that
+ * registers its own node as `localhost:8787` gets the same "this machine"
+ * badge.
+ */
+export const isThisMachine = (url: string): boolean => {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  if (isLoopbackHost(hostname)) return true;
+  return isLocalAccess() && url === location.origin;
+};
 
 /** Display name for a node id — nicknames win, then self-reported names. */
 export const nodeName = (node: string | undefined): string => {
@@ -757,7 +815,7 @@ export const nodeName = (node: string | undefined): string => {
     return (
       settingsStore.state.localNodeName ??
       nodesStore.state.self?.name ??
-      (isLocalAccess() ? "this machine" : "local")
+      (isThisMachine(localNodeAddress()) ? "this machine" : "local")
     );
   }
   const peer = nodesStore.state.peers.find((p) => p.id === node);
@@ -773,7 +831,11 @@ export const nodeName = (node: string | undefined): string => {
 export const spanNodeLabel = (node: string): string => {
   const self = nodesStore.state.self;
   if (node === LOCAL_NODE_ID || (self !== null && node === self.id)) {
-    return settingsStore.state.localNodeName ?? self?.name ?? "local";
+    return (
+      settingsStore.state.localNodeName ??
+      self?.name ??
+      (isThisMachine(localNodeAddress()) ? "this machine" : "local")
+    );
   }
   const peer = nodesStore.state.peers.find((p) => p.id === node);
   if (peer !== undefined) return peer.alias ?? peer.name;

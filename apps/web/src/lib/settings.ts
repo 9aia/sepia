@@ -44,6 +44,16 @@ export interface SepiaSettings {
   /** Nickname for this machine — overrides the self-reported node name. */
   localNodeName: string | null;
   /**
+   * Address override for the local node — the machine this client treats as
+   * "local". `null` (default) means the origin serving this UI: local API
+   * calls go out relative (`baseUrl: ""`), which is also what makes the vite
+   * dev proxy (UI :3000 → API :8787) work. Set it to a canonical http(s)
+   * origin to point the client at a different node than the UI host — every
+   * local call (fan-out legs, session actions, the events feed, gateway
+   * hops) then goes to that absolute origin with the local token.
+   */
+  localNodeUrl: string | null;
+  /**
    * Settings → Nodes' enable switch for this machine — the local equivalent
    * of `PeerNode.enabled`. It's a client-local pref, not node state: `false`
    * stops this machine's sessions/projects/agents merging into the federated
@@ -85,6 +95,21 @@ const normalizeNodeMap = (value: unknown): Record<string, string> => {
   return map;
 };
 
+/**
+ * The stored local-node address override — kept only as a canonical http(s)
+ * origin; anything else (empty, malformed, non-http scheme, a stray path —
+ * origins are all `localTarget` can use) reads as "no override".
+ */
+const normalizeLocalNodeUrl = (value: unknown): string | null => {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null;
+  } catch {
+    return null;
+  }
+};
+
 const defaultSettings = (): SepiaSettings => ({
   defaultAgent: {},
   defaultCwd: {},
@@ -93,6 +118,7 @@ const defaultSettings = (): SepiaSettings => ({
   notifications: { enabled: false, done: true, permission: true },
   theme: "dark",
   localNodeName: null,
+  localNodeUrl: null,
   localNodeEnabled: true,
   sidebar: { sections: defaultSidebarSections() },
 });
@@ -123,6 +149,7 @@ const load = (): SepiaSettings => {
         typeof parsed.localNodeName === "string" && parsed.localNodeName.trim() !== ""
           ? parsed.localNodeName.trim()
           : null,
+      localNodeUrl: normalizeLocalNodeUrl(parsed.localNodeUrl),
       // Absent (and any non-false legacy value) reads as enabled — same
       // convention as `PeerNode.enabled`.
       localNodeEnabled: parsed.localNodeEnabled !== false,

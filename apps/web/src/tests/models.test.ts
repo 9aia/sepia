@@ -7,6 +7,7 @@ const settings = (models: SepiaSettings["models"]): SepiaSettings => ({
   defaultAgent: {},
   defaultCwd: {},
   localNodeName: null,
+  localNodeUrl: null,
   localNodeEnabled: true,
   models,
   keybinds: {},

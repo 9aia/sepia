@@ -1,6 +1,6 @@
 import { AuthError } from "./api";
 import { getToken } from "./token";
-import type { ApiTarget } from "./targets";
+import { localTarget, type ApiTarget } from "./targets";
 
 /**
  * Managed servers (Settings → Servers) — the server-side registry behind
@@ -137,7 +137,10 @@ export const serverTarget = (server: ManagedServer): ApiTarget => ({
  * the local node's token; the peer only ever sees its stored credential.
  */
 export const gatewayTarget = (serverId: string): ApiTarget => ({
-  baseUrl: `/api/gateway/${encodeURIComponent(serverId)}`,
+  // Prefixed with the local target's baseUrl so a `localNodeUrl` override
+  // repoints gateway hops too — the managed registry lives on whichever
+  // node this client treats as local. "" keeps it relative (the default).
+  baseUrl: `${localTarget().baseUrl}/api/gateway/${encodeURIComponent(serverId)}`,
   token: getToken(),
   // Generous: an SSH tunnel cold-start is folded into the first proxied call.
   timeoutMs: 12_000,

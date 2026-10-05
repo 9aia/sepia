@@ -20,9 +20,11 @@ import {
   useUpdateNode,
 } from "../hooks/query/useNodes";
 import {
-  isLocalAccess,
   isPeerEnabled,
+  isThisMachine,
+  localNodeAddress,
   parseNodeAddress,
+  setLocalNodeUrl,
   setPeerAlias,
   type PeerCredentialSpec,
   type PeerNode,
@@ -80,6 +82,13 @@ const addressValidator = ({ value }: { value: string }): string | undefined => {
   return parsed.ok ? undefined : parsed.error;
 };
 
+/**
+ * The self row's address field — same parser, but empty is allowed: it
+ * means "no override", i.e. the URL the client was opened on.
+ */
+const selfAddressValidator = ({ value }: { value: string }): string | undefined =>
+  value.trim() === "" ? undefined : addressValidator({ value });
+
 const requiredValidator =
   (message: string) =>
   ({ value }: { value: string }): string | undefined =>
@@ -103,31 +112,42 @@ function FieldLabel({ children }: { readonly children: ReactNode }) {
 }
 
 /**
- * The unified address field shared by the add form and the edit dialog —
+ * The unified address field shared by the add form and the edit dialogs —
  * one input covering `host`, `host:port` and `http(s)://…` forms. The parsed
  * scheme rides inside the value; there's no separate scheme/port control.
+ * `trailing` slots a control next to the input (the self row's copy
+ * button); `hint` renders a muted caption under it.
  */
 function AddressField({
   field,
+  trailing,
+  hint,
 }: {
   readonly field: {
     state: { value: string; meta: { errors: ReadonlyArray<unknown> } };
     handleBlur: () => void;
     handleChange: (value: string) => void;
   };
+  readonly trailing?: ReactNode;
+  readonly hint?: string;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
       <FieldLabel>Address</FieldLabel>
-      <Input
-        placeholder="hostname, host:port or https://…"
-        aria-label="Node address"
-        title="A bare host (defaults to http://…:8787), a host:port pair, or a full http(s):// address"
-        value={field.state.value}
-        onBlur={field.handleBlur}
-        onChange={(event) => field.handleChange(event.target.value)}
-      />
+      <div className="flex items-center gap-2">
+        <Input
+          className="min-w-0 flex-1"
+          placeholder="hostname, host:port or https://…"
+          aria-label="Node address"
+          title="A bare host (defaults to http://…:8787), a host:port pair, or a full http(s):// address"
+          value={field.state.value}
+          onBlur={field.handleBlur}
+          onChange={(event) => field.handleChange(event.target.value)}
+        />
+        {trailing}
+      </div>
       <FieldError errors={field.state.meta.errors} />
+      {hint !== undefined && <span className="text-xs text-muted-foreground">{hint}</span>}
     </div>
   );
 }
@@ -671,13 +691,24 @@ const copy = (value: string): void => {
   );
 };
 
+/** `host:port` for display — falls back to the raw string on a non-URL. */
+const hostLabel = (url: string): string => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
+
 /**
- * The serving node's edit form — a slimmer `NodeEditForm`: only the
- * nickname is writable (`localNodeName`, the peer `alias` equivalent). The
- * address is `location.origin` — it's whatever URL the client was opened
- * on, so it can't be edited here — and there's no credential or remove:
- * the serving node is the transport, not an entry to delete. The client
- * keypair row just links to Settings → Client.
+ * The local node's edit form — a slimmer `NodeEditForm`: nickname
+ * (`localNodeName`, the peer `alias` equivalent) and address
+ * (`localNodeUrl`, the client's override for which node is "local") are
+ * writable; there's no credential or remove — this entry is the client's
+ * own API route, not an entry to delete. The address seeds with the
+ * effective url (override or the serving origin); clearing it restores the
+ * default — the URL the client was opened on. The client keypair row just
+ * links to Settings → Client.
  */
 function LocalNodeEditForm({
   selfName,
@@ -687,51 +718,72 @@ function LocalNodeEditForm({
   readonly onClose: () => void;
 }) {
   const localName = useStore(settingsStore, (s) => s.localNodeName);
-  const [name, setName] = useState(localName ?? "");
+  const localUrl = useStore(settingsStore, (s) => s.localNodeUrl);
+  const form = useForm({
+    defaultValues: {
+      label: localName ?? "",
+      host: localUrl ?? location.origin,
+    },
+    onSubmit: ({ value }) => {
+      // Empty restores the default (relative calls through the serving
+      // origin); an address equal to that origin normalizes to the default
+      // too — the explicit override only differs in being absolute.
+      const host = value.host.trim();
+      const parsed = host === "" ? null : parseNodeAddress(host);
+      if (parsed !== null && !parsed.ok) return; // The field validator catches this first.
+      const url =
+        parsed === null || parsed.address.url === location.origin ? null : parsed.address.url;
+      setSettings({ localNodeName: value.label.trim() === "" ? null : value.label.trim() });
+      setLocalNodeUrl(url);
+      onClose();
+    },
+  });
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        setSettings({ localNodeName: name.trim() === "" ? null : name.trim() });
-        onClose();
+        void form.handleSubmit();
       }}
       className="flex flex-col gap-3"
     >
-      <div className="flex flex-col gap-1.5">
-        <FieldLabel>Nickname · optional</FieldLabel>
-        <Input
-          placeholder={selfName ?? "This machine"}
-          aria-label="Node nickname"
-          title="Nickname — shown instead of the node's name; empty reverts to the reported name"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <FieldLabel>Address</FieldLabel>
-        <div className="flex items-center gap-2">
-          <Input
-            readOnly
-            value={location.origin}
-            aria-label="Node address"
-            title="The node serving this UI — its address is the URL you open the client on"
+      <form.Field name="label">
+        {(field) => (
+          <div className="flex flex-col gap-1.5">
+            <FieldLabel>Nickname · optional</FieldLabel>
+            <Input
+              placeholder={selfName ?? "This machine"}
+              aria-label="Node nickname"
+              title="Nickname — shown instead of the node's name; empty reverts to the reported name"
+              value={field.state.value}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.value)}
+            />
+          </div>
+        )}
+      </form.Field>
+      <form.Field
+        name="host"
+        validators={{ onChange: selfAddressValidator, onSubmit: selfAddressValidator }}
+      >
+        {(field) => (
+          <AddressField
+            field={field}
+            hint="Which node this client treats as local — empty uses the URL you opened the client on. Point peers at this address to add this machine's node."
+            trailing={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Copy node address"
+                title="Copy node address"
+                onClick={() => copy(field.state.value.trim() || location.origin)}
+              >
+                <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
+              </Button>
+            }
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Copy node address"
-            title="Copy node address"
-            onClick={() => copy(location.origin)}
-          >
-            <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
-          </Button>
-        </div>
-        <span className="text-xs text-muted-foreground">
-          Read-only — this is the URL you access the client on; point peers at it to add this
-          machine as a node.
-        </span>
-      </div>
+        )}
+      </form.Field>
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <span className="block text-sm">Client identity</span>
@@ -768,20 +820,27 @@ function LocalNodeEditForm({
 
 /**
  * Settings → Nodes: the node registry behind the federated lists — the
- * serving node first (same controls as a peer, minus remove), then each
- * registered peer. Each row shows reachability, the display name and
- * address, an enable switch (disabled nodes merge nothing; a disabled peer
- * also resolves to an unreachable target), and an edit affordance — the
- * local row's pencil opens its own dialog (nickname + read-only address),
- * a peer's ⋮ menu covers every peer subfield (nickname, address,
- * credential, routing) plus a confirmed remove since a gateway peer's
- * stored credential dies with it.
+ * local node first (the machine this client treats as its own; same
+ * controls as a peer, minus credential/remove), then each registered peer.
+ * Each row shows reachability, the display name and address, an enable
+ * switch (disabled nodes merge nothing; a disabled peer also resolves to
+ * an unreachable target), and an edit affordance — the local row's pencil
+ * opens its own dialog (nickname + address override), a peer's ⋮ menu
+ * covers every peer subfield (nickname, address, credential, routing)
+ * plus a confirmed remove since a gateway peer's stored credential dies
+ * with it.
  */
 export function NodesSection() {
   const { self, selfStatus, peers } = useNodes();
   const credentials = useStore(credentialsStore);
   const localName = useStore(settingsStore, (s) => s.localNodeName);
   const localEnabled = useStore(settingsStore, (s) => s.localNodeEnabled);
+  // The self row's effective address — the override when set, else the
+  // origin serving this UI. Everything the row claims (badge, fallback
+  // name, unreachable tooltip) keys off this, not the origin alone.
+  const selfAddress = useStore(settingsStore, () => localNodeAddress());
+  const selfThisMachine = isThisMachine(selfAddress);
+  const selfHost = hostLabel(selfAddress);
   // Drives refreshSelf — populates self, selfStatus and the node alias.
   useSelfNode();
   const statuses = useNodeStatuses(peers);
@@ -812,20 +871,20 @@ export function NodesSection() {
               !localEnabled
                 ? "Disabled"
                 : selfStatus === "offline"
-                  ? `Unreachable — run \`sepia serve\` on ${isLocalAccess() ? "this machine" : location.host}`
+                  ? `Unreachable — run \`sepia serve\` on ${selfThisMachine ? "this machine" : selfHost}`
                   : undefined
             }
           />
           <div className={`min-w-0 flex-1${localEnabled ? "" : " opacity-60"}`}>
             <span className="flex items-center gap-1.5">
               <span className="truncate text-sm font-medium">
-                {localName ?? self?.name ?? (isLocalAccess() ? "This machine" : location.host)}
+                {localName ?? self?.name ?? (selfThisMachine ? "This machine" : selfHost)}
               </span>
-              {isLocalAccess() && (
+              {selfThisMachine && (
                 <Badge
                   variant="outline"
                   className="shrink-0 text-muted-foreground"
-                  title="The node serving this UI"
+                  title="This node runs on the device this browser is on"
                 >
                   <HugeiconsIcon icon={MonitorIcon} strokeWidth={2} data-icon="inline-start" />
                   this machine
@@ -839,7 +898,7 @@ export function NodesSection() {
             </span>
             <span className="block truncate text-xs text-muted-foreground">
               {localName !== null && self !== null ? `${self.name} — ` : ""}
-              {location.origin}
+              {selfAddress}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -868,6 +927,16 @@ export function NodesSection() {
               <div className={`min-w-0 flex-1${enabled ? "" : " opacity-60"}`}>
                 <span className="flex items-center gap-1.5">
                   <span className="truncate text-sm font-medium">{peer.alias ?? peer.name}</span>
+                  {isThisMachine(peer.url) && (
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 text-muted-foreground"
+                      title="This node runs on the device this browser is on"
+                    >
+                      <HugeiconsIcon icon={MonitorIcon} strokeWidth={2} data-icon="inline-start" />
+                      this machine
+                    </Badge>
+                  )}
                   {peer.via === "gateway" && (
                     <Badge variant="secondary" className="h-4 shrink-0 px-1.5 text-[10px]">
                       gateway
@@ -930,8 +999,8 @@ export function NodesSection() {
           <DialogHeader>
             <DialogTitle>{`Edit ${localName ?? self?.name ?? "this node"}`}</DialogTitle>
             <DialogDescription>
-              The node serving this UI — only the nickname is editable; its address follows the URL
-              you access the client on, and it can&apos;t be removed.
+              The node this client treats as local — by default the one serving this UI. Edit the
+              address to point the client at a different node; it can&apos;t be removed.
             </DialogDescription>
           </DialogHeader>
           <LocalNodeEditForm selfName={self?.name} onClose={() => setEditingLocal(false)} />
