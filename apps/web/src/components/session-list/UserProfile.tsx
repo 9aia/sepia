@@ -27,13 +27,14 @@ import {
 
 export function UserProfile() {
   const hasKeyboard = useHasKeyboard();
-  const { data: user, isLoading, isError } = useUserInfo();
+  const { data: user, isLoading } = useUserInfo();
   const health = useHealth();
   const [dialog, setDialog] = useState<"profile" | null>(null);
   const settingsOpen = useStore(sepiaStore, (state) => state.settingsOpen);
   useAppHotkey("app.settings", () => setSettingsOpen(!settingsOpen));
   const openSettings = (open: boolean): void => setSettingsOpen(open);
-  const username = user?.username ?? (isError ? "Unavailable" : "");
+  // An unreachable node yields no profile — it stays absent, not an error.
+  const username = user?.username ?? "";
   const initial = user?.username.charAt(0).toUpperCase();
 
   return (
@@ -79,7 +80,7 @@ export function UserProfile() {
               <>
                 <span className="block truncate text-sm font-medium">{username}</span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  {isError ? "Couldn't load profile" : (user?.hostname ?? "")}
+                  {user?.hostname ?? ""}
                 </span>
               </>
             )}

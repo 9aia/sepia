@@ -108,7 +108,7 @@ function Home() {
   // Local-node recovery: the health ping runs every 10s. Once the API
   // answers again after an outage, refetch everything so the merged lists
   // and nodesStore.selfStatus heal without a restart — the UI degrades to
-  // "this machine is offline" in the meantime, it never blocks.
+  // its "no nodes connected" state in the meantime, it never blocks.
   const wasUnreachable = useRef(false);
   useEffect(() => {
     if (health.isError) {

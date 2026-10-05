@@ -43,8 +43,11 @@ export const useNodeLabel = (node: string | undefined): string =>
   useStore(nodesStore, () => nodeName(node));
 
 /**
- * Per-peer reachability for the Settings list (green/grey dot). Disabled
- * peers aren't probed — their index reports `undefined` (grey dot).
+ * Per-peer reachability (green/red/grey dot). `undefined` means "not probed
+ * yet" — the first fetch is in flight, or the peer is disabled (never
+ * probed); `false` means the probe settled with a failure. A failed REFETCH
+ * keeps the last answer (`isSuccess` survives with stale data) so the dot
+ * doesn't flap.
  */
 export const useNodeStatuses = (
   peers: ReadonlyArray<PeerNode>,
@@ -64,7 +67,7 @@ export const useNodeStatuses = (
   }).map((result, index) => {
     const peer = peers[index];
     if (peer === undefined || !isPeerEnabled(peer)) return undefined;
-    return result.data === undefined ? undefined : result.isSuccess;
+    return result.isPending ? undefined : result.isSuccess;
   });
 
 /**

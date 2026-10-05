@@ -16,6 +16,7 @@ import { modelArgsFor } from "../lib/models";
 import { keyTargetsLocalNode, resolveSession } from "../lib/format";
 import { queryKeys } from "../hooks/query/keys";
 import { useAttachSession } from "../hooks/query/useAttachSession";
+import { useNodeLabel } from "../hooks/query/useNodes";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { useRespondToPermission } from "../hooks/query/useRespondToPermission";
 import { useSessions } from "../hooks/query/useSessions";
@@ -54,9 +55,14 @@ function parsePermission(value: unknown): PermissionRequest | null {
 const messageOf = (err: unknown, fallback: string): string =>
   err instanceof Error ? err.message : fallback;
 
+const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
 export function ChatPanel() {
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
   const selfOffline = useStore(nodesStore, (state) => state.selfStatus === "offline");
+  // The node serving this UI — "this machine" on loopback, its nickname or
+  // "local" for a remote browser. Drives the unreachable-node empty state.
+  const originLabel = useNodeLabel(undefined);
   const { data: sessions = [], isLoading: sessionsLoading } = useSessions();
   const session = resolveSession(sessions, selectedId) ?? null;
   const sessionId = session?.id ?? null;
@@ -287,13 +293,13 @@ export function ChatPanel() {
         {sessionsLoading ? (
           <ChatSkeleton />
         ) : selfOffline && keyTargetsLocalNode(selectedId) ? (
-          // A local row selected while this machine is down — its rows left
-          // the merged list, so nothing resolves; say why instead of
-          // "No session selected".
+          // A row on this UI's origin node selected while that node is
+          // unreachable — its rows left the merged list, so nothing
+          // resolves; say why instead of "No session selected".
           <EmptyScreen
             icon={CloudOffIcon}
-            title="This machine is offline"
-            description="That session lives on this machine — start `sepia serve` and it will load here."
+            title={`${capitalize(originLabel)} is unreachable`}
+            description={`That session lives on ${originLabel} — it will load once the node is reachable again.`}
           />
         ) : (
           <EmptyScreen

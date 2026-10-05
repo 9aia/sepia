@@ -557,7 +557,9 @@ export function NodesSection() {
           <StatusDot
             ok={selfStatus === "unknown" ? undefined : selfStatus === "online"}
             title={
-              selfStatus === "offline" ? "Offline — start `sepia serve` on this machine" : undefined
+              selfStatus === "offline"
+                ? `Unreachable — run \`sepia serve\` on ${isLocalAccess() ? "this machine" : location.host}`
+                : undefined
             }
           />
           <div className="min-w-0 flex-1">

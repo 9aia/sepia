@@ -6,8 +6,6 @@ import { useStore } from "@tanstack/react-store";
 import {
   AlertCircleIcon,
   ChevronDownIcon,
-  CloudOffIcon,
-  FolderOpenIcon,
   PlusSignIcon,
   SearchAreaIcon,
 } from "@hugeicons/core-free-icons";
@@ -31,7 +29,6 @@ import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { modelArgsFor } from "../lib/models";
 import { bareProjectId, isLocalNode, projectKey, resolveSession, sessionKey } from "../lib/format";
-import { nodesStore } from "../lib/nodes";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
 import { ButtonGroup } from "./ui/button-group";
@@ -48,6 +45,7 @@ import {
 } from "./session-list/FilterBar";
 import { settingsStore } from "../lib/settings";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
+import { ListEmptyState } from "./session-list/ListEmptyState";
 import { ProjectNameDialog, SessionSections } from "./session-list/SessionSections";
 import { getRecents } from "../lib/recents";
 import { UserProfile } from "./session-list/UserProfile";
@@ -74,10 +72,6 @@ export function SessionList() {
   const { data: agents = [] } = useAgents();
   const deleteMutation = useDeleteSession();
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
-  // This machine's reachability — the local fan-out leg degrades like a
-  // peer's (contributes nothing) and reports through selfStatus instead of
-  // taking the app down.
-  const selfOffline = useStore(nodesStore, (state) => state.selfStatus === "offline");
   const settings = useStore(settingsStore);
   const navigate = useNavigate({ from: "/" });
   const search = useSearch({ from: "/" });
@@ -282,14 +276,6 @@ export function SessionList() {
       </div>
 
       <ScrollArea className="flex min-h-0 flex-1 flex-col" viewportRef={bodyScrollRef}>
-        {selfOffline && (
-          <p className="flex items-center gap-2 px-4 pt-2 pb-1 text-xs text-muted-foreground">
-            <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
-            <span>
-              This machine is offline — start <code>sepia serve</code> to see its sessions.
-            </span>
-          </p>
-        )}
         <SessionSections
           sessions={activeSessions}
           recentSessions={recentSessions}
@@ -314,18 +300,7 @@ export function SessionList() {
             description={messageOf(error, "Failed to list sessions")}
           />
         )}
-        {!loading && !error && filtered.length === 0 && sessions.length === 0 && (
-          <EmptyScreen
-            className="p-6"
-            icon={selfOffline ? CloudOffIcon : FolderOpenIcon}
-            title={selfOffline ? "This machine is offline" : "No sessions yet"}
-            description={
-              selfOffline
-                ? "Start `sepia serve` on this machine — its sessions will appear here. Peer sessions still work."
-                : "Create your first session above."
-            }
-          />
-        )}
+        {!loading && !error && filtered.length === 0 && sessions.length === 0 && <ListEmptyState />}
         {!loading && !error && filtered.length === 0 && sessions.length > 0 && (
           <EmptyScreen
             className="p-6"

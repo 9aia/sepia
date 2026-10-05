@@ -36,7 +36,7 @@ export const useServerStatuses = (
       refetchInterval: 15_000,
       staleTime: 10_000,
     })),
-  }).map((result) => (result.data === undefined ? undefined : result.isSuccess));
+  }).map((result) => (result.isPending ? undefined : result.isSuccess));
 
 export const useCreateServer = () => {
   const queryClient = useQueryClient();

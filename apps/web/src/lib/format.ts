@@ -102,7 +102,7 @@ export const isLocalNode = (node: string | undefined): boolean =>
  * Whether a session key names a row on this machine. `agent:id` and bare-id
  * forms are implicitly local; `node:agent:id` checks the node segment
  * (the server-issued local alias counts too). Used to tell "session gone"
- * apart from "this machine is offline" when a selection doesn't resolve.
+ * apart from "the node is unreachable" when a selection doesn't resolve.
  */
 export const keyTargetsLocalNode = (key: string | null | undefined): boolean => {
   if (key === null || key === undefined || key === "") return false;
