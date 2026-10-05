@@ -18,7 +18,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { Project, SessionSummary } from "../../lib/types";
 import { formatUpdated, isLocalNode, nodeKey, projectKey, sessionKey } from "../../lib/format";
 import { useCreateSession } from "../../hooks/query/useCreateSession";
-import { useNodeLabel, useNodes } from "../../hooks/query/useNodes";
+import { useNodeLabel, useNodes, useNodesConnected } from "../../hooks/query/useNodes";
 import { useUiState } from "../../hooks/query/useConfig";
 import { useAgents } from "../../hooks/query/useAgents";
 import { focusNode, resolveCreateTarget, useFocus } from "../../lib/focus";
@@ -738,6 +738,7 @@ export function SessionSections({
 }: SessionSectionsProps) {
   const { data: projects, isLoading: projectsLoading } = useProjects();
   const { data: agents = [] } = useAgents();
+  const nodesConnected = useNodesConnected();
   const createSession = useCreateSession();
   const settings = useStore(settingsStore);
   const focus = useFocus();
@@ -754,6 +755,13 @@ export function SessionSections({
     const keys = new Set(pinnedRows.map(sessionKey));
     return sessions.filter((session) => keys.has(sessionKey(session)));
   }, [sessions, pinnedRows]);
+
+  // Zero reachable nodes → no sections at all: the sidebar body is only the
+  // "No nodes connected" empty state then. "checking" hides them too so a
+  // later "connected" verdict pops the sections in once, instead of headers
+  // flashing in under the "Checking nodes" transient and back out on a
+  // "disconnected" verdict.
+  if (nodesConnected !== "connected") return null;
 
   // Sections that would render nothing (disabled, or an empty flat list)
   // drop out so the block collapses entirely — as before. The Projects

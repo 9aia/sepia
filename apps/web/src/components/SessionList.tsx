@@ -29,6 +29,7 @@ import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { modelArgsFor } from "../lib/models";
 import { bareProjectId, isLocalNode, projectKey, resolveSession, sessionKey } from "../lib/format";
+import { useNodesConnected } from "../hooks/query/useNodes";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
 import { ButtonGroup } from "./ui/button-group";
@@ -70,6 +71,9 @@ const messageOf = (err: unknown, fallback: string): string =>
 
 export function SessionList() {
   const { data: sessions = [], isLoading: loading, error } = useSessions();
+  // Gates every creation affordance in the sidebar — with zero reachable
+  // nodes the body is just the "No nodes connected" empty state.
+  const nodesConnected = useNodesConnected();
   const { data: agents = [] } = useAgents();
   const deleteMutation = useDeleteSession();
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
@@ -197,6 +201,9 @@ export function SessionList() {
   // (Ctrl+N = new window can't be preventDefault'd in Chrome/Firefox).
   useAppHotkey("session.new", () => {
     if (inFormField()) return;
+    // No reachable node → a create can only fail; the header affordance is
+    // already hidden, so the hotkey no-ops to match.
+    if (nodesConnected !== "connected") return;
     create(resolvedCwd);
   });
   useAppHotkey(
@@ -241,12 +248,12 @@ export function SessionList() {
       </div>
 
       <div className="flex shrink-0 flex-col gap-1.5 px-4 py-3">
-        {loading ? (
+        {loading || nodesConnected === "checking" ? (
           <>
             <Skeleton className="h-9 w-full rounded-4xl" />
             <Skeleton className="h-8 w-full rounded-3xl" />
           </>
-        ) : (
+        ) : nodesConnected === "connected" ? (
           <>
             <ButtonGroup className="w-full">
               <Button
@@ -301,42 +308,55 @@ export function SessionList() {
               </DropdownMenu>
             </ButtonGroup>
           </>
-        )}
+        ) : null}
       </div>
 
       <ScrollArea className="flex min-h-0 flex-1 flex-col" viewportRef={bodyScrollRef}>
-        <SessionSections
-          sessions={activeSessions}
-          recentSessions={recentSessions}
-          archivedSessions={archivedSessions}
-          selectedId={selectedId}
-          resolvedCwd={resolvedCwd}
-          showContent={!loading && error === null}
-          scrollRef={bodyScrollRef}
-          hotkeyTarget={asideRef}
-          onNewSession={setCreateCwd}
-          onSelect={selectAndClose}
-          onDetails={detailsAndClose}
-          onDelete={onDeleteSession}
-        />
+        {nodesConnected === "disconnected" ? (
+          // Nothing can contribute — the body is only the no-nodes state,
+          // no sections/creation affordances beneath it. ("checking" keeps
+          // this branch open: the sections gate themselves on the same
+          // verdict and the empty list renders the "Checking nodes"
+          // transient.)
+          <ListEmptyState />
+        ) : (
+          <>
+            <SessionSections
+              sessions={activeSessions}
+              recentSessions={recentSessions}
+              archivedSessions={archivedSessions}
+              selectedId={selectedId}
+              resolvedCwd={resolvedCwd}
+              showContent={!loading && error === null}
+              scrollRef={bodyScrollRef}
+              hotkeyTarget={asideRef}
+              onNewSession={setCreateCwd}
+              onSelect={selectAndClose}
+              onDetails={detailsAndClose}
+              onDelete={onDeleteSession}
+            />
 
-        {loading && <SessionTreeSkeleton />}
-        {error !== null && (
-          <EmptyScreen
-            className="p-6"
-            icon={AlertCircleIcon}
-            title="Couldn't load sessions"
-            description={messageOf(error, "Failed to list sessions")}
-          />
-        )}
-        {!loading && !error && filtered.length === 0 && sessions.length === 0 && <ListEmptyState />}
-        {!loading && !error && filtered.length === 0 && sessions.length > 0 && (
-          <EmptyScreen
-            className="p-6"
-            icon={SearchAreaIcon}
-            title="No matches"
-            description="No sessions match the current filters."
-          />
+            {loading && <SessionTreeSkeleton />}
+            {error !== null && (
+              <EmptyScreen
+                className="p-6"
+                icon={AlertCircleIcon}
+                title="Couldn't load sessions"
+                description={messageOf(error, "Failed to list sessions")}
+              />
+            )}
+            {!loading && !error && filtered.length === 0 && sessions.length === 0 && (
+              <ListEmptyState />
+            )}
+            {!loading && !error && filtered.length === 0 && sessions.length > 0 && (
+              <EmptyScreen
+                className="p-6"
+                icon={SearchAreaIcon}
+                title="No matches"
+                description="No sessions match the current filters."
+              />
+            )}
+          </>
         )}
       </ScrollArea>
 

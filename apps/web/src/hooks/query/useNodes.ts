@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { useStore } from "@tanstack/react-store";
 import { getNode } from "../../lib/api";
 import { LOCAL_NODE_ID } from "../../lib/format";
+import { settingsStore } from "../../lib/settings";
 import { toastError, toastSuccess } from "../../lib/toast";
 import {
   addGatewayPeer,
@@ -72,6 +73,34 @@ export const useNodeStatuses = (
     if (peer === undefined || !isPeerEnabled(peer)) return undefined;
     return result.isPending ? undefined : result.isSuccess;
   });
+
+/**
+ * "Is anything reachable" — the verdict that gates creation affordances and
+ * the sidebar's sections. The local leg counts unless the user parked this
+ * machine (`localNodeEnabled: false` — its fan-out leg never runs, so it
+ * can't contribute) or its last probe failed (`selfStatus === "offline"`);
+ * "unknown" reads optimistically connected because the merged fan-out's own
+ * local leg is what settles it — treating boot as disconnected would flash
+ * the no-nodes empty state on every load. Enabled peers are probed via
+ * `useNodeStatuses`, but only while the local leg can't already answer:
+ * a connected local makes the peer verdict irrelevant, and the
+ * ClientBar/Settings mounts probe the same `node/status` keys anyway.
+ *
+ * - "connected" — some node can contribute; creation affordances may show.
+ * - "checking" — nothing connected yet and ≥1 peer probe is still in flight.
+ * - "disconnected" — local parked/offline and every enabled peer failed.
+ */
+export type NodesConnected = "connected" | "checking" | "disconnected";
+
+export const useNodesConnected = (): NodesConnected => {
+  const localEnabled = useStore(settingsStore, (s) => s.localNodeEnabled);
+  const selfStatus = useStore(nodesStore, (s) => s.selfStatus);
+  const peers = useStore(nodesStore, (s) => s.peers);
+  const localConnected = localEnabled && selfStatus !== "offline";
+  const statuses = useNodeStatuses(localConnected ? [] : peers.filter(isPeerEnabled));
+  if (localConnected || statuses.some((status) => status === true)) return "connected";
+  return statuses.some((status) => status === undefined) ? "checking" : "disconnected";
+};
 
 /**
  * Each peer's own /api/node descriptor, aligned with `peers` by index —

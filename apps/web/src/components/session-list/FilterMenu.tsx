@@ -1,11 +1,19 @@
-import { BotIcon, Clock01Icon, FilterHorizontalIcon, StatusIcon } from "@hugeicons/core-free-icons";
+import {
+  Add01Icon,
+  BotIcon,
+  Clock01Icon,
+  FilterHorizontalIcon,
+  StatusIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { setSettingsOpen } from "../../lib/store";
 import type { AgentInfo } from "../../lib/types";
 import { Button } from "../ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSub,
@@ -81,6 +89,19 @@ export function FilterMenu({
             {agentFilter.length > 0 && <Hint>{agentFilter.length}</Hint>}
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
+            {/* Empty roster = no node reachable — point at the fix instead
+                of opening a blank submenu. */}
+            {agents.length === 0 && (
+              <>
+                <DropdownMenuItem disabled>
+                  <span className="text-muted-foreground">No agents — connect a node</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSettingsOpen(true, "nodes")}>
+                  <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                  Add a node
+                </DropdownMenuItem>
+              </>
+            )}
             {agents.map((agent) => (
               <DropdownMenuCheckboxItem
                 key={agent.id}

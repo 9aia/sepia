@@ -10,13 +10,13 @@ import { historyKeyMatches } from "../lib/events";
 import { nodeTarget, nodesStore } from "../lib/nodes";
 import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
 import { liveCoveredByHistory } from "../lib/historyRows";
-import { sepiaStore } from "../lib/store";
+import { sepiaStore, setSettingsOpen } from "../lib/store";
 import { settingsStore } from "../lib/settings";
 import { modelArgsFor } from "../lib/models";
 import { keyTargetsLocalNode, resolveSession } from "../lib/format";
 import { queryKeys } from "../hooks/query/keys";
 import { useAttachSession } from "../hooks/query/useAttachSession";
-import { useNodeLabel } from "../hooks/query/useNodes";
+import { useNodeLabel, useNodesConnected } from "../hooks/query/useNodes";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
 import { useRespondToPermission } from "../hooks/query/useRespondToPermission";
 import { useSessions } from "../hooks/query/useSessions";
@@ -60,6 +60,7 @@ const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 export function ChatPanel() {
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
   const selfOffline = useStore(nodesStore, (state) => state.selfStatus === "offline");
+  const nodesConnected = useNodesConnected();
   // The node serving this UI — "this machine" on loopback, its nickname or
   // "local" for a remote browser. Drives the unreachable-node empty state.
   const originLabel = useNodeLabel(undefined);
@@ -301,6 +302,18 @@ export function ChatPanel() {
             title={`${capitalize(originLabel)} is unreachable`}
             description={`That session lives on ${originLabel} — it will load once the node is reachable again.`}
           />
+        ) : nodesConnected === "disconnected" ? (
+          // Same verdict as the sidebar — "pick or create a session" is a
+          // dead affordance when nothing can answer.
+          <EmptyScreen
+            icon={CloudOffIcon}
+            title="No nodes connected"
+            description="Sessions come from nodes this client can reach — connect one to see them here."
+          >
+            <Button variant="secondary" onClick={() => setSettingsOpen(true, "nodes")}>
+              Connect a node
+            </Button>
+          </EmptyScreen>
         ) : (
           <EmptyScreen
             icon={BubbleChatIcon}
