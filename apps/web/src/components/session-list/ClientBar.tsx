@@ -1,11 +1,9 @@
-import { useState } from "react";
 import { useStore } from "@tanstack/react-store";
 import { useHasKeyboard } from "../../lib/keyboard";
 import {
   ArrowUp01Icon,
   ComputerIcon,
   KeyboardIcon,
-  ProfileIcon,
   Settings02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -19,7 +17,6 @@ import { LOCAL_NODE_ID, nodeKey } from "../../lib/format";
 import { defaultAgentFor, settingsStore } from "../../lib/settings";
 import { useAgents } from "../../hooks/query/useAgents";
 import { useNodes, useNodeStatuses, usePeerDescriptors } from "../../hooks/query/useNodes";
-import { ProfileDialog } from "../ProfileDialog";
 import { SettingsDialog } from "../SettingsDialog";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
@@ -67,7 +64,6 @@ export function ClientBar() {
   const statuses = useNodeStatuses(peers);
   const descriptors = usePeerDescriptors(peers);
   const { data: agents = [] } = useAgents();
-  const [dialog, setDialog] = useState<"profile" | null>(null);
   const settingsOpen = useStore(sepiaStore, (state) => state.settingsOpen);
   useAppHotkey("app.settings", () => setSettingsOpen(!settingsOpen));
   const openSettings = (open: boolean): void => setSettingsOpen(open);
@@ -215,10 +211,6 @@ export function ClientBar() {
             )}
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setDialog("profile")}>
-            <HugeiconsIcon icon={ProfileIcon} strokeWidth={2} />
-            Server profile
-          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
             <HugeiconsIcon icon={Settings02Icon} strokeWidth={2} />
             Settings
@@ -236,7 +228,6 @@ export function ClientBar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <ProfileDialog open={dialog === "profile"} onOpenChange={(o) => !o && setDialog(null)} />
       <SettingsDialog open={settingsOpen} onOpenChange={openSettings} />
     </div>
   );

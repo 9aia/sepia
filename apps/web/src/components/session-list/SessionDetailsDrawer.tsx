@@ -19,6 +19,7 @@ import { toastError, toastSuccess } from "../../lib/toast";
 import { restoreSummary, useCheckpoints, useRestoreSession } from "../../hooks/query/useRestore";
 import { nodeKey, projectKey, resolveSession, sessionKey, subAgentsOf } from "../../lib/format";
 import { nodeName, spanNodeLabel } from "../../lib/nodes";
+import { NodeDetailsDialog } from "./NodeDetailsDialog";
 import { useNodes } from "../../hooks/query/useNodes";
 import { useSessions } from "../../hooks/query/useSessions";
 import { useRenameSession } from "../../hooks/query/useRenameSession";
@@ -227,6 +228,7 @@ export function SessionDetailsDrawer({
   const { peers } = useNodes();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [nodeDetailsOpen, setNodeDetailsOpen] = useState(false);
   // Checkpoint picker → confirm → restore; the fetch only runs while open.
   const [checkpointsOpen, setCheckpointsOpen] = useState(false);
   const [confirmCheckpoint, setConfirmCheckpoint] = useState<SessionCheckpoint | null>(null);
@@ -298,10 +300,17 @@ export function SessionDetailsDrawer({
                   )}
                 </Detail>
                 <Detail label="Server">
-                  {nodeName(session.node)}
-                  {peer !== undefined && (
-                    <span className="text-muted-foreground">{` · ${new URL(peer.url).host}`}</span>
-                  )}
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-sm text-left hover:text-foreground"
+                    onClick={() => setNodeDetailsOpen(true)}
+                    title="Node details"
+                  >
+                    {nodeName(session.node)}
+                    {peer !== undefined && (
+                      <span className="text-muted-foreground">{` · ${new URL(peer.url).host}`}</span>
+                    )}
+                  </button>
                 </Detail>
               </div>
               <Collapsible className="mt-2">
@@ -598,6 +607,11 @@ export function SessionDetailsDrawer({
               </AlertDialogContent>
             </AlertDialog>
             <RenameDialog session={session} open={renameOpen} onOpenChange={setRenameOpen} />
+            <NodeDetailsDialog
+              node={session.node}
+              open={nodeDetailsOpen}
+              onOpenChange={setNodeDetailsOpen}
+            />
 
             {/* Checkpoint picker — the refs the agent's store recorded
                 (Cline shadow-git). Restoring materializes the covered files
