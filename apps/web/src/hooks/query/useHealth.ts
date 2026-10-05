@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 
 /**
  * Server reachability — pings /api/health (unauthenticated). `isError` means
- * the API is down or unreachable; drives the offline indicator + empty state.
+ * the API is down or unreachable; drives the footer dot and the
+ * outage → recovery refetch in the root route.
  */
 export const useHealth = () =>
   useQuery({

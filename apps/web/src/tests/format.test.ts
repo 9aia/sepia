@@ -9,6 +9,7 @@ import {
   formatUsage,
   isLocalNode,
   isSubAgentOf,
+  keyTargetsLocalNode,
   LOCAL_NODE_ID,
   nodeKey,
   projectKey,
@@ -87,6 +88,21 @@ describe("node key helpers", () => {
     setLocalNodeAlias("node_mine");
     expect(isLocalNode("node_mine")).toBe(true);
     expect(nodeKey("node_mine")).toBe("local");
+  });
+
+  it("keyTargetsLocalNode reads the node segment of a selection key", () => {
+    // Implicit-local forms: agent:id, bare id, the "local" sentinel.
+    expect(keyTargetsLocalNode("devin:s1")).toBe(true);
+    expect(keyTargetsLocalNode("s1")).toBe(true);
+    expect(keyTargetsLocalNode("local:devin:s1")).toBe(true);
+    expect(keyTargetsLocalNode("node_peer:devin:s1")).toBe(false);
+    // The aliased server-issued id counts as local too.
+    setLocalNodeAlias("node_mine");
+    expect(keyTargetsLocalNode("node_mine:devin:s1")).toBe(true);
+    // Empty/absent keys target nothing.
+    expect(keyTargetsLocalNode(null)).toBe(false);
+    expect(keyTargetsLocalNode(undefined)).toBe(false);
+    expect(keyTargetsLocalNode("")).toBe(false);
   });
 });
 

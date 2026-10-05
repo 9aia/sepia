@@ -31,11 +31,11 @@ describe("projectsCollection", () => {
     vi.clearAllMocks();
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockedListProjects.mockResolvedValue({ projects });
-    nodesStore.setState(() => ({ self: null, peers: [] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [] }));
   });
 
   afterEach(() => {
-    nodesStore.setState(() => ({ self: null, peers: [] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [] }));
   });
 
   it("syncs GET /api/projects into items keyed by id", async () => {
@@ -119,6 +119,7 @@ describe("projectsCollection", () => {
     // match what the next merged fetch produces.
     nodesStore.setState(() => ({
       self: null,
+      selfStatus: "unknown",
       peers: [{ id: "node_peer1", name: "peerbox", url: "https://peer.example", token: null }],
     }));
     mockedCreateProject.mockResolvedValue({ project: { id: "p3", name: "Three" } });

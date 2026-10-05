@@ -10,7 +10,9 @@ import { queryKeys } from "./keys";
  * identity, so downstream `useMemo` work (filters, folder tree) skips
  * entirely. The paired `useQuery` shares the collection's `queryKey` — still
  * one fetch — and keeps the `error`/`isLoading` contract (e.g. AuthError →
- * token gate) that the collection's status flags can't express.
+ * token gate) that the collection's status flags can't express. A dead
+ * local node isn't an error at all: the fan-out degrades it like a peer and
+ * reports the outage through `nodesStore.selfStatus`.
  */
 export const useSessions = () => {
   const query = useQuery({ queryKey: queryKeys.sessions, queryFn: listAllSessions });

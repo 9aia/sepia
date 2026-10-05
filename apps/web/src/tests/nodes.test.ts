@@ -102,7 +102,7 @@ beforeEach(() => {
       store.delete(key);
     },
   });
-  nodesStore.setState(() => ({ self: null, peers: [] }));
+  nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [] }));
 });
 
 afterEach(() => {
@@ -230,6 +230,7 @@ describe("addPeer / removePeer / refreshSelf", () => {
       capabilities: [],
     });
     nodesStore.setState(() => ({
+      selfStatus: "unknown",
       self: {
         id: "node_self",
         name: "me",
@@ -256,12 +257,28 @@ describe("addPeer / removePeer / refreshSelf", () => {
     const self = await refreshSelf();
     expect(self.name).toBe("laptop");
     expect(nodesStore.state.self?.id).toBe("node_local");
+    expect(nodesStore.state.selfStatus).toBe("online");
+  });
+
+  it("refreshSelf failure clears self and marks the node offline", async () => {
+    mockedGetNode.mockRejectedValue(new Error("down"));
+    await expect(refreshSelf()).rejects.toThrow("down");
+    expect(nodesStore.state.self).toBeNull();
+    expect(nodesStore.state.selfStatus).toBe("offline");
+  });
+
+  it("refreshSelf on 401 rethrows without marking the node offline", async () => {
+    mockedGetNode.mockRejectedValue(
+      Object.assign(new Error("Unauthorized"), { name: "AuthError" }),
+    );
+    await expect(refreshSelf()).rejects.toThrow("Unauthorized");
+    expect(nodesStore.state.selfStatus).toBe("unknown");
   });
 });
 
 describe("nodeTarget / nodeName", () => {
   it("resolves local, peer, and unknown node ids", () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("node_p")] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
     expect(nodeTarget(undefined)).toEqual({ baseUrl: "", token: getToken() });
     expect(nodeTarget("local")).toEqual({ baseUrl: "", token: getToken() });
     expect(nodeTarget("node_p")).toEqual({
@@ -284,6 +301,7 @@ describe("nodeTarget / nodeName", () => {
   it("nodeName prefers the self name, falls back gracefully", () => {
     expect(nodeName(undefined)).toBe("this machine");
     nodesStore.setState(() => ({
+      selfStatus: "unknown",
       self: {
         id: "node_self",
         name: "laptop",
@@ -300,8 +318,31 @@ describe("nodeTarget / nodeName", () => {
     expect(nodeName("node_ghost")).toBe("node_ghost");
   });
 
+  it("nodeName marks this machine (offline) while selfStatus is offline", () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "offline", peers: [] }));
+    expect(nodeName(undefined)).toBe("this machine (offline)");
+    expect(nodeName("local")).toBe("this machine (offline)");
+    nodesStore.setState(() => ({
+      selfStatus: "offline",
+      self: {
+        id: "node_self",
+        name: "laptop",
+        version: "1",
+        protocol: 1,
+        agents: [],
+        capabilities: [],
+      },
+      peers: [],
+    }));
+    expect(nodeName(undefined)).toBe("laptop (offline)");
+  });
+
   it("peer alias overrides the self-reported name", () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("node_p", "Thinkpad")] }));
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [peer("node_p", "Thinkpad")],
+    }));
     setPeerAlias("node_p", "work laptop");
     expect(nodeName("node_p")).toBe("work laptop");
     // Clearing the alias reverts to the name.
@@ -326,7 +367,7 @@ describe("fan-out fetches", () => {
   });
 
   it("listAllSessions tags local + peer rows and namespaces projectIds", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("node_p")] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
     mockedListSessions.mockImplementation(async (target) =>
       target?.baseUrl === "" ? [session("local-1", ["p1"])] : [session("peer-1", ["p2"])],
     );
@@ -337,7 +378,7 @@ describe("fan-out fetches", () => {
   });
 
   it("listAllSessions requests lock state on every node and keeps it through tagging", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("node_p")] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
     mockedListSessions.mockResolvedValue([{ ...session("s1"), locked: true, lockHolderPid: 4242 }]);
     const rows = await listAllSessions();
     expect(mockedListSessions).toHaveBeenCalledTimes(2);
@@ -348,21 +389,72 @@ describe("fan-out fetches", () => {
     expect(rows.every((row) => row.locked && row.lockHolderPid === 4242)).toBe(true);
   });
 
-  it("a dead peer contributes nothing; a dead local node propagates", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("node_p")] }));
+  it("a dead peer contributes nothing; a dead local node degrades to offline", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
     mockedListSessions.mockImplementation(async (target) =>
       target?.baseUrl === "" ? [session("local-1")] : Promise.reject(new Error("peer down")),
     );
     const rows = await listAllSessions();
     expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe("local-1");
+    expect(nodesStore.state.selfStatus).toBe("online");
 
-    mockedListSessions.mockImplementation(async () => Promise.reject(new Error("local down")));
-    await expect(listAllSessions()).rejects.toThrow("local down");
+    // Local degrades like a peer: its rows drop out, peers keep listing,
+    // and the store records the machine as offline.
+    mockedListSessions.mockImplementation(async (target) =>
+      target?.baseUrl === "" ? Promise.reject(new Error("local down")) : [session("peer-1")],
+    );
+    const degraded = await listAllSessions();
+    expect(degraded.map((r) => `${r.node}:${r.id}`)).toEqual(["node_p:peer-1"]);
+    expect(nodesStore.state.selfStatus).toBe("offline");
+
+    // A later success flips it back — no restart needed.
+    mockedListSessions.mockImplementation(async (target) =>
+      target?.baseUrl === "" ? [session("local-2")] : [session("peer-1")],
+    );
+    const recovered = await listAllSessions();
+    expect(recovered.map((r) => r.id)).toEqual(["local-2", "peer-1"]);
+    expect(nodesStore.state.selfStatus).toBe("online");
+  });
+
+  it("listAllSessions resolves empty (not an error) when local is down with no peers", async () => {
+    mockedListSessions.mockRejectedValue(new Error("local down"));
+    await expect(listAllSessions()).resolves.toEqual([]);
+    expect(nodesStore.state.selfStatus).toBe("offline");
+  });
+
+  it("a local 401 still throws — the TokenGate path, not degradation", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
+    mockedListSessions.mockImplementation(async (target) =>
+      target?.baseUrl === ""
+        ? Promise.reject(Object.assign(new Error("Unauthorized"), { name: "AuthError" }))
+        : [session("peer-1")],
+    );
+    await expect(listAllSessions()).rejects.toThrow("Unauthorized");
+    // Reachable-but-unauthorized isn't an outage — the marker doesn't move.
+    expect(nodesStore.state.selfStatus).toBe("unknown");
+  });
+
+  it("listAllProjects and listAllAgents degrade the local leg the same way", async () => {
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
+    mockedListProjects.mockImplementation(async (target) =>
+      target?.baseUrl === ""
+        ? Promise.reject(new Error("local down"))
+        : { projects: [{ id: "p2", name: "p2" }] },
+    );
+    expect(await listAllProjects()).toEqual([{ id: "p2", name: "p2", node: "node_p" }]);
+    expect(nodesStore.state.selfStatus).toBe("offline");
+
+    mockedListAgents.mockImplementation(async (target) =>
+      target?.baseUrl === ""
+        ? Promise.reject(new Error("local down"))
+        : [{ id: "devin", label: "Devin peer" }],
+    );
+    expect(await listAllAgents()).toEqual([{ id: "devin", label: "Devin peer" }]);
   });
 
   it("listAllProjects tags rows by node and tolerates peer failure", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("node_p")] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("node_p")] }));
     const project = (id: string): Project => ({ id, name: id });
     mockedListProjects.mockImplementation(async (target) =>
       target?.baseUrl === "" ? { projects: [project("p1")] } : Promise.reject(new Error("down")),
@@ -380,7 +472,11 @@ describe("fan-out fetches", () => {
   });
 
   it("listAllAgents dedupes by id with local winning, tolerates peer failure", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("node_p"), peer("node_dead")] }));
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [peer("node_p"), peer("node_dead")],
+    }));
     mockedListAgents.mockImplementation(async (target) => {
       if (target?.baseUrl === "") return [{ id: "devin", label: "Devin local" }];
       if (target?.baseUrl.includes("node_dead")) throw new Error("down");
@@ -435,7 +531,11 @@ describe("gateway peers (via: gateway)", () => {
   });
 
   it("nodeTarget flips gateway peers, keeps direct peers direct", () => {
-    nodesStore.setState(() => ({ self: null, peers: [gatewayPeer(), peer("node_direct")] }));
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [gatewayPeer(), peer("node_direct")],
+    }));
     expect(nodeTarget("node_remote").baseUrl).toBe("/api/gateway/srv_1");
     expect(nodeTarget("node_direct")).toEqual({
       baseUrl: "https://node_direct.example",
@@ -592,7 +692,11 @@ describe("gateway peers (via: gateway)", () => {
   });
 
   it("removePeerEntry deletes the managed credential for gateway peers only", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [gatewayPeer(), peer("node_direct")] }));
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [gatewayPeer(), peer("node_direct")],
+    }));
     mockedDeleteServer.mockResolvedValue(undefined);
 
     await removePeerEntry("node_remote");
@@ -606,7 +710,7 @@ describe("gateway peers (via: gateway)", () => {
   });
 
   it("removePeerEntry still removes the peer when the managed entry is already gone", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [gatewayPeer()] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gatewayPeer()] }));
     mockedDeleteServer.mockRejectedValue(new Error("Unknown server"));
 
     await removePeerEntry("node_remote");
@@ -673,7 +777,7 @@ describe("enabled peers", () => {
   });
 
   it("setPeerEnabled parks and un-parks a peer, persisting the flag", () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("a")] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("a")] }));
     setPeerEnabled("a", false);
     expect(nodesStore.state.peers[0]?.enabled).toBe(false);
     expect((JSON.parse(store.get("sepia:nodes") ?? "[]") as PeerNode[])[0]?.enabled).toBe(false);
@@ -683,9 +787,13 @@ describe("enabled peers", () => {
   });
 
   it("isMultiNode counts only enabled peers", () => {
-    nodesStore.setState(() => ({ self: null, peers: [disabled("a")] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [disabled("a")] }));
     expect(isMultiNode()).toBe(false);
-    nodesStore.setState(() => ({ self: null, peers: [disabled("a"), peer("b")] }));
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [disabled("a"), peer("b")],
+    }));
     expect(isMultiNode()).toBe(true);
   });
 
@@ -693,7 +801,11 @@ describe("enabled peers", () => {
     const target = peerTarget(disabled("node_off"));
     expect(target.baseUrl).toBe("http://node_off.invalid");
     expect(target.token).toBeNull();
-    nodesStore.setState(() => ({ self: null, peers: [disabled("node_off")] }));
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [disabled("node_off")],
+    }));
     expect(nodeTarget("node_off").baseUrl).toBe("http://node_off.invalid");
     // Display names still resolve — a parked peer keeps its identity.
     expect(nodeName("node_off")).toBe("node_off");
@@ -702,6 +814,7 @@ describe("enabled peers", () => {
   it("disabled peers are skipped by the fan-out lists", async () => {
     nodesStore.setState(() => ({
       self: null,
+      selfStatus: "unknown",
       peers: [disabled("node_off"), peer("node_on")],
     }));
     mockedListSessions.mockImplementation(async (target) =>
@@ -717,7 +830,11 @@ describe("enabled peers", () => {
   });
 
   it("with every peer disabled, local rows stay untagged (single-node shape)", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [disabled("node_off")] }));
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [disabled("node_off")],
+    }));
     mockedListSessions.mockResolvedValue([session("local-1", ["p1"])]);
     const rows = await listAllSessions();
     expect(rows[0]?.node).toBeUndefined();
@@ -726,7 +843,11 @@ describe("enabled peers", () => {
   });
 
   it("listAllProjects and listAllAgents skip disabled peers", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [disabled("node_off"), peer("node_on")] }));
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [disabled("node_off"), peer("node_on")],
+    }));
     mockedListProjects.mockImplementation(async (target) =>
       target?.baseUrl === "" ? { projects: [{ id: "p1", name: "p1" }] } : { projects: [] },
     );
@@ -747,7 +868,7 @@ describe("enabled peers", () => {
 
 describe("updatePeerEntry", () => {
   it("updates a direct peer's url and token in place", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("a")] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("a")] }));
     await updatePeerEntry("a", { url: "https://new.example:9000", token: "fresh" });
     const updated = getPeers()[0];
     expect(updated?.url).toBe("https://new.example:9000");
@@ -757,7 +878,7 @@ describe("updatePeerEntry", () => {
   });
 
   it("keeps the stored token on the mask, clears it on empty", async () => {
-    nodesStore.setState(() => ({ self: null, peers: [peer("a")] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [peer("a")] }));
     await updatePeerEntry("a", { token: SECRET_MASK });
     expect(getPeers()[0]?.token).toBe("tok-a");
     await updatePeerEntry("a", { token: "   " });
@@ -782,7 +903,7 @@ describe("updatePeerEntry", () => {
       via: "gateway",
       serverId: "srv_1",
     };
-    nodesStore.setState(() => ({ self: null, peers: [gw] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gw] }));
     mockedListServers.mockResolvedValue([managed]);
     mockedUpdateServer.mockResolvedValue(managed);
 
@@ -819,7 +940,7 @@ describe("updatePeerEntry", () => {
       via: "gateway",
       serverId: "srv_1",
     };
-    nodesStore.setState(() => ({ self: null, peers: [gw] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gw] }));
     mockedListServers.mockResolvedValue([managed]);
     mockedUpdateServer.mockResolvedValue(managed);
 
@@ -841,7 +962,7 @@ describe("updatePeerEntry", () => {
       via: "gateway",
       serverId: "srv_gone",
     };
-    nodesStore.setState(() => ({ self: null, peers: [gw] }));
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [gw] }));
     mockedListServers.mockResolvedValue([]);
 
     await updatePeerEntry("node_gw", { url: "http://remote.example:9999" });

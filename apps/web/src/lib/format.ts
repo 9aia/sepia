@@ -98,6 +98,18 @@ export const setLocalNodeAlias = (id: string): void => {
 export const isLocalNode = (node: string | undefined): boolean =>
   node === undefined || node === LOCAL_NODE_ID || node === localNodeAlias;
 
+/**
+ * Whether a session key names a row on this machine. `agent:id` and bare-id
+ * forms are implicitly local; `node:agent:id` checks the node segment
+ * (the server-issued local alias counts too). Used to tell "session gone"
+ * apart from "this machine is offline" when a selection doesn't resolve.
+ */
+export const keyTargetsLocalNode = (key: string | null | undefined): boolean => {
+  if (key === null || key === undefined || key === "") return false;
+  const parts = key.split(":");
+  return parts.length < 3 || isLocalNode(parts[0]);
+};
+
 /** Canonical node segment for keys: local rows normalize to "local". */
 export const nodeKey = (node: string | undefined): string =>
   node === undefined || node === localNodeAlias ? LOCAL_NODE_ID : node;

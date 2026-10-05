@@ -52,9 +52,19 @@ export interface PeerNode {
   readonly enabled?: boolean;
 }
 
+/** Local-node reachability — "unknown" until the first probe settles. */
+export type SelfStatus = "unknown" | "online" | "offline";
+
 interface NodesState {
   /** The local node's /api/node descriptor, once `refreshSelf` has run. */
   readonly self: NodeDescriptor | null;
+  /**
+   * This machine's reachability — the same degradation peers get via
+   * `useNodeStatuses`, surfaced on the store so the sidebar, node badges
+   * and Settings → Nodes can mark this machine offline. Any local probe
+   * (a fan-out leg or `refreshSelf`) can move it.
+   */
+  readonly selfStatus: SelfStatus;
   readonly peers: ReadonlyArray<PeerNode>;
 }
 
@@ -106,7 +116,26 @@ const persistPeers = (peers: ReadonlyArray<PeerNode>): void => {
   }
 };
 
-export const nodesStore = new Store<NodesState>({ self: null, peers: loadPeers() });
+export const nodesStore = new Store<NodesState>({
+  self: null,
+  selfStatus: "unknown",
+  peers: loadPeers(),
+});
+
+/**
+ * A 401 means the node answered — that's an auth problem for the TokenGate,
+ * not an outage, so auth rejections stay fatal while other failures degrade
+ * to "offline". Matched by name so tests can stub the api module without
+ * the `AuthError` class.
+ */
+const isAuthFailure = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AuthError";
+
+/** Move the local-node reachability marker — no-ops when already there. */
+const setSelfStatus = (selfStatus: SelfStatus): void => {
+  if (nodesStore.state.selfStatus === selfStatus) return;
+  nodesStore.setState((prev) => ({ ...prev, selfStatus }));
+};
 
 /** Registered peers, sorted by name for stable display. */
 export const getPeers = (): ReadonlyArray<PeerNode> => nodesStore.state.peers;
@@ -409,12 +438,24 @@ export const pairGatewayPeer = async (url: string, code: string): Promise<PeerNo
   }
 };
 
-/** Populate `nodesStore.self` from the local node's own /api/node. */
+/**
+ * Populate `nodesStore.self` from the local node's own /api/node. A failed
+ * probe clears `self` and marks the node offline — the error still
+ * propagates so the query sees it — except a 401, which is reachable (an
+ * auth problem, not an outage) and left for the TokenGate.
+ */
 export const refreshSelf = async (): Promise<NodeDescriptor> => {
-  const descriptor = await getNode(localTarget());
-  setLocalNodeAlias(descriptor.id);
-  nodesStore.setState((prev) => ({ ...prev, self: descriptor }));
-  return descriptor;
+  try {
+    const descriptor = await getNode(localTarget());
+    setLocalNodeAlias(descriptor.id);
+    nodesStore.setState((prev) => ({ ...prev, self: descriptor, selfStatus: "online" }));
+    return descriptor;
+  } catch (error) {
+    if (!isAuthFailure(error)) {
+      nodesStore.setState((prev) => ({ ...prev, self: null, selfStatus: "offline" }));
+    }
+    throw error;
+  }
 };
 
 /**
@@ -452,7 +493,8 @@ export const nodeTarget = (node: string | undefined): ApiTarget => {
 /** Display name for a node id — nicknames win, then self-reported names. */
 export const nodeName = (node: string | undefined): string => {
   if (node === undefined || node === LOCAL_NODE_ID) {
-    return settingsStore.state.localNodeName ?? nodesStore.state.self?.name ?? "this machine";
+    const name = settingsStore.state.localNodeName ?? nodesStore.state.self?.name ?? "this machine";
+    return nodesStore.state.selfStatus === "offline" ? `${name} (offline)` : name;
   }
   const peer = nodesStore.state.peers.find((p) => p.id === node);
   return peer === undefined ? node : (peer.alias ?? peer.name);
@@ -477,9 +519,12 @@ export const spanNodeLabel = (node: string): string => {
 
 // --- Fan-out fetches ---------------------------------------------------------
 //
-// Each merged list calls every registered node. The LOCAL node's failure is
-// fatal (it preserves today's error/TokenGate UX); a peer's failure means
-// that node simply contributes nothing (docs/protocol.md failure model).
+// Each merged list calls every registered node. Every leg degrades the same
+// way — a node that doesn't answer contributes nothing — and a failed LOCAL
+// leg additionally flips `selfStatus` to "offline" so the UI can mark this
+// machine down (docs/protocol.md failure model). The one exception: a local
+// 401 stays fatal — the machine answered, so it's an auth problem for the
+// TokenGate, not an outage.
 
 const tagSession = (session: SessionSummary, node: string | undefined): SessionSummary =>
   node === undefined
@@ -495,6 +540,31 @@ const tagSession = (session: SessionSummary, node: string | undefined): SessionS
 const tagProject = (project: Project, node: string | undefined): Project =>
   node === undefined ? project : { ...project, node };
 
+/**
+ * Fold a fan-out's settled legs into rows — index 0 is always the local
+ * node, the rest are the enabled peers in registry order. A rejected leg
+ * contributes nothing; the local leg additionally drives `selfStatus`
+ * (success → online, failure → offline). A local 401 still throws so the
+ * caller's AuthError → TokenGate path keeps working.
+ */
+const mergeFanOut = <T>(legs: ReadonlyArray<PromiseSettledResult<T[]>>): T[] => {
+  const rows: T[] = [];
+  const [local, ...peers] = legs;
+  if (local !== undefined) {
+    if (local.status === "fulfilled") {
+      setSelfStatus("online");
+      rows.push(...local.value);
+    } else {
+      if (isAuthFailure(local.reason)) throw local.reason;
+      setSelfStatus("offline");
+    }
+  }
+  for (const leg of peers) {
+    if (leg.status === "fulfilled") rows.push(...leg.value);
+  }
+  return rows;
+};
+
 // `withLocks` rides every fan-out leg so rows can show held state. Each leg
 // costs the node one `session/list` probe — a throwaway agent spawn per
 // agent with no live connection — but the server's lockCache TTL
@@ -506,54 +576,47 @@ export const listAllSessions = async (): Promise<SessionSummary[]> => {
   // Disabled peers contribute nothing — same as if they weren't registered.
   const peers = nodesStore.state.peers.filter(isPeerEnabled);
   const multi = peers.length > 0;
-  const local = await listSessions(localTarget(), { withLocks: true });
-  const rows = local.map((s) => tagSession(s, multi ? LOCAL_NODE_ID : undefined));
-  if (!multi) return rows;
-  const settled = await Promise.allSettled(
-    peers.map((peer) =>
+  const settled = await Promise.allSettled([
+    listSessions(localTarget(), { withLocks: true }).then((list) =>
+      list.map((s) => tagSession(s, multi ? LOCAL_NODE_ID : undefined)),
+    ),
+    ...peers.map((peer) =>
       listSessions(peerTarget(peer), { withLocks: true }).then((list) =>
         list.map((s) => tagSession(s, peer.id)),
       ),
     ),
-  );
-  for (const result of settled) {
-    if (result.status === "fulfilled") rows.push(...result.value);
-  }
-  return rows;
+  ]);
+  return mergeFanOut(settled);
 };
 
 export const listAllProjects = async (): Promise<Project[]> => {
   const peers = nodesStore.state.peers.filter(isPeerEnabled);
   const multi = peers.length > 0;
-  const local = await listProjects(localTarget());
-  const rows = local.projects.map((p) => tagProject(p, multi ? LOCAL_NODE_ID : undefined));
-  if (!multi) return rows;
-  const settled = await Promise.allSettled(
-    peers.map((peer) =>
+  const settled = await Promise.allSettled([
+    listProjects(localTarget()).then((data) =>
+      data.projects.map((p) => tagProject(p, multi ? LOCAL_NODE_ID : undefined)),
+    ),
+    ...peers.map((peer) =>
       listProjects(peerTarget(peer)).then((data) =>
         data.projects.map((p) => tagProject(p, peer.id)),
       ),
     ),
-  );
-  for (const result of settled) {
-    if (result.status === "fulfilled") rows.push(...result.value);
-  }
-  return rows;
+  ]);
+  return mergeFanOut(settled);
 };
 
 /** Union of agent rosters across nodes — deduped by agent id, local wins. */
 export const listAllAgents = async (): Promise<AgentInfo[]> => {
   const peers = nodesStore.state.peers.filter(isPeerEnabled);
+  const settled = await Promise.allSettled([
+    listAgents(localTarget()),
+    ...peers.map((peer) => listAgents(peerTarget(peer))),
+  ]);
+  // Rows merge local-first, so first-wins dedupe keeps this machine's
+  // roster authoritative whenever the local leg answered.
   const merged = new Map<string, AgentInfo>();
-  for (const agent of await listAgents(localTarget())) merged.set(agent.id, agent);
-  if (peers.length === 0) return [...merged.values()];
-  const settled = await Promise.allSettled(peers.map((peer) => listAgents(peerTarget(peer))));
-  for (const result of settled) {
-    if (result.status === "fulfilled") {
-      for (const agent of result.value) {
-        if (!merged.has(agent.id)) merged.set(agent.id, agent);
-      }
-    }
+  for (const agent of mergeFanOut(settled)) {
+    if (!merged.has(agent.id)) merged.set(agent.id, agent);
   }
   return [...merged.values()];
 };

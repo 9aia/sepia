@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAppHotkey } from "../lib/keybinds";
 import { useStore } from "@tanstack/react-store";
@@ -6,6 +6,7 @@ import { ChatPanel } from "../components/ChatPanel";
 import { SessionDetailsDrawer } from "../components/session-list/SessionDetailsDrawer";
 import { useSessions } from "../hooks/query/useSessions";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
+import { useSelfNode } from "../hooks/query/useNodes";
 import { resolveSession, shouldSyncUrlSelection } from "../lib/format";
 import { setDetailsFor } from "../lib/store";
 import type { SessionSummary } from "../lib/types";
@@ -14,9 +15,6 @@ import { TokenGate } from "../components/TokenGate";
 import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";
 import { useHealth } from "../hooks/query/useHealth";
 import { useQueryClient } from "@tanstack/react-query";
-import { EmptyScreen } from "../components/EmptyScreen";
-import { Button } from "../components/ui/button";
-import { CloudOffIcon } from "@hugeicons/core-free-icons";
 import { AuthError } from "../lib/api";
 import { sepiaStore, setSettingsOpen, setSelectedId } from "../lib/store";
 import { sessionKey } from "../lib/format";
@@ -42,6 +40,10 @@ function Home() {
   const { data: sessions, error } = useSessions();
   const health = useHealth();
   const queryClient = useQueryClient();
+  // Probes /api/node at boot — populates nodesStore.self/selfStatus and the
+  // local node alias used by key resolution (previously only fetched while
+  // Settings → Nodes was open).
+  useSelfNode();
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -103,31 +105,23 @@ function Home() {
 
   useAppHotkey("app.keybinds", () => setSettingsOpen(true, "keyboard"));
 
-  if (error instanceof AuthError) return <TokenGate />;
+  // Local-node recovery: the health ping runs every 10s. Once the API
+  // answers again after an outage, refetch everything so the merged lists
+  // and nodesStore.selfStatus heal without a restart — the UI degrades to
+  // "this machine is offline" in the meantime, it never blocks.
+  const wasUnreachable = useRef(false);
+  useEffect(() => {
+    if (health.isError) {
+      wasUnreachable.current = true;
+      return;
+    }
+    if (wasUnreachable.current && health.isSuccess) {
+      wasUnreachable.current = false;
+      void queryClient.invalidateQueries();
+    }
+  }, [health.isError, health.isSuccess, queryClient]);
 
-  // The PWA shell still loads when the API is down — say so instead of an
-  // empty app. Only when sessions also failed: a transient health blip
-  // shouldn't wipe the UI (the footer dot stays the transient indicator).
-  if (health.isError && sessions === undefined && error !== undefined) {
-    return (
-      <main className="flex min-h-svh">
-        <EmptyScreen
-          className="m-auto max-w-xl"
-          icon={CloudOffIcon}
-          title="Server unreachable"
-          description="The Sepia server isn't responding — make sure `sepia serve` is running, then retry."
-        >
-          <Button
-            variant="secondary"
-            onClick={() => void queryClient.invalidateQueries()}
-            disabled={health.isFetching}
-          >
-            {health.isFetching ? "Retrying…" : "Retry"}
-          </Button>
-        </EmptyScreen>
-      </main>
-    );
-  }
+  if (error instanceof AuthError) return <TokenGate />;
 
   return (
     <SidebarProvider style={{ "--sidebar-width": "24rem" } as CSSProperties}>

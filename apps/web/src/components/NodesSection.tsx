@@ -463,9 +463,10 @@ const blurOnEnter = (event: KeyboardEvent<HTMLInputElement>): void => {
  * address and credential.
  */
 export function NodesSection() {
-  const { self, peers } = useNodes();
+  const { self, selfStatus, peers } = useNodes();
   const localName = useStore(settingsStore, (s) => s.localNodeName);
-  const selfQuery = useSelfNode();
+  // Drives refreshSelf — populates self, selfStatus and the node alias.
+  useSelfNode();
   const statuses = useNodeStatuses(peers);
   const removeNode = useRemoveNode();
   const setEnabled = useSetNodeEnabled();
@@ -480,7 +481,12 @@ export function NodesSection() {
       </p>
       <div className="divide-y divide-border/50 rounded-lg border border-border">
         <div className="flex items-center gap-3 px-3 py-2.5">
-          <StatusDot ok={selfQuery.isSuccess || self !== null} />
+          <StatusDot
+            ok={selfStatus === "unknown" ? undefined : selfStatus === "online"}
+            title={
+              selfStatus === "offline" ? "Offline — start `sepia serve` on this machine" : undefined
+            }
+          />
           <div className="min-w-0 flex-1">
             <Input
               key={localName ?? self?.name ?? ""}
@@ -494,6 +500,7 @@ export function NodesSection() {
             />
             <span className="block truncate text-xs text-muted-foreground">
               {location.origin} — this machine
+              {selfStatus === "offline" ? " (offline)" : ""}
             </span>
           </div>
         </div>

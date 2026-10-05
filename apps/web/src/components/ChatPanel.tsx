@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
-import { AlertCircleIcon, BubbleChatIcon } from "@hugeicons/core-free-icons";
+import { AlertCircleIcon, BubbleChatIcon, CloudOffIcon } from "@hugeicons/core-free-icons";
 import { EmptyScreen } from "./EmptyScreen";
 import type { HistoryBlock, PermissionRequest } from "../lib/types";
 import { listSessions, subscribeSessionStream } from "../lib/api";
 import type { StreamStatus } from "../lib/api";
 import { historyKeyMatches } from "../lib/events";
-import { nodeTarget } from "../lib/nodes";
+import { nodeTarget, nodesStore } from "../lib/nodes";
 import { applyAguiEvent, type LiveMessage } from "../lib/liveMessages";
 import { liveCoveredByHistory } from "../lib/historyRows";
 import { sepiaStore } from "../lib/store";
 import { settingsStore } from "../lib/settings";
 import { modelArgsFor } from "../lib/models";
-import { resolveSession } from "../lib/format";
+import { keyTargetsLocalNode, resolveSession } from "../lib/format";
 import { queryKeys } from "../hooks/query/keys";
 import { useAttachSession } from "../hooks/query/useAttachSession";
 import { flattenHistory, useHistory } from "../hooks/query/useHistory";
@@ -56,6 +56,7 @@ const messageOf = (err: unknown, fallback: string): string =>
 
 export function ChatPanel() {
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
+  const selfOffline = useStore(nodesStore, (state) => state.selfStatus === "offline");
   const { data: sessions = [], isLoading: sessionsLoading } = useSessions();
   const session = resolveSession(sessions, selectedId) ?? null;
   const sessionId = session?.id ?? null;
@@ -285,6 +286,15 @@ export function ChatPanel() {
       <section className="flex h-svh flex-col overflow-hidden">
         {sessionsLoading ? (
           <ChatSkeleton />
+        ) : selfOffline && keyTargetsLocalNode(selectedId) ? (
+          // A local row selected while this machine is down — its rows left
+          // the merged list, so nothing resolves; say why instead of
+          // "No session selected".
+          <EmptyScreen
+            icon={CloudOffIcon}
+            title="This machine is offline"
+            description="That session lives on this machine — start `sepia serve` and it will load here."
+          />
         ) : (
           <EmptyScreen
             icon={BubbleChatIcon}
