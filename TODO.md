@@ -7,22 +7,30 @@ gateway + HTTPS upstreams), IR v2 (usage, tool status, lineage, model,
 blocks, thinking signatures, checkpoints+diffs), session lifecycle
 (file restore + rewind per store), 4 adapters (devin, cline, claude,
 cursor — all read+write), details tabs, sub-agents, sidebar config,
-mobile polish, coverage, takeover, folder-by-node, live contents.
+mobile polish, coverage, takeover, folder-by-node, live contents,
+client identity (label + keypair), Desktop (the {node, agent, model,
+cwd} working environment + footer picker), the federated catalog
+(Models/Agents/Nodes sections with per-item toggles), credential store
+(nodes reference, per-node tokens), security hardening (address-bound
+tokens, SSE-only query auth, gateway confinement, SSH argv guards).
 
 ## Remaining
 
 ### Deferred by design
 
-- [ ] `sessionCapabilities`/`promptCapabilities` probing — attachments
-      are sent blind; a peer's advertised capability isn't read
+- [x] `sessionCapabilities`/`promptCapabilities` probing — initialize
+      capabilities parsed + surfaced (`AgentInfo.capabilities`, "Supports"
+      row in details); prompt parts gate on `promptCapabilities` (400 on
+      unsupported); attach/delete gate on `sessionCapabilities`.
 - [x] `sepia` CLI `import/export`/`install`/`list`/`delete` for
       claude/cursor — `--from`/`--to` + `--claude-dir`/`--cursor-dir`;
       `ClaudeCode.toJsonl` writer added (the store was read-only)
-- [ ] `lockHolderPid` across agents — only the default agent's
-      `session/list` is probed; a cline-held session's holder is
-      invisible to the devin probe
-- [ ] Mid-attach replay — attaching mid-tool-call drops args (no
-      TOOL_CALL_START → the row gets no accumulated args)
+- [x] `lockHolderPid` across agents — `session/list` fans out per
+      registered agent (capability-gated); a cline-held lock reports its
+      holder pid to the devin attach.
+- [x] Mid-attach replay — replayed `TOOL_CALL_*` updates lazy-create
+      rows and synthesize starts; args arrive on update without a prior
+      start.
 - [x] Devin `prompt_history`/`rendered_commits` on rewind — investigated:
       no reliable join to `message_nodes` exists for either table, so they
       stay; rationale documented on `SqliteStorage.truncateSessionNodes`
