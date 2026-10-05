@@ -78,7 +78,8 @@ values. Highlights — the full reference lives in `DEPLOY.md`:
   `CursorRepository` (read-only overlay; no ACP runtime exists).
 - `SEPIA_ORIGINS`, `SEPIA_AGENT_<ID>_COMMAND`.
 - `SEPIA_IDLE_TTL_MS`/`SEPIA_SWEEP_MS` — idle live-session detach.
-- `SEPIA_LOCK_TTL_MS`, `SEPIA_HISTORY_LIMIT`, `SEPIA_SSE_KEEPALIVE_MS`.
+- `SEPIA_LOCK_TTL_MS`, `SEPIA_HELD_WATCH_MS` (held-session probe feeding
+  `/api/events`), `SEPIA_HISTORY_LIMIT`, `SEPIA_SSE_KEEPALIVE_MS`.
 - `SEPIA_INHERIT_ENV`, `SEPIA_DEBUG` — child env allowlist bypass / stderr stream.
 
 ## Dependency policy

@@ -14,6 +14,7 @@ import type {
   ControlErrorCode,
   ControlPlaneService,
   SessionEventListener,
+  SessionSummary,
   Unsubscribe,
 } from "sepia-session-control";
 import { createAguiAgentHandler } from "./agui-agent";
@@ -45,6 +46,11 @@ export interface AppOptions {
   readonly allowedOrigins?: ReadonlyArray<string>;
   /** Overrides `SEPIA_SSE_KEEPALIVE_MS`; tests use a tiny value. */
   readonly keepAliveMs?: number;
+  /**
+   * Overrides `SEPIA_HELD_WATCH_MS` — how often the held-session watch
+   * re-probes lock state for sessions last seen read-only; `0` disables.
+   */
+  readonly heldWatchMs?: number;
   /** Session-title overlay; absent → `PATCH /api/sessions/:id` returns 501. */
   readonly meta?: MetaStore;
   /** Enables `POST /api/sessions/:id/convert` — needs the stores it converts between. */
@@ -86,6 +92,17 @@ const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([
 ]);
 
 const HEALTH_TIMEOUT_MS = 1_500;
+const DEFAULT_HELD_WATCH_MS = 5_000;
+// A held session stops being watched this long after the last read-only
+// attach observed it — a closed tab can't leave the probe running forever.
+const HELD_WATCH_TTL_MS = 30 * 60_000;
+
+/** `SEPIA_HELD_WATCH_MS=0` disables the held-session watch. */
+const heldWatchMsFromEnv = (raw: string | undefined): number => {
+  if (raw === undefined || raw === "") return DEFAULT_HELD_WATCH_MS;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : DEFAULT_HELD_WATCH_MS;
+};
 
 const CODE_STATUS: Readonly<Record<ControlErrorCode, number>> = {
   not_found: 404,
@@ -494,6 +511,104 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
   // every title/pin/project write emits meta/project events automatically.
   const feed = createEventFeed();
   const metaStore = options.meta === undefined ? undefined : instrumentMeta(options.meta, feed);
+
+  const heldWatchMs = options.heldWatchMs ?? heldWatchMsFromEnv(process.env.SEPIA_HELD_WATCH_MS);
+
+  /**
+   * Held-session watch (docs/protocol.md): a read-only attach means another
+   * process owns the session's store lock — the holder's transcript writes
+   * and its eventual release happen outside this node, so no local emit ever
+   * reports them. While a session is known held AND the feed has listeners,
+   * the watch re-lists sessions with locks (`withLocks` shares the control
+   * plane's probe TTL, so ticks inside the TTL cost no extra agent spawns)
+   * and diffs each watched summary: a `locked` flip or an `updatedAt` bump
+   * (the holder flushing transcript rows) becomes the `session` events the
+   * web UI used to poll `GET /api/sessions?withLocks=1` for.
+   */
+  interface HeldWatch {
+    readonly id: string;
+    /** Owning agent when the attach resolved one — disambiguates colliding ids. */
+    readonly agent?: string;
+    /** Last attach that saw the session held; refreshes HELD_WATCH_TTL_MS. */
+    at: number;
+  }
+  const heldWatches = new Map<string, HeldWatch>();
+  // The diff baseline, seeded `{locked: true}` so the first tick reports
+  // either the holder details or the release edge.
+  const heldBaseline = new Map<string, Partial<SessionSummary>>();
+  let heldTimer: ReturnType<typeof setInterval> | undefined;
+
+  const HELD_FIELDS = ["title", "updatedAt", "locked", "lockHolderPid", "busy"] as const;
+
+  const tickHeldWatches = async (): Promise<void> => {
+    const now = Date.now();
+    for (const [key, watch] of heldWatches) {
+      if (now - watch.at > HELD_WATCH_TTL_MS) {
+        heldWatches.delete(key);
+        heldBaseline.delete(key);
+      }
+    }
+    if (heldWatches.size === 0) {
+      if (heldTimer !== undefined) {
+        clearInterval(heldTimer);
+        heldTimer = undefined;
+      }
+      return;
+    }
+    // Nobody drains the feed — the probe (agent spawns) buys nothing.
+    if (feed.subscriberCount() === 0) return;
+    const listed = await run(Effect.either(plane.listSessions({ withLocks: true })));
+    if (Either.isLeft(listed)) {
+      void run(Effect.logWarning(`held-session watch failed: ${errorMessage(listed.left)}`));
+      return;
+    }
+    for (const [key, watch] of heldWatches) {
+      const summary = listed.right.find(
+        (row) => row.id === watch.id && (watch.agent === undefined || row.agent === watch.agent),
+      );
+      if (summary === undefined) {
+        // The store row vanished while held — same shape as DELETE.
+        feed.emit("session", sessionPayload(watch.id, watch.agent, { deleted: true }));
+        heldWatches.delete(key);
+        heldBaseline.delete(key);
+        continue;
+      }
+      const prev = heldBaseline.get(key);
+      const patch: Record<string, unknown> = {};
+      for (const field of HELD_FIELDS) {
+        if (prev === undefined || summary[field] !== prev[field]) {
+          patch[field] = summary[field];
+        }
+      }
+      heldBaseline.set(
+        key,
+        Object.fromEntries(HELD_FIELDS.map((field) => [field, summary[field]])),
+      );
+      if (Object.keys(patch).length > 0) {
+        feed.emit("session", sessionPayload(summary.id, summary.agent, patch));
+      }
+    }
+  };
+
+  // Keys carry the agent — session ids collide across agent stores.
+  const watchHeld = (id: string, agent?: string): void => {
+    const key = `${agent ?? ""}:${id}`;
+    heldWatches.set(key, { id, agent, at: Date.now() });
+    heldBaseline.set(key, { locked: true });
+    if (heldTimer === undefined && heldWatchMs > 0) {
+      heldTimer = setInterval(() => void tickHeldWatches(), heldWatchMs);
+      (heldTimer as { unref?: () => void }).unref?.();
+    }
+  };
+
+  const unwatchHeld = (id: string, agent?: string): void => {
+    for (const [key, watch] of heldWatches) {
+      if (watch.id === id && (agent === undefined || watch.agent === agent)) {
+        heldWatches.delete(key);
+        heldBaseline.delete(key);
+      }
+    }
+  };
 
   // Push subscriptions + a per-session listener that turns live AG-UI events
   // into notifications and `busy` feed events even when no client has the
@@ -1277,6 +1392,7 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
         ),
         Effect.tap(() =>
           Effect.sync(() => {
+            unwatchHeld(id, agentParam);
             feed.emit("session", sessionPayload(id, agentParam, { deleted: true }));
             metaStore?.remove(id);
           }),
@@ -1376,6 +1492,11 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
               Effect.sync(() => {
                 registerLiveListener(id, agentParam);
                 feed.emit("session", sessionPayload(id, result.agentId, { live: result.attached }));
+                // Read-only means another process holds the store lock —
+                // the watch turns its release (and its transcript writes)
+                // into feed events so held clients never poll for it.
+                if (result.readOnly) watchHeld(id, result.agentId);
+                else if (result.attached) unwatchHeld(id, result.agentId);
                 // Provenance: an attach means the run continues under this
                 // node's control plane — record which agent + node own the
                 // span. Idempotent, so a same-agent re-attach doesn't dup.
@@ -1386,6 +1507,13 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
                     node: node.id,
                   });
                 }
+              }),
+            ),
+            // A failed takeover leaves the session held — keep the watch so
+            // the release edge still reaches the feed.
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                if (error.code === "locked") watchHeld(id, agentParam);
               }),
             ),
           ),

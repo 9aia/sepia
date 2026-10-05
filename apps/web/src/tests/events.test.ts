@@ -95,17 +95,23 @@ describe("applyNodeEvent", () => {
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: ["history"], predicate: expect.any(Function) }),
     );
+    // The held-session probe refetches on `locked`/`updatedAt` diffs too —
+    // that's what replaced its fast poll.
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["held-session"], predicate: expect.any(Function) }),
+    );
 
     applyNodeEvent(client, { kind: "meta", id: "s1", patch: { pinned: true } });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["sessions"] });
-    // meta events don't touch transcripts.
+    // meta events don't touch transcripts or held probes.
     expect(spy.mock.calls.filter(([arg]) => arg?.queryKey?.[0] === "history")).toHaveLength(1);
+    expect(spy.mock.calls.filter(([arg]) => arg?.queryKey?.[0] === "held-session")).toHaveLength(1);
 
     applyNodeEvent(client, { kind: "project", id: "p1", patch: { name: "x" } });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["projects"] });
 
     applyNodeEvent(client, { kind: "heartbeat" });
-    expect(spy).toHaveBeenCalledTimes(4);
+    expect(spy).toHaveBeenCalledTimes(5);
   });
 
   it("the history predicate only matches the event's session id", () => {
@@ -121,6 +127,22 @@ describe("applyNodeEvent", () => {
     expect(predicate?.(q(["history", "devin:s1"]))).toBe(true);
     expect(predicate?.(q(["history", "node_x:cline:s1"]))).toBe(true);
     expect(predicate?.(q(["history", "devin:s2"]))).toBe(false);
+  });
+
+  it("the held-session predicate only matches the event's probe key", () => {
+    const client = new QueryClient();
+    const spy = vi.spyOn(client, "invalidateQueries");
+    applyNodeEvent(client, { kind: "session", id: "s1" });
+
+    const call = spy.mock.calls.find(([arg]) => arg?.queryKey?.[0] === "held-session");
+    const predicate = call?.[0]?.predicate as
+      | ((q: { queryKey: readonly unknown[] }) => boolean)
+      | undefined;
+    const q = (key: readonly unknown[]) => ({ queryKey: key });
+    expect(predicate?.(q(["held-session", "node_a", "devin", "s1"]))).toBe(true);
+    expect(predicate?.(q(["held-session", "", "cline", "s1"]))).toBe(true);
+    expect(predicate?.(q(["held-session", "node_a", "devin", "s2"]))).toBe(false);
+    expect(predicate?.(q(["history", "devin:s1"]))).toBe(false);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   File01Icon,
   Folder01Icon,
   Loading03Icon,
+  LockIcon,
   SourceCodeIcon,
 } from "@hugeicons/core-free-icons";
 import { ArrowDown01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
@@ -90,6 +91,7 @@ import { ReasoningBlock } from "./reasoning-block";
 import { ToolCall } from "./tool-call";
 import {
   PromptInput,
+  PromptInputApiBridge,
   PromptInputAttachButton,
   PromptInputAttachments,
   PromptInputBody,
@@ -550,8 +552,11 @@ export function SessionChat({
     resend: { text: string; attachments: PendingAttachment[] };
   } | null>(null);
   const replyTo = useStore(sepiaStore, (state) => state.replyTo);
-  // Held by another process → the send asks to take over first.
+  // Held by another process → the send queues behind a takeover confirm. The
+  // sessionId guards the flush: a queue raised on one session must never fire
+  // into another after a switch.
   const [takeoverPrompt, setTakeoverPrompt] = useState<{
+    sessionId: string;
     text: string;
     attachments: PendingAttachment[];
   } | null>(null);
@@ -572,6 +577,16 @@ export function SessionChat({
   // Populated by ScrollerApiBridge — lets `send` reveal the row it appended.
   const scrollToEnd = useRef<(() => void) | null>(null);
   const scrollOnSent = useRef(false);
+  // Composer access for the held-session queue: the textarea ref flushes the
+  // box after the deferred send lands, and `hasDraft` drives the "Take over &
+  // send" label — a typed draft means the click sends, not just attaches.
+  // A boolean keeps keystroke updates cheap: identical values bail out of
+  // re-render, so only the empty↔typed flip repaints.
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Populated by PromptInputApiBridge — empties the attachment tray the same
+  // way (a queued submit keeps its chips until the send actually happens).
+  const clearAttachmentsRef = useRef<(() => void) | null>(null);
+  const [hasDraft, setHasDraft] = useState(false);
 
   const spans = sessionRow?.spans;
 
@@ -601,6 +616,7 @@ export function SessionChat({
     // while scrolled up would leave the row appended below the fold (and
     // unmounted by the virtualizer). Flag a scroll for when it commits.
     scrollOnSent.current = true;
+    setHasDraft(false);
     sendPrompt(sessionId, { text: prompt, attachments: parts }, agent, nodeTarget(sessionRow?.node))
       .then((ok) => {
         if (!ok) {
@@ -662,13 +678,26 @@ export function SessionChat({
       .finally(() => setSubmitting(false));
   };
 
-  const onSubmit = (message: PromptInputMessage) => {
+  const onSubmit = (message: PromptInputMessage): false | void => {
     const text = message.text.trim();
-    if ((text === "" && message.attachments.length === 0) || running || submitting) return;
+    const empty = text === "" && message.attachments.length === 0;
+    // Held by another process — the send queues behind a takeover confirm.
+    // Returning `false` keeps the draft in the composer: it's the queued
+    // payload, left in place for editing on cancel and for the retry when a
+    // takeover fails.
     if (readOnly) {
-      setTakeoverPrompt({ text, attachments: message.attachments });
-      return;
+      if (empty) {
+        // Nothing to queue — the send slot's plain Take over, same dialog
+        // without the "message will be sent" trailer.
+        setTakeoverConfirm(true);
+      } else {
+        setTakeoverPrompt({ sessionId, text, attachments: message.attachments });
+      }
+      return false;
     }
+    // A blocked submit keeps the draft too — Enter during a run or an
+    // in-flight send must not drop what was just typed.
+    if (empty || running || submitting) return false;
     send(text, message.attachments);
   };
 
@@ -682,17 +711,28 @@ export function SessionChat({
     return () => cancelAnimationFrame(frame);
   }, [liveMessages]);
 
+  // A queue or confirm raised on another session is stale — drop it on
+  // switch so the dialog can't fire the old text into the new session.
+  useEffect(() => {
+    setTakeoverPrompt(null);
+    setTakeoverConfirm(false);
+  }, [sessionId]);
+
   // Takeover confirmed → attach resolved readOnly off → close the dialog and
   // send the held prompt. A failed takeover keeps readOnly on, so neither the
   // dialog nor the queued message is dropped.
   useEffect(() => {
     if (readOnly) return;
     setTakeoverConfirm(false);
-    if (takeoverPrompt !== null) {
-      const held = takeoverPrompt;
-      setTakeoverPrompt(null);
-      send(held.text, held.attachments);
-    }
+    if (takeoverPrompt === null) return;
+    const held = takeoverPrompt;
+    setTakeoverPrompt(null);
+    if (held.sessionId !== sessionId) return;
+    // The composer kept the draft on submit (`false`) — the send below is
+    // what consumed it, so the box and tray flush now like a normal send.
+    textareaRef.current?.form?.reset();
+    clearAttachmentsRef.current?.();
+    send(held.text, held.attachments);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readOnly]);
 
@@ -793,33 +833,38 @@ export function SessionChat({
         onSubmit={onSubmit}
         className="shrink-0 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]"
       >
+        <PromptInputApiBridge apiRef={clearAttachmentsRef} />
         <PromptInputBody>
           {replyTo !== null && <ReplyPreview quote={replyTo} />}
           <PromptInputAttachments />
-          {/* Held by another process: the composer is the banner — the
-              textarea names the state and the send slot carries the one
-              action that unblocks it. */}
+          {/* Held by another process: the composer stays live — the draft
+              queues behind the takeover confirm, the slim footer line names
+              the state, and the send slot carries the action that unblocks
+              it ("Take over & send" once there's something to send). */}
           <PromptInputTextarea
-            placeholder={readOnly ? "Held by another process" : "Prompt the agent…"}
-            disabled={readOnly}
+            ref={textareaRef}
+            placeholder="Prompt the agent…"
+            onChange={(event) => setHasDraft(event.target.value.trim() !== "")}
           />
         </PromptInputBody>
         <PromptInputFooter>
           <PromptInputTools>
-            {/* Hidden while held (send slot is the takeover action) and when
-                the agent advertised it can't take images — the button would
-                just produce a send-time rejection either way. */}
-            {!readOnly && promptCapabilities?.image !== false && <PromptInputAttachButton />}
+            {readOnly ? (
+              <span className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+                <HugeiconsIcon icon={LockIcon} className="size-3.5" strokeWidth={2} />
+                Held — message sends after takeover
+              </span>
+            ) : (
+              // Hidden when the agent advertised it can't take images — the
+              // button would just produce a send-time rejection.
+              promptCapabilities?.image !== false && <PromptInputAttachButton />
+            )}
           </PromptInputTools>
           <div className="ml-auto flex min-w-0 items-center gap-1">
             <ModelSelect sessionId={sessionId} agent={agent} />
             {readOnly ? (
-              <InputGroupButton
-                variant="secondary"
-                disabled={takeoverPending}
-                onClick={() => setTakeoverConfirm(true)}
-              >
-                {takeoverPending ? "Taking over…" : "Take over"}
+              <InputGroupButton type="submit" variant="secondary" disabled={takeoverPending}>
+                {takeoverPending ? "Taking over…" : hasDraft ? "Take over & send" : "Take over"}
               </InputGroupButton>
             ) : (
               <PromptInputSubmit
@@ -836,6 +881,8 @@ export function SessionChat({
         open={takeoverPrompt !== null || takeoverConfirm}
         onOpenChange={(open) => {
           if (open) return;
+          // Cancel drops the queue, not the draft — it never left the
+          // composer, so the text and chips are still there to edit or retry.
           setTakeoverPrompt(null);
           setTakeoverConfirm(false);
         }}

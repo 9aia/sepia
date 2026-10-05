@@ -126,7 +126,12 @@ event: project     data: {"id":"...","patch":{}}  // created/renamed/deleted
 event: heartbeat   data: {"ts":1700000000}
 ```
 
-- `session` — a summary row changed (created, updated, deleted).
+- `session` — a summary row changed (created, updated, deleted). While a
+  session is held by another process (a read-only attach), the node's
+  held-session watch re-probes it every `SEPIA_HELD_WATCH_MS` and emits
+  `locked`/`lockHolderPid`/`updatedAt` diffs — the lock-release edge and the
+  holder's transcript flushes arrive here instead of clients polling
+  `GET /api/sessions?withLocks=1`.
 - `meta` — the overlay (title/pinned/archived/projectIds/model) changed.
 - `project` — a project row changed.
 - `heartbeat` — keepalive every `SEPIA_SSE_KEEPALIVE_MS`.

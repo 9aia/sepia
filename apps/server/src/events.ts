@@ -42,11 +42,17 @@ export interface EventSubscription {
 export interface NodeEventFeed {
   readonly emit: (kind: NodeEventKind, payload: Record<string, unknown>) => void;
   readonly subscribe: () => EventSubscription;
+  /**
+   * Live SSE subscribers — background work that only exists to feed events
+   * (the held-session watch) gates on someone listening.
+   */
+  readonly subscriberCount: () => number;
 }
 
 export const createEventFeed = (): NodeEventFeed => {
   const subscribers = new Set<Subscription>();
   return {
+    subscriberCount: () => subscribers.size,
     emit: (kind, payload) => {
       const event: NodeEvent = { kind, payload };
       for (const sub of subscribers) {

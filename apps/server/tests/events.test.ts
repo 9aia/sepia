@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { AcpCapabilities } from "sepia-acp";
-import type { ControlPlaneService } from "sepia-session-control";
+import type { ControlPlaneService, SessionSummary } from "sepia-session-control";
 import { ControlError } from "sepia-session-control";
 import { createApp } from "../src/app";
 import { busyFromEvents, createEventFeed, instrumentMeta } from "../src/events";
@@ -263,5 +263,133 @@ describe("GET /api/events", () => {
     const allowed = await app(new Request("http://localhost/api/events?access_token=secret"));
     expect(allowed.status).toBe(200);
     await streamReader(allowed).cancel();
+  });
+});
+
+const HELD_SUMMARY: SessionSummary = {
+  id: "sess-1",
+  title: "Held session",
+  cwd: "/work",
+  agent: "devin",
+  updatedAt: "2024-01-01T00:00:00.000Z",
+  locked: true,
+  lockHolderPid: 4242,
+  source: "devin",
+  busy: false,
+};
+
+const post = (path: string): Request => new Request(`http://localhost${path}`, { method: "POST" });
+
+/**
+ * Reads the stream until `needle` shows up in the accumulated text. Frames
+ * are small here so one read is usually one frame — looping just absorbs
+ * coalesced chunks.
+ */
+const readUntil = async (
+  reader: ReturnType<typeof streamReader>,
+  needle: string,
+): Promise<string> => {
+  const decoder = new TextDecoder();
+  let text = "";
+  for (let i = 0; i < 60 && !text.includes(needle); i += 1) {
+    const { value, done } = await reader.read();
+    if (done === true) break;
+    text += decoder.decode(value);
+  }
+  return text;
+};
+
+describe("held-session watch", () => {
+  it("emits summary diffs as `session` events, including the release edge", async () => {
+    let locked = true;
+    let updatedAt = HELD_SUMMARY.updatedAt;
+    const heldPlane: ControlPlaneService = {
+      ...plane,
+      attach: () =>
+        Effect.succeed({
+          attached: false,
+          readOnly: true,
+          agentId: "devin",
+          capabilities: CAPS,
+        }),
+      listSessions: (options) =>
+        Effect.succeed(
+          options?.withLocks === true
+            ? [{ ...HELD_SUMMARY, locked, lockHolderPid: locked ? 4242 : null, updatedAt }]
+            : [HELD_SUMMARY],
+        ),
+    };
+    const app = createApp(heldPlane, { heldWatchMs: 5, keepAliveMs: 0 });
+
+    const res = await app(new Request("http://localhost/api/events"));
+    // A read-only attach is what registers the session as held.
+    await app(post("/api/sessions/sess-1/attach"));
+
+    const reader = streamReader(res);
+    // First tick diffs against the seeded {locked: true} baseline — the
+    // holder's pid and the row's freshness arrive immediately.
+    expect(await readUntil(reader, '"lockHolderPid":4242')).toContain('"lockHolderPid":4242');
+
+    // The holder flushing transcript rows bumps updatedAt — the UI's cue to
+    // refetch history, no client poll needed.
+    updatedAt = "2024-01-01T00:00:05.000Z";
+    expect(await readUntil(reader, '"updatedAt":"2024-01-01T00:00:05.000Z"')).toContain(
+      "event: session",
+    );
+
+    // The release edge — the event that lets a held panel auto-attach.
+    locked = false;
+    const release = await readUntil(reader, '"locked":false');
+    expect(release).toContain('"locked":false');
+    expect(release).toContain('"lockHolderPid":null');
+    await reader.cancel();
+  });
+
+  it("emits locked:false on the first tick when the holder already let go", async () => {
+    const heldPlane: ControlPlaneService = {
+      ...plane,
+      attach: () =>
+        Effect.succeed({
+          attached: false,
+          readOnly: true,
+          agentId: "devin",
+          capabilities: CAPS,
+        }),
+      // Attach's own lock probe saw the lock, but the store listing already
+      // reads free — the watch still reports the release.
+      listSessions: () => Effect.succeed([{ ...HELD_SUMMARY, locked: false, lockHolderPid: null }]),
+    };
+    const app = createApp(heldPlane, { heldWatchMs: 5, keepAliveMs: 0 });
+
+    const res = await app(new Request("http://localhost/api/events"));
+    await app(post("/api/sessions/sess-1/attach"));
+
+    const reader = streamReader(res);
+    expect(await readUntil(reader, '"locked":false')).toContain('"locked":false');
+    await reader.cancel();
+  });
+
+  it("never probes while the feed has no subscribers", async () => {
+    let lockLists = 0;
+    const heldPlane: ControlPlaneService = {
+      ...plane,
+      attach: () =>
+        Effect.succeed({
+          attached: false,
+          readOnly: true,
+          agentId: "devin",
+          capabilities: CAPS,
+        }),
+      listSessions: (options) =>
+        Effect.sync(() => {
+          if (options?.withLocks === true) lockLists += 1;
+          return [HELD_SUMMARY];
+        }),
+    };
+    const app = createApp(heldPlane, { heldWatchMs: 5, keepAliveMs: 0 });
+
+    await app(post("/api/sessions/sess-1/attach"));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(lockLists).toBe(0);
   });
 });

@@ -9,6 +9,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
   createContext,
   useContext,
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -19,6 +20,7 @@ import {
   type FormEventHandler,
   type HTMLAttributes,
   type KeyboardEvent,
+  type RefObject,
 } from "react";
 import { cn } from "cn";
 import {
@@ -48,13 +50,20 @@ interface PromptInputContextValue {
   readonly attachments: ReadonlyArray<PendingAttachment>;
   readonly addFiles: (files: Iterable<File>) => void;
   readonly removeAttachment: (id: string) => void;
+  /** Empties the tray — for a deferred send that kept its draft on submit. */
+  readonly clearAttachments: () => void;
 }
 
 /** Present only inside `<PromptInput>` — children opt into the shared attachment tray. */
 const PromptInputContext = createContext<PromptInputContextValue | null>(null);
 
 export type PromptInputProps = Omit<HTMLAttributes<HTMLFormElement>, "onSubmit"> & {
-  onSubmit: (message: PromptInputMessage, event: FormEvent<HTMLFormElement>) => void;
+  /**
+   * Returning `false` keeps the draft in the composer (text + chips) — a
+   * queued send, like the held-session takeover path, flushes the box itself
+   * once the message actually lands.
+   */
+  onSubmit: (message: PromptInputMessage, event: FormEvent<HTMLFormElement>) => false | void;
 };
 
 export function PromptInput({ className, onSubmit, children, ...props }: PromptInputProps) {
@@ -97,16 +106,22 @@ export function PromptInput({ className, onSubmit, children, ...props }: PromptI
     setAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
   };
 
+  const clearAttachments = (): void => {
+    setAttachments([]);
+  };
+
   const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const entry = new FormData(form).get("message");
     const text = typeof entry === "string" ? entry : "";
     const sent = attachments;
+    // `false` keeps the draft — the caller queued it behind something (a
+    // takeover confirm, a busy turn) and owns flushing the box later.
+    if (onSubmit({ text, attachments: sent }, event) === false) return;
     // Reset immediately after capturing — new keystrokes land on a clean box.
     form.reset();
     setAttachments([]);
-    onSubmit({ text, attachments: sent }, event);
   };
 
   const onDragOver = (event: DragEvent<HTMLFormElement>): void => {
@@ -126,7 +141,9 @@ export function PromptInput({ className, onSubmit, children, ...props }: PromptI
   };
 
   return (
-    <PromptInputContext.Provider value={{ attachments, addFiles, removeAttachment }}>
+    <PromptInputContext.Provider
+      value={{ attachments, addFiles, removeAttachment, clearAttachments }}
+    >
       <form
         className={cn("w-full", className)}
         onSubmit={handleSubmit}
@@ -147,6 +164,26 @@ export function PromptInput({ className, onSubmit, children, ...props }: PromptI
 
 export function PromptInputBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("contents", className)} {...props} />;
+}
+
+/**
+ * `useContext(PromptInputContext)` only works under the provider — this
+ * bridge hands `clearAttachments` out through a ref so a queued draft (kept
+ * in the composer on submit) can be emptied when its deferred send lands.
+ */
+export function PromptInputApiBridge({
+  apiRef,
+}: {
+  readonly apiRef: RefObject<(() => void) | null>;
+}) {
+  const context = useContext(PromptInputContext);
+  useEffect(() => {
+    apiRef.current = context?.clearAttachments ?? null;
+    return () => {
+      apiRef.current = null;
+    };
+  }, [apiRef, context]);
+  return null;
 }
 
 export function PromptInputTextarea({

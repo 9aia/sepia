@@ -121,18 +121,20 @@ export function ChatPanel() {
   }, [sessionId, attach, modelArgs]);
 
   // A held session has no live stream — the other process's updates never
-  // reach this node — so the panel polls the node's lock view instead. Each
-  // tick re-syncs the transcript (rows the holder flushes keep appearing)
-  // and refreshes the holder pid shown in the takeover dialog; when the
-  // lock clears the session attaches on its own, which flips `readOnly`
-  // off and opens the real stream. `refetchInterval` pauses in background
-  // tabs, so the probe only runs while the session is actually on screen.
+  // reach this node — so the panel watches the node's lock view. The server
+  // re-probes held sessions while the feed has listeners and emits `session`
+  // events on `locked`/`updatedAt` diffs, which invalidate this query (see
+  // applyNodeEvent): the lock-release edge and the holder's transcript
+  // flushes arrive over /api/events rather than a fast poll. The slow
+  // interval below is only the self-heal for a missed event (an older peer
+  // emits nothing — polling still works). `refetchInterval` pauses in
+  // background tabs, so the probe only runs while the session is on screen.
   const heldPoll = useQuery({
-    queryKey: ["held-session", session?.node ?? "", session?.agent ?? "", sessionId ?? ""],
+    queryKey: queryKeys.heldSession(session?.node ?? "", session?.agent ?? "", sessionId ?? ""),
     enabled: readOnly && sessionId !== null,
     staleTime: 0,
     gcTime: 0,
-    refetchInterval: 6_000,
+    refetchInterval: 30_000,
     queryFn: async () => {
       const rows = await listSessions(nodeTarget(session?.node), { withLocks: true });
       return rows.find((row) => row.id === sessionId) ?? null;
@@ -159,9 +161,10 @@ export function ChatPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heldPoll.data, readOnly, sessionId, attachMutation.isPending]);
 
-  // Every successful poll invalidates this session's history — the held
-  // session reads as a live transcript while the holder writes to the
-  // store.
+  // The feed's `session` events already invalidate history on each
+  // `updatedAt` diff the watcher emits — this catch-up on the probe's slow
+  // self-heal tick covers events missed during an SSE gap, so the held
+  // session keeps reading as a live transcript while the holder writes.
   useEffect(() => {
     if (!readOnly || sessionId === null || heldPoll.dataUpdatedAt === 0) return;
     void queryClient.invalidateQueries({

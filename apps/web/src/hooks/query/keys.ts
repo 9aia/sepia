@@ -21,6 +21,13 @@ export const queryKeys = {
           : `${agent}:${sessionId}`
         : `${node}:${agent ?? ""}:${sessionId}`,
     ] as const,
+  /**
+   * The held-session lock probe (`GET /api/sessions?withLocks=1` filtered to
+   * one session) while the panel reads read-only. `[node, agent, id]`
+   * segments so a `session` feed event can refetch just the watched row.
+   */
+  heldSession: (node: string, agent: string, sessionId: string) =>
+    ["held-session", node, agent, sessionId] as const,
   /** Checkpoint refs a session recorded — same node-scoped keying as history. */
   checkpoints: (sessionId: string, agent?: string, node?: string) =>
     [

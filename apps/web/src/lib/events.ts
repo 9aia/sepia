@@ -50,6 +50,17 @@ const historyPredicate =
   (query: Query): boolean =>
     historyKeyMatches(query.queryKey[1], id);
 
+/**
+ * Held-session probes key as `["held-session", node, agent, id]` — the
+ * server watcher's `locked`/`updatedAt` diffs arrive as `session` events
+ * with that id, so the probe refetches on events (plus its slow self-heal
+ * interval) instead of every few seconds.
+ */
+const heldPredicate =
+  (id: string) =>
+  (query: Query): boolean =>
+    query.queryKey[0] === "held-session" && query.queryKey[3] === id;
+
 /** Apply one feed event to the cache — invalidates the matching queries. */
 export const applyNodeEvent = (client: QueryClient, event: NodeEvent): void => {
   for (const queryKey of invalidationsForEvent(event)) {
@@ -62,6 +73,10 @@ export const applyNodeEvent = (client: QueryClient, event: NodeEvent): void => {
     void client.invalidateQueries({
       queryKey: ["history"],
       predicate: historyPredicate(event.id),
+    });
+    void client.invalidateQueries({
+      queryKey: ["held-session"],
+      predicate: heldPredicate(event.id),
     });
   }
 };
