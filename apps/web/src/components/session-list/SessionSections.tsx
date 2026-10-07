@@ -52,6 +52,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Skeleton } from "../ui/skeleton";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -575,6 +576,16 @@ function ProjectsSection({
           </>
         }
       />
+      {open && !projectsLoaded && (
+        <div
+          className="flex flex-col gap-1 px-1.5 pb-2"
+          aria-busy="true"
+          aria-label="Loading projects"
+        >
+          <Skeleton className="mx-2 my-1.5 h-4 w-3/5" />
+          <Skeleton className="mx-2 my-1.5 h-4 w-4/5" />
+        </div>
+      )}
       {open && projectsLoaded && projects.length === 0 && (
         <p className="px-3 py-1 text-xs text-muted-foreground">No projects yet.</p>
       )}
@@ -837,7 +848,8 @@ export function SessionSections({
   // Sections that would render nothing (disabled, or an empty flat list)
   // drop out so the block collapses entirely — as before. The Projects
   // header only shows when it or a sibling flat section has content.
-  const hasTopContent = pinned.length > 0 || recentSessions.length > 0 || projects.length > 0;
+  const hasTopContent =
+    pinned.length > 0 || recentSessions.length > 0 || projects.length > 0 || !projectsLoaded;
   const visible = settings.sidebar.sections.filter((section) => {
     if (!section.enabled) return false;
     switch (section.id) {
