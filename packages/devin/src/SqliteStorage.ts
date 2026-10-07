@@ -551,11 +551,10 @@ export const make = (
           // Resolve calls only when the window actually has tool rows.
           const needsCalls = nodes.some((n) => n.role === "tool");
           if (needsCalls) {
+            const inWindow = new Set(nodes.map((n) => n.nodeId));
             const cached = callsIndex.get(id);
             if (cached?.maxNodeId === stamp.maxNodeId) {
-              toolCallNodes.push(
-                ...cached.nodes.filter((n) => !nodes.some((w) => w.nodeId === n.nodeId)),
-              );
+              toolCallNodes.push(...cached.nodes.filter((n) => !inWindow.has(n.nodeId)));
             } else {
               const callRows = sqlite
                 .query<
@@ -573,10 +572,10 @@ export const make = (
                    and json_array_length(chat_message, '$.tool_calls') > 0`,
                 )
                 .all(id);
-              const inWindow = new Set(nodes.map((n) => n.nodeId));
               const parsed = parseRows(callRows.filter((r) => !inWindow.has(r.node_id))).filter(
                 (n) => n.toolCalls.length > 0,
               );
+              if (callsIndex.size >= SESSION_CACHE_MAX) callsIndex.clear();
               callsIndex.set(id, { maxNodeId: stamp.maxNodeId, nodes: parsed });
               toolCallNodes.push(...parsed);
             }
