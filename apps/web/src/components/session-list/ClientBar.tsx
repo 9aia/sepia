@@ -181,7 +181,7 @@ export function ClientBar() {
 
   // Summary segments — an unset pick dims to the default that will apply:
   // agent → the node's own pick (resolvable only as the local roster's
-  // first), model → the agent's configured pref, then "agent default".
+  // first), model → the agent's configured pref, then "Agent default".
   const agentText =
     desktop.agent !== null
       ? agentLabel(desktop.agent)
@@ -191,7 +191,7 @@ export function ClientBar() {
   const agentPref = agentId === null ? undefined : modelPrefs[agentId];
   const configuredModel =
     agentPref !== undefined && agentPref.model.trim() !== "" ? agentPref.model.trim() : undefined;
-  const modelText = desktop.model ?? configuredModel ?? "agent default";
+  const modelText = desktop.model ?? configuredModel ?? "Agent default";
 
   // The Agent submenu lists the focused node's roster; a stored pick that
   // fell out of it still shows so its check mark stays visible.
