@@ -33,15 +33,23 @@ them from a web UI over the Agent Client Protocol (ACP).
 
 ## Layout
 
-| Path                       | Package                 | Role                                                                  |
-| -------------------------- | ----------------------- | --------------------------------------------------------------------- |
-| `packages/sepia`           | `sepia-core`            | Session IR, Devin/Cline adapters, stores, conversion                  |
-| `packages/acp`             | `sepia-acp`             | Spawn an ACP agent over stdio; typed session ops + normalized updates |
-| `packages/agui`            | `sepia-agui`            | Translate ACP session updates into AG-UI events; SSE encoding         |
-| `packages/session-control` | `sepia-session-control` | Control plane: lists sessions, owns one live agent per session, locks |
-| `apps/sepia`               | `sepia-cli`             | CLI (`list`, `import`, `export`, `install`, `delete`)                 |
-| `apps/server`              | `sepia-server`          | Bun API: REST + AG-UI SSE + AG-UI agent endpoint                      |
-| `apps/web`                 | `sepia-web`             | TanStack Start UI (AI Elements chat)                                  |
+Ports-and-adapters: `sepia-core` is pure domain (no I/O, no `bun:*`), adapters
+depend only on it, and `sepia-convert`/`session-control`/apps compose ports.
+
+| Path                       | Package                 | Role                                                                                  |
+| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| `packages/sepia`           | `sepia-core`            | Session IR, `SessionRepository` port, AgentConfig IR, Restore/Rewind, Shared services |
+| `packages/devin`           | `sepia-devin`           | Devin `sessions.db` adapter (drizzle + `bun:sqlite`), DevinConfig                     |
+| `packages/cline`           | `sepia-cline`           | Cline dir adapter + session index + repository, ClineConfig                           |
+| `packages/claude`          | `sepia-claude`          | Claude Code `projects/*.jsonl` adapter + repository, ClaudeConfig                     |
+| `packages/cursor`          | `sepia-cursor`          | Cursor `store.db`/transcript adapter + repository, CursorConfig                       |
+| `packages/convert`         | `sepia-convert`         | Cross-store conversion + ClineStore import bridge                                     |
+| `packages/acp`             | `sepia-acp`             | Spawn an ACP agent over stdio; typed session ops + normalized updates                 |
+| `packages/agui`            | `sepia-agui`            | Translate ACP session updates into AG-UI events; SSE encoding                         |
+| `packages/session-control` | `sepia-session-control` | Control plane: lists sessions, owns one live agent per session, locks                 |
+| `apps/sepia`               | `sepia-cli`             | CLI (`list`, `import`, `export`, `install`, `delete`)                                 |
+| `apps/server`              | `sepia-server`          | Bun API: REST + AG-UI SSE + AG-UI agent endpoint                                      |
+| `apps/web`                 | `sepia-web`             | TanStack Start UI (AI Elements chat)                                                  |
 
 ## Commands
 
@@ -100,14 +108,15 @@ never run concurrent installs).
 
 ## Constraints worth knowing
 
-- `sepia-core`'s sqlite modules (`SessionSqlite`, `SqliteStorage`) import
-  `bun:sqlite` at module load and `index.ts` re-exports them, so anything that
-  imports `sepia-core` (the CLI, `sepia-server`) must run under Bun.
-  `CursorRepository` loads it lazily to stay Node-importable. The package's own
-  vitest suite never touches the bun modules — `tests/**/*.bun.test.ts` is
-  excluded there and run via `bun test` (`test:bun`) instead. The `bun:sqlite` /
+- `sepia-devin`'s sqlite modules (`SessionSqlite`, `SqliteStorage`) import
+  `bun:sqlite` at module load, so anything importing it (the CLI,
+  `sepia-server`, `sepia-convert`'s `ClineStore`) must run under Bun.
+  `sepia-cursor`'s `CursorRepository` loads it lazily to stay
+  Node-importable. `tests/**/*.bun.test.ts` is excluded from vitest and run
+  via `bun test` (`test:bun`) instead. The `bun:sqlite` /
   `drizzle-orm/bun-sqlite` `resolve.alias` stubs live in `apps/server`'s and
-  `session-control`'s vitest configs, whose node tests do import the package.
+  `session-control`'s vitest configs, whose node tests do import the
+  package.
 - `devin acp` and `cline --acp` are the agent runtimes. `devin acp` advertises
   `loadSession` plus `session/list` (with live lock metadata).
 - The web UI chats over `POST /api/sessions/:id/prompt` + `GET
@@ -117,8 +126,8 @@ never run concurrent installs).
   `{ "takeover": true }` overrides that.
 - The generated `apps/web/src/routeTree.gen.ts` is excluded from formatting via
   `fmt.ignorePatterns` in the root `vite.config.ts`.
-- Only `packages/sepia` sets coverage thresholds — an aggregate floor plus
-  per-file measured floors in `vitest.config.ts` (100% only where a file is
-  fully covered, e.g. `Domain`/`Storage`/`ClineIndex`). Raise them as coverage
-  improves; never lower them silently.
+- Coverage thresholds live in each package's `vitest.config.ts` — an
+  aggregate floor plus per-file measured floors (100% only where a file is
+  fully covered). Raise them as coverage improves; never lower them
+  silently.
 - The `devin acp` integration test is skipped unless `ACP_IT=1`.
