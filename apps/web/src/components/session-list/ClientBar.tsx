@@ -3,6 +3,7 @@ import { useStore } from "@tanstack/react-store";
 import { useHasKeyboard } from "../../lib/keyboard";
 import {
   ArrowUp01Icon,
+  BotIcon,
   BrainIcon,
   ComputerIcon,
   FolderIcon,
@@ -20,7 +21,12 @@ import { isAgentEnabled, isModelEnabled } from "../../lib/catalog";
 import { isPeerEnabled, nodeName } from "../../lib/nodes";
 import { LOCAL_NODE_ID, nodeKey } from "../../lib/format";
 import { useAgents } from "../../hooks/query/useAgents";
-import { useNodes, useNodeStatuses, usePeerDescriptors } from "../../hooks/query/useNodes";
+import {
+  useNodes,
+  useNodesConnected,
+  useNodeStatuses,
+  usePeerDescriptors,
+} from "../../hooks/query/useNodes";
 import { useSessions } from "../../hooks/query/useSessions";
 import { SettingsDialog } from "../SettingsDialog";
 import { Button } from "../ui/button";
@@ -39,7 +45,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
-/** One targetable machine — this node first, then every enabled peer. */
+/** One targetable node — this node first, then every enabled peer. */
 interface DesktopEntry {
   /** nodeKey — "local" or the peer's registered id. */
   readonly node: string;
@@ -69,13 +75,15 @@ const SubValue = ({ children }: { children: ReactNode }) => (
 /**
  * The sidebar footer: this client (browser/device identity — label +
  * keypair, managed in Settings → Client) plus the *desktop* summary —
- * the machine+agent+model "New session" aims at, the same
+ * the node+agent+model "New session" aims at, the same
  * `settings.desktop` Settings → Desktop edits. The dot tracks the
- * desktop machine's reachability (selfStatus for this node, the peer
+ * desktop node's reachability (selfStatus for this node, the peer
  * probe otherwise). The menu edits the desktop: a node submenu per
- * enabled machine picks node+agent, then Model and Directory submenus
- * cover the remaining fields. A desktop node that goes offline or gets
- * disabled dims and reads "unreachable" until the user repicks.
+ * enabled node picks node+agent, while first-class Agent, Model and
+ * Directory submenus cover the focused node's remaining fields. A
+ * desktop node that goes offline or gets disabled dims and reads
+ * "unreachable" until the user repicks; with no node reachable at all
+ * the summary reads "No nodes connected".
  */
 export function ClientBar() {
   const hasKeyboard = useHasKeyboard();
@@ -88,6 +96,7 @@ export function ClientBar() {
   const disabledAgents = useStore(settingsStore, (state) => state.disabledAgents);
   const disabledModels = useStore(settingsStore, (state) => state.disabledModels);
   const { self, selfStatus, peers } = useNodes();
+  const nodesConnected = useNodesConnected();
   const statuses = useNodeStatuses(peers);
   const descriptors = usePeerDescriptors(peers);
   const { data: agents = [] } = useAgents();
@@ -141,26 +150,31 @@ export function ClientBar() {
   // Disabled peers drop out of `entries`, so a desktop aimed at one reads
   // as missing; a probed-and-failed peer is the other unreachable case.
   const unreachable = nodeMissing || entry?.reachable === false;
-  const machineLabel = entry?.label ?? nodeName(desktop.node ?? undefined);
+  const nodeLabel = entry?.label ?? nodeName(desktop.node ?? undefined);
+  // Nothing reachable at all (local parked or down, every peer failed) —
+  // the summary reports that instead of a stale node name.
+  const noNodes = nodesConnected === "disconnected";
 
-  // The dot tracks the desktop machine's reachability — the local node's
+  // The dot tracks the desktop node's reachability — the local node's
   // own selfStatus (unknown until the first probe settles) or the peer's
   // probe result; a missing/disabled pick reads as offline.
-  const dotState: "online" | "offline" | "checking" = unreachable
-    ? "offline"
-    : focusedKey === LOCAL_NODE_ID
-      ? selfStatus === "unknown"
-        ? "checking"
-        : "online"
-      : entry === undefined || entry.reachable === undefined
-        ? "checking"
-        : "online";
-  const dotLabel =
-    dotState === "online"
-      ? `${machineLabel} online`
+  const dotState: "online" | "offline" | "checking" =
+    noNodes || unreachable
+      ? "offline"
+      : focusedKey === LOCAL_NODE_ID
+        ? selfStatus === "unknown"
+          ? "checking"
+          : "online"
+        : entry === undefined || entry.reachable === undefined
+          ? "checking"
+          : "online";
+  const dotLabel = noNodes
+    ? "No nodes connected"
+    : dotState === "online"
+      ? `${nodeLabel} online`
       : dotState === "offline"
-        ? `${machineLabel} unreachable`
-        : `Checking ${machineLabel}`;
+        ? `${nodeLabel} unreachable`
+        : `Checking ${nodeLabel}`;
 
   // Summary segments — an unset pick dims to the default that will apply:
   // agent → the node's own pick (resolvable only as the local roster's
@@ -175,6 +189,14 @@ export function ClientBar() {
   const configuredModel =
     agentPref !== undefined && agentPref.model.trim() !== "" ? agentPref.model.trim() : undefined;
   const modelText = desktop.model ?? configuredModel ?? "agent default";
+
+  // The Agent submenu lists the focused node's roster; a stored pick that
+  // fell out of it still shows so its check mark stays visible.
+  const rosterAgents = entry?.agents ?? [];
+  const agentItems =
+    desktop.agent !== null && !rosterAgents.includes(desktop.agent)
+      ? [desktop.agent, ...rosterAgents]
+      : rosterAgents;
 
   // The Model submenu lists the agent's known models — the configured
   // pref plus its comma-separated fallbacks (Settings → Models), minus the
@@ -217,7 +239,7 @@ export function ClientBar() {
     setFocus({
       node: node === LOCAL_NODE_ID ? null : node,
       agent,
-      // Scoped picks don't port: a machine change drops the dir too, an
+      // Scoped picks don't port: a node change drops the dir too, an
       // agent change drops a model picked for the previous agent.
       model: sameNode && desktop.agent === agent ? desktop.model : null,
       cwd: sameNode ? desktop.cwd : null,
@@ -282,11 +304,13 @@ export function ClientBar() {
                     unreachable ? "text-destructive/80" : "text-muted-foreground"
                   }`}
                 >
-                  {unreachable ? (
-                    `${machineLabel} · unreachable`
+                  {noNodes ? (
+                    "No nodes connected"
+                  ) : unreachable ? (
+                    `${nodeLabel} · unreachable`
                   ) : (
                     <>
-                      {machineLabel}
+                      {nodeLabel}
                       {" · "}
                       <span className={desktop.agent === null ? "opacity-60" : undefined}>
                         {agentText}
@@ -307,7 +331,7 @@ export function ClientBar() {
           <DropdownMenuGroup>
             <DropdownMenuLabel>Desktop</DropdownMenuLabel>
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger title="Machine">
+              <DropdownMenuSubTrigger title="Node">
                 <HugeiconsIcon
                   icon={ServerIcon}
                   strokeWidth={2}
@@ -315,7 +339,7 @@ export function ClientBar() {
                 />
                 <span className="flex min-w-0 flex-1 items-baseline justify-between gap-2">
                   <span>Node</span>
-                  <SubValue>{machineLabel}</SubValue>
+                  <SubValue>{noNodes ? "No nodes connected" : nodeLabel}</SubValue>
                 </span>
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-44">
@@ -350,6 +374,39 @@ export function ClientBar() {
                 {nodeMissing && desktop.node !== null && (
                   <DropdownMenuItem disabled>
                     {nodeName(desktop.node)} — unavailable
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger title="Agent">
+                <HugeiconsIcon
+                  icon={BotIcon}
+                  strokeWidth={2}
+                  className="shrink-0 text-muted-foreground"
+                />
+                <span className="flex min-w-0 flex-1 items-baseline justify-between gap-2">
+                  <span>Agent</span>
+                  <SubValue>
+                    {desktop.agent === null ? "Node default" : agentLabel(desktop.agent)}
+                  </SubValue>
+                </span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-44">
+                <DropdownMenuItem onClick={() => pick(focusedKey, null)}>
+                  Node default
+                  {desktop.agent === null && <Check />}
+                </DropdownMenuItem>
+                {agentItems.length > 0 && <DropdownMenuSeparator />}
+                {agentItems.map((id) => (
+                  <DropdownMenuItem key={id} onClick={() => pick(focusedKey, id)}>
+                    {agentLabel(id)}
+                    {desktop.agent === id && <Check />}
+                  </DropdownMenuItem>
+                ))}
+                {agentItems.length === 0 && (
+                  <DropdownMenuItem disabled>
+                    <span className="text-muted-foreground">No agents</span>
                   </DropdownMenuItem>
                 )}
               </DropdownMenuSubContent>
