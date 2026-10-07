@@ -69,6 +69,9 @@ bundle, bundles the CLI, and stages `packages/sepia-node/{bin,dist,ui}` and
 
 ```bash
 vp run version:bump      # stamp 0.YYMMDD.HHMM everywhere
+vp run release           # one-shot: stamp → build npm + binary → commit/tag/
+                         # push → npm publish ×2 → gh release (auto notes)
+vp run release -- --dry-run   # full pipeline minus commit/push/publish
 vp run build:npm         # build + stage both packages
 cd packages/sepia-node && bun pm pack --destination /tmp
 cd ../sepia-ui && bun pm pack --destination /tmp

@@ -17,7 +17,8 @@
     "build:npm": "bun tools/build-npm.ts",
     "version": "bun tools/version.ts",
     "version:bump": "bun tools/version.ts",
-    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "release": "bun tools/release.ts"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "4.1.10",

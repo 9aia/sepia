@@ -20,8 +20,9 @@
  * a stamp that skips this leaves `bun install --frozen-lockfile` broken.
  *
  * Usage:
- *   bun tools/version.ts            # stamp now + sync bun.lock
+ *   bun tools/version.ts [X.Y.Z]    # stamp now (or an explicit version) + sync bun.lock
  *   bun tools/version.ts --print    # print the current stamp, write nothing
+ *   bun tools/version.ts --print-next  # print what the stamp would be now
  *   bun tools/version.ts --no-install
  */
 import { readdir, readFile, writeFile } from "node:fs/promises";
@@ -32,6 +33,7 @@ const versionFile = join(repoRoot, "VERSION");
 
 const args = process.argv.slice(2);
 const printOnly = args.includes("--print");
+const printNext = args.includes("--print-next");
 const skipInstall = args.includes("--no-install");
 
 /** `0.YYMMDD.HHMM` — HHMM as an integer (semver has no leading zeros). */
@@ -83,7 +85,17 @@ if (printOnly) {
   process.exit(0);
 }
 
-const version = stamp(new Date());
+if (printNext) {
+  console.log(stamp(new Date()));
+  process.exit(0);
+}
+
+const versionArg = args.find((a) => !a.startsWith("-"));
+const version = versionArg ?? stamp(new Date());
+if (!/^\d+\.\d+\.\d+$/.test(version)) {
+  console.error(`version: "${version}" is not MAJOR.MINOR.PATCH`);
+  process.exit(1);
+}
 
 let stamped = 0;
 for (const path of await packageJsonPaths()) {
