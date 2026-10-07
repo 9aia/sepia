@@ -1,4 +1,5 @@
 import { Effect, Layer, Option } from "effect";
+import { statSync } from "node:fs";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import * as Fs from "@effect/platform/FileSystem";
@@ -79,6 +80,24 @@ export const makeClineSessionRepository = (
 ): SessionRepositoryService => {
   const sessionsDir = () => `${options.dataDir}/sessions`;
 
+  /**
+   * Read cache — `list()` reads and parses every session's manifest on
+   * each call. The directory walk is cheap, so the parsed array is keyed
+   * on a stamp of it: every sessions-root entry with its mtime, and for
+   * each session dir its file listing, the manifest name it resolves to
+   * and that manifest's mtime. Manifest edits, session adds/removes and
+   * manifest renames all move the stamp. The repo is read-only, so no
+   * write path needs to invalidate.
+   */
+  let listCache: { readonly stamp: string; readonly value: ReadonlyArray<Session> } | undefined;
+  const fileMtimeMs = (filePath: string): number | undefined => {
+    try {
+      return statSync(filePath).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  };
+
   return {
     list: () =>
       Effect.gen(function* () {
@@ -88,23 +107,37 @@ export const makeClineSessionRepository = (
         const exists = yield* fs.exists(root).pipe(Effect.orElseSucceed(() => false));
         if (!exists) return [] as ReadonlyArray<Session>;
         const entries = yield* fs.readDirectory(root);
-        const sessions: Array<Session> = [];
+        const manifests: Array<{ readonly metaPath: string; readonly fallbackId: string }> = [];
+        const parts: Array<string> = [];
         for (const entry of entries) {
           const dir = path.join(root, entry);
           const info = yield* fs.stat(dir).pipe(Effect.option);
-          if (Option.isNone(info) || info.value.type !== "Directory") continue;
+          if (Option.isNone(info) || info.value.type !== "Directory") {
+            parts.push(`${entry}:${fileMtimeMs(dir) ?? "?"}`);
+            continue;
+          }
           const files = yield* fs
             .readDirectory(dir)
             .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
           const metaName = files.find(isManifest);
-          if (metaName === undefined) continue;
-          const raw = yield* fs
-            .readFileString(path.join(dir, metaName))
-            .pipe(Effect.orElseSucceed(() => ""));
-          const session = manifestToSession(raw, entry);
+          const metaPath = metaName === undefined ? undefined : path.join(dir, metaName);
+          parts.push(
+            `${entry}:${fileMtimeMs(dir) ?? "?"}:${files.join(",")}:${metaName ?? ""}:` +
+              `${metaPath === undefined ? "" : (fileMtimeMs(metaPath) ?? "?")}`,
+          );
+          if (metaPath !== undefined) manifests.push({ metaPath, fallbackId: entry });
+        }
+        const stamp = `${entries.length}\n${parts.join("\n")}`;
+        if (listCache?.stamp === stamp) return listCache.value;
+        const sessions: Array<Session> = [];
+        for (const { metaPath, fallbackId } of manifests) {
+          const raw = yield* fs.readFileString(metaPath).pipe(Effect.orElseSucceed(() => ""));
+          const session = manifestToSession(raw, fallbackId);
           if (session !== null) sessions.push(session);
         }
-        return sessions.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+        const listed = sessions.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+        listCache = { stamp, value: listed };
+        return listed;
       }).pipe(
         Effect.provide(fsLayer),
         Effect.mapError(storageError("Failed to list cline sessions")),

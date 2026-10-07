@@ -1,4 +1,5 @@
 import { Effect, Layer, Option } from "effect";
+import { statSync } from "node:fs";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import * as Fs from "@effect/platform/FileSystem";
@@ -257,6 +258,48 @@ export const makeCursorSessionRepository = (
       return yield* fs.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
     });
 
+  /** statSync mtime — a missing/unstatable file reads as `undefined`. */
+  const fileMtimeMs = (filePath: string): number | undefined => {
+    try {
+      return statSync(filePath).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  };
+
+  /**
+   * Read cache — `list()` opens every chat's `store.db` and reads every
+   * transcript on each call. The entry scan is the cheap half, so the
+   * summarized array is keyed on a stamp built from it: each chat dir's
+   * `store.db` (+ its WAL — external writes may touch only that, like the
+   * devin store) and sidecar mtimes, each transcript's mtime, and the
+   * entry set itself. Writes through this instance invalidate explicitly.
+   */
+  let listCache: { readonly stamp: string; readonly value: ReadonlyArray<Session> } | undefined;
+  const listStamp = (entries: ReadonlyArray<StoreEntry>): string => {
+    let maxMtime = 0;
+    const parts: Array<string> = [];
+    const bump = (filePath: string): string => {
+      const mtime = fileMtimeMs(filePath);
+      if (mtime !== undefined && mtime > maxMtime) maxMtime = mtime;
+      return `${filePath}:${mtime ?? "?"}`;
+    };
+    for (const entry of entries) {
+      if (entry.kind === "chat") {
+        parts.push(
+          `${entry.dir}:${entry.hasStore}:${entry.hasMeta}`,
+          bump(`${entry.dir}/store.db`),
+          bump(`${entry.dir}/store.db-wal`),
+          bump(`${entry.dir}/meta.json`),
+          bump(`${entry.dir}/prompt_history.json`),
+        );
+      } else {
+        parts.push(bump(entry.filePath));
+      }
+    }
+    return `${entries.length}:${maxMtime}\n${parts.join("\n")}`;
+  };
+
   const mtimeMs = (filePath: string) =>
     Effect.gen(function* () {
       const fs = yield* Fs.FileSystem;
@@ -420,6 +463,8 @@ export const makeCursorSessionRepository = (
     list: () =>
       Effect.gen(function* () {
         const entries = yield* scanEntries();
+        const stamp = listStamp(entries);
+        if (listCache?.stamp === stamp) return listCache.value;
         const chatIds = new Set(
           entries.flatMap((entry) => (entry.kind === "chat" ? [entry.id] : [])),
         );
@@ -443,7 +488,9 @@ export const makeCursorSessionRepository = (
           ).pipe(Effect.option);
           if (Option.isSome(session)) sessions.push(session.value);
         }
-        return sessions.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+        const listed = sessions.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+        listCache = { stamp, value: listed };
+        return listed;
       }).pipe(
         Effect.provide(fsLayer),
         Effect.mapError(storageError("Failed to list cursor sessions")),
@@ -639,6 +686,7 @@ export const makeCursorSessionRepository = (
         yield* fs
           .utimes(filePath, new Date(), new Date(session.lastActivityAt * 1000))
           .pipe(Effect.ignore);
+        listCache = undefined;
       }).pipe(
         Effect.provide(fsLayer),
         Effect.mapError(storageError("Failed to save cursor session")),
@@ -677,6 +725,7 @@ export const makeCursorSessionRepository = (
             );
           }
         }
+        listCache = undefined;
       }).pipe(
         Effect.provide(fsLayer),
         Effect.mapError(storageError("Failed to delete cursor session")),

@@ -6,7 +6,15 @@
  */
 import { Effect, Either, Option } from "effect";
 import { expect, test } from "vite-plus/test";
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as ClineRepository from "../src/ClineRepository.js";
@@ -103,6 +111,35 @@ test("list treats a missing sessions dir as empty and a file root as an error", 
   const repo = ClineRepository.makeClineSessionRepository({ dataDir });
   await expect(Effect.runPromise(repo.list())).rejects.toThrow("Failed to list cline sessions");
 });
+
+test("list caches manifest reads until a manifest or the dir set changes", async () =>
+  withTempDir("sepia-cline-repo-", async (dataDir) => {
+    writeClineSession(dataDir, "s1", { metadata: { title: "One" } });
+    // a dangling-symlink entry at the sessions root — unstatable, skipped
+    symlinkSync(join(dataDir, "sessions", "nonexistent"), join(dataDir, "sessions", "ghost"));
+    const repo = ClineRepository.makeClineSessionRepository({ dataDir });
+
+    const first = await Effect.runPromise(repo.list());
+    expect(first[0]?.title).toBe("One");
+    expect(first.map((s) => s.id)).toEqual(["s1"]);
+    // unchanged stamp → the cached array comes back verbatim
+    expect(await Effect.runPromise(repo.list())).toBe(first);
+
+    // editing the manifest bumps its mtime → re-read
+    const manifest = join(dataDir, "sessions", "s1", "s1.json");
+    writeFileSync(
+      manifest,
+      JSON.stringify({ session_id: "s1", cwd: "/work", metadata: { title: "Two" } }),
+    );
+    utimesSync(manifest, new Date(), new Date(Date.now() + 10_000));
+    const third = await Effect.runPromise(repo.list());
+    expect(third).not.toBe(first);
+    expect(third[0]?.title).toBe("Two");
+
+    // a new session dir busts via the listing stamp
+    writeClineSession(dataDir, "s2");
+    expect((await Effect.runPromise(repo.list())).map((s) => s.id).sort()).toEqual(["s1", "s2"]);
+  }));
 
 test("getById loads the transcript; unknown and unreadable ids degrade correctly", async () =>
   withTempDir("sepia-cline-repo-", async (dataDir) => {

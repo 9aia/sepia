@@ -414,6 +414,12 @@ export interface ControlPlaneOptions {
   /** How often the idle sweep runs. Defaults to `SEPIA_SWEEP_MS`. */
   readonly sweepMs?: number;
   /**
+   * A pooled lock-probe connection unused for this long is closed by the
+   * next probe — keeps an idle node from holding agent subprocesses.
+   * Defaults to `max(10 × SEPIA_LOCK_TTL_MS, 60s)`.
+   */
+  readonly probeIdleMs?: number;
+  /**
    * Signals the lock-holder pid during an explicit takeover — SIGTERM via
    * `process.kill` by default. Injectable so tests can fake the process table;
    * only ever invoked with the pid the agent itself reported.

@@ -1,4 +1,5 @@
 import { Effect, Layer, Option } from "effect";
+import { statSync } from "node:fs";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import * as Fs from "@effect/platform/FileSystem";
@@ -102,12 +103,42 @@ export const makeClaudeCodeSessionRepository = (
 ): SessionRepositoryService => {
   const transcriptFiles = () => scanTranscriptFiles(options.projectsDir);
 
+  /**
+   * Read cache — `list()` reads and summarizes every transcript on each
+   * call and a projects dir can hold hundreds of `.jsonl` files. The scan
+   * itself (dir walk + stats) is cheap, so the parsed array is keyed on a
+   * stamp of the file set: count + max mtime + every path with its mtime.
+   * Edits, adds and deletes all move the stamp; writes through this
+   * instance invalidate explicitly.
+   */
+  let listCache: { readonly stamp: string; readonly value: ReadonlyArray<Session> } | undefined;
+  const fileMtimeMs = (filePath: string): number | undefined => {
+    try {
+      return statSync(filePath).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  };
+  const listStamp = (files: ReadonlyArray<TranscriptFile>): string => {
+    let maxMtime = 0;
+    const parts: Array<string> = [];
+    for (const file of files) {
+      const mtime = fileMtimeMs(file.filePath);
+      if (mtime !== undefined && mtime > maxMtime) maxMtime = mtime;
+      parts.push(`${file.filePath}:${mtime ?? "?"}`);
+    }
+    return `${files.length}:${maxMtime}\n${parts.join("\n")}`;
+  };
+
   return {
     list: () =>
       Effect.gen(function* () {
         const fs = yield* Fs.FileSystem;
+        const files = yield* transcriptFiles();
+        const stamp = listStamp(files);
+        if (listCache?.stamp === stamp) return listCache.value;
         const sessions: Array<Session> = [];
-        for (const file of yield* transcriptFiles()) {
+        for (const file of files) {
           const raw = yield* fs.readFileString(file.filePath).pipe(Effect.orElseSucceed(() => ""));
           if (raw === "") continue;
           sessions.push(
@@ -118,7 +149,9 @@ export const makeClaudeCodeSessionRepository = (
             }),
           );
         }
-        return sessions.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+        const listed = sessions.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+        listCache = { stamp, value: listed };
+        return listed;
       }).pipe(
         Effect.provide(fsLayer),
         Effect.mapError(storageError("Failed to list claude sessions")),
@@ -196,6 +229,7 @@ export const makeClaudeCodeSessionRepository = (
           filePath = path.join(dir, `${session.id}${JSONL}`);
         }
         yield* fs.writeFileString(filePath, ClaudeCode.toJsonl(session));
+        listCache = undefined;
       }).pipe(
         Effect.provide(fsLayer),
         Effect.mapError(storageError("Failed to save claude session")),
@@ -220,6 +254,7 @@ export const makeClaudeCodeSessionRepository = (
         const sideDir = path.join(path.dirname(file.filePath), id);
         const held = yield* fs.exists(sideDir).pipe(Effect.orElseSucceed(() => false));
         if (held) yield* fs.remove(sideDir, { recursive: true });
+        listCache = undefined;
       }).pipe(
         Effect.provide(fsLayer),
         Effect.mapError(storageError("Failed to delete claude session")),

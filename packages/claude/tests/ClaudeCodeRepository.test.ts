@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Option } from "effect";
@@ -155,6 +163,40 @@ describe("ClaudeCodeRepository", () => {
       expect(Option.isNone(await Effect.runPromise(repo.getById("new-1")))).toBe(true);
       // deleting again is a no-op
       await Effect.runPromise(repo.delete("new-1"));
+    }));
+
+  test("list caches summaries until the transcript set changes", async () =>
+    withTempDir(async (root) => {
+      const projectsDir = join(root, "projects");
+      const filePath = writeTranscript(projectsDir, "-work-a", "sess-a", "/work/a");
+      // a dangling-symlink transcript is skipped by the scan and the stat
+      symlinkSync(
+        join(projectsDir, "-work-a", "nonexistent.jsonl"),
+        join(projectsDir, "-work-a", "ghost.jsonl"),
+      );
+      const repo = makeClaudeCodeSessionRepository({ projectsDir });
+
+      const first = await Effect.runPromise(repo.list());
+      expect(first.map((s) => s.id)).toEqual(["sess-a"]);
+      // unchanged stamp → the cached array comes back verbatim
+      expect(await Effect.runPromise(repo.list())).toBe(first);
+
+      // editing a transcript bumps its mtime → re-read
+      writeFileSync(
+        filePath,
+        transcript("sess-a", "/work/a").replace('"summary":"T"', '"summary":"Edited"'),
+      );
+      utimesSync(filePath, new Date(), new Date(Date.now() + 10_000));
+      const third = await Effect.runPromise(repo.list());
+      expect(third).not.toBe(first);
+      expect(third.find((s) => s.id === "sess-a")?.title).toBe("Edited");
+
+      // a new transcript busts via the file-set signature
+      writeTranscript(projectsDir, "-work-b", "sess-b", "/work/b");
+      expect((await Effect.runPromise(repo.list())).map((s) => s.id).sort()).toEqual([
+        "sess-a",
+        "sess-b",
+      ]);
     }));
 
   test("save refuses unsafe ids", async () =>

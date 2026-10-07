@@ -12,6 +12,7 @@ import {
   mkdirSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -243,6 +244,79 @@ test("save refuses unsafe ids and survives a broken parent probe", async () =>
       "agent-9.jsonl",
     );
     expect(existsSync(expected)).toBe(true);
+  }));
+
+test("list caches summaries until a transcript, store or sidecar changes", async () =>
+  withTempDir("sepia-cursor-repo-", async (cursorDir) => {
+    writeTranscript(cursorDir, "home-x", "chat-1");
+    // a chat whose WAL/sidecar paths are dangling symlinks — the statSync
+    // stamp degrades their mtimes to "?" and the session still lists
+    const metaDir = join(cursorDir, "chats", "aaaa", "chat-meta");
+    mkdirSync(metaDir, { recursive: true });
+    writeFileSync(
+      join(metaDir, "meta.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        createdAtMs: 1_700_000_000_000,
+        title: "meta only",
+        hasConversation: false,
+      }),
+    );
+    symlinkSync(join(metaDir, "nonexistent-wal"), join(metaDir, "store.db-wal"));
+    symlinkSync(join(metaDir, "nonexistent-ph"), join(metaDir, "prompt_history.json"));
+    const repo = CursorRepository.makeCursorSessionRepository({ cursorDir });
+
+    const first = await Effect.runPromise(repo.list());
+    expect(first.map((s) => s.id).sort()).toEqual(["chat-1", "chat-meta"]);
+    // unchanged stamp → the cached array comes back verbatim
+    expect(await Effect.runPromise(repo.list())).toBe(first);
+
+    // editing the transcript bumps its mtime → re-read
+    const file = join(
+      cursorDir,
+      "projects",
+      "home-x",
+      "agent-transcripts",
+      "chat-1",
+      "chat-1.jsonl",
+    );
+    writeFileSync(
+      file,
+      JSON.stringify({
+        role: "user",
+        message: { content: [{ type: "text", text: "edited text" }] },
+      }) + "\n",
+    );
+    utimesSync(file, new Date(), new Date(Date.now() + 10_000));
+    const third = await Effect.runPromise(repo.list());
+    expect(third).not.toBe(first);
+    expect(third.find((s) => s.id === "chat-1")?.title).toBe("edited text");
+
+    // a new transcript busts via the entry-set signature
+    writeTranscript(cursorDir, "home-x", "chat-2");
+    expect((await Effect.runPromise(repo.list())).map((s) => s.id).sort()).toEqual([
+      "chat-1",
+      "chat-2",
+      "chat-meta",
+    ]);
+
+    // writes through the repo invalidate the cache too (a subagent save
+    // needs no store.db — transcript-only path)
+    await Effect.runPromise(
+      repo.save(session({ id: "agent-5", parentSessionId: Option.some("chat-1") })),
+    );
+    expect((await Effect.runPromise(repo.list())).map((s) => s.id).sort()).toEqual([
+      "agent-5",
+      "chat-1",
+      "chat-2",
+      "chat-meta",
+    ]);
+    await Effect.runPromise(repo.delete("chat-2"));
+    expect((await Effect.runPromise(repo.list())).map((s) => s.id).sort()).toEqual([
+      "agent-5",
+      "chat-1",
+      "chat-meta",
+    ]);
   }));
 
 test("save registers a store write failure as a StorageError", async () =>

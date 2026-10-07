@@ -274,6 +274,9 @@ test("merges agent lock state when withLocks is set", async () => {
     ["s2", false, null],
   ]);
   expect(spawns).toEqual([{ cwd: "/work" }]);
+  // The probe conn stays pooled for reuse — closeAll retires it.
+  expect(conn.closed).toBe(false);
+  await Effect.runPromise(cp.closeAll());
   expect(conn.closed).toBe(true);
 });
 
@@ -296,9 +299,13 @@ test("probes every registered agent — a cline-held lock is not invisible to th
   expect(summaries.map((item) => [item.id, item.locked, item.lockHolderPid])).toEqual([
     ["s1", true, 777],
   ]);
-  // Both agents were probed once — each throwaway spawn closed after listing.
+  // Both agents were probed once — each probe conn is pooled for reuse
+  // rather than closed after listing; closeAll retires them.
   expect(devin.spawns).toEqual([{ cwd: "/work" }]);
   expect(cline.spawns).toEqual([{ cwd: "/work" }]);
+  expect(devinConn.closed).toBe(false);
+  expect(clineConn.closed).toBe(false);
+  await Effect.runPromise(cp.closeAll());
   expect(devinConn.closed).toBe(true);
   expect(clineConn.closed).toBe(true);
 });
@@ -345,6 +352,104 @@ test("keeps listing when the lock pass fails", async () => {
   expect(Either.isRight(result)).toBe(true);
   if (Either.isRight(result)) expect(result.right.map((item) => item.locked)).toEqual([false]);
   expect(conn.closed).toBe(true);
+});
+
+test("reuses the pooled probe connection across probes past the lock TTL", async () => {
+  const previousTtl = process.env.SEPIA_LOCK_TTL_MS;
+  process.env.SEPIA_LOCK_TTL_MS = "0";
+  try {
+    const conn = new FakeConnection();
+    conn.infos = [lockedInfo("s1")];
+    const { runtime, spawns } = fakeAgent(conn);
+    const cp = await makeService(
+      { agents: [runtime], probeCwd: "/work" },
+      repository([session("s1", "/work")]),
+    );
+
+    await Effect.runPromise(cp.listSessions({ withLocks: true }));
+    await Effect.runPromise(cp.listSessions({ withLocks: true }));
+    await Effect.runPromise(cp.listSessions({ withLocks: true }));
+
+    // One spawn total — every later probe re-verified the pooled conn with
+    // the session/list RPC instead of paying for a subprocess.
+    expect(spawns).toEqual([{ cwd: "/work" }]);
+    expect(conn.listCalls).toBe(3);
+    await Effect.runPromise(cp.closeAll());
+    expect(conn.closed).toBe(true);
+  } finally {
+    if (previousTtl === undefined) delete process.env.SEPIA_LOCK_TTL_MS;
+    else process.env.SEPIA_LOCK_TTL_MS = previousTtl;
+  }
+});
+
+test("a dead pooled probe connection is closed and respawned once", async () => {
+  const previousTtl = process.env.SEPIA_LOCK_TTL_MS;
+  process.env.SEPIA_LOCK_TTL_MS = "0";
+  try {
+    const first = new FakeConnection();
+    const second = new FakeConnection();
+    second.infos = [lockedInfo("s1")];
+    const conns = [first, second];
+    let spawned = 0;
+    const runtime: AgentRuntime = {
+      id: "devin",
+      label: "Devin",
+      spawn: async () => conns[Math.min(spawned++, conns.length - 1)]!,
+    };
+    const cp = await makeService(
+      { agents: [runtime], probeCwd: "/work" },
+      repository([session("s1", "/work")]),
+    );
+
+    await Effect.runPromise(cp.listSessions({ withLocks: true }));
+    // The pooled conn dies — the next probe drops it and respawns once.
+    first.listError = new Error("agent gone");
+    const summaries = await Effect.runPromise(cp.listSessions({ withLocks: true }));
+
+    expect(summaries.map((item) => [item.id, item.locked])).toEqual([["s1", true]]);
+    expect(first.closed).toBe(true);
+    expect(spawned).toBe(2);
+    await Effect.runPromise(cp.closeAll());
+    expect(second.closed).toBe(true);
+  } finally {
+    if (previousTtl === undefined) delete process.env.SEPIA_LOCK_TTL_MS;
+    else process.env.SEPIA_LOCK_TTL_MS = previousTtl;
+  }
+});
+
+test("a stale pooled probe connection is evicted and respawned", async () => {
+  const previousTtl = process.env.SEPIA_LOCK_TTL_MS;
+  process.env.SEPIA_LOCK_TTL_MS = "0";
+  try {
+    const first = new FakeConnection();
+    const second = new FakeConnection();
+    second.infos = [lockedInfo("s1")];
+    const conns = [first, second];
+    let spawned = 0;
+    const runtime: AgentRuntime = {
+      id: "devin",
+      label: "Devin",
+      spawn: async () => conns[Math.min(spawned++, conns.length - 1)]!,
+    };
+    const cp = await makeService(
+      { agents: [runtime], probeCwd: "/work", probeIdleMs: 20 },
+      repository([session("s1", "/work")]),
+    );
+
+    await Effect.runPromise(cp.listSessions({ withLocks: true }));
+    // Past the probe-idle window, the next probe retires the conn on sight.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const summaries = await Effect.runPromise(cp.listSessions({ withLocks: true }));
+
+    expect(summaries.map((item) => [item.id, item.locked])).toEqual([["s1", true]]);
+    expect(first.closed).toBe(true);
+    expect(spawned).toBe(2);
+    await Effect.runPromise(cp.closeAll());
+    expect(second.closed).toBe(true);
+  } finally {
+    if (previousTtl === undefined) delete process.env.SEPIA_LOCK_TTL_MS;
+    else process.env.SEPIA_LOCK_TTL_MS = previousTtl;
+  }
 });
 
 test("returns history in node order with millisecond timestamps", async () => {
@@ -908,7 +1013,8 @@ test("agents that advertised they cannot list or load sessions are not re-probed
     // Cline cannot answer session/list; claude cannot load a session, so it
     // can never hold a lock a takeover would need to release. The first
     // probe's spawn is what learns each capability set — later probes skip
-    // both agents entirely.
+    // both agents entirely. Devin's probe conn is pooled, so the second
+    // probe re-verifies it instead of spawning again.
     const clineConn = new FakeConnection();
     clineConn.capabilities = {
       ...FULL_CAPABILITIES,
@@ -938,7 +1044,11 @@ test("agents that advertised they cannot list or load sessions are not re-probed
     expect(claude.spawns).toHaveLength(1);
     expect(clineConn.listCalls).toBe(0);
     expect(claudeConn.listCalls).toBe(0);
-    expect(devin.spawns).toHaveLength(2);
+    expect(clineConn.closed).toBe(true);
+    expect(claudeConn.closed).toBe(true);
+    // The capable agent spawned once; the pooled conn answered both probes.
+    expect(devin.spawns).toHaveLength(1);
+    expect(devinConn.listCalls).toBe(2);
   } finally {
     if (previousTtl === undefined) delete process.env.SEPIA_LOCK_TTL_MS;
     else process.env.SEPIA_LOCK_TTL_MS = previousTtl;

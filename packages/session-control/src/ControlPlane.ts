@@ -70,6 +70,18 @@ interface LockProbe {
 }
 
 /**
+ * A pooled, internal `session/list` connection for one agent. Kept out of
+ * `liveSessions` — no translator, no listeners, no attach/detach events —
+ * and retired by `closeAll`. `at` is the last successful probe verify; a
+ * conn idle past the probe-idle window is closed by the next probe that
+ * finds it stale, so an idle node doesn't hold agent subprocesses forever.
+ */
+interface ProbeConn {
+  readonly conn: AcpConnection;
+  at: number;
+}
+
+/**
  * The owning agent's view of a session, falling back to the merged union
  * when that agent did not list the id at all. A colliding id locked in a
  * different agent's view still counts as held — it just can't supply the
@@ -93,6 +105,10 @@ const TAKEOVER_POLL_MS = 100;
 // A store lock can lag the holder's exit — an explicit takeover retries the
 // load once after this delay.
 const TAKEOVER_RETRY_DELAY_MS = 300;
+// A pooled probe conn unused for this many lock TTLs is evicted by the next
+// probe — floored so a 0 lock TTL doesn't churn agent spawns.
+const PROBE_IDLE_FACTOR = 10;
+const MIN_PROBE_IDLE_MS = 60_000;
 
 const controlError = (code: ControlErrorCode, message: string, cause: unknown): ControlError =>
   new ControlError({ code, message, cause });
@@ -183,6 +199,9 @@ export const make = (
   Effect.gen(function* () {
     const repo = yield* SessionRepository;
     const liveSessions = new Map<string, LiveSession>();
+    // Pooled lock-probe connections, keyed by agent id — internal only,
+    // never registered in liveSessions, retired by closeAll.
+    const probeConns = new Map<string, ProbeConn>();
     const pendingAttaches = new Map<string, Promise<Either.Either<AttachResult, ControlError>>>();
     const probeCwd = options.probeCwd ?? process.cwd();
     const idleTtlMs =
@@ -211,6 +230,9 @@ export const make = (
           }),
         ),
       );
+
+    const closeAgent = (conn: AcpConnection): Effect.Effect<void> =>
+      tryAcp("Failed to close agent connection", () => conn.close()).pipe(Effect.ignore);
 
     const storageFail = (message: string) => (cause: unknown) =>
       controlError("internal", message, cause);
@@ -241,19 +263,31 @@ export const make = (
      * cline process during a devin probe) still surfaces. A live attach's
      * connection is reused for its own agent; `borrowed` covers a connection
      * about to go live, so attach's lock check doubles as that agent's probe.
-     * Every other agent gets a throwaway spawn that is closed after listing.
-     * An agent already probed as incapable is skipped — no spawn, no RPC.
-     * The probes run in parallel — each is a subprocess spawn — and a
-     * failing probe contributes an empty view.
+     * Every other agent is served by a pooled probe connection in
+     * `probeConns`: spawned on first use, kept across probes, and verified
+     * by the probe RPC itself — a conn that fails `session/list` is closed,
+     * dropped, and replaced by one fresh spawn. An agent already probed as
+     * incapable is skipped — no spawn, no RPC. The probes run in parallel
+     * and a failing probe contributes an empty view.
      */
     const probeLocks = (
       cwd: string,
+      lockTtlMs: number,
       borrowed?: { readonly agentId: string; readonly conn: AcpConnection },
     ): Effect.Effect<LockProbe, never> => {
+      const now = Date.now();
+      const probeIdleMs =
+        options.probeIdleMs ?? Math.max(lockTtlMs * PROBE_IDLE_FACTOR, MIN_PROBE_IDLE_MS);
       const listOn = (conn: AcpConnection): Effect.Effect<ReadonlyArray<AcpSessionInfo>, never> =>
         tryAcp("Failed to list agent sessions", () => conn.listSessions()).pipe(
           Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AcpSessionInfo>)),
         );
+      // The strict variant the reuse health-check needs — a pooled conn is
+      // only trustworthy while the RPC answering the probe still works.
+      const listStrict = (
+        conn: AcpConnection,
+      ): Effect.Effect<Either.Either<ReadonlyArray<AcpSessionInfo>, ControlError>> =>
+        Effect.either(tryAcp("Failed to list agent sessions", () => conn.listSessions()));
       const empty = (
         agentId: string,
       ): { readonly agentId: string; readonly infos: ReadonlyArray<AcpSessionInfo> } => ({
@@ -274,25 +308,54 @@ export const make = (
           if (!probeable(reusable.capabilities)) return Effect.succeed(empty(agent.id));
           return Effect.map(listOn(reusable), (infos) => ({ agentId: agent.id, infos }));
         }
-        if (!probeable(probedCapabilities.get(agent.id))) {
-          return Effect.succeed(empty(agent.id));
-        }
         return Effect.gen(function* () {
+          const pooled = probeConns.get(agent.id);
+          if (pooled !== undefined) {
+            if (now - pooled.at >= probeIdleMs) {
+              // Stale — retire it on sight rather than keep a subprocess
+              // alive on a node that isn't probing anymore.
+              probeConns.delete(agent.id);
+              yield* closeAgent(pooled.conn);
+            } else if (!probeable(pooled.conn.capabilities)) {
+              // The capability verdict is cached on the conn itself — no
+              // RPC needed to know this agent can't answer the probe.
+              return empty(agent.id);
+            } else {
+              const listed = yield* listStrict(pooled.conn);
+              if (Either.isRight(listed)) {
+                pooled.at = Date.now();
+                return { agentId: agent.id, infos: listed.right };
+              }
+              // The pooled conn is dead — drop it and fall back to one
+              // fresh spawn below (respawn once, then the probe fails).
+              probeConns.delete(agent.id);
+              yield* closeAgent(pooled.conn);
+            }
+          }
+          if (!probeable(probedCapabilities.get(agent.id))) {
+            return empty(agent.id);
+          }
           const conn = yield* spawn(agent, "Failed to spawn agent for lock check", { cwd });
-          // The throwaway spawn doubles as the capability probe — an agent
-          // that turns out incapable has nothing to list this round either.
-          const list = probeable(conn.capabilities)
-            ? listOn(conn)
-            : Effect.succeed([] as ReadonlyArray<AcpSessionInfo>);
-          return yield* list.pipe(
-            Effect.ensuring(
-              tryAcp("Failed to close agent connection", () => conn.close()).pipe(Effect.ignore),
-            ),
-          );
-        }).pipe(
-          Effect.map((infos) => ({ agentId: agent.id, infos })),
-          Effect.catchAll(() => Effect.succeed(empty(agent.id))),
-        );
+          // The spawn doubles as the capability probe — an agent that
+          // turns out incapable has nothing to list and nothing to pool.
+          if (!probeable(conn.capabilities)) {
+            yield* closeAgent(conn);
+            return empty(agent.id);
+          }
+          const listed = yield* listStrict(conn);
+          if (Either.isLeft(listed)) {
+            yield* closeAgent(conn);
+            return empty(agent.id);
+          }
+          if (probeConns.has(agent.id)) {
+            // A racing probe pooled a conn first — keep that one and
+            // retire ours so no subprocess leaks.
+            yield* closeAgent(conn);
+          } else {
+            probeConns.set(agent.id, { conn, at: Date.now() });
+          }
+          return { agentId: agent.id, infos: listed.right };
+        }).pipe(Effect.catchAll(() => Effect.succeed(empty(agent.id))));
       };
       return Effect.all(options.agents.map(probeOne), { concurrency: "unbounded" }).pipe(
         Effect.map((probes) => {
@@ -324,7 +387,7 @@ export const make = (
         const now = Date.now();
         const ttl = envNumber(process.env.SEPIA_LOCK_TTL_MS, DEFAULT_LOCK_TTL_MS);
         if (!force && lockCache !== null && now - lockCache.at < ttl) return lockCache.probe;
-        const probe = yield* probeLocks(cwd, borrowed);
+        const probe = yield* probeLocks(cwd, ttl, borrowed);
         lockCache = { at: Date.now(), probe };
         return probe;
       });
@@ -1571,6 +1634,12 @@ export const make = (
       Effect.gen(function* () {
         if (sweeper !== undefined) clearInterval(sweeper);
         yield* Effect.forEach([...liveSessions.keys()], (id) => detach(id), { discard: true });
+        // Pooled probe conns aren't live sessions, so detach never reaches
+        // them — retire them here or their agent subprocesses leak past
+        // teardown.
+        const pooled = [...probeConns.values()];
+        probeConns.clear();
+        yield* Effect.forEach(pooled, (entry) => closeAgent(entry.conn), { discard: true });
       });
 
     return {
