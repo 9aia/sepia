@@ -1,6 +1,6 @@
 import { toast } from "sonner";
 import { toastError, toastLoading, toastSuccess } from "../../lib/toast";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLiveQuery } from "@tanstack/react-db";
 import {
   convertSession,
@@ -11,7 +11,7 @@ import {
 } from "../../lib/api";
 import { projectsCollection } from "../../lib/db-projects";
 import { LOCAL_NODE_ID, projectKey } from "../../lib/format";
-import { isMultiNode, nodeTarget } from "../../lib/nodes";
+import { isMultiNode, listAllProjects, nodeTarget } from "../../lib/nodes";
 import type { Project } from "../../lib/types";
 import { queryKeys } from "./keys";
 
@@ -19,9 +19,19 @@ import { queryKeys } from "./keys";
  * Live list of projects across every registered node, backed by
  * `projectsCollection` (which mirrors the `queryKeys.projects` fan-out
  * query). `data` is the projects array; `isLoading`/`isReady` reflect the
- * collection's sync status.
+ * collection's sync status — which can report ready before the underlying
+ * fan-out resolves, so `dataAvailable` is the empty-state gate: true only
+ * once the query has resolved a real array (an empty one counts).
  */
-export const useProjects = () => useLiveQuery((q) => q.from({ project: projectsCollection }));
+export const useProjects = () => {
+  const query = useQuery({ queryKey: queryKeys.projects, queryFn: listAllProjects });
+  const live = useLiveQuery((q) => q.from({ project: projectsCollection }));
+  return {
+    ...live,
+    data: live.isReady ? live.data : (query.data ?? live.data),
+    dataAvailable: query.data !== undefined,
+  };
+};
 
 /** The `node` tag a freshly created project carries in merged lists. */
 const createdNodeTag = (node: string | undefined): string | undefined =>

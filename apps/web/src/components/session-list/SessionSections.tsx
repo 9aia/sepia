@@ -425,7 +425,7 @@ function ProjectActions({
 function ProjectsSection({
   label,
   projects,
-  projectsLoading,
+  projectsLoaded,
   sessions,
   selectedId,
   resolvedCwd,
@@ -433,7 +433,7 @@ function ProjectsSection({
 }: {
   readonly label: string;
   readonly projects: ReadonlyArray<Project>;
-  readonly projectsLoading: boolean;
+  readonly projectsLoaded: boolean;
   readonly sessions: ReadonlyArray<SessionSummary>;
   readonly selectedId: string | null;
   /** Fallback spawn dir for projects with no member sessions yet. */
@@ -575,7 +575,7 @@ function ProjectsSection({
           </>
         }
       />
-      {open && !projectsLoading && projects.length === 0 && (
+      {open && projectsLoaded && projects.length === 0 && (
         <p className="px-3 py-1 text-xs text-muted-foreground">No projects yet.</p>
       )}
       {open &&
@@ -808,7 +808,7 @@ export function SessionSections({
   onNewSession,
   ...handlers
 }: SessionSectionsProps) {
-  const { data: projects, isLoading: projectsLoading } = useProjects();
+  const { data: projects, dataAvailable: projectsLoaded } = useProjects();
   const { data: agents = [] } = useAgents();
   const nodesConnected = useNodesConnected();
   const createSession = useCreateSession();
@@ -882,7 +882,7 @@ export function SessionSections({
                 key={section.id}
                 label={label}
                 projects={projects}
-                projectsLoading={projectsLoading}
+                projectsLoaded={projectsLoaded}
                 sessions={sessions}
                 selectedId={selectedId}
                 resolvedCwd={resolvedCwd}
