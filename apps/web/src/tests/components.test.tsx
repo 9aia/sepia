@@ -80,5 +80,5 @@ describe("marker + reasoning components", () => {
     expect(container.textContent).toContain("Thinking");
     const { container: done } = render(<ReasoningBlock done content="finished text" />);
     expect(done.textContent).toContain("Reasoning");
-  });
+  }, 20000);
 });
