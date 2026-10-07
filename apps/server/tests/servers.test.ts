@@ -362,6 +362,21 @@ describe("handleServersRoute", () => {
     expect(store.list()).toHaveLength(0);
   });
 
+  it("caps POST bodies at the proxy limit with 413", async () => {
+    const dir = tmp();
+    const store = createServerStore(join(dir, "s.json"), join(dir, "k.key"), {});
+    const deps = makeDeps(store);
+    // 8MB + 1 of declared length — the fast reject path.
+    const big = "x".repeat(8 * 1024 * 1024 + 1);
+    const res = await handleServersRoute(
+      get("/api/servers", { method: "POST", body: big }),
+      [],
+      deps,
+    );
+    expect(res?.status).toBe(413);
+    expect(store.list()).toHaveLength(0);
+  });
+
   it("keeps the stored secret across a masked PATCH", async () => {
     const dir = tmp();
     const store = createServerStore(join(dir, "s.json"), join(dir, "k.key"), {});

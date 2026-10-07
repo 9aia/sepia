@@ -102,6 +102,22 @@ const readProxyBody = async (request: Request): Promise<Uint8Array | null> => {
   return body;
 };
 
+/** Capped JSON body for the management routes — same bound as the proxy. */
+const readJsonCapped = async (
+  request: Request,
+): Promise<
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly status: 400 | 413 }
+> => {
+  const bytes = await readProxyBody(request);
+  if (bytes === null) return { ok: false, status: 413 };
+  try {
+    return { ok: true, value: JSON.parse(new TextDecoder().decode(bytes)) };
+  } catch {
+    return { ok: false, status: 400 };
+  }
+};
+
 /**
  * Direct URL, or the loopback end of the SSH forward when configured.
  *
@@ -245,12 +261,15 @@ export const handleServersRoute = async (
       return json(body, 200, cors);
     }
     if (method === "POST") {
-      let body: unknown;
-      try {
-        body = await request.json();
-      } catch {
-        return json({ error: "Invalid JSON body" }, 400, cors);
+      const read = await readJsonCapped(request);
+      if (!read.ok) {
+        return json(
+          { error: read.status === 413 ? "Body too large" : "Invalid JSON body" },
+          read.status,
+          cors,
+        );
       }
+      const body = read.value;
       const parsed = validateServerInput(body);
       if (!parsed.ok) return json({ error: parsed.error }, 400, cors);
       return json({ server: publicServer(store.create(parsed.input)) }, 201, cors);
@@ -264,12 +283,15 @@ export const handleServersRoute = async (
 
   if (segments.length === 1) {
     if (method === "PATCH") {
-      let body: unknown;
-      try {
-        body = await request.json();
-      } catch {
-        return json({ error: "Invalid JSON body" }, 400, cors);
+      const read = await readJsonCapped(request);
+      if (!read.ok) {
+        return json(
+          { error: read.status === 413 ? "Body too large" : "Invalid JSON body" },
+          read.status,
+          cors,
+        );
       }
+      const body = read.value;
       const parsed = validateServerInput(body);
       if (!parsed.ok) return json({ error: parsed.error }, 400, cors);
       const updated = store.update(id, parsed.input);
