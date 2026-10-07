@@ -1,9 +1,10 @@
 # Deploying sepia
 
-Sepia is a self-hosted control plane for coding-agent sessions. Packaged
-forms: the **`sepia-node` npm package** (`npm i -g sepia-node` → `sepia
-serve`, see [npm packages](#npm-packages)) and a **single `bun --compile`
-binary** built from source (see [Single binary](#single-binary)). Both serve
+Sepia is a self-hosted control plane for coding-agent sessions. The default
+packaged form is a **single `bun --compile` binary** built from source (see
+[Single binary](#single-binary)) — `vp run build:binary` → `./sepia serve`.
+The **`sepia-node` npm package** (`npm i -g sepia-node` → `sepia serve`, see
+[npm packages](#npm-packages)) is the platform-neutral alternative. Both serve
 the API and the web UI on one port — "one binary per machine, any machine
 hosts the UI". For development the two halves still run side by side:
 
@@ -201,13 +202,17 @@ After=network.target
 [Service]
 Environment=SEPIA_TOKEN=<token>
 Environment=SEPIA_HOST=127.0.0.1
-ExecStart=/home/you/.bun/bin/bun /opt/sepia/apps/server/src/main.ts
+ExecStart=/opt/sepia/sepia serve
 WorkingDirectory=/opt/sepia
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+The unit expects `vp run build:binary` output at `/opt/sepia/sepia` — no
+runtime install needed. Running from a checkout instead? Point `ExecStart` at
+`/home/you/.bun/bin/bun /opt/sepia/apps/server/src/main.ts`.
 
 SIGINT/SIGTERM/SIGHUP all trigger a graceful shutdown that closes agent
 subprocesses (releasing their session locks), so plain `systemctl stop` is safe.
