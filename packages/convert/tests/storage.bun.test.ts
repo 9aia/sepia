@@ -16,7 +16,7 @@ import { describe, expect, test } from "vite-plus/test";
 import { ClineIndex } from "sepia-cline";
 import { ClineRepository } from "sepia-cline";
 import * as ClineStore from "../src/ClineStore.js";
-import { MessageNode, PromptHistoryEntry, Session, StorageError } from "sepia-core";
+import { MessageNode, PromptHistoryEntry, Session, StorageError, ToolCall } from "sepia-core";
 import { openSessionsDb } from "sepia-devin";
 import { SqliteStorage } from "sepia-devin";
 
@@ -340,4 +340,116 @@ describe("ClineStore + ClineRepository over a real sessions.db", () => {
       );
       expect(forced).toBe("cline-1");
     }));
+});
+
+describe("SqliteStorage paged reads + caches (real bun:sqlite)", () => {
+  const paged = Session.make({
+    id: "paged",
+    title: "paged",
+    workingDirectory: "/work",
+    model: "m",
+    createdAt: 1_700_000_000,
+    lastActivityAt: 1_700_000_500,
+    mainChainId: 4,
+    metadata: null,
+    nodes: [
+      MessageNode.make({
+        nodeId: 0,
+        role: "user",
+        content: "go",
+        createdAt: 1_700_000_000,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 1,
+        parentNodeId: Option.some(0),
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          ToolCall.make({
+            id: "call-1",
+            name: "exec",
+            arguments: { command: "ls" },
+            locations: [{ path: "/a" }],
+            diffs: [{ path: "/a", newText: "x" }],
+          }),
+        ],
+        createdAt: 1_700_000_100,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 2,
+        parentNodeId: Option.some(1),
+        role: "tool",
+        content: "ok",
+        toolCallId: Option.some("call-1"),
+        toolName: Option.some("exec"),
+        createdAt: 1_700_000_200,
+        metadata: null,
+      }),
+      MessageNode.make({
+        nodeId: 3,
+        parentNodeId: Option.some(2),
+        role: "assistant",
+        content: "done",
+        createdAt: 1_700_000_300,
+        metadata: null,
+      }),
+    ],
+    promptHistory: [],
+  });
+
+  test("nodesWindow slices by limit/before and joins tool-row calls", async () => {
+    const repo = await Effect.runPromise(SqliteStorage.make(":memory:"));
+    await Effect.runPromise(repo.save(paged));
+
+    const win = await Effect.runPromise(repo.nodesWindow!("paged", { limit: 2 }));
+    expect(Option.isSome(win)).toBe(true);
+    if (Option.isSome(win)) {
+      expect(win.value.total).toBe(4);
+      expect(win.value.start).toBe(2);
+      expect(win.value.nodes.map((n) => n.nodeId)).toEqual([2, 3]);
+      // the window's tool row resolves its call from the call-bearing index
+      const call = win.value.toolCallNodes
+        .flatMap((n) => n.toolCalls)
+        .find((c) => c.id === "call-1");
+      expect(call?.arguments).toEqual({ command: "ls" });
+      expect(call?.locations[0]?.path).toBe("/a");
+    }
+
+    const head = await Effect.runPromise(repo.nodesWindow!("paged", { limit: 1, before: 1 }));
+    if (Option.isSome(head)) {
+      expect(head.value.start).toBe(0);
+      expect(head.value.nodes.map((n) => n.nodeId)).toEqual([0]);
+    }
+
+    expect(Option.isNone(await Effect.runPromise(repo.nodesWindow!("nope", {})))).toBe(true);
+  });
+
+  test("save and delete invalidate the read caches", async () => {
+    const repo = await Effect.runPromise(SqliteStorage.make(":memory:"));
+    await Effect.runPromise(repo.save(paged));
+    expect(await Effect.runPromise(repo.getById("paged")).then(Option.isSome)).toBe(true);
+
+    // a second save bumps lastActivityAt → the cached copy must refresh
+    const bumped = Session.make({
+      id: "paged",
+      title: "paged",
+      workingDirectory: "/work",
+      model: "m",
+      createdAt: 1_700_000_000,
+      lastActivityAt: 1_700_000_900,
+      mainChainId: 4,
+      metadata: null,
+      nodes: paged.nodes,
+      promptHistory: [],
+    });
+    await Effect.runPromise(repo.save(bumped));
+    const found = await Effect.runPromise(repo.getById("paged"));
+    if (Option.isSome(found)) expect(found.value.lastActivityAt).toBe(1_700_000_900);
+
+    await Effect.runPromise(repo.delete("paged"));
+    expect(Option.isNone(await Effect.runPromise(repo.getById("paged")))).toBe(true);
+    expect(await Effect.runPromise(repo.list()).then((l) => l.length)).toBe(0);
+  });
 });
