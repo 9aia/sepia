@@ -583,9 +583,15 @@ export function SessionChat({
   const spans = sessionRow?.spans;
 
   const rows = useMemo<ChatRow[]>(() => {
-    const context = parseSystemContext(history.filter((m) => m.role === "system"));
+    // Devin emits system nodes per-turn — parsing them from a partial window
+    // renders the context card relative to loaded pages instead of the
+    // conversation's absolute beginning. Only build it once pagination has
+    // reached the start (hasNextPage false ⇒ the earliest page landed).
+    const context = parseSystemContext(
+      historyQuery.hasNextPage === false ? history.filter((m) => m.role === "system") : [],
+    );
     return buildRows(history, liveMessages, context, spans, spanLabel);
-  }, [history, liveMessages, spans]);
+  }, [history, liveMessages, spans, historyQuery.hasNextPage]);
 
   const send = (text: string, attachments: ReadonlyArray<PendingAttachment> = []): void => {
     // Consume any pending reply — the quote rides inside the sent prompt.
