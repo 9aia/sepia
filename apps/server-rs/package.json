@@ -1,0 +1,13 @@
+{
+  "name": "sepia-server-rs",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Sepia node — Rust port of apps/server (work in progress; Bun server remains the runtime until parity).",
+  "scripts": {
+    "check": "cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --no-run",
+    "test": "cargo test --workspace",
+    "test:coverage": "cargo llvm-cov --workspace --all-targets --fail-under-lines 100",
+    "build": "cargo build --release",
+    "dev": "cargo run"
+  }
+}
