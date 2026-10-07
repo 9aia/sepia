@@ -43,7 +43,7 @@ import { ListEmptyState } from "./session-list/ListEmptyState";
 import { ProjectNameDialog, SessionSections } from "./session-list/SessionSections";
 import { getRecents } from "../lib/recents";
 import { ClientBar } from "./session-list/ClientBar";
-import { resolveCreateCwd, resolveCreateTarget, useFocus } from "../lib/focus";
+import { resolveCreateCwd, resolveCreateTarget } from "../lib/focus";
 
 const DATE_CUTOFFS: Record<Exclude<DateFilter, "all">, number> = {
   day: 24 * 60 * 60 * 1000,
@@ -94,7 +94,6 @@ export function SessionList() {
   const createCwd = useStore(sepiaStore, (state) => state.createCwd);
   const createNode = useStore(sepiaStore, (state) => state.createNode);
   const cwd = useStore(sepiaStore, (state) => state.cwd);
-  const desktop = useFocus();
   const { data: user } = useUserInfo();
   const { isMobile, setOpenMobile } = useSidebar();
   const selectAndClose = (key: string): void => {
