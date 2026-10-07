@@ -154,6 +154,9 @@ export function ClientBar() {
   // Nothing reachable at all (local parked or down, every peer failed) —
   // the summary reports that instead of a stale node name.
   const noNodes = nodesConnected === "disconnected";
+  // Probes in flight — the desktop summary isn't known yet, so the line
+  // skeletons instead of flashing a default node·agent·model string.
+  const checking = nodesConnected === "checking";
 
   // The dot tracks the desktop node's reachability — the local node's
   // own selfStatus (unknown until the first probe settles) or the peer's
@@ -299,29 +302,33 @@ export function ClientBar() {
             ) : (
               <>
                 <span className="block truncate text-sm font-medium">{client.label}</span>
-                <span
-                  className={`block truncate text-xs ${
-                    unreachable ? "text-destructive/80" : "text-muted-foreground"
-                  }`}
-                >
-                  {noNodes ? (
-                    "No nodes connected"
-                  ) : unreachable ? (
-                    `${nodeLabel} · unreachable`
-                  ) : (
-                    <>
-                      {nodeLabel}
-                      {" · "}
-                      <span className={desktop.agent === null ? "opacity-60" : undefined}>
-                        {agentText}
-                      </span>
-                      {" · "}
-                      <span className={desktop.model === null ? "opacity-60" : undefined}>
-                        {modelText}
-                      </span>
-                    </>
-                  )}
-                </span>
+                {checking ? (
+                  <Skeleton className="mt-1 h-3 w-2/3" />
+                ) : (
+                  <span
+                    className={`block truncate text-xs ${
+                      unreachable ? "text-destructive/80" : "text-muted-foreground"
+                    }`}
+                  >
+                    {noNodes ? (
+                      "No nodes connected"
+                    ) : unreachable ? (
+                      `${nodeLabel} · unreachable`
+                    ) : (
+                      <>
+                        {nodeLabel}
+                        {" · "}
+                        <span className={desktop.agent === null ? "opacity-60" : undefined}>
+                          {agentText}
+                        </span>
+                        {" · "}
+                        <span className={desktop.model === null ? "opacity-60" : undefined}>
+                          {modelText}
+                        </span>
+                      </>
+                    )}
+                  </span>
+                )}
               </>
             )}
           </span>

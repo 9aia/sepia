@@ -255,10 +255,7 @@ export function SessionList() {
 
       <div className="flex shrink-0 flex-col gap-1.5 px-4 py-3">
         {loading || nodesConnected === "checking" ? (
-          <>
-            <Skeleton className="h-9 w-full rounded-4xl" />
-            <Skeleton className="h-8 w-full rounded-3xl" />
-          </>
+          <Skeleton className="h-9 w-full rounded-4xl" />
         ) : nodesConnected === "connected" ? (
           <>
             <ButtonGroup className="w-full">
