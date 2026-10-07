@@ -3,12 +3,7 @@ import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useAppHotkey } from "../lib/keybinds";
 import { isFormField } from "../lib/keyboard";
 import { useStore } from "@tanstack/react-store";
-import {
-  AlertCircleIcon,
-  ChevronDownIcon,
-  PlusSignIcon,
-  SearchAreaIcon,
-} from "@hugeicons/core-free-icons";
+import { AlertCircleIcon, PlusSignIcon, SearchAreaIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   sepiaStore,
@@ -33,12 +28,9 @@ import { bareProjectId, isLocalNode, projectKey, resolveSession, sessionKey } fr
 import { useNodesConnected } from "../hooks/query/useNodes";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
-import { ButtonGroup } from "./ui/button-group";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { ScrollArea } from "./ui/scroll-area";
 import { Sidebar, useSidebar } from "./ui/sidebar";
 import { EmptyScreen } from "./EmptyScreen";
-import { CwdPicker } from "./session-list/CwdPicker";
 import {
   FilterBar,
   type DateFilter,
@@ -51,7 +43,7 @@ import { ListEmptyState } from "./session-list/ListEmptyState";
 import { ProjectNameDialog, SessionSections } from "./session-list/SessionSections";
 import { getRecents } from "../lib/recents";
 import { ClientBar } from "./session-list/ClientBar";
-import { focusNode, resolveCreateCwd, resolveCreateTarget, useFocus } from "../lib/focus";
+import { resolveCreateCwd, resolveCreateTarget, useFocus } from "../lib/focus";
 
 const DATE_CUTOFFS: Record<Exclude<DateFilter, "all">, number> = {
   day: 24 * 60 * 60 * 1000,
@@ -257,60 +249,15 @@ export function SessionList() {
         {loading || nodesConnected === "checking" ? (
           <Skeleton className="h-9 w-full rounded-4xl" />
         ) : nodesConnected === "connected" ? (
-          <>
-            <ButtonGroup className="w-full">
-              <Button
-                variant="secondary"
-                className="flex-1"
-                onClick={() => create(resolvedCwd)}
-                disabled={createMutation.isPending}
-              >
-                <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} />
-                {createMutation.isPending ? "Creating…" : "New session"}
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      variant="secondary"
-                      size="icon"
-                      aria-label="New session options"
-                      title="New session options"
-                    />
-                  }
-                >
-                  <HugeiconsIcon icon={ChevronDownIcon} strokeWidth={2} />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-72">
-                  <div className="flex flex-col gap-1.5 px-3 py-2.5">
-                    <span className="px-1 text-xs font-medium text-muted-foreground">
-                      Working directory
-                    </span>
-                    {focusNode(desktop) === undefined ? (
-                      <CwdPicker
-                        value={resolvedCwd}
-                        // The picker feeds the local create button — a peer's
-                        // paths aren't valid local dirs.
-                        dirs={[
-                          ...new Set(sessions.filter((s) => isLocalNode(s.node)).map((s) => s.cwd)),
-                        ]}
-                        onChange={setCwd}
-                      />
-                    ) : (
-                      <>
-                        <span className="block truncate px-1 font-mono text-xs" title={resolvedCwd}>
-                          {resolvedCwd}
-                        </span>
-                        <span className="px-1 text-xs text-muted-foreground">
-                          Set the working directory for this machine in Settings → Desktop.
-                        </span>
-                      </>
-                    )}
-                  </div>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </ButtonGroup>
-          </>
+          <Button
+            variant="secondary"
+            className="w-full"
+            onClick={() => create(resolvedCwd)}
+            disabled={createMutation.isPending}
+          >
+            <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} />
+            {createMutation.isPending ? "Creating…" : "New session"}
+          </Button>
         ) : null}
       </div>
 
