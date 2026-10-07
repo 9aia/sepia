@@ -16,7 +16,6 @@ import {
   File01Icon,
   Folder01Icon,
   Loading03Icon,
-  LockIcon,
   SourceCodeIcon,
 } from "@hugeicons/core-free-icons";
 import { ArrowDown01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
@@ -77,7 +76,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collap
 import { ScrollArea } from "./ui/scroll-area";
 import { ErrorBanner } from "./ErrorBanner";
 import { Button } from "./ui/button";
-import { InputGroupButton } from "./ui/input-group";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -561,9 +559,6 @@ export function SessionChat({
     text: string;
     attachments: PendingAttachment[];
   } | null>(null);
-  // The composer's "Take over" opens the same confirm dialog — without a
-  // queued message.
-  const [takeoverConfirm, setTakeoverConfirm] = useState(false);
   // A per-file restore requested from a tool-call diff row — the dialog
   // confirms before the server writes the file back.
   const [restoreTarget, setRestoreTarget] = useState<{
@@ -579,15 +574,11 @@ export function SessionChat({
   const scrollToEnd = useRef<(() => void) | null>(null);
   const scrollOnSent = useRef(false);
   // Composer access for the held-session queue: the textarea ref flushes the
-  // box after the deferred send lands, and `hasDraft` drives the "Take over &
-  // send" label — a typed draft means the click sends, not just attaches.
-  // A boolean keeps keystroke updates cheap: identical values bail out of
-  // re-render, so only the empty↔typed flip repaints.
+  // box after the deferred send lands. Populated by PromptInputApiBridge —
+  // clears the attachment tray the same way (a queued submit keeps its chips
+  // until the send actually happens).
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  // Populated by PromptInputApiBridge — empties the attachment tray the same
-  // way (a queued submit keeps its chips until the send actually happens).
   const clearAttachmentsRef = useRef<(() => void) | null>(null);
-  const [hasDraft, setHasDraft] = useState(false);
 
   const spans = sessionRow?.spans;
 
@@ -617,7 +608,6 @@ export function SessionChat({
     // while scrolled up would leave the row appended below the fold (and
     // unmounted by the virtualizer). Flag a scroll for when it commits.
     scrollOnSent.current = true;
-    setHasDraft(false);
     sendPrompt(sessionId, { text: prompt, attachments: parts }, agent, nodeTarget(sessionRow?.node))
       .then((ok) => {
         if (!ok) {
@@ -687,11 +677,7 @@ export function SessionChat({
     // payload, left in place for editing on cancel and for the retry when a
     // takeover fails.
     if (readOnly) {
-      if (empty) {
-        // Nothing to queue — the send slot's plain Take over, same dialog
-        // without the "message will be sent" trailer.
-        setTakeoverConfirm(true);
-      } else {
+      if (!empty) {
         setTakeoverPrompt({ sessionId, text, attachments: message.attachments });
       }
       return false;
@@ -716,7 +702,6 @@ export function SessionChat({
   // switch so the dialog can't fire the old text into the new session.
   useEffect(() => {
     setTakeoverPrompt(null);
-    setTakeoverConfirm(false);
   }, [sessionId]);
 
   // Takeover confirmed → attach resolved readOnly off → close the dialog and
@@ -724,7 +709,6 @@ export function SessionChat({
   // dialog nor the queued message is dropped.
   useEffect(() => {
     if (readOnly) return;
-    setTakeoverConfirm(false);
     if (takeoverPrompt === null) return;
     const held = takeoverPrompt;
     setTakeoverPrompt(null);
@@ -838,54 +822,35 @@ export function SessionChat({
         <PromptInputBody>
           {replyTo !== null && <ReplyPreview quote={replyTo} />}
           <PromptInputAttachments />
-          {/* Held by another process: the composer stays live — the draft
-              queues behind the takeover confirm, the slim footer line names
-              the state, and the send slot carries the action that unblocks
-              it ("Take over & send" once there's something to send). */}
-          <PromptInputTextarea
-            ref={textareaRef}
-            placeholder="Prompt the agent…"
-            onChange={(event) => setHasDraft(event.target.value.trim() !== "")}
-          />
+          {/* Held by another process: the composer looks and stays live —
+              a real submit queues behind the takeover confirm dialog; the
+              draft is left in place for editing on cancel or retry. */}
+          <PromptInputTextarea ref={textareaRef} placeholder="Prompt the agent…" />
         </PromptInputBody>
         <PromptInputFooter>
           <PromptInputTools>
-            {readOnly ? (
-              <span className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-                <HugeiconsIcon icon={LockIcon} className="size-3.5" strokeWidth={2} />
-                Held — message sends after takeover
-              </span>
-            ) : (
-              // Hidden when the agent advertised it can't take images — the
-              // button would just produce a send-time rejection.
-              promptCapabilities?.image !== false && <PromptInputAttachButton />
-            )}
+            {/* Hidden when the agent advertised it can't take images — the
+                button would just produce a send-time rejection. */}
+            {promptCapabilities?.image !== false && <PromptInputAttachButton />}
           </PromptInputTools>
           <div className="ml-auto flex min-w-0 items-center gap-1">
             <ModelSelect sessionId={sessionId} agent={agent} />
-            {readOnly ? (
-              <InputGroupButton type="submit" variant="secondary" disabled={takeoverPending}>
-                {takeoverPending ? "Taking over…" : hasDraft ? "Take over & send" : "Take over"}
-              </InputGroupButton>
-            ) : (
-              <PromptInputSubmit
-                status={running ? "streaming" : submitting ? "submitted" : "ready"}
-                disabled={submitting}
-                onStop={() => void cancel(sessionId, agent, nodeTarget(sessionRow?.node))}
-              />
-            )}
+            <PromptInputSubmit
+              status={running ? "streaming" : submitting ? "submitted" : "ready"}
+              disabled={submitting}
+              onStop={() => void cancel(sessionId, agent, nodeTarget(sessionRow?.node))}
+            />
           </div>
         </PromptInputFooter>
       </PromptInput>
 
       <AlertDialog
-        open={takeoverPrompt !== null || takeoverConfirm}
+        open={takeoverPrompt !== null}
         onOpenChange={(open) => {
           if (open) return;
           // Cancel drops the queue, not the draft — it never left the
           // composer, so the text and chips are still there to edit or retry.
           setTakeoverPrompt(null);
-          setTakeoverConfirm(false);
         }}
       >
         <AlertDialogContent>
@@ -893,9 +858,8 @@ export function SessionChat({
             <AlertDialogTitle>Take over this session?</AlertDialogTitle>
             <AlertDialogDescription>
               {holderPid !== null
-                ? `This will stop the run on the other process (PID ${holderPid}) and hand control to you`
-                : "This will stop the run on the other process and hand control to you"}
-              {takeoverPrompt !== null ? " — your message will be sent after." : "."}
+                ? `Sending will stop the run on the other process (PID ${holderPid}) and hand control to you — your message will be sent after.`
+                : "Sending will stop the run on the other process and hand control to you — your message will be sent after."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {takeoverError !== null && (
