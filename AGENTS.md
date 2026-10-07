@@ -47,7 +47,7 @@ depend only on it, and `sepia-convert`/`session-control`/apps compose ports.
 | `packages/acp`             | `sepia-acp`             | Spawn an ACP agent over stdio; typed session ops + normalized updates                 |
 | `packages/agui`            | `sepia-agui`            | Translate ACP session updates into AG-UI events; SSE encoding                         |
 | `packages/session-control` | `sepia-session-control` | Control plane: lists sessions, owns one live agent per session, locks                 |
-| `apps/sepia`               | `sepia-cli`             | CLI (`list`, `import`, `export`, `install`, `delete`)                                 |
+| `apps/sepia`               | `sepia-cli`             | CLI — store/node/config verbs, `serve`, `pair`, `service`                             |
 | `apps/server`              | `sepia-server`          | Bun API: REST + AG-UI SSE + AG-UI agent endpoint                                      |
 | `apps/web`                 | `sepia-web`             | TanStack Start UI (AI Elements chat)                                                  |
 

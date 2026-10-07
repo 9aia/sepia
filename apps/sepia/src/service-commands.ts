@@ -18,8 +18,10 @@ const systemOption = Options.boolean("system").pipe(
   Options.withDescription("Install/manage the system-level unit instead of the per-user one"),
 );
 
+// Exec is only meaningful at install time — status/logs/uninstall must not
+// resolve it (a dev checkout refuses, and these verbs don't need it anyway).
 const spec = (system: boolean, envFile?: string): ServiceSpec => ({
-  exec: resolveExec(),
+  exec: [],
   envFile: envFile ?? defaultEnvFile(homedir()),
   system,
 });
@@ -51,7 +53,11 @@ const backend = Effect.promise(async () => {
 const fail = (verb: string) => (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   return Console.error(`sepia service ${verb}: ${message}`).pipe(
-    Effect.andThen(Effect.fail(error)),
+    Effect.andThen(
+      Effect.sync(() => {
+        process.exit(1);
+      }),
+    ),
   );
 };
 

@@ -195,30 +195,53 @@ location / {
 
 Terminate TLS at the proxy — the API itself speaks plain HTTP.
 
-## systemd
+## OS service (systemd / launchd)
+
+`sepia service` installs the node as a real OS service — survives reboots
+and crashes, no hand-written unit needed:
+
+```bash
+sepia service install     # user unit (systemd ~/.config/systemd/user,
+                          # or launchd ~/Library/LaunchAgents on macOS)
+sepia service install --system   # system-wide unit (needs sudo)
+sepia service install --linger   # + start at boot without a login
+sepia service status      # installed/enabled/active + last log lines
+sepia service logs [-f]   # journalctl --user -u sepia / log tail
+sepia service restart
+sepia service uninstall [--purge]
+```
+
+`install` pins `ExecStart` to the compiled binary that ran it, so run it
+as `/opt/sepia/sepia service install` after `vp run build:binary` — no
+runtime install needed. From a dev checkout it refuses (the bun
+interpreter isn't service material); pass
+`--exec "/opt/bin/sepia serve"` to override the command explicitly.
+
+Environment lives in `~/.config/sepia/env` (created once with a commented
+template, never overwritten on reinstall) — set `SEPIA_TOKEN`,
+`SEPIA_DB`, etc. there, then `sepia service restart`. systemd reads it
+via `EnvironmentFile=`; launchd renders it into the plist on install.
+
+To run under systemd without the helper, the equivalent user unit is:
 
 ```ini
 [Unit]
-Description=sepia API
-After=network.target
+Description=Sepia node
+After=network-online.target
 
 [Service]
-Environment=SEPIA_TOKEN=<token>
-Environment=SEPIA_HOST=127.0.0.1
 ExecStart=/opt/sepia/sepia serve
-WorkingDirectory=/opt/sepia
+EnvironmentFile=-%h/.config/sepia/env
 Restart=on-failure
+RestartSec=2
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
 
-The unit expects `vp run build:binary` output at `/opt/sepia/sepia` — no
-runtime install needed. Running from a checkout instead? Point `ExecStart` at
-`/home/you/.bun/bin/bun /opt/sepia/apps/server/src/main.ts`.
-
 SIGINT/SIGTERM/SIGHUP all trigger a graceful shutdown that closes agent
-subprocesses (releasing their session locks), so plain `systemctl stop` is safe.
+subprocesses (releasing their session locks), so stopping the service is
+safe.
 
 ## Health and logs
 
