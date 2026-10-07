@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAppHotkey } from "../lib/keybinds";
 import { useStore } from "@tanstack/react-store";
 import { ChatPanel } from "../components/ChatPanel";
-import { SessionDetailsDrawer } from "../components/session-list/SessionDetailsDrawer";
 import { useSessions } from "../hooks/query/useSessions";
 import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useSelfNode } from "../hooks/query/useNodes";
@@ -18,6 +17,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AuthError } from "../lib/api";
 import { sepiaStore, setSettingsOpen, setSelectedId } from "../lib/store";
 import { sessionKey } from "../lib/format";
+
+// The details drawer (checkpoints, resume targets, rename, transfer dialogs)
+// is an on-demand surface — defer its chunk until a session is inspected.
+const LazySessionDetailsDrawer = lazy(() =>
+  import("../components/session-list/SessionDetailsDrawer").then((m) => ({
+    default: m.SessionDetailsDrawer,
+  })),
+);
 
 const DATES = new Set(["day", "week", "month"]);
 const STATUSES = new Set(["free", "locked"]);
@@ -141,15 +148,24 @@ function GlobalSessionDrawer() {
   const { data: sessions = [] } = useSessions();
   const details = useStore(sepiaStore, (state) => state.detailsFor);
   const deleteMutation = useDeleteSession();
+  // Mount on first open, then keep mounted so the drawer's close animation
+  // and internal state behave as if it had been mounted eagerly.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    if (details !== null) setMounted(true);
+  }, [details]);
+  if (!mounted) return null;
   return (
-    <SessionDetailsDrawer
-      session={resolveSession(sessions, details?.id)}
-      focusRename={details?.rename ?? false}
-      onClose={() => setDetailsFor(null)}
-      onOpen={setSelectedId}
-      onDelete={(session: SessionSummary) =>
-        deleteMutation.mutate({ id: session.id, agent: session.agent })
-      }
-    />
+    <Suspense fallback={null}>
+      <LazySessionDetailsDrawer
+        session={resolveSession(sessions, details?.id)}
+        focusRename={details?.rename ?? false}
+        onClose={() => setDetailsFor(null)}
+        onOpen={setSelectedId}
+        onDelete={(session: SessionSummary) =>
+          deleteMutation.mutate({ id: session.id, agent: session.agent })
+        }
+      />
+    </Suspense>
   );
 }

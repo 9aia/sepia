@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useStore } from "@tanstack/react-store";
 import { useHasKeyboard } from "../../lib/keyboard";
 import {
@@ -28,7 +28,6 @@ import {
   usePeerDescriptors,
 } from "../../hooks/query/useNodes";
 import { useSessions } from "../../hooks/query/useSessions";
-import { SettingsDialog } from "../SettingsDialog";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import {
@@ -44,6 +43,12 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+
+// The settings dialog (forms, hotkey recorder, node/credentials sections) is
+// a big on-demand surface — defer its chunk until the first open.
+const LazySettingsDialog = lazy(() =>
+  import("../SettingsDialog").then((m) => ({ default: m.SettingsDialog })),
+);
 
 /** One targetable node — this node first, then every enabled peer. */
 interface DesktopEntry {
@@ -104,6 +109,12 @@ export function ClientBar() {
   const settingsOpen = useStore(sepiaStore, (state) => state.settingsOpen);
   useAppHotkey("app.settings", () => setSettingsOpen(!settingsOpen));
   const openSettings = (open: boolean): void => setSettingsOpen(open);
+  // Mount on first open, then keep mounted — close animation and dialog-local
+  // state behave exactly as if it had been mounted eagerly all along.
+  const [settingsMounted, setSettingsMounted] = useState(false);
+  useEffect(() => {
+    if (settingsOpen) setSettingsMounted(true);
+  }, [settingsOpen]);
 
   // The merged roster stands in for a node whose descriptor hasn't landed.
   const fallbackIds = agents.map((agent) => agent.id);
@@ -504,7 +515,11 @@ export function ClientBar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <SettingsDialog open={settingsOpen} onOpenChange={openSettings} />
+      {settingsMounted && (
+        <Suspense fallback={null}>
+          <LazySettingsDialog open={settingsOpen} onOpenChange={openSettings} />
+        </Suspense>
+      )}
     </div>
   );
 }

@@ -1,13 +1,13 @@
 "use client";
 
 import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
 import { cn } from "cn";
 import { memo, type ComponentProps } from "react";
 import { Streamdown } from "streamdown";
 import { StreamdownCodeBlock } from "./code-block";
+// shiki and mermaid stay out of the initial bundle — see streamdown-plugins.ts
+import { lazyCode, lazyMermaid } from "./streamdown-plugins";
 import { ScrollArea } from "./ui/scroll-area";
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
@@ -26,7 +26,7 @@ function StreamdownTable({
   );
 }
 
-const streamdownPlugins = { cjk, code, math, mermaid };
+const streamdownPlugins = { cjk, code: lazyCode, math, mermaid: lazyMermaid };
 
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (

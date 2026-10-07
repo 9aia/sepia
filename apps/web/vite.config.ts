@@ -7,6 +7,27 @@ import viteReact from "@vitejs/plugin-react";
 const token = process.env.SEPIA_TOKEN;
 
 export default defineConfig({
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            // Cap every eagerly-loaded chunk: modules tagged $initial are
+            // statically reachable from an entry, so this repacks the initial
+            // payload into bounded pieces. maxSize counts pre-minification
+            // bytes — ~700 kB of source lands near ~450 kB minified here.
+            // Lazily imported modules (shiki languages, mermaid, the settings
+            // dialog, the details drawer) keep their own on-demand chunks.
+            {
+              name: "initial",
+              tags: ["$initial"],
+              maxSize: 700 * 1024,
+            },
+          ],
+        },
+      },
+    },
+  },
   resolve: {
     alias: { "@": path.resolve(__dirname, "src") },
   },
