@@ -4,14 +4,8 @@ import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { AcpCapabilities, AcpConnection, PromptPart } from "sepia-acp";
-import {
-  Conversion,
-  MessageNode,
-  PromptHistoryEntry,
-  Session,
-  SessionRepository,
-  ToolCall,
-} from "sepia-core";
+import { MessageNode, PromptHistoryEntry, Session, SessionRepository, ToolCall } from "sepia-core";
+import { Conversion } from "sepia-convert";
 import { ControlPlane, layer as controlPlaneLayer } from "sepia-session-control";
 import type {
   AgentRuntime,

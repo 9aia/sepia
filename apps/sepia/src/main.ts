@@ -4,21 +4,17 @@ import * as Fs from "@effect/platform/FileSystem";
 import * as Path from "@effect/platform/Path";
 import { Console, Effect, Layer, Option } from "effect";
 import { homedir } from "node:os";
+import { ClaudeCode, ClaudeCodeRepository } from "sepia-claude";
+import { Cline, ClineRepository } from "sepia-cline";
 import {
-  ClaudeCode,
-  ClaudeCodeRepository,
-  Cline,
-  ClineRepository,
-  ClineStore,
-  Conversion,
   ConversionError,
-  CursorRepository,
   Session,
   SessionRepository,
-  SqliteStorage,
-  openSessionsDb,
   type SessionRepositoryService,
 } from "sepia-core";
+import { ClineStore, Conversion } from "sepia-convert";
+import { CursorRepository } from "sepia-cursor";
+import { openSessionsDb, SqliteStorage } from "sepia-devin";
 import { parseEnv, SEPIA_VERSION, startServer, type ServerEnv } from "sepia-server/serve";
 import { configGroup } from "./config-commands";
 import { nodeCommands, promptCommand } from "./node-commands";

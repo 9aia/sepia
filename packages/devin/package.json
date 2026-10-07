@@ -1,0 +1,36 @@
+{
+  "name": "sepia-devin",
+  "version": "0.0.1",
+  "private": true,
+  "files": [
+    "src",
+    "drizzle"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run && bun test",
+    "test:node": "vitest run",
+    "test:bun": "bun test",
+    "coverage": "vitest run --coverage",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.97.1",
+    "@effect/platform-bun": "0.91.2",
+    "drizzle-orm": "^0.45.2",
+    "effect": "^3.22.1",
+    "sepia-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.1.0",
+    "@types/node": "^26.1.1",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2"
+  }
+}

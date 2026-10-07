@@ -2,15 +2,11 @@ import { Effect, Layer, Option } from "effect";
 import * as Fs from "@effect/platform/FileSystem";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import {
-  ClineIndex,
-  ClineRepository,
-  ClineStore,
-  ClaudeCodeRepository,
-  CursorRepository,
-  openSessionsDb,
-  SqliteStorage,
-} from "sepia-core";
+import { ClaudeCodeRepository } from "sepia-claude";
+import { ClineIndex, ClineRepository } from "sepia-cline";
+import { ClineStore } from "sepia-convert";
+import { CursorRepository } from "sepia-cursor";
+import { openSessionsDb, SqliteStorage } from "sepia-devin";
 import type { Session } from "sepia-core";
 import { ControlError } from "sepia-session-control";
 import type { SessionRewinder } from "sepia-session-control";

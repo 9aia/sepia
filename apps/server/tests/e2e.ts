@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Layer, ManagedRuntime } from "effect";
 import { spawnAgent } from "sepia-acp";
-import { SqliteStorage } from "sepia-core";
+import { SqliteStorage } from "sepia-devin";
 import { ControlPlane, layer as controlPlaneLayer } from "sepia-session-control";
 import { createApp } from "../src/app";
 

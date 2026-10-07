@@ -1,6 +1,7 @@
 import { Either, Effect } from "effect";
 import { sseHeaders } from "sepia-agui";
-import { Conversion, Session } from "sepia-core";
+import { Conversion } from "sepia-convert";
+import { Session } from "sepia-core";
 import type { ControlPlaneService } from "sepia-session-control";
 import { sessionPayload, type NodeEventFeed } from "./events";
 import { isRunSpan, type MetaStore, type SessionMeta } from "./meta";

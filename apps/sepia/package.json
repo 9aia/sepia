@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "bun src/main.ts",
     "start": "bun src/main.ts",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@effect/cli": "^0.77.0",
@@ -17,7 +18,12 @@
     "@effect/platform-bun": "^0.91.2",
     "effect": "^3.22.1",
     "sepia-acp": "workspace:*",
+    "sepia-claude": "workspace:*",
+    "sepia-cline": "workspace:*",
+    "sepia-convert": "workspace:*",
     "sepia-core": "workspace:*",
+    "sepia-cursor": "workspace:*",
+    "sepia-devin": "workspace:*",
     "sepia-server": "workspace:*",
     "sepia-session-control": "workspace:*"
   },

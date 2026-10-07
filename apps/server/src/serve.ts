@@ -1,12 +1,10 @@
 import { homedir } from "node:os";
 import { Effect, Layer, ManagedRuntime } from "effect";
-import {
-  ClaudeCodeRepository,
-  ClineRepository,
-  CursorRepository,
-  SessionRepository,
-  SqliteStorage,
-} from "sepia-core";
+import { ClaudeCodeRepository } from "sepia-claude";
+import { ClineRepository } from "sepia-cline";
+import { SessionRepository } from "sepia-core";
+import { CursorRepository } from "sepia-cursor";
+import { SqliteStorage } from "sepia-devin";
 import { builtinAgents, spawnAgent } from "sepia-acp";
 import { ControlPlane, layer as controlPlaneLayer, mergeRepositories } from "sepia-session-control";
 import { createApp } from "./app";

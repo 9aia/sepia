@@ -2,17 +2,17 @@ import { Args, Command, Options } from "@effect/cli";
 import * as Fs from "@effect/platform/FileSystem";
 import { Console, Effect, Option } from "effect";
 import { homedir } from "node:os";
+import { ClaudeConfig } from "sepia-claude";
+import { ClineConfig } from "sepia-cline";
 import {
   AgentConfig,
-  ClaudeConfig,
-  ClineConfig,
   configFromJson,
   configToJson,
   ConversionError,
-  CursorConfig,
-  DevinConfig,
   type ConfigWriteAction,
 } from "sepia-core";
+import { CursorConfig } from "sepia-cursor";
+import { DevinConfig } from "sepia-devin";
 
 /**
  * The `sepia config` verb group — reads an agent's on-disk configuration

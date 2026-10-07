@@ -24,7 +24,12 @@
         "@effect/platform-bun": "^0.91.2",
         "effect": "^3.22.1",
         "sepia-acp": "workspace:*",
+        "sepia-claude": "workspace:*",
+        "sepia-cline": "workspace:*",
+        "sepia-convert": "workspace:*",
         "sepia-core": "workspace:*",
+        "sepia-cursor": "workspace:*",
+        "sepia-devin": "workspace:*",
         "sepia-server": "workspace:*",
         "sepia-session-control": "workspace:*",
       },
@@ -50,7 +55,12 @@
         "effect": "^3.22.1",
         "sepia-acp": "workspace:*",
         "sepia-agui": "workspace:*",
+        "sepia-claude": "workspace:*",
+        "sepia-cline": "workspace:*",
+        "sepia-convert": "workspace:*",
         "sepia-core": "workspace:*",
+        "sepia-cursor": "workspace:*",
+        "sepia-devin": "workspace:*",
         "sepia-session-control": "workspace:*",
         "web-push": "^3.6.7",
       },
@@ -139,19 +149,96 @@
         "typescript": "^7.0.2",
       },
     },
-    "packages/sepia": {
-      "name": "sepia-core",
+    "packages/claude": {
+      "name": "sepia-claude",
+      "version": "0.0.1",
+      "dependencies": {
+        "@effect/platform": "^0.97.1",
+        "@effect/platform-bun": "0.91.2",
+        "effect": "^3.22.1",
+        "sepia-core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "1.1.0",
+        "@types/node": "^26.1.1",
+        "typescript": "^7.0.2",
+      },
+    },
+    "packages/cline": {
+      "name": "sepia-cline",
+      "version": "0.0.1",
+      "dependencies": {
+        "@effect/platform": "^0.97.1",
+        "@effect/platform-bun": "0.91.2",
+        "effect": "^3.22.1",
+        "sepia-core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "1.1.0",
+        "@types/node": "^26.1.1",
+        "typescript": "^7.0.2",
+      },
+    },
+    "packages/convert": {
+      "name": "sepia-convert",
+      "version": "0.0.1",
+      "dependencies": {
+        "@effect/platform": "^0.97.1",
+        "@effect/platform-bun": "0.91.2",
+        "effect": "^3.22.1",
+        "sepia-claude": "workspace:*",
+        "sepia-cline": "workspace:*",
+        "sepia-core": "workspace:*",
+        "sepia-devin": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "1.1.0",
+        "@types/node": "^26.1.1",
+        "typescript": "^7.0.2",
+      },
+    },
+    "packages/cursor": {
+      "name": "sepia-cursor",
+      "version": "0.0.1",
+      "dependencies": {
+        "@effect/platform": "^0.97.1",
+        "@effect/platform-bun": "0.91.2",
+        "effect": "^3.22.1",
+        "sepia-core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "1.1.0",
+        "@types/node": "^26.1.1",
+        "typescript": "^7.0.2",
+      },
+    },
+    "packages/devin": {
+      "name": "sepia-devin",
       "version": "0.0.1",
       "dependencies": {
         "@effect/platform": "^0.97.1",
         "@effect/platform-bun": "0.91.2",
         "drizzle-orm": "^0.45.2",
         "effect": "^3.22.1",
+        "sepia-core": "workspace:*",
       },
       "devDependencies": {
         "@types/bun": "1.1.0",
         "@types/node": "^26.1.1",
         "drizzle-kit": "^0.31.10",
+        "typescript": "^7.0.2",
+      },
+    },
+    "packages/sepia": {
+      "name": "sepia-core",
+      "version": "0.0.1",
+      "dependencies": {
+        "@effect/platform": "^0.97.1",
+        "effect": "^3.22.1",
+      },
+      "devDependencies": {
+        "@types/bun": "1.1.0",
+        "@types/node": "^26.1.1",
         "typescript": "^7.0.2",
       },
     },
@@ -1916,9 +2003,19 @@
 
     "sepia-agui": ["sepia-agui@workspace:packages/agui"],
 
+    "sepia-claude": ["sepia-claude@workspace:packages/claude"],
+
     "sepia-cli": ["sepia-cli@workspace:apps/sepia"],
 
+    "sepia-cline": ["sepia-cline@workspace:packages/cline"],
+
+    "sepia-convert": ["sepia-convert@workspace:packages/convert"],
+
     "sepia-core": ["sepia-core@workspace:packages/sepia"],
+
+    "sepia-cursor": ["sepia-cursor@workspace:packages/cursor"],
+
+    "sepia-devin": ["sepia-devin@workspace:packages/devin"],
 
     "sepia-node": ["sepia-node@workspace:packages/sepia-node"],
 

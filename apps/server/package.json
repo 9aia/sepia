@@ -26,7 +26,12 @@
     "effect": "^3.22.1",
     "sepia-acp": "workspace:*",
     "sepia-agui": "workspace:*",
+    "sepia-claude": "workspace:*",
+    "sepia-cline": "workspace:*",
+    "sepia-convert": "workspace:*",
     "sepia-core": "workspace:*",
+    "sepia-cursor": "workspace:*",
+    "sepia-devin": "workspace:*",
     "sepia-session-control": "workspace:*",
     "web-push": "^3.6.7"
   },

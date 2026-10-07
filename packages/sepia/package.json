@@ -3,8 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "files": [
-    "src",
-    "drizzle"
+    "src"
   ],
   "type": "module",
   "exports": {
@@ -18,20 +17,15 @@
     "test:bun": "bun test",
     "test:coverage": "vitest run --coverage",
     "coverage": "vitest run --coverage",
-    "coverage:bun": "bun test --coverage",
-    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
+    "coverage:bun": "bun test --coverage"
   },
   "dependencies": {
     "@effect/platform": "^0.97.1",
-    "@effect/platform-bun": "0.91.2",
-    "drizzle-orm": "^0.45.2",
     "effect": "^3.22.1"
   },
   "devDependencies": {
     "@types/bun": "1.1.0",
     "@types/node": "^26.1.1",
-    "drizzle-kit": "^0.31.10",
     "typescript": "^7.0.2"
   }
 }
