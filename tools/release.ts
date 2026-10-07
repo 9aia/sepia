@@ -12,22 +12,27 @@
  *   3. `tools/build-binary.ts`          — `bun build --compile` → ./sepia
  *                                       (host platform; skipped w/ --no-binary)
  *   4. commit "release v<stamp>" + `git tag v<stamp>` + push --follow-tags
- *   5. `npm publish --access public`    — packages/sepia-node, sepia-ui
+ *   5. `bun publish --access public`    — packages/sepia-node, sepia-ui
+ *                                       (`bun`, not `npm`: the repo's
+ *                                       devEngines declares bun; npm 11
+ *                                       refuses on the mismatch)
  *   6. `gh release create v<stamp>`     — notes auto-generated from commits;
  *                                       the binary uploads as an asset
  *
  * Flags:
  *   --dry-run        — full pipeline except the irreversibles: no commit/tag/
- *                      push, `npm publish --dry-run`, no `gh release create`
+ *                      push, `bun publish --dry-run`, no `gh release create`
  *   --version X.Y.Z  — override the date stamp
  *   --no-binary      — skip the compiled binary (still publishes npm)
  *   --no-npm         — skip npm publish
  *   --no-gh          — skip the GitHub release
  *
  * Preflight fails fast on: dirty tree, non-master branch, missing `npm whoami`
- * / `gh auth status` (auth checks are skipped in --dry-run).
+ * / `gh auth status` (auth checks are skipped in --dry-run). Credentials are
+ * the standard npm registry ones — `npm whoami` covers `bun publish` since
+ * bun reads ~/.npmrc.
  */
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "..");
 const args = process.argv.slice(2);
@@ -55,9 +60,9 @@ const check = (argv: string[], hint: string): void => {
   }
 };
 
-const run = (argv: string[]): void => {
-  console.log(`release: $ ${argv.join(" ")}`);
-  const proc = Bun.spawnSync(argv, { cwd: repoRoot, stdio: ["inherit", "inherit", "inherit"] });
+const run = (argv: string[], cwd = repoRoot): void => {
+  console.log(`release: $ ${argv.join(" ")}  (in ${cwd})`);
+  const proc = Bun.spawnSync(argv, { cwd, stdio: ["inherit", "inherit", "inherit"] });
   if (proc.exitCode !== 0) {
     console.error(`release: failed (${proc.exitCode}): ${argv.join(" ")}`);
     process.exit(proc.exitCode ?? 1);
@@ -77,7 +82,10 @@ if (!dryRun) {
     console.error(`release: releases cut from master, currently on "${branch}"`);
     process.exit(1);
   }
-  check(["npm", "whoami"], "not logged into npm (npm login)");
+  check(
+    ["npm", "whoami"],
+    "not logged into the npm registry (npm login — bun publish reads ~/.npmrc)",
+  );
   if (!noGh) check(["gh", "auth", "status"], "gh CLI not authenticated (gh auth login)");
 }
 
@@ -109,7 +117,8 @@ if (!noBinary) run(["bun", "tools/build-binary.ts", "--skip-web-build"]);
 if (dryRun) {
   console.log("release: [dry-run] would commit, tag, push, npm publish, gh release create");
   for (const pkg of ["sepia-node", "sepia-ui"]) {
-    run(["npm", "publish", "--access", "public", "--dry-run", `packages/${pkg}`]);
+    // `bun publish <arg>` expects a tarball, not a dir — run inside the package.
+    run(["bun", "publish", "--access", "public", "--dry-run"], join(repoRoot, "packages", pkg));
   }
   console.log(`release: [dry-run] done — ${tag} is staged but nothing was pushed`);
   process.exit(0);
@@ -126,7 +135,7 @@ run(["git", "push", "--follow-tags"]);
 
 if (!noNpm) {
   for (const pkg of ["sepia-node", "sepia-ui"]) {
-    run(["npm", "publish", "--access", "public", `packages/${pkg}`]);
+    run(["bun", "publish", "--access", "public"], join(repoRoot, "packages", pkg));
   }
 }
 
