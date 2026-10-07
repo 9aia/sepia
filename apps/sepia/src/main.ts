@@ -16,6 +16,7 @@ import { ClineStore, Conversion } from "sepia-convert";
 import { CursorRepository } from "sepia-cursor";
 import { openSessionsDb, SqliteStorage } from "sepia-devin";
 import { parseEnv, SEPIA_VERSION, startServer, type ServerEnv } from "sepia-server/serve";
+import { serviceGroup } from "./service-commands";
 import { configGroup } from "./config-commands";
 import { nodeCommands, promptCommand } from "./node-commands";
 import { PAIR_CODE_TTL_MS, writePairCodeFile } from "./pair";
@@ -578,6 +579,7 @@ const sepia = Command.make("sepia").pipe(
     // Node lifecycle + pairing.
     pairCommand,
     serveCommand,
+    serviceGroup,
     versionCommand,
   ]),
   Command.withDescription(
