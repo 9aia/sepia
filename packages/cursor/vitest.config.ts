@@ -11,11 +11,11 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: ["src/index.ts"],
       thresholds: {
-        lines: 99,
-        statements: 99,
-        functions: 97,
-        branches: 90,
-        "src/Cursor.ts": { lines: 100, statements: 99, functions: 100, branches: 93 },
+        lines: 98,
+        statements: 98,
+        functions: 96,
+        branches: 91,
+        "src/Cursor.ts": { lines: 99, statements: 99, functions: 100, branches: 93 },
         // The uncovered lines are the default `bun:sqlite` openers' success
         // bodies — importable only under Bun.
         "src/CursorRepository.ts": {

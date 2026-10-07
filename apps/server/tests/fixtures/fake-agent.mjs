@@ -22,7 +22,7 @@ rl.on("line", (line) => {
           protocolVersion: params?.protocolVersion ?? 1,
           agentCapabilities: {
             loadSession: true,
-            sessionCapabilities: { list: {} },
+            sessionCapabilities: { list: {}, delete: {} },
           },
         },
       });

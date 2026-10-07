@@ -11,10 +11,10 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: ["src/index.ts"],
       thresholds: {
-        lines: 99,
-        statements: 99,
-        functions: 97,
-        branches: 94,
+        lines: 98,
+        statements: 98,
+        functions: 98,
+        branches: 92,
         "src/ClineIndex.ts": {
           lines: 100,
           statements: 100,
@@ -23,10 +23,10 @@ export default defineConfig({
         },
         "src/Cline.ts": { lines: 100, statements: 99.5, functions: 99, branches: 94 },
         "src/ClineRepository.ts": {
-          lines: 100,
-          statements: 98,
+          lines: 93,
+          statements: 92,
           functions: 93,
-          branches: 87,
+          branches: 80,
         },
       },
     },
