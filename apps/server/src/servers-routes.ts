@@ -30,6 +30,11 @@ export interface ServersRouteDeps {
   readonly cors: Record<string, string>;
   /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;
+  /**
+   * Upstream ceiling override for tests; `0` disables. Defaults to
+   * UPSTREAM_TIMEOUT_MS — applies to plain requests only, never SSE.
+   */
+  readonly timeoutMs?: number;
 }
 
 const json = (body: unknown, status: number, cors: Record<string, string>): Response =>
@@ -37,6 +42,65 @@ const json = (body: unknown, status: number, cors: Record<string, string>): Resp
     status,
     headers: { "content-type": "application/json", ...cors },
   });
+
+/**
+ * Ceiling for a plain proxied call — a peer that holds the socket open
+ * without answering must not pin a gateway request forever. Generous on
+ * purpose: `POST /api/sessions/:id/prompt` only responds at end-of-turn, so
+ * a tight bound would kill live agent runs (the web client aborts gateway
+ * hops at 12s anyway; this guards non-UI callers and dead sockets).
+ */
+const UPSTREAM_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Cap on a buffered request body — proxied payloads are prompt-sized (the
+ * composer's 8MB budget, cf. MAX_PROMPT_PART_CHARS in routes/sessions.ts).
+ * Past that, `request.arrayBuffer()` would be allocating hostile RAM.
+ */
+const MAX_PROXY_BODY_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Upstream paths whose response stays open indefinitely — the node's own
+ * AG-UI SSE routes (same shapes app.ts's QUERY_TOKEN_PATH authorizes query
+ * tokens for). They get no timeout: they only end on client disconnect.
+ */
+const SSE_UPSTREAM_PATH = /^\/api\/(?:events|sessions\/[^/]+\/stream)$/;
+
+const isStreamRequest = (request: Request, upstreamPath: string): boolean =>
+  SSE_UPSTREAM_PATH.test(upstreamPath) ||
+  (request.headers.get("accept")?.includes("text/event-stream") ?? false);
+
+/**
+ * Buffer the inbound body under a hard cap: a declared `content-length`
+ * over the limit rejects cheaply, a lied/absent one trips mid-read —
+ * either way a hostile caller can't make the proxy allocate unboundedly.
+ * Returns null when the cap is hit.
+ */
+const readProxyBody = async (request: Request): Promise<Uint8Array | null> => {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > MAX_PROXY_BODY_BYTES) return null;
+  if (request.body === null) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_PROXY_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+};
 
 /**
  * Direct URL, or the loopback end of the SSH forward when configured.
@@ -102,6 +166,34 @@ const proxy = async (
   if (auth !== null) headers.authorization = auth;
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  let body: Uint8Array | undefined;
+  if (hasBody) {
+    let buffered: Uint8Array | null;
+    try {
+      buffered = await readProxyBody(request);
+    } catch {
+      return json({ error: "Failed to read request body" }, 400, deps.cors);
+    }
+    if (buffered === null) {
+      return json(
+        { error: `Body exceeds the ${MAX_PROXY_BODY_BYTES}-byte proxy limit` },
+        413,
+        deps.cors,
+      );
+    }
+    body = buffered;
+  }
+
+  // SSE passthroughs stay open by design — they only cancel on client
+  // disconnect (request.signal). Everything else rides a combined signal
+  // with an upstream ceiling so a dead peer fails the request instead of
+  // pinning it forever.
+  const streamed = isStreamRequest(request, target.pathname);
+  const timeoutMs = deps.timeoutMs ?? UPSTREAM_TIMEOUT_MS;
+  const deadline = streamed || timeoutMs <= 0 ? undefined : AbortSignal.timeout(timeoutMs);
+  const signal =
+    deadline === undefined ? request.signal : AbortSignal.any([request.signal, deadline]);
+
   let upstream: Response;
   try {
     // `${base}${normalized path}${query}` — keeps the entry's explicit port
@@ -110,13 +202,19 @@ const proxy = async (
     upstream = await fetchImpl(`${base}${target.pathname}${target.search}`, {
       method: request.method,
       headers,
-      // request.signal so a client disconnect cancels upstream too — needed
-      // for the long-lived /stream SSE passthrough.
-      signal: request.signal,
-      body: hasBody ? await request.arrayBuffer() : undefined,
+      signal,
+      body,
     });
   } catch {
-    return json({ error: `Cannot reach ${entry.label ?? entry.host}` }, 502, deps.cors);
+    // The deadline firing without a client abort means the peer never
+    // answered — 504, distinct from an unreachable peer's 502.
+    const timedOut = deadline?.aborted === true && !request.signal.aborted;
+    const label = entry.label ?? entry.host;
+    return json(
+      { error: timedOut ? `Timed out waiting for ${label}` : `Cannot reach ${label}` },
+      timedOut ? 504 : 502,
+      deps.cors,
+    );
   }
 
   const responseHeaders: Record<string, string> = { ...deps.cors };

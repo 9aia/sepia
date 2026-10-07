@@ -242,6 +242,180 @@ describe("handleGatewayRoute", () => {
   });
 });
 
+describe("gateway hardening", () => {
+  it("times out a peer that holds the socket without answering (504)", async () => {
+    const { store, entry } = makeStore();
+    const fetchImpl: typeof fetch = (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("The operation timed out", "TimeoutError")),
+        );
+      });
+    const res = await handleGatewayRoute(
+      req(`/api/gateway/${entry.id}/api/node`),
+      [entry.id, "api", "node"],
+      { ...makeDeps(store, fetchImpl), timeoutMs: 20 },
+    );
+    expect(res?.status).toBe(504);
+    expect((await res?.json()) as { error: string }).toEqual({
+      error: "Timed out waiting for Thinkpad",
+    });
+  });
+
+  it("SSE-intended requests never get the upstream deadline", async () => {
+    const { store, entry } = makeStore();
+    let seenSignal: AbortSignal | undefined;
+    const fetchImpl: typeof fetch = (_input, init) => {
+      seenSignal = init?.signal ?? undefined;
+      return Promise.resolve(new Response("ok"));
+    };
+    const deps = { ...makeDeps(store, fetchImpl), timeoutMs: 20 };
+
+    // Path-detected: the two AG-UI SSE routes.
+    for (const segments of [
+      [entry.id, "api", "events"],
+      [entry.id, "api", "sessions", "s1", "stream"],
+    ]) {
+      const request = req(`/api/gateway/${segments.join("/")}`);
+      await handleGatewayRoute(request, segments, deps);
+      // request.signal itself is passed through — no AbortSignal.any wrap.
+      expect(seenSignal).toBe(request.signal);
+    }
+
+    // Header-detected: a client asking for event-stream on any path.
+    const acceptReq = req(`/api/gateway/${entry.id}/api/other`, {
+      headers: { accept: "text/event-stream" },
+    });
+    await handleGatewayRoute(acceptReq, [entry.id, "api", "other"], deps);
+    expect(seenSignal).toBe(acceptReq.signal);
+
+    // A plain request gets a combined signal (not the raw request.signal).
+    const plainReq = req(`/api/gateway/${entry.id}/api/node`);
+    await handleGatewayRoute(plainReq, [entry.id, "api", "node"], deps);
+    expect(seenSignal).not.toBe(plainReq.signal);
+  });
+
+  it("rejects an over-limit body with 413 before any upstream call", async () => {
+    const { store, entry } = makeStore();
+    let fetched = false;
+    const fetchImpl: typeof fetch = () => {
+      fetched = true;
+      return Promise.resolve(new Response("ok"));
+    };
+    // 9 × 1MB chunks — over the 8MB cap; streamed so the reader-side limit
+    // (not the content-length fast path) is what trips.
+    const nineMeg = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 9; i += 1) controller.enqueue(new Uint8Array(1024 * 1024));
+        controller.close();
+      },
+    });
+    const res = await handleGatewayRoute(
+      req(`/api/gateway/${entry.id}/api/sessions/s1/prompt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: nineMeg,
+        // Node/undici requires duplex for a streamed request body.
+        duplex: "half",
+      } as RequestInit),
+      [entry.id, "api", "sessions", "s1", "prompt"],
+      makeDeps(store, fetchImpl),
+    );
+    expect(res?.status).toBe(413);
+    expect(fetched).toBe(false);
+  });
+
+  it("rejects on a declared content-length over the cap without reading", async () => {
+    const { store, entry } = makeStore();
+    let fetched = false;
+    const fetchImpl: typeof fetch = () => {
+      fetched = true;
+      return Promise.resolve(new Response("ok"));
+    };
+    const res = await handleGatewayRoute(
+      new Request(`http://localhost/api/gateway/${entry.id}/api/node`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(9 * 1024 * 1024),
+        },
+        body: "x",
+      }),
+      [entry.id, "api", "node"],
+      makeDeps(store, fetchImpl),
+    );
+    expect(res?.status).toBe(413);
+    expect(fetched).toBe(false);
+  });
+
+  it("never forwards the caller's Authorization — even when the entry has no auth", async () => {
+    const { store, entry } = makeStore({ ...INPUT, auth: null });
+    let seenAuth: string | null = "unset";
+    const fetchImpl: typeof fetch = (_input, init) => {
+      seenAuth = new Headers(init?.headers).get("authorization");
+      return Promise.resolve(new Response("{}"));
+    };
+    await handleGatewayRoute(
+      req(`/api/gateway/${entry.id}/api/node`, {
+        headers: { authorization: "Bearer caller-token" },
+      }),
+      [entry.id, "api", "node"],
+      makeDeps(store, fetchImpl),
+    );
+    expect(seenAuth).toBeNull();
+  });
+
+  it("does not leak upstream hop-by-hop headers (set-cookie, location)", async () => {
+    const { store, entry } = makeStore();
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(
+        new Response("ok", {
+          status: 302,
+          headers: {
+            "content-type": "text/plain",
+            "set-cookie": "peer_session=abc; HttpOnly",
+            location: "http://192.168.1.10:8787/login",
+          },
+        }),
+      );
+    const res = await handleGatewayRoute(
+      req(`/api/gateway/${entry.id}/api/node`),
+      [entry.id, "api", "node"],
+      makeDeps(store, fetchImpl),
+    );
+    expect(res?.status).toBe(302);
+    expect(res?.headers.get("content-type")).toBe("text/plain");
+    expect(res?.headers.get("set-cookie")).toBeNull();
+    expect(res?.headers.get("location")).toBeNull();
+  });
+
+  it("an ssh peer whose tunnel can't come up answers 502, not a crash", async () => {
+    const { store, entry } = makeStore(SSH_INPUT);
+    const deps = makeDeps(store);
+    const failing: ServersRouteDeps = {
+      ...deps,
+      tunnels: { ...deps.tunnels, ensure: () => Promise.reject(new Error("ssh died")) },
+    };
+    const res = await handleGatewayRoute(
+      req(`/api/gateway/${entry.id}/api/node`),
+      [entry.id, "api", "node"],
+      failing,
+    );
+    expect(res?.status).toBe(502);
+    expect((await res?.json()) as { error: string }).toEqual({ error: "ssh died" });
+  });
+
+  it("a path-traversal peer segment is a store miss (404), never URL input", async () => {
+    const { store } = makeStore();
+    const res = await handleGatewayRoute(
+      req("/api/gateway/%2e%2e/api/node"),
+      ["%2e%2e", "api", "node"],
+      makeDeps(store),
+    );
+    expect(res?.status).toBe(404);
+  });
+});
+
 describe("app /api/gateway integration", () => {
   const auth = { authorization: "Bearer node-token" };
 
