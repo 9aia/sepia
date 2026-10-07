@@ -308,11 +308,27 @@ export const make = (
       );
 
     // Summaries only: a real store holds gigabytes of message nodes, so listing
-    // must not read them. Unreadable rows are skipped rather than failing the list.
+    // must not read them. `cogs_json` is also projected out — resume blobs are
+    // megabytes per row and no list consumer reads them (buildSession defaults
+    // the absent column to "[]"). Unreadable rows are skipped, not fatal.
     const list = () =>
       Effect.gen(function* () {
         const rows = db
-          .select()
+          .select({
+            id: schema.sessions.id,
+            workingDirectory: schema.sessions.workingDirectory,
+            backendType: schema.sessions.backendType,
+            model: schema.sessions.model,
+            agentMode: schema.sessions.agentMode,
+            createdAt: schema.sessions.createdAt,
+            lastActivityAt: schema.sessions.lastActivityAt,
+            title: schema.sessions.title,
+            mainChainId: schema.sessions.mainChainId,
+            shellLastSeenIndex: schema.sessions.shellLastSeenIndex,
+            workspaceDirs: schema.sessions.workspaceDirs,
+            hidden: schema.sessions.hidden,
+            metadata: schema.sessions.metadata,
+          })
           .from(schema.sessions)
           .orderBy(desc(schema.sessions.lastActivityAt))
           .all();
