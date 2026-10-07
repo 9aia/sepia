@@ -13,8 +13,10 @@ import { Store, useStore } from "@tanstack/react-store";
  * Keys generate lazily via WebCrypto (`ensureClient` — the API is async, so
  * the store starts empty on first run and fills once generation settles).
  * Ed25519 is preferred; ECDSA P-256 is the universal fallback; on a
- * non-secure context (a `http://lan` origin) `crypto.subtle` is absent and
- * the client still gets an id + random secret with `algorithm: "none"`.
+ * non-secure context (a `http://lan` origin) `crypto.subtle` is absent, so
+ * the serving node mints the pair (`POST /api/client/keypair`); only that
+ * failing lands on `algorithm: "none"` — upgraded on a later `ensureClient`
+ * once a real mint is reachable.
  */
 export type ClientAlgorithm = "Ed25519" | "ECDSA-P-256" | "none";
 
@@ -92,7 +94,21 @@ const fallbackKeys = (): ClientKeys => ({
 const generateKeys = async (): Promise<ClientKeys> => {
   const subtle =
     typeof crypto !== "undefined" && crypto.subtle !== undefined ? crypto.subtle : undefined;
-  if (subtle === undefined) return fallbackKeys();
+  if (subtle === undefined) {
+    // Non-secure context (http:// LAN) has no WebCrypto — the serving node
+    // mints the pair instead (POST /api/client/keypair). Only an unreachable
+    // node or a runtime with no supported algorithm lands on "none".
+    try {
+      const response = await fetch("/api/client/keypair", { method: "POST" });
+      if (response.ok) {
+        const body = (await response.json()) as ClientKeys;
+        if (typeof body.publicKey === "string" && body.publicKey !== "") return body;
+      }
+    } catch {
+      // Unreachable — fall through to the local fallback.
+    }
+    return fallbackKeys();
+  }
   const attempts: ReadonlyArray<{
     params: EcKeyGenParams | { name: string };
     algorithm: ClientAlgorithm;
@@ -170,6 +186,7 @@ const commitClient = (client: ClientIdentity): void => {
 };
 
 let pending: Promise<ClientIdentity> | null = null;
+let upgradePending: Promise<ClientIdentity> | null = null;
 
 /**
  * The lazy init — returns the stored identity, or generates + persists one
@@ -177,7 +194,24 @@ let pending: Promise<ClientIdentity> | null = null;
  */
 export const ensureClient = (): Promise<ClientIdentity> => {
   const existing = clientStore.state.client;
-  if (existing !== null) return Promise.resolve(existing);
+  if (existing !== null) {
+    // A "none" identity was minted before a real keypair was reachable —
+    // upgrade the keys, keep the id + label so the identity is continuous.
+    if (existing.algorithm !== "none" || upgradePending !== null) {
+      return Promise.resolve(existing);
+    }
+    upgradePending = generateKeys()
+      .then((keys): ClientIdentity => {
+        if (keys.algorithm === "none") return existing;
+        const upgraded = { ...existing, ...keys };
+        commitClient(upgraded);
+        return upgraded;
+      })
+      .finally(() => {
+        upgradePending = null;
+      });
+    return upgradePending;
+  }
   pending ??= (async (): Promise<ClientIdentity> => {
     const client: ClientIdentity = {
       id: newClientId(),

@@ -90,7 +90,7 @@ export function ClientSection() {
               </span>
               <span className="block truncate font-mono text-xs" title={client.publicKey}>
                 {client.publicKey === ""
-                  ? "Unavailable — this context can't generate keys"
+                  ? "Unavailable — no usable crypto in this context or node"
                   : truncateKey(client.publicKey)}
               </span>
             </div>

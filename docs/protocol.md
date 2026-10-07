@@ -116,6 +116,13 @@ POST   /api/projects/:id/push         { target: { url, token? } } — this node
                                       bundles the project and POSTs it to
                                       target.url's /api/projects/import with
                                       target.token. Same SSE progress shape
+POST   /api/client/keypair           mint a client-identity keypair
+                                        ({ algorithm, publicKey, secretKey })
+                                        server-side — for clients on
+                                        non-secure contexts (http:// LAN)
+                                        where crypto.subtle is unavailable;
+                                        the secret transits the wire, so it's
+                                        only as private as the transport
 GET    /api/config/:key  PATCH /api/config/:key   server-side UI state
 GET    /api/push/vapid  POST/DELETE /api/push/subscribe   web-push
 ANY    /api/gateway/:server/*           gateway mode — forward to a managed
