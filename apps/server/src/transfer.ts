@@ -404,6 +404,100 @@ export const postProjectBundle = async (
   }
 };
 
+/**
+ * Session transfer — the single-session counterpart of the project bundle
+ * verbs. The wire format is the existing session IR JSON (`{session}` from
+ * `GET /api/sessions/:id/export`, consumed verbatim by
+ * `POST /api/sessions/import`), so each hop just chains those endpoints
+ * node-to-node; no new format or route is needed on the peer.
+ */
+
+/**
+ * Pull half: fetch the remote's `GET /api/sessions/:id/export` `{session}`
+ * payload and decode the IR — a peer that answers 200 with a non-IR body is
+ * reported like any other refusal.
+ */
+export const fetchSessionExport = async (
+  source: RemoteEndpoint,
+  sessionId: string,
+  agentId: string | undefined,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal,
+): Promise<Session | Error> => {
+  const agent = agentId === undefined ? "" : `?agent=${encodeURIComponent(agentId)}`;
+  let res: Response;
+  try {
+    res = await fetchImpl(
+      `${source.url}/api/sessions/${encodeURIComponent(sessionId)}/export${agent}`,
+      {
+        headers: { accept: "application/json", ...remoteAuth(source) },
+        signal,
+      },
+    );
+  } catch (error) {
+    return new Error(`Cannot reach the source node: ${errorMessage(error)}`);
+  }
+  if (!res.ok) {
+    let detail = `the source responded ${res.status}`;
+    try {
+      const body: unknown = await res.json();
+      if (isRecord(body) && typeof body.error === "string") detail = body.error;
+    } catch {
+      // Non-JSON error body — keep the status text.
+    }
+    return new Error(`Source refused the export: ${detail}`);
+  }
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return new Error("The source's export was not JSON");
+  }
+  if (!isRecord(body) || body.session === undefined) {
+    return new Error("The source's export carried no session payload");
+  }
+  try {
+    return Conversion.sessionFromJson(body.session);
+  } catch {
+    return new Error("The source's export was not a session IR object");
+  }
+};
+
+/** Push half: POST `{agent, session, title?, model?}` to the remote's `POST /api/sessions/import`. */
+export const postSessionImport = async (
+  target: RemoteEndpoint,
+  payload: Record<string, unknown>,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal,
+): Promise<Record<string, unknown> | Error> => {
+  let res: Response;
+  try {
+    res = await fetchImpl(`${target.url}/api/sessions/import`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...remoteAuth(target) },
+      body: JSON.stringify(payload),
+      signal,
+    });
+  } catch (error) {
+    return new Error(`Cannot reach the target node: ${errorMessage(error)}`);
+  }
+  if (!res.ok) {
+    let detail = `the target responded ${res.status}`;
+    try {
+      const parsed: unknown = await res.json();
+      if (isRecord(parsed) && typeof parsed.error === "string") detail = parsed.error;
+    } catch {
+      // Non-JSON error body — keep the status text.
+    }
+    return new Error(`Target refused the import: ${detail}`);
+  }
+  try {
+    return (await res.json()) as Record<string, unknown>;
+  } catch {
+    return new Error("The target's import response was not JSON");
+  }
+};
+
 export type TransferEmit = (event: string, data: unknown) => void;
 
 /**

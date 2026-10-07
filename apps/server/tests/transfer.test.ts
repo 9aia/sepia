@@ -535,3 +535,248 @@ describe("project push", () => {
     expect(String(frames.at(-1)?.data.error)).toContain("ECONNREFUSED");
   });
 });
+
+/**
+ * Session transfer — the single-session siblings of the project verbs. The
+ * wire format is the IR JSON of GET /api/sessions/:id/export; pull writes
+ * through the importSession executor seam and push posts `{agent, session}`
+ * to the peer's /api/sessions/import. Both answer plain JSON `{id}`, not SSE.
+ */
+describe("session pull", () => {
+  const exportBody = (): Response =>
+    new Response(JSON.stringify({ session: Conversion.sessionToJson(SESSION_IR) }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+  it("fetches the peer's export and imports it through the executor", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const auth = (init?.headers as Record<string, string> | undefined)?.authorization;
+      seen.push(`${url} ${String(auth)}`);
+      return exportBody();
+    };
+    const targetMeta = freshMeta();
+    const imported: Array<{ id: string; agent: string; nodes: number }> = [];
+    const app = createApp(planeOver([]), {
+      meta: targetMeta,
+      fetchImpl: fetchImpl as typeof fetch,
+      importSession: (session, agent) =>
+        Effect.sync(() => {
+          imported.push({ id: session.id, agent, nodes: session.nodes.length });
+          return `stored-${session.id}`;
+        }),
+      node: { id: "node_target", name: "target", version: "0" },
+    });
+
+    const res = await app(
+      post("/api/sessions/pull", {
+        url: "http://peer:8787",
+        token: "peer-secret",
+        sessionId: "sess-a",
+        agentId: "cline",
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ id: "stored-sess-a" });
+    // The node fetched the peer's export itself — agentId rode along as
+    // `?agent=` and steered the local store (cline stays cline).
+    expect(seen).toEqual([
+      "http://peer:8787/api/sessions/sess-a/export?agent=cline Bearer peer-secret",
+    ]);
+    expect(imported).toEqual([{ id: "sess-a", agent: "cline", nodes: 2 }]);
+    // Provenance + identification meta, same as /api/sessions/import.
+    const meta = targetMeta.of("stored-sess-a")!;
+    expect(meta.agent).toBe("cline");
+    expect(meta.cwd).toBe("/work/a");
+    expect(meta.spans?.at(-1)).toMatchObject({ agent: "cline", node: "node_target" });
+  });
+
+  it("defaults the target store from the IR's backendType", async () => {
+    const fetchImpl = (() => Promise.resolve(exportBody())) as typeof fetch;
+    const agents: string[] = [];
+    const app = createApp(planeOver([]), {
+      meta: freshMeta(),
+      fetchImpl,
+      importSession: (session, agent) =>
+        Effect.sync(() => {
+          agents.push(agent);
+          return session.id;
+        }),
+    });
+    const res = await app(
+      post("/api/sessions/pull", { url: "http://peer:8787", sessionId: "sess-a" }),
+    );
+    expect(res.status).toBe(201);
+    // SESSION_IR.backendType is "windsurf" → the devin store.
+    expect(agents).toEqual(["devin"]);
+  });
+
+  it("502s when the peer is unreachable or refuses the export", async () => {
+    const dead = createApp(planeOver([]), {
+      fetchImpl: (() => Promise.reject(new Error("ECONNREFUSED"))) as typeof fetch,
+      importSession: (session) => Effect.succeed(session.id),
+    });
+    const unreachable = await dead(
+      post("/api/sessions/pull", { url: "http://dead:8787", sessionId: "s" }),
+    );
+    expect(unreachable.status).toBe(502);
+    expect(((await unreachable.json()) as { error: string }).error).toContain("ECONNREFUSED");
+
+    const refused = createApp(planeOver([]), {
+      fetchImpl: (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Unknown session" }), { status: 404 }),
+        )) as typeof fetch,
+      importSession: (session) => Effect.succeed(session.id),
+    });
+    const denied = await refused(
+      post("/api/sessions/pull", { url: "http://peer:8787", sessionId: "nope" }),
+    );
+    expect(denied.status).toBe(502);
+    expect(((await denied.json()) as { error: string }).error).toContain("Unknown session");
+  });
+
+  it("502s when the export payload is not a session IR", async () => {
+    const app = createApp(planeOver([]), {
+      fetchImpl: (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ session: { id: 42 } }), { status: 200 }),
+        )) as typeof fetch,
+      importSession: (session) => Effect.succeed(session.id),
+    });
+    const res = await app(post("/api/sessions/pull", { url: "http://peer:8787", sessionId: "s" }));
+    expect(res.status).toBe(502);
+  });
+
+  it("501s without an executor and validates the body", async () => {
+    const noExec = createApp(planeOver([]));
+    expect(
+      (await noExec(post("/api/sessions/pull", { url: "http://peer:8787", sessionId: "s" })))
+        .status,
+    ).toBe(501);
+
+    const app = createApp(planeOver([]), {
+      importSession: (session) => Effect.succeed(session.id),
+    });
+    for (const body of [
+      {},
+      { url: "notaurl", sessionId: "s" },
+      { url: "ftp://x", sessionId: "s" },
+      { url: "http://x" },
+      { url: "http://x", token: 4, sessionId: "s" },
+      { url: "http://x", sessionId: "s", agentId: 7 },
+    ]) {
+      expect((await app(post("/api/sessions/pull", body))).status).toBe(400);
+    }
+  });
+});
+
+describe("session push", () => {
+  it("posts the local session IR to the peer's import endpoint", async () => {
+    const meta = freshMeta();
+    const plane = planeOver([{ session: SESSION_IR, agent: "devin" }]);
+    const app = createApp(plane, { meta });
+    await app(
+      new Request("http://localhost:8787/api/sessions/sess-a", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "Renamed", model: "picked-model" }),
+      }),
+    );
+
+    const captured: { url: string; auth: string | undefined; body: Record<string, unknown> }[] = [];
+    const fetchImpl = async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ): Promise<Response> => {
+      captured.push({
+        url: typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+        auth: (init?.headers as Record<string, string> | undefined)?.authorization,
+        body: JSON.parse(init?.body as string) as Record<string, unknown>,
+      });
+      return new Response(JSON.stringify({ id: "remote-minted" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const pushing = createApp(plane, { meta, fetchImpl: fetchImpl as typeof fetch });
+    const res = await pushing(
+      post("/api/sessions/sess-a/push", {
+        url: "http://peer-b:8787/",
+        token: "t-secret",
+      }),
+    );
+    expect(res.status).toBe(201);
+    // The response carries the id the remote's /import minted.
+    expect(await res.json()).toEqual({ id: "remote-minted" });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.url).toBe("http://peer-b:8787/api/sessions/import");
+    expect(captured[0]!.auth).toBe("Bearer t-secret");
+    // The /import body shape: agent routes the store, session is the IR
+    // verbatim, and the meta overlay's title/model steer the copy.
+    expect(captured[0]!.body.agent).toBe("devin");
+    expect(captured[0]!.body.title).toBe("Renamed");
+    expect(captured[0]!.body.model).toBe("picked-model");
+    const sent = Conversion.sessionFromJson(captured[0]!.body.session);
+    expect(sent.id).toBe("sess-a");
+    expect(sent.nodes).toHaveLength(2);
+  });
+
+  it("lets agentId override the remote target store", async () => {
+    const captured: Record<string, unknown>[] = [];
+    const fetchImpl = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
+      captured.push(JSON.parse(init?.body as string) as Record<string, unknown>);
+      return new Response(JSON.stringify({ id: "x" }), { status: 201 });
+    }) as typeof fetch;
+    const app = createApp(planeOver([{ session: SESSION_IR, agent: "devin" }]), {
+      fetchImpl,
+    });
+    const res = await app(
+      post("/api/sessions/sess-a/push", { url: "http://peer:8787", agentId: "cline" }),
+    );
+    expect(res.status).toBe(201);
+    expect(captured[0]?.agent).toBe("cline");
+    // Anything outside cline|devin is a client error, not a remote 400.
+    const bad = await app(
+      post("/api/sessions/sess-a/push", { url: "http://peer:8787", agentId: "claude" }),
+    );
+    expect(bad.status).toBe(400);
+  });
+
+  it("404s an unknown session", async () => {
+    const app = createApp(planeOver([]), { meta: freshMeta() });
+    const res = await app(post("/api/sessions/nope/push", { url: "http://peer:8787" }));
+    expect(res.status).toBe(404);
+  });
+
+  it("502s when the peer is unreachable or refuses the import", async () => {
+    const plane = planeOver([{ session: SESSION_IR, agent: "devin" }]);
+    const dead = createApp(plane, {
+      fetchImpl: (() => Promise.reject(new Error("ECONNREFUSED"))) as typeof fetch,
+    });
+    const res = await dead(post("/api/sessions/sess-a/push", { url: "http://dead:8787" }));
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { error: string }).error).toContain("ECONNREFUSED");
+  });
+
+  it("validates the target address", async () => {
+    const app = createApp(planeOver([{ session: SESSION_IR, agent: "devin" }]));
+    for (const body of [
+      {},
+      { url: "notaurl" },
+      { url: "ftp://x" },
+      { url: "http://x", token: 4 },
+    ]) {
+      expect((await app(post("/api/sessions/sess-a/push", body))).status).toBe(400);
+    }
+  });
+});

@@ -90,6 +90,17 @@ POST   /api/sessions/import           { agent, cwd?, title?, session | history }
                                         payload verbatim — full fidelity;
                                         {history} is the flat compat form for
                                         older source nodes)
+POST   /api/sessions/pull             { url, token?, sessionId, agentId? } —
+                                      this node fetches the peer's
+                                      /api/sessions/:id/export (agentId rides
+                                      along as ?agent= and picks the local
+                                      store) and writes the IR through the
+                                      /import executor → 201 { id }
+POST   /api/sessions/:id/push         { url, token?, agentId? } — this node
+                                      POSTs the session's IR as
+                                      { agent, session } to the peer's
+                                      /api/sessions/import → 201 { id }
+                                      (the id the remote minted)
 GET    /api/sessions/:id/stream       AG-UI SSE (live run)
 GET    /api/events                    node event feed (see below)
 POST   /api/pair                      { code } → { token } — unauthenticated
@@ -208,6 +219,14 @@ title}`), then `done` (the import summary) or `error`.
 - `POST /api/projects/:id/push` — `{ target: { url, token? } }` — the owning
   node POSTs the bundle to `target.url`'s `/api/projects/import`
   authenticated with `target.token`. Same SSE shape.
+
+Single sessions move the same way without the bundle: `POST
+/api/sessions/pull` chains a peer's `GET /api/sessions/:id/export` into the
+local `/api/sessions/import` executor, and `POST /api/sessions/:id/push`
+POSTs `{agent, session}` (plus the meta overlay's title/model when set) to
+the peer's `/api/sessions/import`. Both take the peer as flat
+`{url, token?}` fields — same bearer model — and answer `201 { id }`;
+unreachable or refusing peers are `502`.
 
 Clone is pull-with-a-new-id — the same op covers both cases since import is
 idempotent by id. `init` is just `POST /api/projects` (`sepia projects

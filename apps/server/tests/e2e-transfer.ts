@@ -168,6 +168,28 @@ try {
   assert.equal(pushFrames.at(-1)?.event, "done");
   assert.equal(nodeA.meta.listProjects().length, 1, "push re-pulled, not duplicated");
 
+  // Single-session pull: a standalone session on A, pulled onto B over the
+  // same node-to-node auth — lands under its source id.
+  await seed(join(tmp, "a.db"), fixture("sess-solo"));
+  const sessPull = await fetch(`${nodeB.url}/api/sessions/pull`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${nodeB.token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      url: nodeA.url,
+      token: nodeA.token,
+      sessionId: "sess-solo",
+    }),
+  });
+  assert.equal(sessPull.status, 201, `session pull status: ${sessPull.status}`);
+  assert.deepEqual(await sessPull.json(), { id: "sess-solo" });
+  assert.equal(nodeB.meta.of("sess-solo")?.agent, "devin");
+  const pulledIr = await fetch(`${nodeB.url}/api/sessions/sess-solo/export`, {
+    headers: { authorization: `Bearer ${nodeB.token}` },
+  });
+  assert.equal(pulledIr.status, 200);
+  const pulledBody = (await pulledIr.json()) as { session: { nodes: unknown[] } };
+  assert.equal(pulledBody.session.nodes.length, 2);
+
   // Auth: a wrong source token fails as an error frame, not silently.
   const denied = await fetch(`${nodeB.url}/api/projects/pull`, {
     method: "POST",
