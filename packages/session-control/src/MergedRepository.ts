@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect";
-import type { Session, SessionRepositoryService } from "sepia-core";
+import type { Session, SessionNodeWindow, SessionRepositoryService } from "sepia-core";
 
 /**
  * Maps a store backend to the agent that can resume it. `"cursor"` maps to
@@ -71,4 +71,28 @@ export const mergeRepositories = (
   // Writes stay scoped to the primary store; overlays are read-only.
   save: primary.save,
   delete: primary.delete,
+
+  /**
+   * Paged history delegated to whichever store owns the id — repos without a
+   * native window are skipped entirely (the caller's `getById` fallback covers
+   * them). Extra-repo failures degrade to a miss, same as `getById`.
+   */
+  nodesWindow: (id, options) =>
+    Effect.gen(function* () {
+      const forAgent = (backendType: string): boolean =>
+        options.agentId === undefined || agentForBackend(backendType) === options.agentId;
+      // Primary errors propagate (same as getById); extras degrade to a miss.
+      if (primary.nodesWindow !== undefined) {
+        const hit = yield* primary.nodesWindow(id, options);
+        if (Option.isSome(hit) && forAgent(hit.value.backendType)) return hit;
+      }
+      for (const repo of extras) {
+        if (repo.nodesWindow === undefined) continue;
+        const hit = yield* repo
+          .nodesWindow(id, options)
+          .pipe(Effect.catchAll(() => Effect.succeed(Option.none<SessionNodeWindow>())));
+        if (Option.isSome(hit) && forAgent(hit.value.backendType)) return hit;
+      }
+      return Option.none<SessionNodeWindow>();
+    }),
 });

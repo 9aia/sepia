@@ -400,11 +400,68 @@ export const make = (
       }
     };
 
+    /** `HistoryMessage` projection — shared by the full-load and paged paths. */
+    const projectHistory = (
+      slice: ReadonlyArray<Session["nodes"][number]>,
+      callsById: ReadonlyMap<string, ToolCall>,
+    ): ReadonlyArray<HistoryMessage> =>
+      slice.map((node): HistoryMessage => {
+        const toolResult = Option.getOrUndefined(node.toolResult);
+        const call =
+          node.role === "tool"
+            ? callsById.get(Option.getOrUndefined(node.toolCallId) ?? "")
+            : undefined;
+        return {
+          role: node.role,
+          nodeId: node.nodeId,
+          content: node.content,
+          blocks: node.blocks.length === 0 ? undefined : node.blocks,
+          createdAt: node.createdAt * 1000,
+          toolName: Option.getOrUndefined(node.toolName),
+          thinking: Option.getOrUndefined(node.thinking),
+          thinkingSignature: Option.getOrUndefined(node.thinkingSignature),
+          usage: Option.getOrUndefined(node.usage),
+          model: Option.getOrUndefined(node.model),
+          requestId: Option.getOrUndefined(node.requestId),
+          finishReason: Option.getOrUndefined(node.finishReason),
+          toolStatus: toolResult?.status,
+          exitCode: toolResult?.exitCode,
+          durationMs: toolResult?.durationMs,
+          args: call === undefined ? undefined : callArgsText(call.arguments),
+          locations: call === undefined || call.locations.length === 0 ? undefined : call.locations,
+          diffs: call === undefined || call.diffs.length === 0 ? undefined : call.diffs,
+          toolCallId: node.role === "tool" ? Option.getOrUndefined(node.toolCallId) : undefined,
+        };
+      });
+
     const getHistory = (
       id: string,
       historyOptions?: HistoryOptions,
     ): Effect.Effect<HistoryPage, ControlError> =>
       Effect.gen(function* () {
+        const limit = historyLimit(historyOptions);
+        // Fast path: a store that pages natively never parses the backlog —
+        // the window plus call-bearing nodes arrive pre-sliced.
+        if (repo.nodesWindow !== undefined) {
+          const win = yield* repo
+            .nodesWindow(id, {
+              limit,
+              before: historyOptions?.before,
+              agentId: historyOptions?.agentId,
+            })
+            .pipe(Effect.mapError(storageFail("Failed to read session")));
+          if (Option.isSome(win)) {
+            const callsById = new Map<string, ToolCall>();
+            for (const node of win.value.toolCallNodes) {
+              for (const call of node.toolCalls) callsById.set(call.id, call);
+            }
+            return {
+              messages: projectHistory(win.value.nodes, callsById),
+              total: win.value.total,
+              start: win.value.start,
+            };
+          }
+        }
         const maybe = yield* repo
           .getById(id, historyOptions?.agentId)
           .pipe(Effect.mapError(storageFail("Failed to read session")));
@@ -417,7 +474,6 @@ export const make = (
         }
         const nodes = maybe.value.nodes;
         const total = nodes.length;
-        const limit = historyLimit(historyOptions);
         const before =
           historyOptions?.before !== undefined && Number.isFinite(historyOptions.before)
             ? Math.min(Math.max(0, Math.floor(historyOptions.before)), total)
@@ -432,35 +488,7 @@ export const make = (
           for (const call of node.toolCalls) callsById.set(call.id, call);
         }
         return {
-          messages: slice.map((node): HistoryMessage => {
-            const toolResult = Option.getOrUndefined(node.toolResult);
-            const call =
-              node.role === "tool"
-                ? callsById.get(Option.getOrUndefined(node.toolCallId) ?? "")
-                : undefined;
-            return {
-              role: node.role,
-              nodeId: node.nodeId,
-              content: node.content,
-              blocks: node.blocks.length === 0 ? undefined : node.blocks,
-              createdAt: node.createdAt * 1000,
-              toolName: Option.getOrUndefined(node.toolName),
-              thinking: Option.getOrUndefined(node.thinking),
-              thinkingSignature: Option.getOrUndefined(node.thinkingSignature),
-              usage: Option.getOrUndefined(node.usage),
-              model: Option.getOrUndefined(node.model),
-              requestId: Option.getOrUndefined(node.requestId),
-              finishReason: Option.getOrUndefined(node.finishReason),
-              toolStatus: toolResult?.status,
-              exitCode: toolResult?.exitCode,
-              durationMs: toolResult?.durationMs,
-              args: call === undefined ? undefined : callArgsText(call.arguments),
-              locations:
-                call === undefined || call.locations.length === 0 ? undefined : call.locations,
-              diffs: call === undefined || call.diffs.length === 0 ? undefined : call.diffs,
-              toolCallId: node.role === "tool" ? Option.getOrUndefined(node.toolCallId) : undefined,
-            };
-          }),
+          messages: projectHistory(slice, callsById),
           total,
           start,
         };
