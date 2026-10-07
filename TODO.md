@@ -1,60 +1,21 @@
 # TODO
 
-## Shipped
+## Open
 
-Federation (node identity, peers, events, pair, binary, spans, resume,
-gateway + HTTPS upstreams), IR v2 (usage, tool status, lineage, model,
-blocks, thinking signatures, checkpoints+diffs), session lifecycle
-(file restore + rewind per store), 4 adapters (devin, cline, claude,
-cursor — all read+write), details tabs, sub-agents, sidebar config,
-mobile polish, coverage, takeover, folder-by-node, live contents,
-client identity (label + keypair), Desktop (the {node, agent, model,
-cwd} working environment + footer picker), the federated catalog
-(Models/Agents/Nodes sections with per-item toggles), credential store
-(nodes reference, per-node tokens), security hardening (address-bound
-tokens, SSE-only query auth, gateway confinement, SSH argv guards).
-
-## Remaining
-
-### Deferred by design
-
-- [x] `sessionCapabilities`/`promptCapabilities` probing — initialize
-      capabilities parsed + surfaced (`AgentInfo.capabilities`, "Supports"
-      row in details); prompt parts gate on `promptCapabilities` (400 on
-      unsupported); attach/delete gate on `sessionCapabilities`.
-- [x] `sepia` CLI `import/export`/`install`/`list`/`delete` for
-      claude/cursor — `--from`/`--to` + `--claude-dir`/`--cursor-dir`;
-      `ClaudeCode.toJsonl` writer added (the store was read-only)
-- [x] `lockHolderPid` across agents — `session/list` fans out per
-      registered agent (capability-gated); a cline-held lock reports its
-      holder pid to the devin attach.
-- [x] Mid-attach replay — replayed `TOOL_CALL_*` updates lazy-create
-      rows and synthesize starts; args arrive on update without a prior
-      start.
-- [x] Devin `prompt_history`/`rendered_commits` on rewind — investigated:
-      no reliable join to `message_nodes` exists for either table, so they
-      stay; rationale documented on `SqliteStorage.truncateSessionNodes`
-
-### Security (audit 2025 — fixed items live in docs/protocol.md "Hardening notes")
+### Security (deferred — rationale also in docs/protocol.md "Hardening notes")
 
 - [ ] **Client credential store encryption at rest** (`sepia:credentials`,
-      `sepia:token` in localStorage). Threat model: plaintext today defends
-      only against nothing — any same-origin script or anyone who can read
-      the browser profile recovers every peer token. Options weighed:
-      (a) AES-GCM keyed from `sepia:client.secretKey` — pure obfuscation,
-      the key sits in the same localStorage, so we did NOT ship it;
-      (b) non-extractable AES-GCM CryptoKey in IndexedDB — genuinely better
-      on Chrome/macOS+Windows where OSCrypt wraps IDB keys with the OS
-      keychain (defeats profile-directory theft), but Linux falls back to a
-      fixed OSCrypt password AND the sync stores (`getToken()`,
-      `peerSecret()`) would need async hydration with a boot race (401
-      flash, transiently credential-less peers); (c) document + defer —
-      chosen. Real fix is either (b) behind a hydration gate or a
+      `sepia:token` in localStorage). Plaintext today: any same-origin
+      script or anyone who can read the browser profile recovers every
+      peer token. Options weighed: (a) AES-GCM keyed from
+      `sepia:client.secretKey` — pure obfuscation (key sits in the same
+      localStorage), not shipped; (b) non-extractable AES-GCM CryptoKey in
+      IndexedDB — genuinely better on Chrome/macOS+Windows (OSCrypt wraps
+      IDB keys with the OS keychain) but Linux falls back to a fixed
+      OSCrypt password AND the sync stores (`getToken()`, `peerSecret()`)
+      need async hydration with a boot race (401 flash); (c) document +
+      defer — chosen. Real fix: (b) behind a hydration gate, or a
       server-issued httpOnly cookie + OS keychain for peer creds.
-- [ ] **Rate limiting on `POST /api/pair`** — none today. Codes are ~40 bits
-      and 60s-lived, so online brute force needs ~10¹⁰ req/s — infeasible —
-      but there is no per-IP throttle; add one if the node is ever exposed
-      off-LAN without a reverse proxy (deploy behind Caddy/nginx limits).
 - [ ] **Residual gateway SSRF** — `/api/servers` accepts any non-denied
       host by design (loopback/private ARE legitimate managed nodes), and
       the proxy injects the entry's stored credential at its
@@ -66,23 +27,60 @@ tokens, SSE-only query auth, gateway confinement, SSH argv guards).
       point an entry at an arbitrary internal HTTP service; the bearer
       already grants agent-level code exec, so this is bounded, but worth
       revisiting if scoped tokens ever ship.
-- [ ] **`SEPIA_ORIGINS=*` echoes any Origin** — deliberate (federated UIs on
-      other machines), and bearer auth remains the gate since no
-      ambient credential (cookie) exists. Note the interaction: a
-      `?access_token` URL pasted into a cross-origin page is replayable —
-      keep the SSE-only restriction in place.
+- [ ] **Rate limiting on `POST /api/pair`** — none today. Codes are ~40
+      bits and 60s-lived, so online brute force needs ~10¹⁰ req/s —
+      infeasible — but there is no per-IP throttle; add one if the node is
+      ever exposed off-LAN without a reverse proxy (deploy behind
+      Caddy/nginx limits).
 - [ ] **httpOnly cookie transport for the local token** — would remove the
-      token from JS reach (XSS) and from SSE URLs entirely; needs SameSite + CORS credential plumbing and a CSRF story, so deferred until
-      session-style auth is worth it.
+      token from JS reach (XSS) and from SSE URLs entirely; needs
+      SameSite + CORS credential plumbing and a CSRF story, so deferred
+      until session-style auth is worth it.
 
-### Housekeeping
+### Ops / QA
 
-- [x] `AGENTS.md` stale claims (sqlite stub note, coverage policy) — stubs
-      live in `apps/server`/`session-control` vitest configs; thresholds are
-      per-file floors, not a blanket 100%
-- [x] `package.json` script name vs `vp` built-in drift (`vp dev` vs
-      `vp run dev`) — `vp run dev` is canonical: root script runs
-      `sepia-web#dev` → `vp dev` inside `apps/web`; bare `vp dev` at the
-      workspace root errors (needs a package target)
 - [ ] Push-notification end-to-end verification on a real device —
       subscribe/reconcile/test coverage exist; real push untested
+- [ ] `SEPIA_*` body-caps audit — the large JSON handlers are capped
+      (`/api/servers`, proxy path, prompt parts); sweep for any remaining
+      unbounded `request.json()`/`arrayBuffer()` route
+
+## Done (previously "Shipped" + "Deferred by design")
+
+Architecture: ports-and-adapters split (`sepia-core` pure domain+ports;
+`sepia-{devin,cline,claude,cursor}` isolated adapters; `sepia-convert`;
+control plane on ports; server routes decomposed); perf (SQL-paged
+history, mtime-stamped list caches, pooled ACP lock probes, bounded
+callsIndex); `bun --compile` single binary (embedded UI, default deploy
+path); release tooling (`vp run release` → stamp → builds → tag/push →
+`bun publish` → `gh release`); ReasoningBlock test-timeout flake fixed.
+
+Federation: node identity, peers, events, pair, binary, spans, resume,
+gateway + HTTPS upstreams, hardened proxy (timeouts, body caps,
+credential confinement, origin pinning), project transfer + single-
+session pull/push, capability probing + gating (prompt parts, attach,
+delete — advertised capabilities surface in details), `lockHolderPid`
+across agents, mid-attach replay (lazy tool-call rows).
+
+IR v2 (usage, tool status, lineage, model, blocks, thinking signatures,
+checkpoints+diffs), session lifecycle (file restore + rewind per store —
+Devin `prompt_history`/`rendered_commits` kept on rewind: no reliable
+join; rationale on `truncateSessionNodes`), 4 adapters all read+write,
+CLI `import/export/install/list/delete` for claude/cursor.
+
+UI: details tabs, sub-agents, sidebar config, mobile polish, takeover
+flows, folder-by-node, live contents, client identity (label + keypair
+incl. server-mint fallback for insecure contexts), Desktop {node, agent,
+model, cwd} + footer picker, federated catalog (Models/Agents/Nodes +
+per-item toggles), credential store, skeleton/hydration honesty across
+the sidebar + chat header, focus-ring consistency, context-only-at-
+absolute-start.
+
+Security hardening shipped: address-bound tokens, SSE-only query auth,
+gateway confinement to `/api/*` + origin pinning, SSH argv guards,
+capability gating, auth-gated keypair mint, server body caps. (Deliberate
+`SEPIA_ORIGINS=*` behavior lives in docs/protocol.md "Hardening notes".)
+
+Housekeeping: AGENTS.md layout + stubs + coverage-policy notes corrected;
+`vp run dev` canonicalized; per-package coverage floors recalibrated
+post-split.
