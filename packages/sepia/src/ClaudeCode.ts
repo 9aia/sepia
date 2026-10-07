@@ -16,6 +16,7 @@ import {
   type ToolResultInfo,
 } from "./Domain.js";
 import { FILE_HISTORY_KIND } from "./Restore.js";
+import { decodeProjectDir } from "./Shared.js";
 import * as Devin from "./Devin.js";
 
 /**
@@ -59,23 +60,6 @@ const toSeconds = (value: unknown): number | undefined =>
   typeof value === "string" && !Number.isNaN(new Date(value).getTime())
     ? Math.floor(new Date(value).getTime() / 1000)
     : undefined;
-
-/**
- * The project dir name is the cwd with non-alphanumerics flattened to `-`,
- * so decoding is lossy — `-home-me-proj` → `/home/me/proj` recovers the
- * common case. Used only when no entry in the file carries a `cwd`.
- */
-export const decodeProjectDir = (name: string): string => {
-  const decoded = name.replaceAll("-", "/");
-  return decoded.startsWith("/") ? decoded : `/${decoded}`;
-};
-
-/**
- * The inverse of `decodeProjectDir` — the dir name a transcript for `cwd`
- * lands under (`/home/me/proj` → `-home-me-proj`). Lossy the same way:
- * `my proj` and `my-proj` collide.
- */
-export const encodeProjectDir = (cwd: string): string => cwd.replace(/[^a-zA-Z0-9]/g, "-");
 
 /**
  * A `message.content` array item mapped onto the IR block union.
@@ -994,3 +978,5 @@ export const toJsonl = (session: Session): string => {
   }
   return entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
 };
+
+export { decodeProjectDir, encodeProjectDir } from "./Shared.js";

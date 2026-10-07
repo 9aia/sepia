@@ -18,6 +18,7 @@ export * as Conversion from "./Conversion.js";
 export * as Devin from "./Devin.js";
 export * as Restore from "./Restore.js";
 export * as Rewind from "./Rewind.js";
+export * as Shared from "./Shared.js";
 export * as SessionSqlite from "./SessionSqlite.js";
 export { openSessionsDb } from "./SessionSqlite.js";
 export * as SqliteStorage from "./SqliteStorage.js";
