@@ -8,5 +8,5 @@ pub mod registry;
 pub mod store;
 
 pub use client::DriverClient;
-pub use registry::{DriverEntry, DriverRegistry, refresh_manifest};
+pub use registry::{DriverEntry, DriverRegistry, command_resolves, refresh_manifest};
 pub use store::{MergedStore, RemoteStore};

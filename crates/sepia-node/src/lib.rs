@@ -23,6 +23,9 @@ use sepia_core::rewind::RewindPlan;
 use sepia_driver_host::DriverRegistry;
 use sepia_driver_host::store::RemoteStore;
 use sepia_driver_sdk::Capability;
+use sepia_http::AppState;
+use sepia_http::env::Env;
+use sepia_http::routes::sessions::ImportTarget;
 use sepia_meta::MetaStore;
 
 /// Node-local state layout under `SEPIA_HOME` (default
@@ -147,21 +150,12 @@ pub async fn build(paths: &NodePaths, mut options: ControlPlaneOptions) -> std::
         tracing::warn!("driver discovery: {warning}");
     }
 
-    // Agents: built-in specs whose driver AND command resolve, with the
-    // SEPIA_AGENT_<ID>_COMMAND argv override applied.
-    let usable: Vec<String> = registry
-        .usable_agents()
-        .iter()
-        .filter_map(|m| m.agent_command.clone())
-        .collect();
+    // Agents: built-in specs whose driver exists AND whose command
+    // resolves. `SEPIA_AGENT_<ID>_COMMAND` overrides the argv BEFORE the
+    // resolution check — it substitutes the real agent binary (or a
+    // test's mock).
     let agents: Vec<Arc<dyn AgentRuntime>> = builtin_agents()
         .into_iter()
-        .filter(|spec| {
-            registry
-                .manifest(&spec.id)
-                .and_then(|m| m.agent_command.as_ref())
-                .is_some_and(|cmd| usable.contains(cmd))
-        })
         .map(|mut spec| {
             if let Some(override_cmd) =
                 std::env::var(format!("SEPIA_AGENT_{}_COMMAND", spec.id.to_uppercase()))
@@ -173,8 +167,19 @@ pub async fn build(paths: &NodePaths, mut options: ControlPlaneOptions) -> std::
                     .map(str::to_string)
                     .collect();
             }
-            Arc::new(SpecRuntime { spec }) as Arc<dyn AgentRuntime>
+            spec
         })
+        .filter(|spec| {
+            let driver_present = registry
+                .manifest(&spec.id)
+                .is_some_and(|m| m.agent_command.is_some());
+            let cmd_resolves = spec
+                .command
+                .first()
+                .is_some_and(|c| sepia_driver_host::command_resolves(c));
+            driver_present && cmd_resolves
+        })
+        .map(|spec| Arc::new(SpecRuntime { spec }) as Arc<dyn AgentRuntime>)
         .collect();
 
     // Stores: every SessionStore driver, merged; extras degrade to misses.
@@ -187,7 +192,7 @@ pub async fn build(paths: &NodePaths, mut options: ControlPlaneOptions) -> std::
     for entry in registry.with(&Capability::Rewind) {
         match entry.client().await {
             Ok(client) => {
-                let store = RemoteStore::new(Arc::clone(client), entry.manifest.id.clone());
+                let store = RemoteStore::new(client, entry.manifest.id.clone());
                 // Rewinders are looked up by agent id (see agent_for_backend),
                 // which coincides with the driver id for the built-in set.
                 rewinders.insert(
@@ -214,4 +219,105 @@ pub async fn build(paths: &NodePaths, mut options: ControlPlaneOptions) -> std::
         repo,
         paths: paths.clone(),
     })
+}
+
+fn control_err(e: impl std::fmt::Display) -> ControlError {
+    ControlError {
+        code: sepia_control::ControlErrorCode::Internal,
+        message: e.to_string(),
+        cause: Some(e.to_string()),
+    }
+}
+
+/// Build + serve the node — the whole `sepia-node` boot path, shared with
+/// `sepia serve` so both binaries behave identically. Call on a tokio
+/// runtime; returns when the listener fails or after graceful shutdown.
+///
+/// # Errors
+/// `std::io::Error` on node build, bind, or serve failure.
+pub async fn serve(env: &Env) -> std::io::Result<()> {
+    let paths = NodePaths::new(env.home.clone());
+    let node = build(
+        &paths,
+        ControlPlaneOptions {
+            idle_ttl: Some(env.idle_ttl),
+            sweep_interval: Some(env.sweep),
+            probe_cwd: std::env::current_dir().ok(),
+            file_history_dir: Some(env.claude_dir.join("file-history")),
+            terminate_lock_holder: Some(Arc::new(|pid| {
+                // SIGTERM — the documented takeover signal.
+                #[cfg(unix)]
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid as i32),
+                    nix::sys::signal::Signal::SIGTERM,
+                );
+                #[cfg(not(unix))]
+                let _ = pid;
+            })),
+            ..ControlPlaneOptions::default()
+        },
+    )
+    .await?;
+
+    // Conversion seams — devin↔cline, like the TS `deps.convert`.
+    let devin_store = node
+        .registry
+        .merged_store()
+        .await
+        .for_agent("devin")
+        .map(|s| Arc::new(s.clone()) as Arc<dyn sepia_core::storage::SessionRepository>);
+    let cline_dir = env.cline_dir.clone();
+    let state = if let Some(devin) = &devin_store {
+        let repo = Arc::clone(devin);
+        let cline = cline_dir.clone();
+        let convert = Arc::new(move |id: String, target: ImportTarget| {
+            let repo = Arc::clone(&repo);
+            let cline = cline.clone();
+            Box::pin(async move {
+                match target {
+                    ImportTarget::Cline => {
+                        sepia_convert::install_cline(&repo, &id, &cline, None, false)
+                            .await
+                            .map_err(|e| control_err(e.message))
+                    }
+                    ImportTarget::Devin => sepia_convert::import_cline(
+                        &cline.join("sessions").join(&id),
+                        None,
+                        &repo,
+                        false,
+                    )
+                    .await
+                    .map_err(|e| control_err(e.message)),
+                }
+            }) as futures::future::BoxFuture<'static, Result<String, ControlError>>
+        }) as sepia_http::ConvertSession;
+        let repo2 = Arc::clone(devin);
+        let import = Arc::new(move |session: Session, _target: ImportTarget| {
+            let repo = Arc::clone(&repo2);
+            Box::pin(async move {
+                sepia_convert::import_session(&repo, &session)
+                    .await
+                    .map_err(|e| control_err(e.message))
+            }) as futures::future::BoxFuture<'static, Result<String, ControlError>>
+        }) as sepia_http::ImportSession;
+        AppState::from_env(env, Arc::clone(&node.plane))
+            .with_convert(convert)
+            .with_import_session(import)
+    } else {
+        AppState::from_env(env, Arc::clone(&node.plane))
+    };
+    run(env, state, node).await
+}
+
+async fn run(env: &Env, state: AppState, node: Node) -> std::io::Result<()> {
+    let listener = tokio::net::TcpListener::bind((env.host.as_str(), env.port)).await?;
+    tracing::info!("sepia-node listening on {}:{}", env.host, env.port);
+    let app = sepia_http::app(state);
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            tracing::info!("sepia-node shutting down");
+            node.plane.close_all().await;
+        })
+        .await
 }

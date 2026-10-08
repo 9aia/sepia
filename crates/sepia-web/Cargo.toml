@@ -1,0 +1,71 @@
+[package]
+name = "sepia-web"
+description = "Leptos UI for Sepia — session list, session detail, and live chat over the node API"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# `cdylib` so the `hydrate` feature build produces a wasm-bindgen library.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Browser build: wasm-bindgen hydration entry + DOM/SSE access.
+hydrate = [
+  "leptos/hydrate",
+  "dep:wasm-bindgen",
+  "dep:wasm-bindgen-futures",
+  "dep:js-sys",
+  "dep:web-sys",
+  "dep:console_error_panic_hook",
+]
+# Server build: SSR rendering + server functions + the node HTTP client.
+ssr = [
+  "leptos/ssr",
+  "leptos_router/ssr",
+  "leptos_meta/ssr",
+  "dep:async-trait",
+  "dep:axum",
+  "dep:leptos_axum",
+  "dep:tokio",
+  "dep:ureq",
+]
+
+[dependencies]
+leptos.workspace = true
+leptos_router.workspace = true
+leptos_meta.workspace = true
+sepia-core.workspace = true
+sepia-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# hydrate-only
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
+web-sys = { workspace = true, optional = true, features = [
+  "Element",
+  "ErrorEvent",
+  "EventSource",
+  "HtmlElement",
+  "HtmlTextAreaElement",
+  "MessageEvent",
+  "Navigator",
+  "ServiceWorkerContainer",
+  "ServiceWorkerRegistration",
+  "Window",
+] }
+console_error_panic_hook = { workspace = true, optional = true }
+
+# ssr-only
+async-trait = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+leptos_axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }

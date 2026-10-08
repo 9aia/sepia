@@ -145,7 +145,7 @@ impl DriverRegistry {
 }
 
 /// Whether `command` resolves — first word on PATH.
-fn command_resolves(command: &str) -> bool {
+pub fn command_resolves(command: &str) -> bool {
     let Some(program) = command.split_whitespace().next() else {
         return false;
     };
