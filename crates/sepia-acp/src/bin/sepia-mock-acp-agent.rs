@@ -15,6 +15,10 @@
 //! - `MOCK_PERM_TEXT`: the prompt text that triggers a
 //!   `session/request_permission` request (default `perm`).
 //! - `MOCK_EXIT_AFTER_INIT`: exit(0) right after initialize.
+//! - `MOCK_EXIT_AFTER_PROMPT`: exit(1) instead of answering the first
+//!   session/prompt — mid-run agent death.
+//! - `MOCK_BAD_UPDATES=1`: send a garbage update line + a truncated
+//!   JSON line before answering the first session/prompt.
 //! - `MOCK_LOAD_SLOW_MS` / `MOCK_LIST_SLOW_MS`: per-call delay.
 
 use std::io::{BufRead, Write};
@@ -179,6 +183,26 @@ fn main() {
             }
             ("session/prompt", Some(id)) => {
                 sleep_ms("MOCK_PROMPT_SLOW_MS");
+                if env("MOCK_BAD_UPDATES").is_some() {
+                    let _ = writeln!(out, "{{ this is not json");
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        notify(
+                            "session/update",
+                            json!({
+                                "sessionId": msg["params"]["sessionId"],
+                                "update": { "sessionUpdate": "agent_message_chunk",
+                                            "content": 42 }
+                            })
+                        )
+                    );
+                    let _ = writeln!(out, r#"{{"partial": "#);
+                }
+                if env("MOCK_EXIT_AFTER_PROMPT").is_some() {
+                    let _ = out.flush();
+                    std::process::exit(1);
+                }
                 let text = msg["params"]["prompt"][0]["text"]
                     .as_str()
                     .unwrap_or_default()
