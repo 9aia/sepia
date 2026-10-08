@@ -822,7 +822,7 @@ export function SessionChat({
           1rem padding everywhere else, so desktop is unchanged. */}
       <PromptInput
         onSubmit={onSubmit}
-        className="shrink-0 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]"
+        className="mx-auto w-full max-w-3xl shrink-0 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]"
       >
         <PromptInputApiBridge apiRef={clearAttachmentsRef} />
         <PromptInputBody>
@@ -1090,13 +1090,17 @@ function Attachments({ blocks }: { readonly blocks: ReadonlyArray<HistoryBlock> 
           <span
             key={i}
             title={view.name}
-            className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/60 bg-background/40 px-2 py-1 text-xs text-muted-foreground"
+            className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border/60 bg-muted/40 py-1.5 pr-2.5 pl-1.5 text-xs"
           >
-            <HugeiconsIcon icon={File01Icon} className="size-3.5 shrink-0" strokeWidth={2} />
-            <span className="min-w-0 truncate">{view.name}</span>
-            {view.detail !== "" && (
-              <span className="shrink-0 text-muted-foreground/60">{view.detail}</span>
-            )}
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+              <HugeiconsIcon icon={File01Icon} className="size-3.5" strokeWidth={2} />
+            </span>
+            <span className="flex min-w-0 flex-col leading-tight">
+              <span className="truncate font-medium text-foreground/90">{view.name}</span>
+              {view.detail !== "" && (
+                <span className="truncate text-muted-foreground/70">{view.detail}</span>
+              )}
+            </span>
           </span>
         ),
       )}

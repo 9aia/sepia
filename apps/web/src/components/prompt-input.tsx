@@ -236,20 +236,24 @@ export function PromptInputAttachments({ className, ...props }: HTMLAttributes<H
         <span
           key={attachment.id}
           title={`${attachment.name} · ${formatAttachmentSize(attachment.size)}`}
-          className="inline-flex max-w-56 items-center gap-1.5 rounded-lg border border-border/60 bg-muted/50 py-1 pr-1 pl-1.5 text-xs text-muted-foreground"
+          className="inline-flex max-w-56 items-center gap-2 rounded-lg border border-border/60 bg-muted/40 py-1.5 pr-1.5 pl-1.5 text-xs"
         >
           {attachment.previewUrl !== undefined ? (
             <img
               src={attachment.previewUrl}
               alt={attachment.name}
-              className="size-7 shrink-0 rounded object-cover"
+              className="size-7 shrink-0 rounded-md object-cover"
             />
           ) : (
-            <HugeiconsIcon icon={File01Icon} className="size-4 shrink-0" strokeWidth={2} />
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+              <HugeiconsIcon icon={File01Icon} className="size-4" strokeWidth={2} />
+            </span>
           )}
-          <span className="min-w-0 truncate">{attachment.name}</span>
-          <span className="shrink-0 text-muted-foreground/60">
-            {formatAttachmentSize(attachment.size)}
+          <span className="flex min-w-0 flex-col leading-tight">
+            <span className="truncate font-medium text-foreground/90">{attachment.name}</span>
+            <span className="truncate text-muted-foreground/70">
+              {formatAttachmentSize(attachment.size)}
+            </span>
           </span>
           <button
             type="button"
