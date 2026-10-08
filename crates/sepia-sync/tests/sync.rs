@@ -237,6 +237,7 @@ async fn start_stub(sessions: Vec<Session>) -> StubNode {
 
 fn fast_options() -> SyncOptions {
     SyncOptions {
+        on_event: None,
         connect_timeout: Duration::from_millis(300),
         request_timeout: Duration::from_secs(2),
         // Long enough that no mid-test reconnect gap drops emitted

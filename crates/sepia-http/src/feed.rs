@@ -456,6 +456,30 @@ impl LiveListeners {
                                 json!({ "busy": busy }),
                             );
                         }
+                        // Marker patches for downstream consumers (the
+                        // hub's push fan-out reads them off the feed —
+                        // a session "run_finished" is distinct from
+                        // "busy: false" because cancel also clears busy).
+                        if events
+                            .iter()
+                            .any(|e| matches!(e, SessionEvent::RunFinished { .. }))
+                        {
+                            feed.emit_session(
+                                &id_owned,
+                                agent_id.as_deref(),
+                                json!({ "runFinished": true }),
+                            );
+                        }
+                        if events.iter().any(|e| {
+                            matches!(e, SessionEvent::Custom { name, .. }
+                                if name == "acp:permission_request")
+                        }) {
+                            feed.emit_session(
+                                &id_owned,
+                                agent_id.as_deref(),
+                                json!({ "permissionRequested": true }),
+                            );
+                        }
                     }
                     // A lagged listener just missed an edge; the next one
                     // still flips the flag.

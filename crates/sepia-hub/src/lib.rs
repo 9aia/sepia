@@ -12,6 +12,7 @@
 //!   `sw.js`, `icon.svg`, `pkg/` when cargo-leptos has run).
 
 pub mod proxy;
+pub mod push_routes;
 pub mod sync_api;
 
 use std::net::SocketAddr;
@@ -42,6 +43,8 @@ pub struct HubState {
     /// node's `(url, token)` for session-scoped proxy calls.
     /// `None` → everything uses `node_url` (single-node mode).
     pub session_router: Option<SessionRouter>,
+    /// Hub-owned push subscription store — `None` → `/api/push/*` 501s.
+    pub push: Option<Arc<sepia_push::PushStore>>,
     /// Long-lived streams: no global deadline, but a 30s body-recv
     /// timeout so a half-dead client is detected on the next ping.
     sse_agent: ureq::Agent,
@@ -80,6 +83,7 @@ impl HubState {
             node_url: node_url.into(),
             node_token,
             session_router: None,
+            push: None,
             sse_agent,
             http_agent,
         }
@@ -213,6 +217,10 @@ pub fn router(state: HubState) -> Router {
         // SSE bridges — must be registered before the `/api/*` wildcard.
         .route("/api/events", get(proxy::sse_events))
         .route("/api/sessions/{id}/stream", get(proxy::sse_session_stream))
+        // Hub-owned push — intercepted before the passthrough so every
+        // node notifies through one subscription store.
+        .route("/api/push/vapid", any(push_routes::vapid))
+        .route("/api/push/subscribe", any(push_routes::subscribe))
         .route("/api/{*rest}", any(proxy::passthrough))
         .leptos_routes_with_context(&state, routes, provide_node.clone(), shell_fn)
         .fallback(file_and_error_handler_with_context::<HubState, _>(
@@ -264,12 +272,47 @@ pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
             None => sepia_sync::engine::NodeTarget::new(node),
         }
     });
-    let engine = sepia_sync::SyncEngine::spawn(
-        projection,
-        outbox,
-        targets,
-        sepia_sync::engine::SyncOptions::default(),
-    );
+    let push = Arc::new(sepia_push::PushStore::open(sepia_meta::MetaStore::open(
+        &home.join("push.json"),
+    )));
+    let projection_for_hook = projection.clone();
+    let push_for_hook = Arc::clone(&push);
+    let options = sepia_sync::engine::SyncOptions {
+        on_event: Some(Arc::new(
+            move |node_id: &str, event: &sepia_sync::client::FeedEvent| {
+                let sepia_sync::client::FeedEvent::Diff { kind, id, patch, .. } = event else {
+                    return;
+                };
+                if kind != "session" {
+                    return;
+                }
+                let title = projection_for_hook
+                    .session(node_id, id)
+                    .map_or_else(|_| id.clone(), |opt| {
+                        opt.map_or_else(|| id.clone(), |r| r.title)
+                    });
+                let url = format!("/?session={id}");
+                if patch.get("runFinished") == Some(&serde_json::Value::Bool(true)) {
+                    push_for_hook.send(
+                        sepia_push::Kind::Done,
+                        "Session finished",
+                        &format!("{title} finished its run."),
+                        &url,
+                    );
+                }
+                if patch.get("permissionRequested") == Some(&serde_json::Value::Bool(true)) {
+                    push_for_hook.send(
+                        sepia_push::Kind::Permission,
+                        "Approval needed",
+                        &format!("{title} is waiting for you."),
+                        &url,
+                    );
+                }
+            },
+        ) as sepia_sync::engine::FeedHook),
+        ..sepia_sync::engine::SyncOptions::default()
+    };
+    let engine = sepia_sync::SyncEngine::spawn(projection, outbox, targets, options);
     let options = leptos_options(config);
     let Some(upstream) = nodes.first().cloned() else {
         return Err("no nodes configured".into());
@@ -281,6 +324,7 @@ pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
         upstream.url.as_str(),
         upstream.token.clone().map(Into::into),
     );
+    state.push = Some(push);
     let router_api = Arc::clone(&api);
     state.session_router = Some(Arc::new(move |id| router_api.node_url_for(id, None)));
     Ok(state)

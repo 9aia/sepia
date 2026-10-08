@@ -23,8 +23,12 @@ use tokio_util::sync::CancellationToken;
 use crate::client::{ClientConfig, FeedEvent, NodeClient, NodeError};
 use crate::{NodeRef, NodeStatus, NodeWrite, PatchStatus, ProjectionStore, SyncError};
 
+/// Sink for every feed frame the engine applies — the hub's push
+/// fan-out rides it. Called per event before projection apply.
+pub type FeedHook = Arc<dyn Fn(&str, &FeedEvent) + Send + Sync>;
+
 /// Tuning knobs — production defaults; tests shrink the sleeps.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub struct SyncOptions {
     /// TCP connect budget for node calls.
     pub connect_timeout: Duration,
@@ -42,6 +46,8 @@ pub struct SyncOptions {
     pub resync_interval: Duration,
     /// Capacity of the per-node SSE event channel.
     pub feed_channel: usize,
+    /// Optional per-event hook (node id + frame). Inert `None`.
+    pub on_event: Option<FeedHook>,
 }
 
 impl Default for SyncOptions {
@@ -54,6 +60,7 @@ impl Default for SyncOptions {
             backoff_max: Duration::from_secs(30),
             resync_interval: Duration::from_secs(300),
             feed_channel: 256,
+            on_event: None,
         }
     }
 }
@@ -666,6 +673,9 @@ async fn apply_event(
     shared: &Arc<Shared>,
     event: FeedEvent,
 ) -> Result<(), SyncError> {
+    if let Some(hook) = &shared.options.on_event {
+        hook(&node.id, &event);
+    }
     match event {
         FeedEvent::Diff {
             kind, id, patch, ..

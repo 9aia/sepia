@@ -212,5 +212,7 @@ fn hub_e2e_over_a_real_node() {
     };
     let _ = hub.kill();
     let _ = node.kill();
+    let _ = hub.wait();
+    let _ = node.wait();
     assert!(body.contains("Capstone session"), "html: {body}");
 }
