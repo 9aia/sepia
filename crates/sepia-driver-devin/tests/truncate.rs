@@ -2,9 +2,6 @@
 
 //! `session.rewind` truncation against a real writable store.
 
-use std::sync::Arc;
-
-use sepia_core::Session;
 use sepia_core::rewind::{self, RewindTarget};
 use sepia_core::storage::SessionRepository;
 use sepia_driver_devin::store::DevinStore;
