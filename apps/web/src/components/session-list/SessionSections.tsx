@@ -1,4 +1,3 @@
-import { cn } from "cn";
 import { useMemo, useState, type RefObject } from "react";
 import { useLiveQuery } from "@tanstack/react-db";
 import { eq } from "@tanstack/db";
@@ -545,6 +544,24 @@ function ProjectsSection({
   };
 
   const [open, setOpen] = useUiState("ui.section.projects", true);
+  // While the fan-out resolves the section is a pure skeleton — placeholder
+  // blocks only, no real "Projects" title or action affordances.
+  if (!projectsLoaded) {
+    return (
+      <section className="group/section" aria-busy="true" aria-label="Loading projects">
+        {/* matches SectionHeader: px-3 pt-6 pb-1.5 + muted label */}
+        <div className="flex items-center justify-between px-3 pt-6 pb-1.5">
+          <Skeleton className="h-4 w-1/4" />
+        </div>
+        {open && (
+          <div className="flex flex-col gap-1 px-1.5 pb-2">
+            <Skeleton className="mx-2 my-1.5 h-4 w-3/5" />
+            <Skeleton className="mx-2 my-1.5 h-4 w-4/5" />
+          </div>
+        )}
+      </section>
+    );
+  }
   return (
     <section className="group/section">
       <SectionHeader
@@ -576,17 +593,7 @@ function ProjectsSection({
           </>
         }
       />
-      {open && !projectsLoaded && (
-        <div
-          className="flex flex-col gap-1 px-1.5 pb-2"
-          aria-busy="true"
-          aria-label="Loading projects"
-        >
-          <Skeleton className="mx-2 my-1.5 h-4 w-3/5" />
-          <Skeleton className="mx-2 my-1.5 h-4 w-4/5" />
-        </div>
-      )}
-      {open && projectsLoaded && projects.length === 0 && (
+      {open && projects.length === 0 && (
         <p className="px-3 py-1 text-xs text-muted-foreground">No projects yet.</p>
       )}
       {open &&
@@ -866,13 +873,8 @@ export function SessionSections({
     }
   });
   if (visible.length === 0) return null;
-  // The separator line originally only topped the pinned/projects/recents
-  // block — folders/archived sat below it, line-free.
-  const hasTopSection = visible.some(
-    (section) => section.id === "pinned" || section.id === "projects" || section.id === "sessions",
-  );
   return (
-    <div className={cn("shrink-0 pb-2", hasTopSection && "border-t border-border")}>
+    <div className="shrink-0 pb-2">
       {visible.map((section) => {
         const label = sidebarSectionLabel(section);
         switch (section.id) {

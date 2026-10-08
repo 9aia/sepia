@@ -64,7 +64,10 @@ export function ChatPanel() {
   // The node serving this UI — "this machine" on loopback, its nickname or
   // "local" for a remote client. Drives the unreachable-node empty state.
   const originLabel = useNodeLabel(undefined);
-  const { data: sessions = [], isLoading: sessionsLoading } = useSessions();
+  // `isPending` holds until the fan-out settles — `isLoading` would let the
+  // "No session selected" empty state flash in the pending-but-not-fetching
+  // gap before the first response lands.
+  const { data: sessions = [], isPending: sessionsLoading } = useSessions();
   const session = resolveSession(sessions, selectedId) ?? null;
   const sessionId = session?.id ?? null;
 

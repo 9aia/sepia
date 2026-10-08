@@ -43,6 +43,8 @@ function Hint({ children }: { readonly children: React.ReactNode }) {
 
 interface FilterMenuProps {
   readonly agents: ReadonlyArray<AgentInfo>;
+  /** false while the roster query is pending — the empty state waits for it. */
+  readonly agentsLoaded: boolean;
   readonly agentFilter: ReadonlyArray<string>;
   readonly dateFilter: DateFilter;
   readonly statusFilter: StatusFilter;
@@ -53,6 +55,7 @@ interface FilterMenuProps {
 
 export function FilterMenu({
   agents,
+  agentsLoaded,
   agentFilter,
   dateFilter,
   statusFilter,
@@ -90,8 +93,9 @@ export function FilterMenu({
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
             {/* Empty roster = no node reachable — point at the fix instead
-                of opening a blank submenu. */}
-            {agents.length === 0 && (
+                of opening a blank submenu. Gated on a settled query so it
+                can't flash while the roster is still loading. */}
+            {agentsLoaded && agents.length === 0 && (
               <>
                 <DropdownMenuItem disabled>
                   <span className="text-muted-foreground">No agents — connect a node</span>

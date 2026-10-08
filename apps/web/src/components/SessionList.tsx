@@ -63,11 +63,14 @@ const messageOf = (err: unknown, fallback: string): string =>
   err instanceof Error ? err.message : fallback;
 
 export function SessionList() {
-  const { data: sessions = [], isLoading: loading, error } = useSessions();
+  // `isPending` — not `isLoading` — is the empty-state gate: it holds until
+  // the fan-out query settles (pending-but-not-fetching included), so the
+  // "No sessions" states can't flash before a real response arrives.
+  const { data: sessions = [], isPending, error } = useSessions();
   // Gates every creation affordance in the sidebar — with zero reachable
   // nodes the body is just the "No nodes connected" empty state.
   const nodesConnected = useNodesConnected();
-  const { data: agents = [] } = useAgents();
+  const { data: agents = [], isPending: agentsPending } = useAgents();
   const deleteMutation = useDeleteSession();
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
   const settings = useStore(settingsStore);
@@ -219,6 +222,7 @@ export function SessionList() {
         <div className="ml-auto flex items-center gap-1">
           <FilterBar
             agents={agents}
+            agentsLoaded={!agentsPending}
             filter={filter}
             filterRef={filterRef}
             modKey={modKey}
@@ -245,7 +249,7 @@ export function SessionList() {
       </div>
 
       <div className="flex shrink-0 flex-col gap-1.5 px-4 py-3">
-        {loading || nodesConnected === "checking" ? (
+        {isPending || nodesConnected === "checking" ? (
           <Skeleton className="h-9 w-full rounded-4xl" />
         ) : nodesConnected === "connected" ? (
           <Button
@@ -276,7 +280,7 @@ export function SessionList() {
               archivedSessions={archivedSessions}
               selectedId={selectedId}
               resolvedCwd={resolvedCwd}
-              showContent={!loading && error === null}
+              showContent={!isPending && error === null}
               scrollRef={bodyScrollRef}
               hotkeyTarget={asideRef}
               onNewSession={setCreateCwd}
@@ -285,7 +289,7 @@ export function SessionList() {
               onDelete={onDeleteSession}
             />
 
-            {loading && <SessionTreeSkeleton />}
+            {isPending && <SessionTreeSkeleton />}
             {error !== null && (
               <EmptyScreen
                 className="p-6"
@@ -294,10 +298,10 @@ export function SessionList() {
                 description={messageOf(error, "Failed to list sessions")}
               />
             )}
-            {!loading && !error && filtered.length === 0 && sessions.length === 0 && (
+            {!isPending && !error && filtered.length === 0 && sessions.length === 0 && (
               <ListEmptyState />
             )}
-            {!loading && !error && filtered.length === 0 && sessions.length > 0 && (
+            {!isPending && !error && filtered.length === 0 && sessions.length > 0 && (
               <EmptyScreen
                 className="p-6"
                 icon={SearchAreaIcon}

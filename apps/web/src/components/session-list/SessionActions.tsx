@@ -61,7 +61,7 @@ export function SessionActions({
   const resume = useResumeSession();
   // Already filtered for this session's own pair; empty in single-node mode.
   const resumeNodes = useResumeTargets(session);
-  const { data: projects } = useProjects();
+  const { data: projects, dataAvailable: projectsLoaded } = useProjects();
   const { data: agents = [] } = useAgents();
   const convertTargets = agents.filter((a) => a.id !== session.agent);
   const agentLabel = (id: string): string => agents.find((a) => a.id === id)?.label ?? id;
@@ -139,7 +139,7 @@ export function SessionActions({
             New project…
           </Item>
           {sameNodeProjects.length > 0 && <Separator />}
-          {sameNodeProjects.length === 0 && (
+          {projectsLoaded && sameNodeProjects.length === 0 && (
             <Item disabled>
               <span className="text-muted-foreground">No projects yet</span>
             </Item>

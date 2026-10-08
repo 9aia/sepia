@@ -18,6 +18,8 @@ export type SortKey = "newest" | "oldest" | "title";
 
 interface FilterBarProps {
   readonly agents: ReadonlyArray<AgentInfo>;
+  /** false while the roster query is pending — empty states wait for it. */
+  readonly agentsLoaded: boolean;
   readonly filter: string;
   readonly filterRef: RefObject<HTMLInputElement | null>;
   readonly modKey: string;
@@ -34,6 +36,7 @@ interface FilterBarProps {
 
 export function FilterBar({
   agents,
+  agentsLoaded,
   filter,
   filterRef,
   modKey,
@@ -102,6 +105,7 @@ export function FilterBar({
       </Popover>
       <FilterMenu
         agents={agents}
+        agentsLoaded={agentsLoaded}
         agentFilter={agentFilter}
         dateFilter={dateFilter}
         statusFilter={statusFilter}

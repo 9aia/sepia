@@ -104,8 +104,8 @@ export function ClientBar() {
   const nodesConnected = useNodesConnected();
   const statuses = useNodeStatuses(peers);
   const descriptors = usePeerDescriptors(peers);
-  const { data: agents = [] } = useAgents();
-  const { data: sessions = [] } = useSessions();
+  const { data: agents = [], isPending: agentsPending } = useAgents();
+  const { data: sessions = [], isPending: sessionsPending } = useSessions();
   const settingsOpen = useStore(sepiaStore, (state) => state.settingsOpen);
   useAppHotkey("app.settings", () => setSettingsOpen(!settingsOpen));
   const openSettings = (open: boolean): void => setSettingsOpen(open);
@@ -268,7 +268,7 @@ export function ClientBar() {
   const initial = client?.label.trim().charAt(0).toUpperCase();
 
   return (
-    <div className="border-t border-border p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <div className="p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -406,7 +406,7 @@ export function ClientBar() {
                     {desktop.agent === id && <Check />}
                   </DropdownMenuItem>
                 ))}
-                {agentItems.length === 0 && (
+                {!agentsPending && agentItems.length === 0 && (
                   <DropdownMenuItem disabled>
                     <span className="text-muted-foreground">No agents</span>
                   </DropdownMenuItem>
@@ -471,7 +471,7 @@ export function ClientBar() {
                     {desktop.cwd === dir && <Check />}
                   </DropdownMenuItem>
                 ))}
-                {dirItems.length === 0 && (
+                {!sessionsPending && dirItems.length === 0 && (
                   <DropdownMenuItem disabled>
                     <span className="text-muted-foreground">No known directories</span>
                   </DropdownMenuItem>
