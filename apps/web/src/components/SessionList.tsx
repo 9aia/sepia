@@ -24,7 +24,7 @@ import { useDeleteSession } from "../hooks/query/useDeleteSession";
 import { useUserInfo } from "../hooks/query/useUserInfo";
 import { enabledAgentOr } from "../lib/catalog";
 import { modelArgsFor } from "../lib/models";
-import { bareProjectId, isLocalNode, projectKey, resolveSession, sessionKey } from "../lib/format";
+import { bareProjectId, isLocalNode, projectKey, resolveSession } from "../lib/format";
 import { useNodesConnected } from "../hooks/query/useNodes";
 import { useSessions } from "../hooks/query/useSessions";
 import { Button } from "./ui/button";
@@ -41,7 +41,7 @@ import { settingsStore } from "../lib/settings";
 import { SessionTreeSkeleton } from "./session-list/SessionTreeSkeleton";
 import { ListEmptyState } from "./session-list/ListEmptyState";
 import { ProjectNameDialog, SessionSections } from "./session-list/SessionSections";
-import { getRecents } from "../lib/recents";
+import { resolveRecentSessions } from "../lib/recents";
 import { ClientBar } from "./session-list/ClientBar";
 import { resolveCreateCwd, resolveCreateTarget } from "../lib/focus";
 
@@ -180,22 +180,15 @@ export function SessionList() {
   const activeSessions = useMemo(() => filtered.filter((s) => s.archived !== true), [filtered]);
   const archivedSessions = useMemo(() => filtered.filter((s) => s.archived === true), [filtered]);
 
-  const recentSessions = useMemo(() => {
-    // Recents may hold the same session twice — bare-id entries from before
-    // the agent-scoped keys, plus the scoped one. Resolve then dedup by key.
-    const seen = new Set<string>();
-    return getRecents()
-      .map((key) => resolveSession(activeSessions, key))
-      .filter((s): s is NonNullable<typeof s> => {
-        if (s === undefined) return false;
-        const key = sessionKey(s);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+  const recentSessions = useMemo(
+    // Membership is the opened-MRU, but the rows keep `activeSessions`
+    // order (the sort pick — updatedAt by default): ordering by open
+    // recency moved the clicked row to the section's top on every select.
+    () => resolveRecentSessions(activeSessions),
     // selectedId change refreshes the MRU
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessions, selectedId]);
+    [activeSessions, selectedId],
+  );
 
   // Bare N — inFormField guards against typing; Mod+N is browser-reserved
   // (Ctrl+N = new window can't be preventDefault'd in Chrome/Firefox).

@@ -1,3 +1,5 @@
+import { resolveSession, sessionKey } from "./format";
+
 /**
  * Most-recently-opened session ids (MRU first). Client-local — recents are a
  * browsing convenience, not shared app data.
@@ -30,4 +32,27 @@ export const pushRecent = (id: string): void => {
   } catch {
     // Storage unavailable — recents just don't persist.
   }
+};
+
+/**
+ * The sidebar's "Sessions" section: every stored recent that resolves, in
+ * the INPUT list's order — not MRU order. Opening a session is not
+ * activity, and sorting the section by open recency would teleport the
+ * clicked row to the section's top on every select. Recents may also hold
+ * the same session twice (bare ids from before agent-scoped keys, plus the
+ * scoped one); resolution collapses both to one key.
+ */
+export const resolveRecentSessions = <
+  T extends { readonly agent: string; readonly id: string; readonly node?: string },
+>(
+  sessions: ReadonlyArray<T>,
+  recents: ReadonlyArray<string> = getRecents(),
+): T[] => {
+  const keys = new Set(
+    recents
+      .map((key) => resolveSession(sessions, key))
+      .filter((session): session is NonNullable<typeof session> => session !== undefined)
+      .map(sessionKey),
+  );
+  return sessions.filter((session) => keys.has(sessionKey(session)));
 };

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { getRecents, pushRecent } from "../lib/recents";
+import { getRecents, pushRecent, resolveRecentSessions } from "../lib/recents";
 
 const store = new Map<string, string>();
 
@@ -88,5 +88,52 @@ describe("pushRecent", () => {
       },
     });
     expect(() => pushRecent("a")).not.toThrow();
+  });
+});
+
+describe("resolveRecentSessions", () => {
+  const session = (id: string, agent = "devin", node?: string) => ({
+    id,
+    agent,
+    ...(node === undefined ? {} : { node }),
+  });
+
+  it("keeps the input list's order, not open recency", () => {
+    // "Sessions" section order follows the list (updatedAt/sort pick) —
+    // MRU order would move the clicked row to the top on every select.
+    const sessions = [session("a"), session("b"), session("c")];
+    const recents = ["devin:c", "devin:a"];
+    expect(resolveRecentSessions(sessions, recents).map((s) => s.id)).toEqual(["a", "c"]);
+  });
+
+  it("does not reorder when a session is opened again", () => {
+    const sessions = [session("a"), session("b"), session("c")];
+    pushRecent("devin:a");
+    pushRecent("devin:c");
+    const before = resolveRecentSessions(sessions).map((s) => s.id);
+    // Re-selecting "c" bumps it to the MRU front — the section must not move.
+    pushRecent("devin:c");
+    const after = resolveRecentSessions(sessions).map((s) => s.id);
+    expect(after).toEqual(before);
+    expect(after).toEqual(["a", "c"]);
+  });
+
+  it("drops keys that resolve to nothing", () => {
+    const sessions = [session("a")];
+    expect(
+      resolveRecentSessions(sessions, ["devin:ghost", "devin:a", "gone"]).map((s) => s.id),
+    ).toEqual(["a"]);
+  });
+
+  it("dedupes rows reached through bare and scoped keys", () => {
+    const sessions = [session("a"), session("a", "cline", "node_x")];
+    // Bare "a" resolves to the local row first; the scoped key hits the
+    // same row — one entry, not two.
+    expect(resolveRecentSessions(sessions, ["a", "devin:a"]).map((s) => s.agent)).toEqual([
+      "devin",
+    ]);
+    expect(
+      resolveRecentSessions(sessions, ["a", "devin:a", "node_x:cline:a"]).map((s) => s.agent),
+    ).toEqual(["devin", "cline"]);
   });
 });

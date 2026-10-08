@@ -54,6 +54,8 @@ interface LiveSession {
   busy: boolean;
   /** Set while the session has no listeners and no in-flight turn. */
   idleSince: number | null;
+  /** When the session went live — pins `updatedAt` for unflushed sessions. */
+  readonly attachedAt: number;
 }
 
 /**
@@ -397,7 +399,9 @@ export const make = (
       title: live.title,
       cwd: live.cwd,
       agent: live.agentId,
-      updatedAt: new Date().toISOString(),
+      // Pinned to attach time — `new Date()` would churn on every fetch and
+      // ride the session to the top of an activity-sorted list.
+      updatedAt: new Date(live.attachedAt).toISOString(),
       locked: false,
       lockHolderPid: null,
       source: "sepia",
@@ -721,6 +725,7 @@ export const make = (
             agentId: agent.id,
             busy: false,
             idleSince: null,
+            attachedAt: Date.now(),
           };
           live.unsubs.push(conn.onUpdate((update) => emit(live, translator.translate(update))));
           live.unsubs.push(
@@ -956,6 +961,7 @@ export const make = (
           agentId: agent.id,
           busy: false,
           idleSince: null,
+          attachedAt: Date.now(),
         };
         live.unsubs.push(conn.onUpdate((update) => emit(live, translator.translate(update))));
         live.unsubs.push(
