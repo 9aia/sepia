@@ -128,7 +128,15 @@ function Home() {
     }
   }, [health.isError, health.isSuccess, queryClient]);
 
-  if (error instanceof AuthError) return <TokenGate />;
+  // Sticky gate: a focus/invalidation refetch clears `error` back to
+  // pending while the 401 still stands — without the flag the gate
+  // unmounts mid-cycle and the page flickers gate → skeleton → gate.
+  const [authBlocked, setAuthBlocked] = useState(false);
+  useEffect(() => {
+    if (error instanceof AuthError) setAuthBlocked(true);
+    else if (sessions !== undefined) setAuthBlocked(false);
+  }, [error, sessions]);
+  if (authBlocked || error instanceof AuthError) return <TokenGate />;
 
   return (
     <SidebarProvider style={{ "--sidebar-width": "24rem" } as CSSProperties}>
