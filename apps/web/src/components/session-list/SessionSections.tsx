@@ -135,7 +135,7 @@ function SectionSessionRow({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="absolute top-1/2 right-8 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+            className="absolute inset-y-0 right-8 my-auto bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
             aria-label={session.pinned === true ? "Unpin session" : "Pin session"}
             title={session.pinned === true ? "Unpin" : "Pin"}
             onClick={(event) => {
@@ -156,7 +156,7 @@ function SectionSessionRow({
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                  className="absolute inset-y-0 right-2 my-auto bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
                   aria-label={`Actions for session ${session.title}`}
                   title="More actions"
                 />
@@ -372,6 +372,7 @@ function ProjectActions({
   Item,
   onDetails,
   onAdd,
+  onNewSession,
   onRename,
   onDelete,
   onPush,
@@ -381,6 +382,7 @@ function ProjectActions({
   readonly Item: typeof ContextMenuItem;
   onDetails: (project: Project) => void;
   onAdd: (project: Project) => void;
+  onNewSession: () => void;
   onRename: (project: Project) => void;
   onDelete: (project: Project) => void;
   /** Present when the project can be pushed somewhere (any other node registered). */
@@ -393,6 +395,10 @@ function ProjectActions({
       <Item onClick={() => onDetails(project)}>
         <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
         Project details
+      </Item>
+      <Item onClick={() => onNewSession()}>
+        <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+        New session here
       </Item>
       <Item onClick={() => onAdd(project)}>
         <HugeiconsIcon icon={UserAdd01Icon} strokeWidth={2} />
@@ -637,7 +643,7 @@ function ProjectsSection({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    className="absolute top-1/2 right-8 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                    className="absolute inset-y-0 right-8 my-auto bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
                     aria-label={`New session in project ${project.name}`}
                     title="New session here"
                     onClick={(event) => {
@@ -653,7 +659,7 @@ function ProjectsSection({
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                          className="absolute inset-y-0 right-2 my-auto bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
                           aria-label={`Actions for project ${project.name}`}
                           title="Project actions"
                         />
@@ -668,6 +674,7 @@ function ProjectsSection({
                         Item={DropdownMenuItem as unknown as typeof ContextMenuItem}
                         onDetails={setDetailsFor}
                         onAdd={setAddFor}
+                        onNewSession={() => newSessionIn(project, members)}
                         onRename={(p) => setDialog({ id: projectKey(p), name: p.name })}
                         onDelete={setDeleteFor}
                         {...transferProps(project)}
@@ -682,6 +689,7 @@ function ProjectsSection({
                   Item={ContextMenuItem}
                   onDetails={setDetailsFor}
                   onAdd={setAddFor}
+                  onNewSession={() => newSessionIn(project, members)}
                   onRename={(p) => setDialog({ id: projectKey(p), name: p.name })}
                   onDelete={setDeleteFor}
                   {...transferProps(project)}

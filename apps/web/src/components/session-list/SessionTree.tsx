@@ -219,7 +219,7 @@ function GroupRow({
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  className="absolute top-1/2 right-2 -translate-y-1/2 bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
+                  className="absolute inset-y-0 right-2 my-auto bg-secondary/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/row:opacity-100 hover:bg-secondary focus-visible:opacity-100 data-popup-open:opacity-100"
                   aria-label={`Actions for folder ${data.label}`}
                   title="More actions"
                 />

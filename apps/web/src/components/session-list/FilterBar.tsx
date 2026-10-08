@@ -93,7 +93,7 @@ export function FilterBar({
             />
             {hasKeyboard && (
               <KbdGroup
-                className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2"
+                className="pointer-events-none absolute inset-y-0 right-2 my-auto"
                 aria-hidden="true"
               >
                 <Kbd>{modKey}</Kbd>
