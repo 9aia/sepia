@@ -46,7 +46,6 @@ async fn readonly_store_refuses_writes() {
 #[tokio::test]
 async fn golden_fixtures() {
     let base = sepia_testkit::fixture_dir("devin", "");
-    let base = base.parent().unwrap().to_path_buf();
     if !base.is_dir() {
         return; // fixtures not generated yet
     }

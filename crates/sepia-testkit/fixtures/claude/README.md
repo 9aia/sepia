@@ -2,15 +2,22 @@
 
 Each case dir holds a synthetic `~/.claude` analogue under `store/` plus the
 adapter's output as `SessionJson` wire payloads (`sessionToJson` from
-`sepia-convert`): `list.json` is the repository `list()) result (summaries,
-`nodes`empty, sorted by`lastActivityAt`desc) and`export.<id>.json`the
-full`getById(id)`session. Cases:`full-session`(multi-turn with thinking +`redacted_thinking`signatures, Edit/MultiEdit/Write/Read/Bash tool calls with
-locations+diffs, usage incl. flat and nested ephemeral cache tiers,`file-history-snapshot`checkpoints with an`isSnapshotUpdate`merge, image /
-document blocks,`system`init + compact_boundary entries, an`isMeta`prompt
-excluded from`promptHistory`, and `progress`/`queue-operation`plumbing that
-emits no node but stays in the uuid chain);`subagents`(main file plus the
-current`<parent>/subagents/agent-_.jsonl`layout and the legacy`agent-_.jsonl`project-root sibling,`isSidechain`entries whose`sessionId`names the parent,`agentId`carried on entries or derived from the`agent-`filename, plus an inline`isSidechain`root inside the main file);`degraded`(malformed/truncated/non-object lines, missing uuids, dangling`parentUuid`chaining to the previous node, orphan`tool_result`blocks, a
-uuid-fallback snapshot ref, and a file with no`cwd` that falls back to the
+`sepia-convert`): `list.json` is the repository `list()` result (summaries,
+`nodes` empty, sorted by `lastActivityAt` desc) and `export.<id>.json` the
+full `getById(id)` session. Cases: `full-session` (multi-turn with thinking +
+`redacted_thinking` signatures, Edit/MultiEdit/Write/Read/Bash tool calls with
+locations+diffs, usage incl. flat and nested ephemeral cache tiers,
+`file-history-snapshot` checkpoints with an `isSnapshotUpdate` merge, image /
+document blocks, `system` init + compact_boundary entries, an `isMeta` prompt
+excluded from `promptHistory`, and `progress`/`queue-operation` plumbing that
+emits no node but stays in the uuid chain); `subagents` (main file plus the
+current `<parent>/subagents/agent-*.jsonl` layout and the legacy
+`agent-*.jsonl` project-root sibling, `isSidechain` entries whose `sessionId`
+names the parent, `agentId` carried on entries or derived from the `agent-`
+filename, plus an inline `isSidechain` root inside the main file);
+`degraded` (malformed/truncated/non-object lines, missing uuids, dangling
+`parentUuid` chaining to the previous node, orphan `tool_result` blocks, a
+uuid-fallback snapshot ref, and a file with no `cwd` that falls back to the
 decoded project slug).
 
 Layout a Rust reader must handle: `projects/<slug>/<sessionId>.jsonl` where the

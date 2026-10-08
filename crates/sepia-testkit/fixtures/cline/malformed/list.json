@@ -1,0 +1,21 @@
+[
+  {
+    "id": "1700003000_pqrst",
+    "title": "Messy transcript",
+    "workingDirectory": "/work/messy",
+    "backendType": "cline",
+    "agentMode": "accept-edits",
+    "model": "swe-2-high",
+    "createdAt": 1735948800,
+    "lastActivityAt": 1735948980,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {},
+    "nodes": [],
+    "promptHistory": []
+  }
+]

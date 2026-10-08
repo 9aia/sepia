@@ -13,5 +13,6 @@ pub use broker::PermissionBroker;
 pub use conn::{AcpConnection, spawn_agent};
 pub use normalize::{normalize_permission, normalize_update};
 pub use registry::{builtin_agents, model_args, resolve_agent};
+pub use sepia_driver_sdk::rpc;
 pub use stderr::StderrTail;
 pub use types::*;

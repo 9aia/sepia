@@ -94,7 +94,7 @@ async fn permission_requests_settle_out_of_band() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(request.session_id, "mock-session");
+    assert_eq!(request.session_id, "s1");
     assert_eq!(request.tool_call_id.as_deref(), Some("tc-1"));
     assert_eq!(request.title, "Run it");
     assert!(conn.respond_to_permission(&request.request_id, Some("allow")));

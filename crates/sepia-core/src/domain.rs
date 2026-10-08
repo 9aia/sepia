@@ -118,7 +118,11 @@ pub struct ToolCall {
 /// `blocks` is populated it holds the complete ordered block list — text
 /// blocks included — so `content` stays the joined text projection.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(
+    tag = "type",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
 pub enum Block {
     Text {
         text: String,

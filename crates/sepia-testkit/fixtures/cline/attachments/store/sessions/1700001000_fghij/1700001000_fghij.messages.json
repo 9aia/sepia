@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "updated_at": "2025-01-02T00:05:00.000Z",
+  "agent": "lead",
+  "sessionId": "1700001000_fghij",
+  "origin": {
+    "source": "cli",
+    "mode": "user",
+    "sessionId": "1700001000_fghij",
+    "version": "3.0.61"
+  },
+  "messages": [
+    {
+      "id": "msg_0",
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "<user_input>what's in this image?</user_input>"
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "aGVsbG8="
+          }
+        }
+      ],
+      "ts": 1700001000000
+    },
+    {
+      "id": "msg_1",
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "and this document"
+        },
+        {
+          "type": "document",
+          "title": "notes.txt",
+          "source": {
+            "type": "text",
+            "media_type": "text/plain",
+            "text": "the doc body"
+          }
+        }
+      ],
+      "ts": 1700001010000
+    },
+    {
+      "id": "msg_2",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "The image says hello; the doc is a note."
+        }
+      ],
+      "ts": 1700001020000,
+      "modelInfo": {
+        "id": "swe-2-high",
+        "provider": "cline-pass"
+      },
+      "metrics": {
+        "inputTokens": 2000,
+        "outputTokens": 14,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "cost": 0.004
+      }
+    },
+    {
+      "id": "msg_3",
+      "role": "user",
+      "content": [
+        {
+          "type": "image",
+          "source": {
+            "type": "url",
+            "url": "https://example.com/only.png"
+          }
+        }
+      ],
+      "ts": 1700001030000
+    },
+    {
+      "id": "msg_4",
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "one more"
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "url",
+            "url": "https://example.com/i.png"
+          }
+        }
+      ],
+      "ts": 1700001040000
+    },
+    {
+      "id": "msg_5",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Same image again."
+        }
+      ],
+      "ts": 1700001050000,
+      "modelInfo": {
+        "id": "swe-2-high",
+        "provider": "cline-pass"
+      },
+      "metrics": {
+        "inputTokens": 2100,
+        "outputTokens": 5,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "cost": 0
+      }
+    }
+  ]
+}

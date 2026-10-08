@@ -1,0 +1,260 @@
+{
+  "id": "devin-full-1",
+  "title": "Full-featured session",
+  "workingDirectory": "/work/app",
+  "backendType": "windsurf",
+  "agentMode": "accept-edits",
+  "model": "swe-1-7-high",
+  "createdAt": 1700100000,
+  "lastActivityAt": 1700100600,
+  "mainChainId": 6,
+  "shellLastSeenIndex": 2,
+  "cogsJson": "[{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/plan_mask\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/accept_edits\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/parallel-tool-calls\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/model\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null}]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [
+    {
+      "ref": "a1b2c3d",
+      "createdAt": 1700100200000,
+      "runCount": 1,
+      "kind": "commit"
+    },
+    {
+      "ref": "e4f5a6b",
+      "createdAt": 1700100400000,
+      "runCount": 2,
+      "kind": "stash"
+    }
+  ],
+  "metadata": {
+    "total_credit_cost": 0,
+    "total_acu_cost": 0,
+    "response_dimensions": [
+      {
+        "uid": "agent_messages",
+        "group_title": "Response Statistics",
+        "kind": {
+          "CumulativeMetric": {
+            "label": "Agent messages",
+            "value": 0,
+            "tail": " message",
+            "plural_tail": " messages",
+            "prefix": ""
+          }
+        }
+      },
+      {
+        "uid": "model",
+        "group_title": "Response Statistics",
+        "kind": {
+          "Metric": {
+            "label": "Model",
+            "value": "Imported from Cline"
+          }
+        }
+      }
+    ],
+    "custom_note": "golden fixture",
+    "sepia/checkpoints": [
+      {
+        "ref": "a1b2c3d",
+        "createdAt": 1700100200000,
+        "runCount": 1,
+        "kind": "commit"
+      },
+      {
+        "ref": "e4f5a6b",
+        "createdAt": 1700100400000,
+        "runCount": 2,
+        "kind": "stash"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "system",
+      "content": "You are Devin, an AI pair programmer.",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700100000,
+      "metadata": null
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "user",
+      "content": "wire up the editor",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "wire up the editor"
+        },
+        {
+          "type": "image",
+          "data": "aGVsbG8gd29ybGQ=",
+          "mimeType": "image/png"
+        },
+        {
+          "type": "file",
+          "uri": "file:///work/app/SPEC.md",
+          "name": "SPEC.md",
+          "mimeType": "text/markdown",
+          "size": 512
+        }
+      ],
+      "toolCalls": [],
+      "createdAt": 1700100050,
+      "metadata": null
+    },
+    {
+      "nodeId": 2,
+      "parentNodeId": 1,
+      "role": "assistant",
+      "content": "",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "toolu_edit_1",
+          "name": "edit",
+          "arguments": {
+            "file_path": "/work/app/editor.ts",
+            "old_string": "const mode = 1;",
+            "new_string": "const mode = 2;"
+          },
+          "index": 0,
+          "kind": "function",
+          "status": "success",
+          "durationMs": 45,
+          "locations": [
+            {
+              "path": "/work/app/editor.ts",
+              "line": 14
+            }
+          ],
+          "diffs": [
+            {
+              "path": "/work/app/editor.ts",
+              "oldText": "const mode = 1;",
+              "newText": "const mode = 2;"
+            },
+            {
+              "path": "/work/app/new-file.ts",
+              "newText": "export {}\n"
+            }
+          ]
+        },
+        {
+          "id": "toolu_exec_1",
+          "name": "exec",
+          "arguments": {
+            "command": "bun test editor"
+          },
+          "index": 1,
+          "kind": "function",
+          "status": "error",
+          "exitCode": 1,
+          "durationMs": 2310,
+          "locations": [],
+          "diffs": []
+        }
+      ],
+      "thinking": "I'll update the editor wiring and run the tests.",
+      "thinkingSignature": "sealed.v1.Zm9vYmFy",
+      "usage": {
+        "input": 4200,
+        "output": 88,
+        "cacheRead": 1024,
+        "cacheWrite": 64
+      },
+      "model": "swe-1-7-high",
+      "requestId": "req-9abc",
+      "finishReason": "tool_calls",
+      "createdAt": 1700100100,
+      "metadata": {
+        "summarized_from": 1,
+        "num_tokens_preceding": 12,
+        "is_system_prefix": null
+      }
+    },
+    {
+      "nodeId": 3,
+      "parentNodeId": 2,
+      "role": "tool",
+      "content": "Applied edit to /work/app/editor.ts",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "toolu_edit_1",
+      "toolName": "edit",
+      "toolResult": {
+        "status": "success",
+        "durationMs": 45
+      },
+      "createdAt": 1700100150,
+      "metadata": null
+    },
+    {
+      "nodeId": 4,
+      "parentNodeId": 3,
+      "role": "tool",
+      "content": "FAIL editor.test.ts — 1 test failed",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "toolu_exec_1",
+      "toolName": "exec",
+      "toolResult": {
+        "status": "error",
+        "exitCode": 1,
+        "durationMs": 2310
+      },
+      "createdAt": 1700100300,
+      "metadata": null
+    },
+    {
+      "nodeId": 5,
+      "parentNodeId": 4,
+      "role": "assistant",
+      "content": "Fixed the race — the suite is green now.",
+      "blocks": [],
+      "toolCalls": [],
+      "thinking": "The mock timer resolved the ordering issue.",
+      "thinkingSignature": "sealed.v1.c2lnYXR1cmU=",
+      "usage": {
+        "input": 5000,
+        "output": 12
+      },
+      "model": "swe-1-7-high",
+      "finishReason": "stop",
+      "createdAt": 1700100500,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": null
+      }
+    },
+    {
+      "nodeId": 6,
+      "parentNodeId": 5,
+      "role": "assistant",
+      "content": "",
+      "blocks": [],
+      "toolCalls": [],
+      "model": "swe-1-7-high",
+      "finishReason": "stop",
+      "createdAt": 1700100600,
+      "metadata": null
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "wire up the editor",
+      "timestamp": 1700100000000,
+      "isShell": false
+    },
+    {
+      "content": "!bun run lint",
+      "timestamp": 1700100050000,
+      "isShell": true
+    }
+  ]
+}

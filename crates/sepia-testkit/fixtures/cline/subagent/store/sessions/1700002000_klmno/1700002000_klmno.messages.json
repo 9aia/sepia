@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "updated_at": "2025-01-02T00:05:00.000Z",
+  "agent": "lead",
+  "sessionId": "1700002000_klmno",
+  "origin": {
+    "source": "cli",
+    "mode": "user",
+    "sessionId": "1700002000_klmno",
+    "version": "3.0.61"
+  },
+  "messages": [
+    {
+      "id": "msg_0",
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "split the work between subagents"
+        }
+      ],
+      "ts": 1700002000000
+    },
+    {
+      "id": "msg_1",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Spawned a researcher and a scout."
+        }
+      ],
+      "ts": 1700002001000,
+      "modelInfo": {
+        "id": "swe-2-high",
+        "provider": "cline-pass"
+      },
+      "metrics": {
+        "inputTokens": 1000,
+        "outputTokens": 10,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "cost": 0
+      }
+    }
+  ]
+}

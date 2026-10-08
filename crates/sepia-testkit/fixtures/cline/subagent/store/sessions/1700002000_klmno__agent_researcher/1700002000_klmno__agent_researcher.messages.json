@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "updated_at": "2025-01-02T00:05:00.000Z",
+  "agent": "lead",
+  "sessionId": "1700002000_klmno__agent_researcher",
+  "origin": {
+    "source": "cli",
+    "mode": "user",
+    "sessionId": "1700002000_klmno__agent_researcher",
+    "version": "3.0.61"
+  },
+  "messages": [
+    {
+      "id": "msg_0",
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "survey the api surface"
+        }
+      ],
+      "ts": 1700002060000
+    },
+    {
+      "id": "msg_1",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "api surface is small — 3 endpoints."
+        }
+      ],
+      "ts": 1700002120000,
+      "modelInfo": {
+        "id": "swe-2-high",
+        "provider": "cline-pass"
+      },
+      "metrics": {
+        "inputTokens": 500,
+        "outputTokens": 9,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "cost": 0
+      }
+    }
+  ]
+}

@@ -86,6 +86,10 @@ const writeJson = (filePath: string, value: unknown): void => {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 };
 
+/** Store sidecars ride as pretty JSON so `vp check`'s formatter leaves them alone. */
+const writePrettyJson = (root: string, rel: string, compactJson: string): string =>
+  writeText(root, rel, `${JSON.stringify(JSON.parse(compactJson), null, 2)}\n`);
+
 const jsonl = (entries: ReadonlyArray<Record<string, unknown> | string>): string =>
   entries.map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry))).join("\n") +
   "\n";
@@ -852,7 +856,7 @@ const buildCursorChatStore = (store: string): void => {
   writeText(store, `${dir}/store.sql`, sql);
   materializeStoreDb(join(store, dir, "store.db"), sql);
   // metaJson.title wins over meta['0'].name; no cwd -> checkpoint workspace.
-  writeText(
+  writePrettyJson(
     store,
     `${dir}/meta.json`,
     Cursor.encodeMetaJson({
@@ -862,11 +866,8 @@ const buildCursorChatStore = (store: string): void => {
       hasConversation: true,
     }),
   );
-  writeText(
-    store,
-    `${dir}/prompt_history.json`,
-    JSON.stringify(["take a screenshot", "now crop it"]),
-  );
+  // oxfmt keeps short arrays on one line — write it that way to stay fmt-clean.
+  writeText(store, `${dir}/prompt_history.json`, '["take a screenshot", "now crop it"]\n');
 
   // the lossy transcript projection of the same chat — the store wins on
   // the shared id in list(), and keeps more nodes in getById().
@@ -908,7 +909,7 @@ const buildCursorTranscriptProjection = (store: string): void => {
   );
   writeText(store, `chats/${wsHash}/${prunedId}/store.sql`, prunedSql);
   materializeStoreDb(join(store, `chats/${wsHash}/${prunedId}/store.db`), prunedSql);
-  writeText(
+  writePrettyJson(
     store,
     `chats/${wsHash}/${prunedId}/meta.json`,
     Cursor.encodeMetaJson({
@@ -1012,7 +1013,7 @@ const buildCursorTranscriptProjection = (store: string): void => {
 
   // a chat dir with only meta.json — summarize-only, no store.db at all
   const metaOnlyDir = `chats/${workspaceHash("/home/demo/other")}/88888888-8888-4888-8888-888888888888`;
-  const metaJson = writeText(
+  const metaJson = writePrettyJson(
     store,
     `${metaOnlyDir}/meta.json`,
     JSON.stringify({
@@ -1057,7 +1058,7 @@ const buildCursorDegradedStore = (store: string): void => {
   );
   writeText(store, `chats/${wsHash}/${plainId}/store.sql`, plainSql);
   materializeStoreDb(join(store, `chats/${wsHash}/${plainId}/store.db`), plainSql);
-  writeText(
+  writePrettyJson(
     store,
     `chats/${wsHash}/${plainId}/meta.json`,
     Cursor.encodeMetaJson({
@@ -1078,7 +1079,7 @@ const buildCursorDegradedStore = (store: string): void => {
   ].join("\n");
   writeText(store, `chats/${wsHash}/${noTablesId}/store.sql`, bareSql);
   materializeStoreDb(join(store, `chats/${wsHash}/${noTablesId}/store.db`), bareSql);
-  writeText(
+  writePrettyJson(
     store,
     `chats/${wsHash}/${noTablesId}/meta.json`,
     Cursor.encodeMetaJson({
@@ -1138,7 +1139,7 @@ const CLAUDE_README = `# Golden fixtures — Claude Code adapter
 
 Each case dir holds a synthetic \`~/.claude\` analogue under \`store/\` plus the
 adapter's output as \`SessionJson\` wire payloads (\`sessionToJson\` from
-\`sepia-convert\`): \`list.json\` is the repository \`list()\) result (summaries,
+\`sepia-convert\`): \`list.json\` is the repository \`list()\` result (summaries,
 \`nodes\` empty, sorted by \`lastActivityAt\` desc) and \`export.<id>.json\` the
 full \`getById(id)\` session. Cases: \`full-session\` (multi-turn with thinking +
 \`redacted_thinking\` signatures, Edit/MultiEdit/Write/Read/Bash tool calls with

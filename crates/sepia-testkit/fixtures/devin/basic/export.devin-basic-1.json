@@ -1,0 +1,80 @@
+{
+  "id": "devin-basic-1",
+  "title": "Basic Devin session",
+  "workingDirectory": "/work/demo",
+  "backendType": "windsurf",
+  "agentMode": "accept-edits",
+  "model": "swe-2-high",
+  "createdAt": 1700000000,
+  "lastActivityAt": 1700000300,
+  "mainChainId": 1,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/plan_mask\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/accept_edits\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/parallel-tool-calls\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/model\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null}]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "total_credit_cost": 0,
+    "total_acu_cost": 0,
+    "response_dimensions": [
+      {
+        "uid": "agent_messages",
+        "group_title": "Response Statistics",
+        "kind": {
+          "CumulativeMetric": {
+            "label": "Agent messages",
+            "value": 0,
+            "tail": " message",
+            "plural_tail": " messages",
+            "prefix": ""
+          }
+        }
+      },
+      {
+        "uid": "model",
+        "group_title": "Response Statistics",
+        "kind": {
+          "Metric": {
+            "label": "Model",
+            "value": "Imported from Cline"
+          }
+        }
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "do the thing",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000000,
+      "metadata": null
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "done — the thing is done",
+      "blocks": [],
+      "toolCalls": [],
+      "model": "swe-2-high",
+      "finishReason": "stop",
+      "createdAt": 1700000100,
+      "metadata": null
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "do the thing",
+      "timestamp": 1700000000000,
+      "isShell": false
+    },
+    {
+      "content": "!git status",
+      "timestamp": 1700000050000,
+      "isShell": true
+    }
+  ]
+}

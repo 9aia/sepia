@@ -1,0 +1,35 @@
+{
+  "id": "devin-basic-2",
+  "title": "Hidden second session",
+  "workingDirectory": "/work/other",
+  "backendType": "windsurf",
+  "agentMode": "plan",
+  "model": "swe-1-7-medium",
+  "createdAt": 1700001000,
+  "lastActivityAt": 1700002000,
+  "mainChainId": 0,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[\"/work/other\",\"/work/shared\"]",
+  "hidden": 1,
+  "checkpoints": [],
+  "metadata": null,
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "plan only, do not touch files",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700001000,
+      "metadata": null
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "plan only, do not touch files",
+      "timestamp": 1700001000000,
+      "isShell": false
+    }
+  ]
+}

@@ -1,0 +1,257 @@
+{
+  "id": "1700001000_fghij",
+  "title": "Attachments",
+  "workingDirectory": "/work/pix",
+  "backendType": "cline",
+  "agentMode": "accept-edits",
+  "model": "swe-2-high",
+  "createdAt": 1735812000,
+  "lastActivityAt": 1735812120,
+  "mainChainId": 9,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/plan_mask\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/accept_edits\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/parallel-tool-calls\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/model\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null}]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "total_credit_cost": 0,
+    "total_acu_cost": 0,
+    "response_dimensions": [
+      {
+        "uid": "agent_messages",
+        "group_title": "Response Statistics",
+        "kind": {
+          "CumulativeMetric": {
+            "label": "Agent messages",
+            "value": 0,
+            "tail": " message",
+            "plural_tail": " messages",
+            "prefix": ""
+          }
+        }
+      },
+      {
+        "uid": "model",
+        "group_title": "Response Statistics",
+        "kind": {
+          "Metric": {
+            "label": "Model",
+            "value": "Imported from Cline"
+          }
+        }
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "system",
+      "content": "<system_info>\nThe following information is automatically generated context about your current environment.\nCurrent workspace directories:\n  /work/pix (cwd)\n\nPlatform: linux\n</system_info>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735812000,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": true
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "system",
+      "content": "<rules type=\"always-on\"></rules>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735812000,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": false
+      }
+    },
+    {
+      "nodeId": 2,
+      "parentNodeId": 1,
+      "role": "user",
+      "content": "what's in this image?",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "<user_input>what's in this image?</user_input>"
+        },
+        {
+          "type": "image",
+          "data": "aGVsbG8=",
+          "mimeType": "image/png"
+        }
+      ],
+      "toolCalls": [],
+      "createdAt": 1735812000,
+      "metadata": {
+        "clineMessageIndex": 0
+      }
+    },
+    {
+      "nodeId": 3,
+      "parentNodeId": 2,
+      "role": "system",
+      "content": "<available_skills></available_skills>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735812000,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": false
+      }
+    },
+    {
+      "nodeId": 4,
+      "parentNodeId": 3,
+      "role": "user",
+      "content": "and this document",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "and this document"
+        },
+        {
+          "type": "file",
+          "name": "notes.txt",
+          "mimeType": "text/plain",
+          "text": "the doc body"
+        }
+      ],
+      "toolCalls": [],
+      "createdAt": 1700001010,
+      "metadata": {
+        "clineMessageIndex": 1
+      }
+    },
+    {
+      "nodeId": 5,
+      "parentNodeId": 4,
+      "role": "assistant",
+      "content": "The image says hello; the doc is a note.",
+      "blocks": [],
+      "toolCalls": [],
+      "usage": {
+        "input": 2000,
+        "output": 14,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0.004
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700001020,
+      "metadata": {
+        "clineMessageIndex": 2
+      }
+    },
+    {
+      "nodeId": 6,
+      "parentNodeId": 4,
+      "role": "assistant",
+      "content": "The image says hello; the doc is a note.",
+      "blocks": [],
+      "toolCalls": [],
+      "usage": {
+        "input": 2000,
+        "output": 14,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0.004
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700001020,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": null,
+        "clineMessageIndex": 2
+      }
+    },
+    {
+      "nodeId": 7,
+      "parentNodeId": 6,
+      "role": "user",
+      "content": "one more",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "one more"
+        },
+        {
+          "type": "image",
+          "uri": "https://example.com/i.png"
+        }
+      ],
+      "toolCalls": [],
+      "createdAt": 1700001040,
+      "metadata": {
+        "clineMessageIndex": 4
+      }
+    },
+    {
+      "nodeId": 8,
+      "parentNodeId": 7,
+      "role": "assistant",
+      "content": "Same image again.",
+      "blocks": [],
+      "toolCalls": [],
+      "usage": {
+        "input": 2100,
+        "output": 5,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700001050,
+      "metadata": {
+        "clineMessageIndex": 5
+      }
+    },
+    {
+      "nodeId": 9,
+      "parentNodeId": 7,
+      "role": "assistant",
+      "content": "Same image again.",
+      "blocks": [],
+      "toolCalls": [],
+      "usage": {
+        "input": 2100,
+        "output": 5,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700001050,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": null,
+        "clineMessageIndex": 5
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "what's in this image?",
+      "timestamp": 1700001000000,
+      "isShell": false
+    },
+    {
+      "content": "and this document",
+      "timestamp": 1700001010000,
+      "isShell": false
+    },
+    {
+      "content": "one more",
+      "timestamp": 1700001040000,
+      "isShell": false
+    }
+  ]
+}

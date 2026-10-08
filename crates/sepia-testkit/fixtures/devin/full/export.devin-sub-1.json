@@ -1,0 +1,42 @@
+{
+  "id": "devin-sub-1",
+  "title": "Research subagent",
+  "workingDirectory": "/work/app",
+  "backendType": "windsurf",
+  "agentMode": "accept-edits",
+  "model": "swe-1-7-mini",
+  "createdAt": 1700100300,
+  "lastActivityAt": 1700100450,
+  "mainChainId": 1,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "parentSessionId": "devin-full-1",
+  "checkpoints": [],
+  "metadata": null,
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "survey the codebase for the editor",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700100300,
+      "metadata": null
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "editor lives in src/editor.ts",
+      "blocks": [],
+      "toolCalls": [],
+      "model": "swe-1-7-mini",
+      "finishReason": "stop",
+      "createdAt": 1700100400,
+      "metadata": null
+    }
+  ],
+  "promptHistory": []
+}

@@ -7,7 +7,9 @@
 pub mod contract;
 pub mod fixtures;
 pub mod json_eq;
+pub mod mock;
 
 pub use contract::assert_session_repository_contract;
 pub use fixtures::{fixture_dir, load_expected, materialize_store};
 pub use json_eq::{assert_json_eq, json_eq};
+pub use mock::ensure_mock_acp_agent;

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "session_id": "1700002000_klmno__agent_researcher",
+  "source": "cli",
+  "pid": 0,
+  "cwd": "/work/team",
+  "workspace_root": "/work/team",
+  "started_at": "2025-01-03T00:01:00.000Z",
+  "ended_at": "2025-01-03T00:08:00.000Z",
+  "status": "completed",
+  "exit_code": 0,
+  "interactive": true,
+  "provider": "cline-pass",
+  "model": "cline-pass/swe-2-high",
+  "enable_tools": true,
+  "enable_spawn": true,
+  "enable_teams": true,
+  "prompt": "survey the api",
+  "metadata": {
+    "title": "Researcher subagent"
+  },
+  "messages_path": ""
+}

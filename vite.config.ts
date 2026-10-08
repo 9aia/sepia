@@ -5,7 +5,13 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   fmt: {
-    ignorePatterns: ["apps/web/src/routeTree.gen.ts", "apps/server/ui-dist"],
+    ignorePatterns: [
+      "apps/web/src/routeTree.gen.ts",
+      "apps/server/ui-dist",
+      // Golden fixtures are byte-exact test data — one is intentionally
+      // malformed JSON; the formatter must never touch them.
+      "crates/sepia-testkit/fixtures/**",
+    ],
   },
   lint: {
     // extract-golden-* are one-shot migration tooling — deep imports and

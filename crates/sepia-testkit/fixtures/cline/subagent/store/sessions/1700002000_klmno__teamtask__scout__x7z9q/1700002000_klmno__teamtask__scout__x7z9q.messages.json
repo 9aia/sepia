@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "updated_at": "2025-01-02T00:05:00.000Z",
+  "agent": "lead",
+  "sessionId": "1700002000_klmno__teamtask__scout__x7z9q",
+  "origin": {
+    "source": "cli",
+    "mode": "user",
+    "sessionId": "1700002000_klmno__teamtask__scout__x7z9q",
+    "version": "3.0.61"
+  },
+  "messages": [
+    {
+      "id": "msg_0",
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "scout the test layout"
+        }
+      ],
+      "ts": 1700002180000
+    },
+    {
+      "id": "msg_1",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "tests live under tests/."
+        }
+      ],
+      "ts": 1700002240000,
+      "modelInfo": {
+        "id": "swe-2-high",
+        "provider": "cline-pass"
+      },
+      "metrics": {
+        "inputTokens": 400,
+        "outputTokens": 6,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "cost": 0
+      }
+    }
+  ]
+}

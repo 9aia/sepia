@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "session_id": "1700000000_abcde",
+  "source": "cli",
+  "pid": 0,
+  "cwd": "/work",
+  "workspace_root": "/work",
+  "started_at": "2025-01-01T00:00:00.000Z",
+  "ended_at": "2025-01-01T00:05:00.000Z",
+  "status": "completed",
+  "exit_code": 0,
+  "interactive": true,
+  "provider": "cline-pass",
+  "model": "cline-pass/swe-2-high",
+  "enable_tools": true,
+  "enable_spawn": true,
+  "enable_teams": true,
+  "prompt": "fix the flaky test",
+  "metadata": {
+    "title": "Fix flaky test",
+    "checkpointEnabled": true,
+    "checkpoint": {
+      "latest": {
+        "ref": "c2def",
+        "createdAt": 1700000300000,
+        "runCount": 2,
+        "kind": "commit"
+      },
+      "history": [
+        {
+          "ref": "c1abc",
+          "createdAt": 1700000100000,
+          "runCount": 1,
+          "kind": "stash"
+        },
+        {
+          "ref": "c2def",
+          "createdAt": 1700000300000,
+          "runCount": 2,
+          "kind": "commit"
+        }
+      ]
+    }
+  },
+  "messages_path": ""
+}

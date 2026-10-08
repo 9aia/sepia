@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "session_id": "1700004000_uvwxy",
+  "source": "cli",
+  "pid": 0,
+  "cwd": "/work/install",
+  "workspace_root": "/work/install",
+  "started_at": "2023-11-14T23:20:00.000Z",
+  "ended_at": "2023-11-14T23:28:20.000Z",
+  "status": "completed",
+  "exit_code": 0,
+  "interactive": true,
+  "provider": "cline-pass",
+  "model": "swe-2-high",
+  "enable_tools": true,
+  "enable_spawn": true,
+  "enable_teams": true,
+  "prompt": "add a hello endpoint",
+  "metadata": {
+    "title": "Installed from a Devin session"
+  },
+  "messages_path": ""
+}

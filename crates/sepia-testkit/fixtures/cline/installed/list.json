@@ -1,0 +1,21 @@
+[
+  {
+    "id": "1700004000_uvwxy",
+    "title": "Installed from a Devin session",
+    "workingDirectory": "/work/install",
+    "backendType": "cline",
+    "agentMode": "accept-edits",
+    "model": "swe-2-high",
+    "createdAt": 1700004000,
+    "lastActivityAt": 1700004500,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {},
+    "nodes": [],
+    "promptHistory": []
+  }
+]

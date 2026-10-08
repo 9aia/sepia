@@ -1,0 +1,97 @@
+[
+  {
+    "id": "devin-full-1",
+    "title": "Full-featured session",
+    "workingDirectory": "/work/app",
+    "backendType": "windsurf",
+    "agentMode": "accept-edits",
+    "model": "swe-1-7-high",
+    "createdAt": 1700100000,
+    "lastActivityAt": 1700100600,
+    "mainChainId": 6,
+    "shellLastSeenIndex": 2,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [
+      {
+        "ref": "a1b2c3d",
+        "createdAt": 1700100200000,
+        "runCount": 1,
+        "kind": "commit"
+      },
+      {
+        "ref": "e4f5a6b",
+        "createdAt": 1700100400000,
+        "runCount": 2,
+        "kind": "stash"
+      }
+    ],
+    "metadata": {
+      "total_credit_cost": 0,
+      "total_acu_cost": 0,
+      "response_dimensions": [
+        {
+          "uid": "agent_messages",
+          "group_title": "Response Statistics",
+          "kind": {
+            "CumulativeMetric": {
+              "label": "Agent messages",
+              "value": 0,
+              "tail": " message",
+              "plural_tail": " messages",
+              "prefix": ""
+            }
+          }
+        },
+        {
+          "uid": "model",
+          "group_title": "Response Statistics",
+          "kind": {
+            "Metric": {
+              "label": "Model",
+              "value": "Imported from Cline"
+            }
+          }
+        }
+      ],
+      "custom_note": "golden fixture",
+      "sepia/checkpoints": [
+        {
+          "ref": "a1b2c3d",
+          "createdAt": 1700100200000,
+          "runCount": 1,
+          "kind": "commit"
+        },
+        {
+          "ref": "e4f5a6b",
+          "createdAt": 1700100400000,
+          "runCount": 2,
+          "kind": "stash"
+        }
+      ]
+    },
+    "nodes": [],
+    "promptHistory": []
+  },
+  {
+    "id": "devin-sub-1",
+    "title": "Research subagent",
+    "workingDirectory": "/work/app",
+    "backendType": "windsurf",
+    "agentMode": "accept-edits",
+    "model": "swe-1-7-mini",
+    "createdAt": 1700100300,
+    "lastActivityAt": 1700100450,
+    "mainChainId": 1,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "parentSessionId": "devin-full-1",
+    "checkpoints": [],
+    "metadata": null,
+    "nodes": [],
+    "promptHistory": []
+  }
+]

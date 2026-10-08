@@ -1,0 +1,693 @@
+{
+  "id": "1700000000_abcde",
+  "title": "Fix flaky test",
+  "workingDirectory": "/work",
+  "backendType": "cline",
+  "agentMode": "accept-edits",
+  "model": "swe-2-high",
+  "createdAt": 1735689600,
+  "lastActivityAt": 1735689900,
+  "mainChainId": 18,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/plan_mask\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/accept_edits\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/parallel-tool-calls\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/model\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null}]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [
+    {
+      "ref": "c1abc",
+      "createdAt": 1700000100000,
+      "runCount": 1,
+      "kind": "stash"
+    },
+    {
+      "ref": "c2def",
+      "createdAt": 1700000300000,
+      "runCount": 2,
+      "kind": "commit"
+    }
+  ],
+  "metadata": {
+    "total_credit_cost": 0,
+    "total_acu_cost": 0,
+    "response_dimensions": [
+      {
+        "uid": "agent_messages",
+        "group_title": "Response Statistics",
+        "kind": {
+          "CumulativeMetric": {
+            "label": "Agent messages",
+            "value": 0,
+            "tail": " message",
+            "plural_tail": " messages",
+            "prefix": ""
+          }
+        }
+      },
+      {
+        "uid": "model",
+        "group_title": "Response Statistics",
+        "kind": {
+          "Metric": {
+            "label": "Model",
+            "value": "Imported from Cline"
+          }
+        }
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "system",
+      "content": "<system_info>\nThe following information is automatically generated context about your current environment.\nCurrent workspace directories:\n  /work (cwd)\n\nPlatform: linux\n</system_info>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735689600,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": true
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "system",
+      "content": "<rules type=\"always-on\"></rules>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735689600,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": false
+      }
+    },
+    {
+      "nodeId": 2,
+      "parentNodeId": 1,
+      "role": "user",
+      "content": "fix the flaky test",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735689600,
+      "metadata": {
+        "clineMessageIndex": 0
+      }
+    },
+    {
+      "nodeId": 3,
+      "parentNodeId": 2,
+      "role": "system",
+      "content": "<available_skills></available_skills>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735689600,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": false
+      }
+    },
+    {
+      "nodeId": 4,
+      "parentNodeId": 3,
+      "role": "assistant",
+      "content": "I'll read the test and run it.",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "chatcmpl-tool-49380dc26a1a4f74",
+          "name": "read",
+          "arguments": {
+            "file_path": "/work/src/flaky.test.ts"
+          },
+          "index": 0,
+          "kind": "function",
+          "status": "success",
+          "locations": [
+            {
+              "path": "/work/src/flaky.test.ts"
+            }
+          ],
+          "diffs": []
+        },
+        {
+          "id": "chatcmpl-tool-3c02b12480df4ec2",
+          "name": "read",
+          "arguments": {
+            "file_path": "/work/src/helper.ts"
+          },
+          "index": 1,
+          "kind": "function",
+          "status": "success",
+          "locations": [
+            {
+              "path": "/work/src/helper.ts"
+            }
+          ],
+          "diffs": []
+        },
+        {
+          "id": "chatcmpl-tool-b75e3cba25d84f71",
+          "name": "exec",
+          "arguments": {
+            "command": "bun test"
+          },
+          "index": 2,
+          "kind": "function",
+          "status": "error",
+          "locations": [],
+          "diffs": []
+        }
+      ],
+      "thinking": "The test flakes under parallel load — check the shared fixture.",
+      "thinkingSignature": "sealed.v1.cline-1",
+      "usage": {
+        "input": 5000,
+        "output": 120,
+        "cacheRead": 3000,
+        "cacheWrite": 400,
+        "cost": 0.0123
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700000001,
+      "metadata": {
+        "clineMessageIndex": 1
+      }
+    },
+    {
+      "nodeId": 5,
+      "parentNodeId": 3,
+      "role": "assistant",
+      "content": "I'll read the test and run it.",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "chatcmpl-tool-49380dc26a1a4f74",
+          "name": "read",
+          "arguments": {
+            "file_path": "/work/src/flaky.test.ts"
+          },
+          "index": 0,
+          "kind": "function",
+          "status": "success",
+          "locations": [
+            {
+              "path": "/work/src/flaky.test.ts"
+            }
+          ],
+          "diffs": []
+        },
+        {
+          "id": "chatcmpl-tool-3c02b12480df4ec2",
+          "name": "read",
+          "arguments": {
+            "file_path": "/work/src/helper.ts"
+          },
+          "index": 1,
+          "kind": "function",
+          "status": "success",
+          "locations": [
+            {
+              "path": "/work/src/helper.ts"
+            }
+          ],
+          "diffs": []
+        },
+        {
+          "id": "chatcmpl-tool-b75e3cba25d84f71",
+          "name": "exec",
+          "arguments": {
+            "command": "bun test"
+          },
+          "index": 2,
+          "kind": "function",
+          "status": "error",
+          "locations": [],
+          "diffs": []
+        }
+      ],
+      "thinking": "The test flakes under parallel load — check the shared fixture.",
+      "thinkingSignature": "sealed.v1.cline-1",
+      "usage": {
+        "input": 5000,
+        "output": 120,
+        "cacheRead": 3000,
+        "cacheWrite": 400,
+        "cost": 0.0123
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700000001,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": null,
+        "clineMessageIndex": 1
+      }
+    },
+    {
+      "nodeId": 6,
+      "parentNodeId": 5,
+      "role": "tool",
+      "content": "test('flaky', …)",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "chatcmpl-tool-49380dc26a1a4f74",
+      "toolName": "read",
+      "toolResult": {
+        "status": "success"
+      },
+      "createdAt": 1700000002,
+      "metadata": {
+        "toolArguments": {
+          "file_path": "/work/src/flaky.test.ts"
+        },
+        "clineMessageIndex": 2
+      }
+    },
+    {
+      "nodeId": 7,
+      "parentNodeId": 6,
+      "role": "tool",
+      "content": "export const db = …",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "chatcmpl-tool-3c02b12480df4ec2",
+      "toolName": "read",
+      "toolResult": {
+        "status": "success"
+      },
+      "createdAt": 1700000002,
+      "metadata": {
+        "toolArguments": {
+          "file_path": "/work/src/helper.ts"
+        },
+        "clineMessageIndex": 2
+      }
+    },
+    {
+      "nodeId": 8,
+      "parentNodeId": 7,
+      "role": "tool",
+      "content": "1 failed, 9 passed",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "chatcmpl-tool-b75e3cba25d84f71",
+      "toolName": "exec",
+      "toolResult": {
+        "status": "error"
+      },
+      "createdAt": 1700000002,
+      "metadata": {
+        "toolArguments": {
+          "command": "bun test"
+        },
+        "clineMessageIndex": 2
+      }
+    },
+    {
+      "nodeId": 9,
+      "parentNodeId": 8,
+      "role": "assistant",
+      "content": "Found the race — patching the fixture.",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "chatcmpl-tool-790efaecf1884981",
+          "name": "edit",
+          "arguments": {
+            "file_path": "/work/src/helper.ts",
+            "old_string": "let x = 0;",
+            "new_string": "let x = 1;"
+          },
+          "index": 0,
+          "kind": "function",
+          "status": "success",
+          "locations": [
+            {
+              "path": "/work/src/helper.ts"
+            }
+          ],
+          "diffs": [
+            {
+              "path": "/work/src/helper.ts",
+              "oldText": "let x = 0;",
+              "newText": "let x = 1;"
+            }
+          ]
+        },
+        {
+          "id": "chatcmpl-tool-920fd39639c34fa8",
+          "name": "write",
+          "arguments": {
+            "file_path": "/work/src/serial.ts",
+            "content": "export const lock = 1;\n"
+          },
+          "index": 1,
+          "kind": "function",
+          "status": "success",
+          "locations": [
+            {
+              "path": "/work/src/serial.ts"
+            }
+          ],
+          "diffs": [
+            {
+              "path": "/work/src/serial.ts",
+              "newText": "export const lock = 1;\n"
+            }
+          ]
+        },
+        {
+          "id": "chatcmpl-tool-eae36d1ba8c44b8d",
+          "name": "grep",
+          "arguments": {
+            "pattern": "race"
+          },
+          "index": 2,
+          "kind": "function",
+          "status": "success",
+          "locations": [],
+          "diffs": []
+        },
+        {
+          "id": "chatcmpl-tool-718c6848604c4f48",
+          "name": "webfetch",
+          "arguments": {
+            "url": "https://example.com/docs"
+          },
+          "index": 3,
+          "kind": "function",
+          "status": "success",
+          "locations": [],
+          "diffs": []
+        },
+        {
+          "id": "chatcmpl-tool-2690bff00bb54cd8",
+          "name": "mystery_tool",
+          "arguments": {
+            "foo": "bar"
+          },
+          "index": 4,
+          "kind": "function",
+          "status": "success",
+          "locations": [],
+          "diffs": []
+        }
+      ],
+      "thinking": "[redacted]",
+      "thinkingSignature": "opaque-blob-1",
+      "usage": {
+        "input": 8000,
+        "output": 200,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700000003,
+      "metadata": {
+        "clineMessageIndex": 3
+      }
+    },
+    {
+      "nodeId": 10,
+      "parentNodeId": 8,
+      "role": "assistant",
+      "content": "Found the race — patching the fixture.",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "chatcmpl-tool-790efaecf1884981",
+          "name": "edit",
+          "arguments": {
+            "file_path": "/work/src/helper.ts",
+            "old_string": "let x = 0;",
+            "new_string": "let x = 1;"
+          },
+          "index": 0,
+          "kind": "function",
+          "status": "success",
+          "locations": [
+            {
+              "path": "/work/src/helper.ts"
+            }
+          ],
+          "diffs": [
+            {
+              "path": "/work/src/helper.ts",
+              "oldText": "let x = 0;",
+              "newText": "let x = 1;"
+            }
+          ]
+        },
+        {
+          "id": "chatcmpl-tool-920fd39639c34fa8",
+          "name": "write",
+          "arguments": {
+            "file_path": "/work/src/serial.ts",
+            "content": "export const lock = 1;\n"
+          },
+          "index": 1,
+          "kind": "function",
+          "status": "success",
+          "locations": [
+            {
+              "path": "/work/src/serial.ts"
+            }
+          ],
+          "diffs": [
+            {
+              "path": "/work/src/serial.ts",
+              "newText": "export const lock = 1;\n"
+            }
+          ]
+        },
+        {
+          "id": "chatcmpl-tool-eae36d1ba8c44b8d",
+          "name": "grep",
+          "arguments": {
+            "pattern": "race"
+          },
+          "index": 2,
+          "kind": "function",
+          "status": "success",
+          "locations": [],
+          "diffs": []
+        },
+        {
+          "id": "chatcmpl-tool-718c6848604c4f48",
+          "name": "webfetch",
+          "arguments": {
+            "url": "https://example.com/docs"
+          },
+          "index": 3,
+          "kind": "function",
+          "status": "success",
+          "locations": [],
+          "diffs": []
+        },
+        {
+          "id": "chatcmpl-tool-2690bff00bb54cd8",
+          "name": "mystery_tool",
+          "arguments": {
+            "foo": "bar"
+          },
+          "index": 4,
+          "kind": "function",
+          "status": "success",
+          "locations": [],
+          "diffs": []
+        }
+      ],
+      "thinking": "[redacted]",
+      "thinkingSignature": "opaque-blob-1",
+      "usage": {
+        "input": 8000,
+        "output": 200,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700000003,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": null,
+        "clineMessageIndex": 3
+      }
+    },
+    {
+      "nodeId": 11,
+      "parentNodeId": 10,
+      "role": "tool",
+      "content": "edit applied",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "chatcmpl-tool-790efaecf1884981",
+      "toolName": "edit",
+      "toolResult": {
+        "status": "success"
+      },
+      "createdAt": 1700000004,
+      "metadata": {
+        "toolArguments": {
+          "file_path": "/work/src/helper.ts",
+          "old_string": "let x = 0;",
+          "new_string": "let x = 1;"
+        },
+        "clineMessageIndex": 4
+      }
+    },
+    {
+      "nodeId": 12,
+      "parentNodeId": 11,
+      "role": "tool",
+      "content": "file created",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "chatcmpl-tool-920fd39639c34fa8",
+      "toolName": "write",
+      "toolResult": {
+        "status": "success"
+      },
+      "createdAt": 1700000004,
+      "metadata": {
+        "toolArguments": {
+          "file_path": "/work/src/serial.ts",
+          "content": "export const lock = 1;\n"
+        },
+        "clineMessageIndex": 4
+      }
+    },
+    {
+      "nodeId": 13,
+      "parentNodeId": 12,
+      "role": "tool",
+      "content": "src/helper.ts:3",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "chatcmpl-tool-eae36d1ba8c44b8d",
+      "toolName": "grep",
+      "toolResult": {
+        "status": "success"
+      },
+      "createdAt": 1700000004,
+      "metadata": {
+        "toolArguments": {
+          "pattern": "race"
+        },
+        "clineMessageIndex": 4
+      }
+    },
+    {
+      "nodeId": 14,
+      "parentNodeId": 13,
+      "role": "tool",
+      "content": "<html>…</html>",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "chatcmpl-tool-718c6848604c4f48",
+      "toolName": "webfetch",
+      "toolResult": {
+        "status": "success"
+      },
+      "createdAt": 1700000004,
+      "metadata": {
+        "toolArguments": {
+          "url": "https://example.com/docs"
+        },
+        "clineMessageIndex": 4
+      }
+    },
+    {
+      "nodeId": 15,
+      "parentNodeId": 14,
+      "role": "tool",
+      "content": "mystery ok",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "chatcmpl-tool-2690bff00bb54cd8",
+      "toolName": "mystery_tool",
+      "toolResult": {
+        "status": "success"
+      },
+      "createdAt": 1700000004,
+      "metadata": {
+        "toolArguments": {
+          "foo": "bar"
+        },
+        "clineMessageIndex": 4
+      }
+    },
+    {
+      "nodeId": 16,
+      "parentNodeId": 10,
+      "role": "user",
+      "content": "looks good, commit it",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000005,
+      "metadata": {
+        "clineMessageIndex": 5
+      }
+    },
+    {
+      "nodeId": 17,
+      "parentNodeId": 16,
+      "role": "assistant",
+      "content": "Committed as c2def.",
+      "blocks": [],
+      "toolCalls": [],
+      "usage": {
+        "input": 9000,
+        "output": 8,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700000006,
+      "metadata": {
+        "clineMessageIndex": 6
+      }
+    },
+    {
+      "nodeId": 18,
+      "parentNodeId": 16,
+      "role": "assistant",
+      "content": "Committed as c2def.",
+      "blocks": [],
+      "toolCalls": [],
+      "usage": {
+        "input": 9000,
+        "output": 8,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700000006,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": null,
+        "clineMessageIndex": 6
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "fix the flaky test",
+      "timestamp": 1700000000000,
+      "isShell": false
+    },
+    {
+      "content": "looks good, commit it",
+      "timestamp": 1700000005000,
+      "isShell": false
+    }
+  ]
+}

@@ -46,24 +46,15 @@ pub trait SessionRepository: Send + Sync {
     async fn list(&self) -> Result<Vec<Session>, StorageError>;
 
     /// Paged history read — adapters that can page natively override it.
-    /// `Ok(None)` means "session unknown to this store" (same contract as
-    /// `get_by_id`); the default falls back to `get_by_id`.
+    /// `Ok(None)` means "I can't serve this" (unsupported store OR
+    /// unknown session); the caller falls back to `get_by_id` + slicing,
+    /// which distinguishes the two.
     async fn nodes_window(
         &self,
-        id: &str,
-        options: &NodesWindowOptions,
+        _id: &str,
+        _options: &NodesWindowOptions,
     ) -> Result<Option<SessionNodeWindow>, StorageError> {
-        let session = self.get_by_id(id, options.agent_id.as_deref()).await?;
-        Ok(session.map(|s| {
-            let total = s.nodes.len();
-            SessionNodeWindow {
-                nodes: s.nodes,
-                tool_call_nodes: Vec::new(),
-                total,
-                start: 0,
-                backend_type: s.backend_type.clone(),
-            }
-        }))
+        Ok(None)
     }
 
     /// Metadata-only read — a `Session` with empty `nodes`/`prompt_history`,

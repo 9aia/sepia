@@ -489,8 +489,8 @@ fn tool_call_ext_map(extensions: &Value) -> HashMap<String, ToolCallExt> {
     for (id, entry) in content {
         let Some(e) = obj(entry) else { continue };
         let status = from_acp_tool_call_status(str_field(e, "status"));
-        let locations = locations_from_acp(&e["locations"]);
-        let diffs = diffs_from_acp_content(&e["content"]);
+        let locations = locations_from_acp(field(e, "locations"));
+        let diffs = diffs_from_acp_content(field(e, "content"));
         map.insert(
             id.clone(),
             ToolCallExt {
@@ -516,12 +516,13 @@ fn parse_tool_calls(raw: &Value, ext_by_id: &HashMap<String, ToolCallExt>) -> Ve
             // Sepia-written calls keep locations/diffs on the call itself;
             // the chisel extension is the store-native carrier and wins.
             let locations = ext.filter(|e| !e.locations.is_empty()).map_or_else(
-                || locations_from_acp(&entry["locations"]),
+                || locations_from_acp(field(entry, "locations")),
                 |e| e.locations.clone(),
             );
-            let diffs = ext
-                .filter(|e| !e.diffs.is_empty())
-                .map_or_else(|| diffs_from_entry(&entry["diffs"]), |e| e.diffs.clone());
+            let diffs = ext.filter(|e| !e.diffs.is_empty()).map_or_else(
+                || diffs_from_entry(field(entry, "diffs")),
+                |e| e.diffs.clone(),
+            );
             Some(ToolCall {
                 id,
                 name: str_field(entry, "name").unwrap_or("unknown").to_string(),
@@ -542,9 +543,12 @@ fn parse_tool_calls(raw: &Value, ext_by_id: &HashMap<String, ToolCallExt>) -> Ve
 /// extensions.
 fn tool_result_from_extensions(extensions: &Value) -> Option<ToolResultInfo> {
     let ext = obj(extensions)?;
-    let success = field(ext, "chisel/tool_result_meta")["success"].as_bool();
-    let exit_code = field(ext, "chisel/terminal_output")["exit"]
-        .as_object()
+    let success = field(ext, "chisel/tool_result_meta")
+        .get("success")
+        .and_then(Value::as_bool);
+    let exit_code = field(ext, "chisel/terminal_output")
+        .get("exit")
+        .and_then(Value::as_object)
         .and_then(|o| num_field(o, "exit_code"));
     let duration_ms = field(ext, "chisel/tool_call_timing")
         .as_object()

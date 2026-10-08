@@ -1,0 +1,68 @@
+[
+  {
+    "id": "devin-basic-2",
+    "title": "Hidden second session",
+    "workingDirectory": "/work/other",
+    "backendType": "windsurf",
+    "agentMode": "plan",
+    "model": "swe-1-7-medium",
+    "createdAt": 1700001000,
+    "lastActivityAt": 1700002000,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[\"/work/other\",\"/work/shared\"]",
+    "hidden": 1,
+    "checkpoints": [],
+    "metadata": null,
+    "nodes": [],
+    "promptHistory": []
+  },
+  {
+    "id": "devin-basic-1",
+    "title": "Basic Devin session",
+    "workingDirectory": "/work/demo",
+    "backendType": "windsurf",
+    "agentMode": "accept-edits",
+    "model": "swe-2-high",
+    "createdAt": 1700000000,
+    "lastActivityAt": 1700000300,
+    "mainChainId": 1,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "total_credit_cost": 0,
+      "total_acu_cost": 0,
+      "response_dimensions": [
+        {
+          "uid": "agent_messages",
+          "group_title": "Response Statistics",
+          "kind": {
+            "CumulativeMetric": {
+              "label": "Agent messages",
+              "value": 0,
+              "tail": " message",
+              "plural_tail": " messages",
+              "prefix": ""
+            }
+          }
+        },
+        {
+          "uid": "model",
+          "group_title": "Response Statistics",
+          "kind": {
+            "Metric": {
+              "label": "Model",
+              "value": "Imported from Cline"
+            }
+          }
+        }
+      ]
+    },
+    "nodes": [],
+    "promptHistory": []
+  }
+]

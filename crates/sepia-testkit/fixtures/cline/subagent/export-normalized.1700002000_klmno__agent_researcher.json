@@ -1,0 +1,152 @@
+{
+  "id": "1700002000_klmno__agent_researcher",
+  "title": "Researcher subagent",
+  "workingDirectory": "/work/team",
+  "backendType": "cline",
+  "agentMode": "accept-edits",
+  "model": "swe-2-high",
+  "createdAt": 1735862460,
+  "lastActivityAt": 1735862880,
+  "mainChainId": 5,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/plan_mask\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"User\"},\"lifetime\":{\"Unique\":\"core/accept_edits\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/parallel-tool-calls\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null},{\"source\":{\"Session\":\"System\"},\"lifetime\":{\"Unique\":\"core/model\"},\"set_system_prefix\":null,\"append_system_messages\":[],\"context\":[],\"footer_messages\":[],\"user_display\":[],\"permissions\":[],\"tool_availability\":null,\"model\":null}]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "parentSessionId": "1700002000_klmno",
+  "agentId": "agent_researcher",
+  "checkpoints": [],
+  "metadata": {
+    "total_credit_cost": 0,
+    "total_acu_cost": 0,
+    "response_dimensions": [
+      {
+        "uid": "agent_messages",
+        "group_title": "Response Statistics",
+        "kind": {
+          "CumulativeMetric": {
+            "label": "Agent messages",
+            "value": 0,
+            "tail": " message",
+            "plural_tail": " messages",
+            "prefix": ""
+          }
+        }
+      },
+      {
+        "uid": "model",
+        "group_title": "Response Statistics",
+        "kind": {
+          "Metric": {
+            "label": "Model",
+            "value": "Imported from Cline"
+          }
+        }
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "system",
+      "content": "<system_info>\nThe following information is automatically generated context about your current environment.\nCurrent workspace directories:\n  /work/team (cwd)\n\nPlatform: linux\n</system_info>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735862460,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": true
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "system",
+      "content": "<rules type=\"always-on\"></rules>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735862460,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": false
+      }
+    },
+    {
+      "nodeId": 2,
+      "parentNodeId": 1,
+      "role": "user",
+      "content": "survey the api surface",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735862460,
+      "metadata": {
+        "clineMessageIndex": 0
+      }
+    },
+    {
+      "nodeId": 3,
+      "parentNodeId": 2,
+      "role": "system",
+      "content": "<available_skills></available_skills>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1735862460,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": false
+      }
+    },
+    {
+      "nodeId": 4,
+      "parentNodeId": 3,
+      "role": "assistant",
+      "content": "api surface is small — 3 endpoints.",
+      "blocks": [],
+      "toolCalls": [],
+      "usage": {
+        "input": 500,
+        "output": 9,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700002120,
+      "metadata": {
+        "clineMessageIndex": 1
+      }
+    },
+    {
+      "nodeId": 5,
+      "parentNodeId": 3,
+      "role": "assistant",
+      "content": "api surface is small — 3 endpoints.",
+      "blocks": [],
+      "toolCalls": [],
+      "usage": {
+        "input": 500,
+        "output": 9,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0
+      },
+      "model": "swe-2-high",
+      "createdAt": 1700002120,
+      "metadata": {
+        "summarized_from": null,
+        "num_tokens_preceding": null,
+        "is_system_prefix": null,
+        "clineMessageIndex": 1
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "survey the api surface",
+      "timestamp": 1700002060000,
+      "isShell": false
+    }
+  ]
+}

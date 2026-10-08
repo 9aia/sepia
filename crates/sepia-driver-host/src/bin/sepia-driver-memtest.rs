@@ -48,6 +48,34 @@ impl SessionRepository for MemStore {
         Ok(())
     }
 
+    async fn nodes_window(
+        &self,
+        id: &str,
+        options: &sepia_core::storage::NodesWindowOptions,
+    ) -> Result<Option<sepia_core::storage::SessionNodeWindow>, StorageError> {
+        let sessions = self.sessions.read().await;
+        let Some(session) = sessions.get(id) else {
+            return Ok(None);
+        };
+        let total = session.nodes.len();
+        let before = options
+            .before
+            .map_or(total, |b| usize::try_from(b.max(0)).unwrap_or(usize::MAX).min(total));
+        let start = before.saturating_sub(options.limit.unwrap_or(total).max(1));
+        Ok(Some(sepia_core::storage::SessionNodeWindow {
+            nodes: session.nodes[start..before].to_vec(),
+            tool_call_nodes: session
+                .nodes
+                .iter()
+                .filter(|n| !n.tool_calls.is_empty())
+                .cloned()
+                .collect(),
+            total,
+            start,
+            backend_type: session.backend_type.clone(),
+        }))
+    }
+
     async fn has_session(&self, id: &str) -> Result<bool, StorageError> {
         Ok(self.sessions.read().await.contains_key(id))
     }

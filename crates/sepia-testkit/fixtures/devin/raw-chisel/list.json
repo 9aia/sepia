@@ -1,0 +1,44 @@
+[
+  {
+    "id": "devin-raw-1",
+    "title": "Raw chisel session",
+    "workingDirectory": "/work/repo",
+    "backendType": "windsurf",
+    "agentMode": "accept-edits",
+    "model": "swe-1.5",
+    "createdAt": 1700200000,
+    "lastActivityAt": 1700200600,
+    "mainChainId": 5,
+    "shellLastSeenIndex": 2,
+    "cogsJson": "[]",
+    "workspaceDirs": "[\"/work/repo\"]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "total_credit_cost": 12.5,
+      "total_acu_cost": 3
+    },
+    "nodes": [],
+    "promptHistory": []
+  },
+  {
+    "id": "devin-raw-2",
+    "title": "Sub run (no nodes)",
+    "workingDirectory": "/work/repo",
+    "backendType": "windsurf",
+    "agentMode": "accept-edits",
+    "model": "swe-1.5-mini",
+    "createdAt": 1700200300,
+    "lastActivityAt": 1700200300,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "parentSessionId": "devin-raw-1",
+    "checkpoints": [],
+    "metadata": {},
+    "nodes": [],
+    "promptHistory": []
+  }
+]

@@ -34,18 +34,19 @@
  * Run: bun tools/extract-golden-devin-cline.ts
  */
 import { Database } from "bun:sqlite";
-import { Effect, Layer, Option } from "effect";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
-import * as BunPath from "@effect/platform-bun/BunPath";
 
 // The repo uses bun's isolated workspace layout — `tools/` is not a
-// workspace package, so the sepia-* specifiers don't resolve here. Import
-// the package entrypoints relatively; their own `sepia-*` imports resolve
-// through each package's node_modules.
+// workspace package, so bare specifiers (`effect`, `@effect/*`, `sepia-*`)
+// don't resolve here. Import through packages/convert's node_modules (all
+// symlink to the same node_modules/.bun targets, so module identity holds)
+// and the package entrypoints relatively.
+import { Effect, Layer, Option } from "../packages/convert/node_modules/effect/dist/esm/index.js";
+import * as BunFileSystem from "../packages/convert/node_modules/@effect/platform-bun/dist/esm/BunFileSystem.js";
+import * as BunPath from "../packages/convert/node_modules/@effect/platform-bun/dist/esm/BunPath.js";
 import {
   MessageNode,
   PromptHistoryEntry,
@@ -326,7 +327,7 @@ const devinFullSessions = (): ReadonlyArray<Session> => [
         parentNodeId: Option.some(1),
         role: "assistant",
         content: "",
-        thinking: "I'll update the editor wiring and run the tests.",
+        thinking: Option.some("I'll update the editor wiring and run the tests."),
         thinkingSignature: Option.some("sealed.v1.Zm9vYmFy"),
         toolCalls: [
           ToolCall.make({
@@ -553,9 +554,15 @@ const seedDevinRaw = (dbPath: string) => {
         "devin-raw-1",
         nodeId,
         parentNodeId,
+        // A string arg lands in the column verbatim — objects are encoded —
+        // so callers can write both well-formed and deliberately broken JSON.
         typeof chatMessage === "string" ? chatMessage : JSON.stringify(chatMessage),
         createdAt,
-        metadata === null ? null : JSON.stringify(metadata),
+        metadata === null
+          ? null
+          : typeof metadata === "string"
+            ? metadata
+            : JSON.stringify(metadata),
       );
 
     node(
@@ -751,9 +758,10 @@ const seedDevinRaw = (dbPath: string) => {
       session_id TEXT NOT NULL, tool_call_id TEXT NOT NULL,
       tool_call_json TEXT, tool_call_update_json TEXT,
       PRIMARY KEY (session_id, tool_call_id))`);
-    // The call row is the still-open snapshot; the update is authoritative —
-    // here it says the read never finished (interrupted session), which
-    // downgrades the tool node's recorded success to pending on read.
+    // The call row is the still-open snapshot; the update is authoritative.
+    // Here it agrees with the tool node's recorded failure (exit_code via
+    // _meta["cognition.ai/terminal_exit"]); the toolu_02 row below is a
+    // malformed update blob and is skipped on read.
     sqlite.run(
       `INSERT INTO tool_call_state (session_id, tool_call_id, tool_call_json, tool_call_update_json)
        VALUES (?, ?, ?, ?)`,

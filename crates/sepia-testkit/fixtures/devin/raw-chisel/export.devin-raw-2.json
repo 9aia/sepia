@@ -1,0 +1,20 @@
+{
+  "id": "devin-raw-2",
+  "title": "Sub run (no nodes)",
+  "workingDirectory": "/work/repo",
+  "backendType": "windsurf",
+  "agentMode": "accept-edits",
+  "model": "swe-1.5-mini",
+  "createdAt": 1700200300,
+  "lastActivityAt": 1700200300,
+  "mainChainId": 0,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "parentSessionId": "devin-raw-1",
+  "checkpoints": [],
+  "metadata": {},
+  "nodes": [],
+  "promptHistory": []
+}

@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "updated_at": "2025-01-02T00:05:00.000Z",
+  "agent": "lead",
+  "sessionId": "1700003000_pqrst",
+  "origin": {
+    "source": "cli",
+    "mode": "user",
+    "sessionId": "1700003000_pqrst",
+    "version": "3.0.61"
+  },
+  "messages": [
+    {
+      "id": "m0",
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "<user_input mode=\"act\">run the suite</user_input>"
+        }
+      ],
+      "ts": 1700003000000
+    },
+    {
+      "id": "m1",
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "ignored"
+        }
+      ],
+      "ts": 1700003001000
+    },
+    {
+      "id": "m2",
+      "role": "assistant",
+      "content": "not-an-array",
+      "ts": "not-a-number"
+    },
+    {
+      "id": "m3",
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "orphan-1",
+          "name": "run_commands",
+          "content": "stale output from a compacted call"
+        }
+      ],
+      "ts": 1700003003000
+    },
+    {
+      "id": "m4",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "trying"
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_bad",
+          "name": "run_commands",
+          "input": {
+            "commands": 42
+          }
+        }
+      ],
+      "ts": 1700003004000
+    },
+    {
+      "id": "m5",
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_bad",
+          "name": "run_commands",
+          "content": "it ran anyway"
+        }
+      ],
+      "ts": 1700003005000
+    },
+    {
+      "id": "m6",
+      "role": "user",
+      "content": "a bare string, not an array",
+      "ts": 1700003006000
+    },
+    {
+      "id": "m7",
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": ""
+        }
+      ],
+      "ts": 1700003007000
+    },
+    {
+      "id": "m8",
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "final question"
+        }
+      ],
+      "ts": 1700003008000
+    }
+  ],
+  "custom_field": {
+    "nested": true
+  }
+}

@@ -1,0 +1,21 @@
+[
+  {
+    "id": "1700001000_fghij",
+    "title": "Attachments",
+    "workingDirectory": "/work/pix",
+    "backendType": "cline",
+    "agentMode": "accept-edits",
+    "model": "swe-2-high",
+    "createdAt": 1735812000,
+    "lastActivityAt": 1735812120,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {},
+    "nodes": [],
+    "promptHistory": []
+  }
+]
