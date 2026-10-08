@@ -74,7 +74,10 @@ function CodeBlock({ language, className, children, ...props }: CodeBlockProps) 
       </div>
       <div
         ref={preRef}
-        className="[&>pre]:!m-0 [&>pre]:!rounded-none [&>pre]:!border-0 [&>pre]:overflow-x-auto [&>pre]:p-3"
+        // children is the <code> element (streamdown passes it to the pre
+        // renderer) — pad the container itself; any nested pre the code
+        // plugin emits keeps chrome but no padding of its own.
+        className="overflow-x-auto p-3 [&_pre]:!m-0 [&_pre]:!rounded-none [&_pre]:!border-0 [&_pre]:!p-0"
       >
         {children}
       </div>

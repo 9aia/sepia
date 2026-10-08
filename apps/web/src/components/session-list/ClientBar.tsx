@@ -198,7 +198,7 @@ export function ClientBar() {
       ? agentLabel(desktop.agent)
       : agentId !== null
         ? agentLabel(agentId)
-        : "node default";
+        : "Node default";
   const agentPref = agentId === null ? undefined : modelPrefs[agentId];
   const configuredModel =
     agentPref !== undefined && agentPref.model.trim() !== "" ? agentPref.model.trim() : undefined;
@@ -361,33 +361,17 @@ export function ClientBar() {
                 </span>
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-44">
+                {/* Flat node picks — agent selection lives in the Agent
+                    submenu below, not a sub-sub-menu here. */}
                 {entries.map((target) => (
-                  <DropdownMenuSub key={target.node}>
-                    <DropdownMenuSubTrigger
-                      className={target.reachable === false ? "text-muted-foreground" : undefined}
-                    >
-                      {target.label}
-                      {focusedKey === target.node && desktop.agent === null && <Check />}
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="w-44">
-                      <DropdownMenuItem onClick={() => pick(target.node, null)}>
-                        Node default
-                        {focusedKey === target.node && desktop.agent === null && <Check />}
-                      </DropdownMenuItem>
-                      {target.agents.length > 0 && <DropdownMenuSeparator />}
-                      {target.agents.length === 0 && (
-                        <DropdownMenuItem disabled>
-                          <span className="text-muted-foreground">No agents</span>
-                        </DropdownMenuItem>
-                      )}
-                      {target.agents.map((id) => (
-                        <DropdownMenuItem key={id} onClick={() => pick(target.node, id)}>
-                          {agentLabel(id)}
-                          {focusedKey === target.node && desktop.agent === id && <Check />}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
+                  <DropdownMenuItem
+                    key={target.node}
+                    disabled={target.reachable === false}
+                    onClick={() => pick(target.node, null)}
+                  >
+                    {target.label}
+                    {focusedKey === target.node && <Check />}
+                  </DropdownMenuItem>
                 ))}
                 {nodeMissing && desktop.node !== null && (
                   <DropdownMenuItem disabled>
