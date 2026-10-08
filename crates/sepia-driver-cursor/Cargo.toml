@@ -1,0 +1,30 @@
+[package]
+name = "sepia-driver-cursor"
+description = "Cursor store driver — ~/.cursor chats store.db + agent-transcripts as a SessionRepository over the driver-wire protocol"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sepia-driver-cursor"
+path = "src/bin/sepia-driver-cursor.rs"
+
+[dependencies]
+sepia-core.workspace = true
+sepia-driver-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+rusqlite.workspace = true
+md-5 = "0.10"
+sha2 = "0.10"
+
+[dev-dependencies]
+sepia-testkit.workspace = true
+tempfile.workspace = true
+rusqlite.workspace = true
