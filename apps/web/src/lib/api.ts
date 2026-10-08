@@ -14,6 +14,7 @@ import type {
 } from "./types";
 import type { PromptPart } from "./attachments";
 import { localTarget, type ApiTarget } from "./targets";
+import { setAuthBlocked } from "./store";
 
 export { getToken, setToken } from "./token";
 export type { ApiTarget } from "./targets";
@@ -73,7 +74,12 @@ async function sepiaFetch(
   } catch {
     throw new Error("Can't reach the Sepia server — is it running?");
   }
-  if (res.status === 401) throw new AuthError();
+  if (res.status === 401) {
+    // Peer 401s are that node's own auth problem — only the local target's
+    // rejection gates the UI (and instantly, not after a query settles).
+    if (target.baseUrl === localTarget().baseUrl) setAuthBlocked(true);
+    throw new AuthError();
+  }
   return res;
 }
 

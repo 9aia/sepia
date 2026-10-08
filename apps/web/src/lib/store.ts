@@ -25,6 +25,12 @@ export interface SepiaState {
   newProjectFor: string | null;
   /** Message the composer is quoting; cleared on session switch and on send. */
   replyTo: ReplyQuote | null;
+  /**
+   * Any /api call on the local target that got a 401 flips this — the
+   * TokenGate mounts on the first rejection rather than waiting for the
+   * sessions query to finish settling. Cleared when a token is submitted.
+   */
+  authBlocked: boolean;
 }
 
 export const sepiaStore = new Store<SepiaState>({
@@ -37,7 +43,14 @@ export const sepiaStore = new Store<SepiaState>({
   cwd: null,
   newProjectFor: null,
   replyTo: null,
+  authBlocked: false,
 });
+
+export const setAuthBlocked = (authBlocked: boolean): void => {
+  sepiaStore.setState((prev) =>
+    prev.authBlocked === authBlocked ? prev : { ...prev, authBlocked },
+  );
+};
 
 export const setSelectedId = (id: string | null): void => {
   if (id !== null) pushRecent(id);

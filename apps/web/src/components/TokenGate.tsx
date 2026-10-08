@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { LockKeyholeIcon } from "@hugeicons/core-free-icons";
 import { setToken } from "../lib/api";
+import { setAuthBlocked } from "../lib/store";
 import { EmptyScreen } from "./EmptyScreen";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -15,6 +16,7 @@ export function TokenGate() {
     const token = value.trim();
     if (token === "") return;
     setToken(token);
+    setAuthBlocked(false);
     void queryClient.invalidateQueries();
   };
 

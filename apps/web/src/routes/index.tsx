@@ -128,14 +128,11 @@ function Home() {
     }
   }, [health.isError, health.isSuccess, queryClient]);
 
-  // Sticky gate: a focus/invalidation refetch clears `error` back to
-  // pending while the 401 still stands — without the flag the gate
-  // unmounts mid-cycle and the page flickers gate → skeleton → gate.
-  const [authBlocked, setAuthBlocked] = useState(false);
-  useEffect(() => {
-    if (error instanceof AuthError) setAuthBlocked(true);
-    else if (sessions !== undefined) setAuthBlocked(false);
-  }, [error, sessions]);
+  // The gate opens on the FIRST local 401 anywhere (set inside
+  // sepiaFetch) — no waiting for the sessions query to settle, and
+  // background refetches can't flicker it because the flag holds until
+  // the TokenGate submits a token.
+  const authBlocked = useStore(sepiaStore, (state) => state.authBlocked);
   if (authBlocked || error instanceof AuthError) return <TokenGate />;
 
   return (
