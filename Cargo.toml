@@ -16,6 +16,7 @@ sepia-control = { path = "crates/sepia-control" }
 sepia-convert = { path = "crates/sepia-convert" }
 sepia-meta = { path = "crates/sepia-meta" }
 sepia-node = { path = "crates/sepia-node" }
+sepia-outbox = { path = "crates/sepia-outbox" }
 sepia-driver-sdk = { path = "crates/sepia-driver-sdk" }
 sepia-driver-host = { path = "crates/sepia-driver-host" }
 sepia-testkit = { path = "crates/sepia-testkit" }

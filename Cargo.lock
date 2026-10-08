@@ -879,6 +879,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sepia-outbox"
+version = "0.0.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "uuid",
+]
+
+[[package]]
 name = "sepia-proto"
 version = "0.0.0"
 dependencies = [
