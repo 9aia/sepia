@@ -58,9 +58,9 @@ impl SessionRepository for MemStore {
             return Ok(None);
         };
         let total = session.nodes.len();
-        let before = options
-            .before
-            .map_or(total, |b| usize::try_from(b.max(0)).unwrap_or(usize::MAX).min(total));
+        let before = options.before.map_or(total, |b| {
+            usize::try_from(b.max(0)).unwrap_or(usize::MAX).min(total)
+        });
         let start = before.saturating_sub(options.limit.unwrap_or(total).max(1));
         Ok(Some(sepia_core::storage::SessionNodeWindow {
             nodes: session.nodes[start..before].to_vec(),

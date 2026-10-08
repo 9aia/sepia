@@ -13,6 +13,8 @@ sepia-core = { path = "crates/sepia-core" }
 sepia-proto = { path = "crates/sepia-proto" }
 sepia-acp = { path = "crates/sepia-acp" }
 sepia-control = { path = "crates/sepia-control" }
+sepia-convert = { path = "crates/sepia-convert" }
+sepia-meta = { path = "crates/sepia-meta" }
 sepia-driver-sdk = { path = "crates/sepia-driver-sdk" }
 sepia-driver-host = { path = "crates/sepia-driver-host" }
 sepia-testkit = { path = "crates/sepia-testkit" }

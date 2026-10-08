@@ -700,6 +700,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sepia-convert"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "sepia-core",
+ "sepia-testkit",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "sepia-core"
 version = "0.0.0"
 dependencies = [
@@ -784,6 +797,16 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "sepia-meta"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
 ]
 
 [[package]]
