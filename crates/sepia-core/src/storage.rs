@@ -10,7 +10,8 @@ use crate::domain::{MessageNode, Session, StorageError};
 /// `tool_call_nodes` carries the nodes whose `tool_calls` the window's
 /// tool rows reference (the calls themselves may live outside the
 /// window); `total` is the full node count.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionNodeWindow {
     pub nodes: Vec<MessageNode>,
     pub tool_call_nodes: Vec<MessageNode>,

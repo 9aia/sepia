@@ -1,5 +1,6 @@
 [package]
 name = "sepia-driver-host"
+description = "Daemon side of the sepia driver protocol — discovery, spawn, registry, remote SessionRepository"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -9,3 +10,14 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+sepia-core.workspace = true
+sepia-driver-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
