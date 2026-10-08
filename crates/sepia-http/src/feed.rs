@@ -403,13 +403,15 @@ pub struct LiveListeners {
 
 impl LiveListeners {
     /// Subscribe a forward task for `id` that mirrors run lifecycle onto
-    /// the feed as `busy` patches — a no-op when a listener is already
-    /// registered (matching the TS `liveUnsubs` dedupe semantics: the
-    /// entry stays even after the task ends).
+    /// the feed as `busy` patches AND fires push notifications — a no-op
+    /// when a listener is already registered (matching the TS
+    /// `liveUnsubs` dedupe semantics: the entry stays even after the
+    /// task ends).
     pub fn register(
         &self,
         plane: &Arc<ControlPlane>,
         feed: &EventFeed,
+        push: Option<Arc<sepia_push::PushStore>>,
         id: &str,
         agent_id: Option<String>,
     ) {
@@ -434,6 +436,19 @@ impl LiveListeners {
             loop {
                 match rx.recv().await {
                     Ok(events) => {
+                        if let Some(push) = &push {
+                            let title = plane
+                                .get_summary(&id_owned, None)
+                                .await
+                                .map_or_else(|_| id_owned.clone(), |s| s.title);
+                            sepia_push::notify_for_events(
+                                push,
+                                &id_owned,
+                                agent_id.as_deref(),
+                                &title,
+                                &events,
+                            );
+                        }
                         if let Some(busy) = busy_from_events(&events) {
                             feed.emit_session(
                                 &id_owned,

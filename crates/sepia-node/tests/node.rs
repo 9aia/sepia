@@ -18,14 +18,15 @@ fn node_serves_sessions_over_http() {
 
     let db = db_dir.join("sessions.db");
     let store = sepia_driver_devin::store::DevinStore::open(&db, false).unwrap();
-    let mut session =
-        sepia_testkit::contract::session("devin-1", "Node test", 1_700_000_000.0);
+    let mut session = sepia_testkit::contract::session("devin-1", "Node test", 1_700_000_000.0);
     session.backend_type = "windsurf".into();
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
-        .block_on(sepia_core::storage::SessionRepository::save(&store, &session))
+        .block_on(sepia_core::storage::SessionRepository::save(
+            &store, &session,
+        ))
         .unwrap();
 
     let port = 18787u16;

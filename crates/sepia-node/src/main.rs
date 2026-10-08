@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use sepia_control::{ControlError, ControlPlaneOptions};
+use sepia_http::AppState;
 use sepia_http::env::Env;
 use sepia_http::routes::sessions::ImportTarget;
-use sepia_http::AppState;
 use sepia_node::{NodePaths, build};
 
 fn control_err(e: impl std::fmt::Display) -> ControlError {
@@ -67,15 +67,11 @@ async fn main() -> std::io::Result<()> {
             let cline = cline.clone();
             Box::pin(async move {
                 match target {
-                    ImportTarget::Cline => sepia_convert::install_cline(
-                        &repo,
-                        &id,
-                        &cline,
-                        None,
-                        false,
-                    )
-                    .await
-                    .map_err(|e| control_err(e.message)),
+                    ImportTarget::Cline => {
+                        sepia_convert::install_cline(&repo, &id, &cline, None, false)
+                            .await
+                            .map_err(|e| control_err(e.message))
+                    }
                     ImportTarget::Devin => sepia_convert::import_cline(
                         &cline.join("sessions").join(&id),
                         None,
@@ -85,8 +81,7 @@ async fn main() -> std::io::Result<()> {
                     .await
                     .map_err(|e| control_err(e.message)),
                 }
-            })
-                as futures::future::BoxFuture<'static, Result<String, ControlError>>
+            }) as futures::future::BoxFuture<'static, Result<String, ControlError>>
         }) as sepia_http::ConvertSession;
         let repo2 = Arc::clone(devin);
         let import = Arc::new(move |session: sepia_core::Session, _target: ImportTarget| {
@@ -95,15 +90,19 @@ async fn main() -> std::io::Result<()> {
                 sepia_convert::import_session(&repo, &session)
                     .await
                     .map_err(|e| control_err(e.message))
-            })
-                as futures::future::BoxFuture<'static, Result<String, ControlError>>
+            }) as futures::future::BoxFuture<'static, Result<String, ControlError>>
         }) as sepia_http::ImportSession;
         let state = AppState::from_env(&env, Arc::clone(&node.plane))
             .with_convert(convert)
             .with_import_session(import);
         run(&env, state, node).await
     } else {
-        run(&env, AppState::from_env(&env, Arc::clone(&node.plane)), node).await
+        run(
+            &env,
+            AppState::from_env(&env, Arc::clone(&node.plane)),
+            node,
+        )
+        .await
     }
 }
 

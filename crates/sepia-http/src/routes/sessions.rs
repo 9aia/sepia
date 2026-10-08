@@ -200,6 +200,7 @@ async fn create(state: &AppState, req: Request<Body>) -> Response {
             state.live.register(
                 &state.plane,
                 &state.feed,
+                state.push.clone(),
                 &created.id,
                 Some(created.agent_id.clone()),
             );
@@ -593,9 +594,13 @@ pub async fn attach(
             error_response(&e)
         }
         Ok(result) => {
-            state
-                .live
-                .register(&state.plane, &state.feed, &id, agent.clone());
+            state.live.register(
+                &state.plane,
+                &state.feed,
+                state.push.clone(),
+                &id,
+                agent.clone(),
+            );
             state.feed.emit_session(
                 &id,
                 Some(&result.agent_id),

@@ -59,6 +59,8 @@ pub struct AppState {
     pub import_session: Option<ImportSession>,
     /// Store-write seam for `POST /api/sessions/:id/convert`.
     pub convert: Option<ConvertSession>,
+    /// Web Push service over the meta store — `None` → 501s.
+    pub push: Option<Arc<sepia_push::PushStore>>,
 }
 
 impl AppState {
@@ -84,6 +86,7 @@ impl AppState {
             live: LiveListeners::default(),
             import_session: None,
             convert: None,
+            push: None,
         }
     }
 
@@ -109,6 +112,9 @@ impl AppState {
             live: LiveListeners::default(),
             import_session: None,
             convert: None,
+            push: Some(Arc::new(sepia_push::PushStore::open(MetaStore::open(
+                &env.meta_path,
+            )))),
         }
     }
 
@@ -157,6 +163,13 @@ impl AppState {
     #[must_use]
     pub fn with_import_session(mut self, f: ImportSession) -> Self {
         self.import_session = Some(f);
+        self
+    }
+
+    /// Override the push service (tests wire a stub store).
+    #[must_use]
+    pub fn with_push(mut self, push: Option<Arc<sepia_push::PushStore>>) -> Self {
+        self.push = push;
         self
     }
 
@@ -289,6 +302,8 @@ pub fn app(state: AppState) -> Router {
         .route("/api/sessions/{id}/restore", any(routes::sessions::restore))
         .route("/api/sessions/{id}/rewind", any(routes::sessions::rewind))
         .route("/api/sessions/{id}/convert", any(routes::sessions::convert))
+        .route("/api/push/vapid", any(routes::push::vapid))
+        .route("/api/push/subscribe", any(routes::push::subscribe))
         .fallback(async || routes::not_found())
         .layer(axum::extract::DefaultBodyLimit::disable())
         // Innermost → outermost: auth gate, request log, CORS.
