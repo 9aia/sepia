@@ -1,60 +1,59 @@
 name: release
 
-# Manual only — dispatch from the Actions tab to cut a release. Continuous
-# release: every run stamps a fresh MAJOR.YYMMDD.HHMM version, builds, and
-# publishes both npm packages. Requires an NPM_TOKEN secret (npm granular
-# access token with publish rights on sepia-node and sepia-ui).
+# Manual — builds release binaries for linux x86_64 and macOS (aarch64
+# + x86_64) and attaches them to a GitHub release tagged from VERSION.
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  id-token: write # npm --provenance
+  contents: write
 
 jobs:
-  publish:
+  binaries:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-13
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: |
+          cargo build --release --target ${{ matrix.target }} \
+            --bin sepia --bin sepia-node --bin sepia-hub \
+            --bin sepia-driver-devin --bin sepia-driver-cline \
+            --bin sepia-driver-claude --bin sepia-driver-cursor
+      - name: Stage
+        run: |
+          mkdir -p "dist/sepia-${{ matrix.target }}"
+          cd "target/${{ matrix.target }}/release"
+          for b in sepia sepia-node sepia-hub sepia-driver-devin sepia-driver-cline sepia-driver-claude sepia-driver-cursor; do
+            install -m 755 "$b" "$OLDPWD/dist/sepia-${{ matrix.target }}/"
+          done
+          tar -czf "$OLDPWD/sepia-${{ matrix.target }}.tar.gz" -C "$OLDPWD/dist" "sepia-${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sepia-${{ matrix.target }}
+          path: sepia-${{ matrix.target }}.tar.gz
+
+  release:
+    needs: binaries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
-
-      # npm publish needs Node on PATH; registry-url wires NODE_AUTH_TOKEN.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org"
-
-      - run: bun install --frozen-lockfile
-
-      # Stamp MAJOR.YYMMDD.HHMM into VERSION + every package.json (the
-      # publishable manifests ship what this writes). The script re-runs
-      # `bun install` to keep bun.lock's workspace table in sync.
-      - run: bun tools/version.ts
-
-      # check + test + build — the web build produces apps/web/dist/client,
-      # which build-npm stages into both packages (--skip-web-build reuses it).
-      - run: bun run ready
-
-      - run: bun tools/build-npm.ts --skip-web-build
-
-      # Pack with bun (npm pack fails inside this repo — the root devEngines
-      # requires bun as packageManager), publish the tarballs with npm from a
-      # neutral directory so provenance signing still applies.
-      - name: Pack sepia-node
-        working-directory: packages/sepia-node
-        run: bun pm pack --destination "$RUNNER_TEMP"
-
-      - name: Pack sepia-ui
-        working-directory: packages/sepia-ui
-        run: bun pm pack --destination "$RUNNER_TEMP"
-
-      - name: Publish to npm
+      - uses: actions/download-artifact@v4
+      - name: Tag + release
         run: |
-          cd "$RUNNER_TEMP"
-          npm publish sepia-node-*.tgz --provenance --access public
-          npm publish sepia-ui-*.tgz --provenance --access public
+          VERSION="$(cat VERSION)-$(date -u +%y%m%d.%H%M)"
+          gh release create "$VERSION" --generate-notes sepia-*.tar.gz
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -53,7 +53,7 @@ fn node_serves_sessions_over_http() {
             }
             Err(e) => {
                 let _ = child.kill();
-    let _ = child.wait();
+                let _ = child.wait();
                 let _ = child.wait();
                 panic!("GET /api/sessions never came up: {e}");
             }
@@ -145,7 +145,7 @@ fn node_attach_prompt_stream_e2e() {
             }
             Err(e) => {
                 let _ = child.kill();
-    let _ = child.wait();
+                let _ = child.wait();
                 let _ = child.wait();
                 panic!("node never came up: {e}");
             }

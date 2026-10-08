@@ -5,16 +5,14 @@ on:
   pull_request:
 
 jobs:
-  ready:
+  rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
-
-      - run: bun install --frozen-lockfile
-
-      # `vp` resolves from node_modules/.bin; `ready` runs check + tests + build.
-      - run: bun run ready
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo check -p sepia-web --target wasm32-unknown-unknown

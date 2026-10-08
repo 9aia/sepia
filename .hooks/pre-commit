@@ -1,0 +1,2 @@
+#!/bin/sh
+cargo fmt --all --check >/dev/null || { echo 'run cargo fmt'; exit 1; }
