@@ -22,6 +22,7 @@ import { createFsRoute } from "./routes/fs";
 import { createHealthRoute } from "./routes/misc";
 import { createNodeRoute } from "./routes/node";
 import { createPairRoute } from "./routes/pair";
+import { cookieToken, createAuthRoute } from "./routes/auth";
 import { createProjectsRoute } from "./routes/projects";
 import { createPushRoute } from "./routes/push";
 import { createServersRoute } from "./routes/servers";
@@ -151,6 +152,11 @@ const isAuthorized = (request: Request, token: string | undefined, pairing?: Pai
   if (token === undefined || token === "") return true;
   const header = request.headers.get("authorization");
   let provided = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
+  // HttpOnly-cookie auth (POST /api/auth/login): same credential, held
+  // outside JS reach — Bearer stays authoritative when both ride.
+  if (provided === null) {
+    provided = cookieToken(request) ?? null;
+  }
   if (provided === null && request.method === "GET") {
     // The access log only records url.pathname, never query params.
     const url = new URL(request.url);
@@ -333,6 +339,13 @@ export const createApp = (plane: ControlPlaneService, options: AppOptions = {}) 
   const preAuth: ReadonlyArray<RouteHandler> = [
     createHealthRoute({ run, plane }),
     createPairRoute({ pairing: options.pairing }),
+    createAuthRoute({
+      token: options.token,
+      pairing: options.pairing,
+      accepts: (provided) =>
+        options.token !== undefined &&
+        (tokenMatches(provided, options.token) || options.pairing?.accepts(provided) === true),
+    }),
   ];
 
   // Post-auth route table — dispatch order mirrors the original if-chain in

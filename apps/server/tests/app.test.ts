@@ -1810,6 +1810,87 @@ describe("pairing", () => {
     expect(authed.status).toBe(200);
   });
 
+  describe("cookie auth (POST /api/auth/*)", () => {
+    const cookieHeader = (res: Response): string => res.headers.get("set-cookie") ?? "";
+
+    it("login sets an httpOnly cookie that then authenticates /api calls", async () => {
+      const { plane } = makeFakePlane();
+      const app = createApp(plane, { token: "secret" });
+
+      const res = await app(post("/api/auth/login", { token: "secret" }));
+      expect(res.status).toBe(200);
+      const cookie = cookieHeader(res);
+      expect(cookie).toContain("sepia_token=secret");
+      expect(cookie).toContain("HttpOnly");
+      expect(cookie).toContain("SameSite=Strict");
+
+      // The cookie authenticates like the bearer — no Authorization header.
+      const authed = await app(
+        new Request("http://localhost:8787/api/sessions", {
+          headers: { origin: "http://localhost:3000", cookie: "sepia_token=secret" },
+        }),
+      );
+      expect(authed.status).toBe(200);
+    });
+
+    it("login rejects a wrong token with 401 and no cookie", async () => {
+      const { plane } = makeFakePlane();
+      const app = createApp(plane, { token: "secret" });
+      const res = await app(post("/api/auth/login", { token: "wrong" }));
+      expect(res.status).toBe(401);
+      expect(cookieHeader(res)).toBe("");
+    });
+
+    it("logout expires the cookie", async () => {
+      const { plane } = makeFakePlane();
+      const app = createApp(plane, { token: "secret" });
+      const res = await app(post("/api/auth/logout"));
+      expect(res.status).toBe(200);
+      expect(cookieHeader(res)).toContain("sepia_token=;");
+      expect(cookieHeader(res)).toContain("Max-Age=0");
+    });
+
+    it("a paired credential works through the cookie path", async () => {
+      const { plane } = makeFakePlane();
+      const dir = mkdtempSync(join(tmpdir(), "sepia-cookie-"));
+      const pairing = createPairing({
+        codeFile: join(dir, "pair-code"),
+        tokensFile: join(dir, "tokens.json"),
+      });
+      writeFileSync(
+        join(dir, "pair-code"),
+        JSON.stringify({ code: "ABCD-EFGH", expiresAt: Date.now() + 60_000 }),
+      );
+      const app = createApp(plane, { token: "secret", pairing });
+      const paired = await app(post("/api/pair", { code: "abcd-efgh" }));
+      const { token } = (await paired.json()) as { token: string };
+
+      const login = await app(post("/api/auth/login", { token }));
+      expect(login.status).toBe(200);
+      const authed = await app(
+        new Request("http://localhost:8787/api/sessions", {
+          headers: { origin: "http://localhost:3000", cookie: `sepia_token=${token}` },
+        }),
+      );
+      expect(authed.status).toBe(200);
+    });
+
+    it("the bearer still wins when both ride (cookie of a wrong token)", async () => {
+      const { plane } = makeFakePlane();
+      const app = createApp(plane, { token: "secret" });
+      const authed = await app(
+        new Request("http://localhost:8787/api/sessions", {
+          headers: {
+            origin: "http://localhost:3000",
+            authorization: "Bearer secret",
+            cookie: "sepia_token=wrong",
+          },
+        }),
+      );
+      expect(authed.status).toBe(200);
+    });
+  });
+
   it("returns 404 for an unknown code and 404 again on replay (single-use)", async () => {
     const { plane } = makeFakePlane();
     const { codeFile, tokensFile } = pairingFixture();

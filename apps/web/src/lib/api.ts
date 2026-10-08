@@ -15,8 +15,9 @@ import type {
 import type { PromptPart } from "./attachments";
 import { localTarget, type ApiTarget } from "./targets";
 import { setAuthBlocked } from "./store";
+import { setCookieAuth, setToken as setStoredToken } from "./token";
 
-export { getToken, setToken } from "./token";
+export { getToken, setToken, isCookieAuth, setCookieAuth } from "./token";
 export type { ApiTarget } from "./targets";
 
 export class AuthError extends Error {
@@ -94,6 +95,32 @@ async function request<T>(path: string, init?: RequestInit, target?: ApiTarget):
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * `POST /api/auth/login` — exchange a presented token for the httpOnly
+ * `sepia_token` cookie. The cookie rides every subsequent same-origin
+ * call automatically, so a successful login leaves NO token in JS:
+ * cookieAuth flips on (localTarget stops sending Bearer) and the legacy
+ * localStorage token is dropped. Throws AuthError on a wrong token.
+ */
+export async function login(token: string): Promise<void> {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (res.status === 401) throw new AuthError();
+  if (!res.ok) throw new ApiError("Login failed", res.status);
+  setCookieAuth(true);
+  // The cookie holds the credential now — scrub the JS-side copy.
+  setStoredToken(null);
+}
+
+/** `POST /api/auth/logout` — expire the cookie server-side. */
+export async function logout(): Promise<void> {
+  await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+  setCookieAuth(false);
+}
 
 /**
  * The server's `{error, code}` payload carries the real failure ("Session

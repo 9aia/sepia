@@ -85,3 +85,20 @@ export const setToken = (token: string | null): void => {
   writeTokens(tokens);
   for (const listener of listeners) listener();
 };
+
+/**
+ * httpOnly-cookie mode: `POST /api/auth/login` set `sepia_token`
+ * server-side, so no credential lives in JS/localStorage. The flag is
+ * module state (not persisted): a fresh page can't know the cookie exists
+ * until a call succeeds, but once any local call 401s the gate re-runs
+ * the login and re-arms it.
+ */
+let cookieAuth = false;
+
+export const setCookieAuth = (enabled: boolean): void => {
+  cookieAuth = enabled;
+  for (const listener of listeners) listener();
+};
+
+/** True when the local target authenticates via cookie instead of Bearer. */
+export const isCookieAuth = (): boolean => cookieAuth;

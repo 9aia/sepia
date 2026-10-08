@@ -1,5 +1,5 @@
 import { settingsStore } from "./settings";
-import { getToken } from "./token";
+import { getToken, isCookieAuth } from "./token";
 
 /**
  * Where an API call lands. `baseUrl` is "" for the same-origin node (the
@@ -33,5 +33,7 @@ export interface ApiTarget {
  */
 export const localTarget = (): ApiTarget => ({
   baseUrl: settingsStore.state.localNodeUrl ?? "",
-  token: getToken(),
+  // Cookie auth only applies same-origin — a repointed localNodeUrl is a
+  // different origin than the cookie is bound to, so it keeps Bearer.
+  token: isCookieAuth() && (settingsStore.state.localNodeUrl ?? "") === "" ? null : getToken(),
 });

@@ -32,10 +32,10 @@
       infeasible — but there is no per-IP throttle; add one if the node is
       ever exposed off-LAN without a reverse proxy (deploy behind
       Caddy/nginx limits).
-- [ ] **httpOnly cookie transport for the local token** — would remove the
-      token from JS reach (XSS) and from SSE URLs entirely; needs
-      SameSite + CORS credential plumbing and a CSRF story, so deferred
-      until session-style auth is worth it.
+- [ ] **Peer credential storage** — the LOCAL token moved to an httpOnly
+      cookie (`POST /api/auth/login`), but _peer_ tokens still live in
+      localStorage (`sepia:credentials`). Server-side credential vault on
+      the serving node (proxy injects, JS never sees) is the real fix.
 
 ### Ops / QA
 
@@ -78,7 +78,9 @@ absolute-start.
 
 Security hardening shipped: address-bound tokens, SSE-only query auth,
 gateway confinement to `/api/*` + origin pinning, SSH argv guards,
-capability gating, auth-gated keypair mint, server body caps. (Deliberate
+capability gating, auth-gated keypair mint, server body caps, httpOnly
+cookie transport for the local token (`POST /api/auth/login|logout`,
+SameSite=Strict — token never touches JS on the serving origin). (Deliberate
 `SEPIA_ORIGINS=*` behavior lives in docs/protocol.md "Hardening notes".)
 
 Housekeeping: AGENTS.md layout + stubs + coverage-policy notes corrected;

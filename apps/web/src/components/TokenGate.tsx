@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { LockKeyholeIcon } from "@hugeicons/core-free-icons";
-import { setToken } from "../lib/api";
+import { login, AuthError } from "../lib/api";
 import { setAuthBlocked } from "../lib/store";
 import { EmptyScreen } from "./EmptyScreen";
 import { Button } from "./ui/button";
@@ -11,13 +11,20 @@ export function TokenGate() {
   const queryClient = useQueryClient();
   const [value, setValue] = useState("");
 
-  const submit = (event: FormEvent): void => {
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     const token = value.trim();
     if (token === "") return;
-    setToken(token);
-    setAuthBlocked(false);
-    void queryClient.invalidateQueries();
+    setError(null);
+    try {
+      await login(token);
+      setAuthBlocked(false);
+      void queryClient.invalidateQueries();
+    } catch (err) {
+      setError(err instanceof AuthError ? "Invalid token" : "Login failed — try again");
+    }
   };
 
   return (
@@ -38,6 +45,7 @@ export function TokenGate() {
             onChange={(event) => setValue(event.target.value)}
           />
           <Button type="submit">Unlock</Button>
+          {error === null ? null : <p className="text-center text-xs text-destructive">{error}</p>}
         </form>
       </EmptyScreen>
     </main>
