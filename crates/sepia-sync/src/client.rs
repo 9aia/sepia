@@ -252,10 +252,10 @@ impl NodeClient {
         let mut req = self.auth(self.agent.get(self.session_url(id, "history")));
         req = Self::query_opt(req, "agent", agent);
         if let Some(limit) = limit {
-            req = req.query("limit", &limit.to_string());
+            req = req.query("limit", limit.to_string());
         }
         if let Some(before) = before {
-            req = req.query("before", &before.to_string());
+            req = req.query("before", before.to_string());
         }
         let res = req.call().map_err(NodeError::Transport)?;
         let body = Self::expect_json(res)?;
@@ -447,7 +447,7 @@ impl<R: std::io::Read> EventStream<R> {
                     if self.data.is_empty() && self.event.is_none() {
                         return Ok(None);
                     }
-                    return self.dispatch().map(Some);
+                    return Ok(Some(self.dispatch()));
                 }
                 Ok(_) => {
                     let line = line.trim_end_matches(['\n', '\r']);
@@ -455,7 +455,7 @@ impl<R: std::io::Read> EventStream<R> {
                         if self.data.is_empty() && self.event.is_none() {
                             continue;
                         }
-                        return self.dispatch().map(Some);
+                        return Ok(Some(self.dispatch()));
                     }
                     if line.starts_with(':') {
                         continue;
@@ -475,10 +475,10 @@ impl<R: std::io::Read> EventStream<R> {
         }
     }
 
-    fn dispatch(&mut self) -> Result<FeedEvent, NodeError> {
+    fn dispatch(&mut self) -> FeedEvent {
         let event = self.event.take().unwrap_or_default();
         let data = std::mem::take(&mut self.data);
-        Ok(classify(&event, &data))
+        classify(&event, &data)
     }
 }
 
@@ -521,19 +521,23 @@ fn classify(event: &str, data: &str) -> FeedEvent {
 /// RFC 3986 unreserved characters pass through; everything else is
 /// percent-encoded — session ids are opaque and may carry `:`/` `/etc.
 fn encode_segment(segment: &str) -> String {
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(segment.len());
     for byte in segment.bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 out.push(char::from(byte));
             }
-            _ => out.push_str(&format!("%{byte:02X}")),
+            _ => {
+                let _ = write!(out, "%{byte:02X}");
+            }
         }
     }
     out
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -594,8 +598,13 @@ mod tests {
 
     #[test]
     fn parses_bare_data_frames_as_session_events() {
-        let input = "data: {\"type\":\"runStarted\",\"threadId\":\"s1\",\"runId\":\"r1\"}\n\n";
-        let got = frames(input);
+        // The real wire shape: tag is camelCase, fields snake_case.
+        let event = SessionEvent::RunStarted {
+            thread_id: "s1".into(),
+            run_id: "r1".into(),
+        };
+        let input = format!("data: {}\n\n", serde_json::to_string(&event).unwrap());
+        let got = frames(&input);
         assert_eq!(
             got,
             vec![FeedEvent::Session(SessionEvent::RunStarted {

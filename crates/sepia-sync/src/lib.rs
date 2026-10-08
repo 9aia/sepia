@@ -526,24 +526,19 @@ impl ProjectionStore {
             .conn
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match node_id {
-            Some(node_id) => {
-                let mut stmt = conn.prepare(
-                    "SELECT * FROM session_index WHERE node_id=? ORDER BY updated_at DESC",
-                )?;
-                let rows = stmt
-                    .query_map(params![node_id], row_to_indexed)?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            }
-            None => {
-                let mut stmt =
-                    conn.prepare("SELECT * FROM session_index ORDER BY updated_at DESC")?;
-                let rows = stmt
-                    .query_map([], row_to_indexed)?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            }
+        if let Some(node_id) = node_id {
+            let mut stmt = conn
+                .prepare("SELECT * FROM session_index WHERE node_id=? ORDER BY updated_at DESC")?;
+            let rows = stmt
+                .query_map(params![node_id], row_to_indexed)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        } else {
+            let mut stmt = conn.prepare("SELECT * FROM session_index ORDER BY updated_at DESC")?;
+            let rows = stmt
+                .query_map([], row_to_indexed)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
         }
     }
 
