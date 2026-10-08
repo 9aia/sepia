@@ -33,6 +33,12 @@ uuid = { workspace = true, features = ["v4"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt"] }
 tower = { workspace = true, features = ["util"] }
+sepia-testkit.workspace = true
+sepia-driver-devin.workspace = true
+sepia-core.workspace = true
+sepia-http = { workspace = true }
+ureq = { workspace = true }
+tempfile = { workspace = true }
 
 # cargo-leptos wiring — `cargo leptos watch` from the workspace root builds
 # the wasm bundle into `site-root/pkg` and runs this binary with

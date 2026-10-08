@@ -123,3 +123,94 @@ async fn prompt_queues_when_the_node_is_down() {
     assert_eq!(pending[0].op, "prompt");
     // The test runtime drop aborts the engine loops.
 }
+
+/// The whole stack: sepia-node (devin driver + mock agent) serving,
+/// sepia-hub projecting it, GET / SSRs the session title.
+#[test]
+fn hub_e2e_over_a_real_node() {
+    let tmp = tempfile::tempdir().unwrap();
+    let driver_dir = tmp.path().join("drivers");
+    let node_home = tmp.path().join("node-home");
+    let db_dir = tmp.path().join("devin");
+    std::fs::create_dir_all(&driver_dir).unwrap();
+    std::fs::create_dir_all(&db_dir).unwrap();
+    std::fs::create_dir_all(&node_home).unwrap();
+
+    let driver = sepia_testkit::ensure_driver_bin("sepia-driver-devin");
+    std::fs::hard_link(&driver, driver_dir.join("sepia-driver-devin")).unwrap();
+    let db = db_dir.join("sessions.db");
+    let store = sepia_driver_devin::store::DevinStore::open(&db, false).unwrap();
+    let mut session =
+        sepia_testkit::contract::session("e2e-1", "Capstone session", 1_700_000_000.0);
+    session.backend_type = "windsurf".into();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(sepia_core::storage::SessionRepository::save(&store, &session))
+        .unwrap();
+
+    let node_port = 18790u16;
+    let mut node = std::process::Command::new(sepia_testkit::ensure_driver_bin("sepia-node"))
+        .env("SEPIA_DRIVER_DIR", &driver_dir)
+        .env("SEPIA_DEVIN_DB", &db)
+        .env("SEPIA_HOME", &node_home)
+        .env("SEPIA_META", node_home.join("meta.json"))
+        .env("SEPIA_NODE", node_home.join("node.json"))
+        .env("SEPIA_PORT", node_port.to_string())
+        .env("SEPIA_HOST", "127.0.0.1")
+        .env("HOME", tmp.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let hub_port = 18791u16;
+    let mut hub = std::process::Command::new(sepia_testkit::ensure_driver_bin("sepia-hub"))
+        .env("SEPIA_NODE_URL", format!("http://127.0.0.1:{node_port}"))
+        .env("SEPIA_NODES", format!("laptop=http://127.0.0.1:{node_port}"))
+        .env("SEPIA_HOME", tmp.path().join("hub-home"))
+        .env("SEPIA_HUB_PORT", hub_port.to_string())
+        .env("SEPIA_HUB_HOST", "127.0.0.1")
+        .env("HOME", tmp.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let client = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .build()
+        .new_agent();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let body = loop {
+        match client
+            .get(format!("http://127.0.0.1:{hub_port}/"))
+            .call()
+        {
+            Ok(mut resp) => {
+                let text = resp.body_mut().read_to_string().unwrap();
+                if text.contains("Capstone session") {
+                    break text;
+                }
+                // SSR may render before the projection's first sync —
+                // keep polling until it lands.
+                if std::time::Instant::now() >= deadline {
+                    break text;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            Err(e) => {
+                let _ = hub.kill();
+                let _ = node.kill();
+                panic!("hub never came up: {e}");
+            }
+        }
+    };
+    let _ = hub.kill();
+    let _ = node.kill();
+    assert!(body.contains("Capstone session"), "html: {body}");
+}
