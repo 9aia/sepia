@@ -7,27 +7,12 @@ import viteReact from "@vitejs/plugin-react";
 const token = process.env.SEPIA_TOKEN;
 
 export default defineConfig({
-  build: {
-    rolldownOptions: {
-      output: {
-        codeSplitting: {
-          groups: [
-            // Cap every eagerly-loaded chunk: modules tagged $initial are
-            // statically reachable from an entry, so this repacks the initial
-            // payload into bounded pieces. maxSize counts pre-minification
-            // bytes — ~700 kB of source lands near ~450 kB minified here.
-            // Lazily imported modules (shiki languages, mermaid, the settings
-            // dialog, the details drawer) keep their own on-demand chunks.
-            {
-              name: "initial",
-              tags: ["$initial"],
-              maxSize: 700 * 1024,
-            },
-          ],
-        },
-      },
-    },
-  },
+  // NOTE: no manual codeSplitting groups — repacking $initial modules into
+  // bounded chunks created an index↔initial cycle that TDZ'd a store class
+  // at eval time ("f is not a constructor" on a black screen). Default
+  // chunking keeps cross-chunk cycles acyclic; the lazy imports in
+  // streamdown-plugins.ts / index.tsx do the real splitting.
+
   resolve: {
     alias: { "@": path.resolve(__dirname, "src") },
   },
