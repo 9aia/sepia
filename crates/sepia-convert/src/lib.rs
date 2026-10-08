@@ -243,3 +243,95 @@ pub async fn import_session(
     .map_err(storage_err("Import failed"))?;
     Ok(session.id.clone())
 }
+
+/// Read a Cline session dir into the IR and import it into the Devin
+/// store. Existing sessions are left untouched.
+///
+/// # Errors
+/// `ConversionError` on parse/store failure.
+pub async fn import_cline(
+    cline_dir: &std::path::Path,
+    session_id: Option<&str>,
+    repo: &Arc<dyn SessionRepository>,
+    dry_run: bool,
+) -> Result<String, ConversionError> {
+    let mut session =
+        sepia_driver_cline::cline::from_directory(cline_dir, session_id).map_err(|e| {
+            ConversionError {
+                message: format!("Import failed: {}", e.message),
+                cause: e.cause.as_str().map(str::to_string),
+            }
+        })?;
+    session.backend_type = "cline".into();
+    let stored_id = session.id.clone();
+    if repo
+        .has_session(&stored_id)
+        .await
+        .map_err(storage_err("Import failed"))?
+    {
+        return Ok(stored_id);
+    }
+    if dry_run {
+        return Ok(stored_id);
+    }
+    import_session(repo, &session).await
+}
+
+/// Write a stored session out to a Cline session dir (manifest +
+/// transcript pair).
+///
+/// # Errors
+/// `ConversionError` on unknown session or write failure.
+pub async fn export_cline(
+    repo: &Arc<dyn SessionRepository>,
+    session_id: &str,
+    out_dir: &std::path::Path,
+    force: bool,
+    dry_run: bool,
+) -> Result<(), ConversionError> {
+    let session = repo
+        .get_by_id(session_id, None)
+        .await
+        .map_err(storage_err("Export failed"))?
+        .ok_or_else(|| ConversionError::new(format!("Session not found: {session_id}")))?;
+    sepia_driver_cline::cline::to_directory(&session, out_dir, force, dry_run).map_err(|e| {
+        ConversionError {
+            message: format!("Export failed: {}", e.message),
+            cause: e.cause.as_str().map(str::to_string),
+        }
+    })?;
+    Ok(())
+}
+
+/// Export a Devin session straight into the Cline CLI store: artifacts
+/// land in `<data_dir>/sessions/<id>/` and the index row is registered,
+/// so `cline --id <id>` resumes it. `force` overwrites a live-owned row.
+///
+/// # Errors
+/// `ConversionError` on unknown session or store write failure.
+pub async fn install_cline(
+    repo: &Arc<dyn SessionRepository>,
+    session_id: &str,
+    data_dir: &std::path::Path,
+    new_session_id: Option<&str>,
+    force: bool,
+) -> Result<String, ConversionError> {
+    let session = repo
+        .get_by_id(session_id, None)
+        .await
+        .map_err(storage_err("Install failed"))?
+        .ok_or_else(|| ConversionError::new(format!("Session not found: {session_id}")))?;
+    let id = new_session_id.map_or_else(
+        || sepia_driver_cline::cline::cline_session_id(session.created_at * 1000.0),
+        str::to_string,
+    );
+    let store = sepia_driver_cline::ClineStore::new(data_dir.to_path_buf());
+    store
+        .install(&session, &id, force)
+        .await
+        .map_err(|e| ConversionError {
+            message: format!("Install failed: {}", e.message),
+            cause: Some(e.message.clone()),
+        })?;
+    Ok(id)
+}

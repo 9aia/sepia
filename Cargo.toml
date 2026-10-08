@@ -14,6 +14,10 @@ sepia-proto = { path = "crates/sepia-proto" }
 sepia-acp = { path = "crates/sepia-acp" }
 sepia-control = { path = "crates/sepia-control" }
 sepia-convert = { path = "crates/sepia-convert" }
+sepia-driver-cline = { path = "crates/sepia-driver-cline" }
+sepia-driver-claude = { path = "crates/sepia-driver-claude" }
+sepia-driver-cursor = { path = "crates/sepia-driver-cursor" }
+sepia-driver-devin = { path = "crates/sepia-driver-devin" }
 sepia-meta = { path = "crates/sepia-meta" }
 sepia-node = { path = "crates/sepia-node" }
 sepia-outbox = { path = "crates/sepia-outbox" }

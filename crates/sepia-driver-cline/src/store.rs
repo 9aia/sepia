@@ -467,25 +467,41 @@ impl ClineStore {
     }
 }
 
-#[async_trait]
-impl SessionRepository for ClineStore {
-    /// `ClineStore.install` — write the manifest/transcript pair and the
-    /// `db/sessions.db` index row. Refuses to overwrite a session that
-    /// still belongs to a live owner.
-    async fn save(&self, session: &Session) -> Result<(), StorageError> {
-        let id = session.id.as_str();
+impl ClineStore {
+    /// `save` under a caller-chosen id; `force` overwrites a live-owned
+    /// index row (the `--force` install path).
+    ///
+    /// # Errors
+    /// `StorageError` on live-owner refusal (without `force`) or I/O.
+    pub async fn install(
+        &self,
+        session: &Session,
+        id: &str,
+        force: bool,
+    ) -> Result<(), StorageError> {
         let dir = self.sessions_dir().join(id);
         let messages_path = dir.join(format!("{id}.messages.json"));
 
-        if let Some((status, pid)) = self.index_row(id)? {
-            if cline_index::is_active_row(&status, cline_index::is_pid_alive(pid)) {
-                return Err(StorageError::new(format!(
-                    "Session {id} still belongs to a live owner (status {status}, pid {pid}); resume it or retry with --force"
-                )));
+        if !force {
+            if let Some((status, pid)) = self.index_row(id)? {
+                if cline_index::is_active_row(&status, cline_index::is_pid_alive(pid)) {
+                    return Err(StorageError::new(format!(
+                        "Session {id} still belongs to a live owner (status {status}, pid {pid}); resume it or retry with --force"
+                    )));
+                }
             }
         }
+        self.install_inner(session, id, &dir, &messages_path).await
+    }
 
-        std::fs::create_dir_all(&dir).map_err(storage_err("Cline install failed"))?;
+    async fn install_inner(
+        &self,
+        session: &Session,
+        id: &str,
+        dir: &std::path::Path,
+        messages_path: &std::path::Path,
+    ) -> Result<(), StorageError> {
+        std::fs::create_dir_all(dir).map_err(storage_err("Cline install failed"))?;
         let manifest = cline::session_manifest(session, id, &messages_path.to_string_lossy());
         std::fs::write(
             dir.join(format!("{id}.json")),
@@ -503,14 +519,24 @@ impl SessionRepository for ClineStore {
             map.insert(SIDECAR_KEY.into(), Value::Object(sepia));
         }
         std::fs::write(
-            &messages_path,
+            messages_path,
             serde_json::to_string_pretty(&messages).unwrap_or_default(),
         )
         .map_err(storage_err("Cline install failed"))?;
 
-        self.register(session, id, &messages_path)?;
+        self.register(session, id, messages_path)?;
         self.invalidate();
         Ok(())
+    }
+}
+
+#[async_trait]
+impl SessionRepository for ClineStore {
+    /// `ClineStore.install` — write the manifest/transcript pair and the
+    /// `db/sessions.db` index row. Refuses to overwrite a session that
+    /// still belongs to a live owner.
+    async fn save(&self, session: &Session) -> Result<(), StorageError> {
+        self.install(session, &session.id, false).await
     }
 
     async fn get_by_id(

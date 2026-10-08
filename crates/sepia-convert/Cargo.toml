@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 sepia-core.workspace = true
+sepia-driver-cline.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

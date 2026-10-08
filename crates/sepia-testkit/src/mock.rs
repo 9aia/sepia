@@ -38,3 +38,9 @@ pub fn ensure_mock_acp_agent() -> &'static PathBuf {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
     PATH.get_or_init(|| build_bin("sepia-mock-acp-agent"))
 }
+
+/// Any workspace driver binary — builds it on first call, cached per
+/// name.
+pub fn ensure_driver_bin(name: &str) -> PathBuf {
+    build_bin(name)
+}
