@@ -151,6 +151,7 @@ impl Outbox {
     ///
     /// # Errors
     /// On sqlite/serde failure.
+    #[allow(clippy::too_many_arguments)]
     pub fn enqueue(
         &self,
         node_id: &str,
@@ -161,7 +162,10 @@ impl Outbox {
         idempotency_key: &str,
         ttl_seconds: Option<i64>,
     ) -> Result<OutboxEntry, OutboxError> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(existing) = Self::by_key_locked(&conn, idempotency_key)? {
             return Ok(existing);
         }
@@ -223,8 +227,11 @@ impl Outbox {
         node_id: &str,
         session_id: &str,
     ) -> Result<Option<OutboxEntry>, OutboxError> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
-        self.expire_locked(&conn)?;
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::expire_locked(&conn)?;
         let mut stmt = conn.prepare(
             "SELECT * FROM outbox WHERE node_id=? AND session_id=? AND status='pending'
              ORDER BY seq LIMIT 1",
@@ -241,7 +248,10 @@ impl Outbox {
     /// # Errors
     /// On sqlite failure.
     pub fn mark_in_flight(&self, id: &str) -> Result<(), OutboxError> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         conn.execute(
             "UPDATE outbox SET status='in_flight', attempts=attempts+1 WHERE id=?",
             params![id],
@@ -254,7 +264,10 @@ impl Outbox {
     /// # Errors
     /// On sqlite failure.
     pub fn mark_done(&self, id: &str) -> Result<(), OutboxError> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         conn.execute("UPDATE outbox SET status='done' WHERE id=?", params![id])?;
         Ok(())
     }
@@ -265,7 +278,10 @@ impl Outbox {
     /// # Errors
     /// On sqlite failure.
     pub fn mark_failed(&self, id: &str, error: &str) -> Result<Status, OutboxError> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = Self::by_id_locked(&conn, id)?
             .ok_or_else(|| OutboxError::Duplicate(format!("unknown entry {id}")))?;
         let status = if entry.kind == OpKind::Turn || entry.attempts >= entry.max_attempts {
@@ -285,8 +301,11 @@ impl Outbox {
     /// # Errors
     /// On sqlite/serde failure.
     pub fn pending_for_node(&self, node_id: &str) -> Result<Vec<OutboxEntry>, OutboxError> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
-        self.expire_locked(&conn)?;
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::expire_locked(&conn)?;
         let mut stmt = conn.prepare(
             "SELECT * FROM outbox WHERE node_id=? AND status='pending' ORDER BY session_id, seq",
         )?;
@@ -301,7 +320,10 @@ impl Outbox {
     /// # Errors
     /// On sqlite/serde failure.
     pub fn dead_letters(&self) -> Result<Vec<OutboxEntry>, OutboxError> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn.prepare("SELECT * FROM outbox WHERE status='dead' ORDER BY seq")?;
         let rows = stmt
             .query_map([], row_to_entry)?
@@ -314,7 +336,10 @@ impl Outbox {
     /// # Errors
     /// On sqlite failure or unknown id.
     pub fn retry_dead(&self, id: &str) -> Result<(), OutboxError> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         conn.execute(
             "UPDATE outbox SET status='pending', attempts=0, last_error=NULL WHERE id=? AND status='dead'",
             params![id],
@@ -341,7 +366,7 @@ impl Outbox {
     }
 
     /// Move expired pending entries to dead-letter.
-    fn expire_locked(&self, conn: &Connection) -> Result<(), OutboxError> {
+    fn expire_locked(conn: &Connection) -> Result<(), OutboxError> {
         let now = OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default();
