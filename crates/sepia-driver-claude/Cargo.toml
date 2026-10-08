@@ -1,0 +1,28 @@
+[package]
+name = "sepia-driver-claude"
+description = "Claude Code store driver — ~/.claude/projects/*.jsonl transcripts as a SessionRepository over the driver-wire protocol"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sepia-driver-claude"
+path = "src/bin/sepia-driver-claude.rs"
+
+[dependencies]
+sepia-core.workspace = true
+sepia-driver-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+time = { workspace = true, features = ["parsing"] }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+sepia-testkit.workspace = true
+tempfile.workspace = true
