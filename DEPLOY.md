@@ -1,253 +1,130 @@
-# Deploying sepia
+# Deploying sepia (Rust)
 
-Sepia is a self-hosted control plane for coding-agent sessions. The default
-packaged form is a **single `bun --compile` binary** built from source (see
-[Single binary](#single-binary)) — `vp run build:binary` → `./sepia serve`.
-The **`sepia-node` npm package** (`npm i -g sepia-node` → `sepia serve`, see
-[npm packages](#npm-packages)) is the platform-neutral alternative. Both serve
-the API and the web UI on one port — "one binary per machine, any machine
-hosts the UI". For development the two halves still run side by side:
+Sepia is a self-hosted control plane for coding-agent sessions. Each
+machine runs a headless **`sepia-node`** daemon; one designated machine
+also runs **`sepia-hub`** (Leptos SSR + the sync engine). Browsers —
+including the phone PWA — only ever talk to the hub.
 
-- **API** (`sepia-server`, Bun, `:8787`) — REST + AG-UI SSE + AG-UI agent endpoint
-  runtime. Spawns `devin acp` / `cline --acp` subprocesses that can read and
-  modify files in session working directories.
-- **Web** (`sepia-web`, TanStack Start, `:3000`) — the client UI. Proxies
-  `/api` to the API.
+```
+phone / any laptop browser ──► sepia-hub (:3000)
+                                   │ HTTP+SSE
+            ┌──────────────────────┼───────────────────────┐
+            ▼                      ▼                       ▼
+       sepia-node (:8787)     sepia-node              sepia-node
+            │                      │                       │
+        sepia-driver-* binaries (discovered, not bundled)
+            │
+        agent CLIs over ACP (devin acp, cline --acp, claude-agent-acp)
+```
 
-Both processes must run under **Bun ≥ 1.3**: `sepia-core` imports `bun:sqlite`
-at module load, so Node cannot host the API or the repository layer.
-
-## Single binary
+## Install
 
 ```bash
-vp run build:binary        # bun tools/build-binary.ts
-./sepia serve              # API + embedded UI on :8787
-./sepia serve --no-ui      # API-only node (same as SEPIA_UI=off)
+cargo xtask install
+# release-builds and copies to ~/.local/bin:
+#   sepia, sepia-node, sepia-hub,
+#   sepia-driver-{devin,cline,claude,cursor}
 ```
 
-`build:binary` builds the web app (TanStack Start SPA mode — the UI is a
-client-rendered static bundle), stages `apps/web/dist/client` at
-`apps/server/ui-dist/`, regenerates `src/ui.assets.gen.ts` with one
-`import ... with { type: "file" }` per asset, and runs
-`bun build apps/sepia/src/main.ts --compile`. The assets land in the binary's
-`$bunfs` store and are served same-origin at `/`; every non-`/api` path falls
-back to `index.html` for client routing.
+Install only what the machine needs — a headless laptop wants
+`sepia-node` + its driver binaries; the UI host wants `sepia-hub` too.
+Drivers can also live in `$SEPIA_DRIVER_DIR`,
+`~/.local/share/sepia/drivers/`, or anywhere on `PATH` — the node scans
+all three at boot.
 
-Flags: `--skip-web-build` reuses an existing `dist/client`, `--outfile <path>`
-renames the output (default `./sepia`).
-
-All `SEPIA_*` configuration applies unchanged. `SEPIA_UI=off` (or `0`/`false`)
-disables UI serving for API-only nodes; `SEPIA_UI_DIR=<dist dir>` serves a
-web bundle from disk instead of the embedded one — useful for trying a newer
-UI without rebuilding the binary.
-
-## npm packages
-
-The npm distribution is **source + dist**, not the compiled binary: a
-`bun --compile` artifact is ~106 MiB and per-platform, while the packages
-below are platform-neutral and a few MB. **Bun is the runtime dependency** —
-install it with `curl -fsSL https://bun.sh/install.sh | bash`.
-
-- **`sepia-node`** — the node + CLI. `bin/sepia` is a `#!/usr/bin/env bun`
-  shim that defaults `SEPIA_UI_DIR` to the packaged web bundle (`ui/`) and
-  hands off to `dist/cli.js` — one `bun build --target bun --minify` bundle
-  of `apps/sepia/src/main.ts` with every workspace dep inlined (no
-  `workspace:*` leaks into the manifest; `bun:*` builtins stay external).
-  `npm i -g sepia-node` → `sepia serve`; `sepia version` prints the stamp.
-
-- **`sepia-ui`** — the standalone web bundle at `dist/` for running the
-  client apart from the node: `npx serve dist` (with SPA fallback to
-  `index.html`), or point a node's `SEPIA_UI_DIR` at it.
-
-Release versioning is a continuous datetime stamp — `MAJOR.YYMMDD.HHMM` UTC
-(e.g. `0.261005.1330`; `0.x` = unstable, HHMM unpadded since semver forbids
-leading zeros). `vp run version:bump` (=`bun tools/version.ts`) writes the
-stamp into `VERSION` and every workspace `package.json`, then re-syncs
-`bun.lock`. `vp run build:npm` (=`bun tools/build-npm.ts`) builds the web
-bundle, bundles the CLI, and stages `packages/sepia-node/{bin,dist,ui}` and
-`packages/sepia-ui/dist`.
+## `sepia-node`
 
 ```bash
-vp run version:bump      # stamp 0.YYMMDD.HHMM everywhere
-vp run release           # one-shot: stamp → build npm + binary → commit/tag/
-                         # push → npm publish ×2 → gh release (auto notes)
-vp run release -- --dry-run   # full pipeline minus commit/push/publish
-vp run build:npm         # build + stage both packages
-cd packages/sepia-node && bun pm pack --destination /tmp
-cd ../sepia-ui && bun pm pack --destination /tmp
-cd /tmp && npm publish sepia-node-*.tgz --access public
-npm publish sepia-ui-*.tgz --access public
+sepia serve            # or: sepia-node
 ```
 
-Publishing from inside the workspace hits `EBADDEVENGINES` (the root
-manifest pins `devEngines.packageManager: bun`), so pack with `bun pm pack`
-and run `npm publish` on the tarballs from outside the repo.
+Key env (full list in `crates/sepia-http/src/env.rs`):
 
-`.github/workflows/release.yml` automates exactly this (stamp → `bun run
-ready` → stage → `bun pm pack` → `npm publish --provenance`) on manual
-`workflow_dispatch` with an `NPM_TOKEN` secret — nothing publishes until it
-is dispatched.
+- `SEPIA_HOST` (default `127.0.0.1`), `SEPIA_PORT` (default `8787`).
+  Non-loopback binds require `SEPIA_TOKEN`.
+- `SEPIA_TOKEN` — bearer auth on `/api/*` (except `GET /api/health`,
+  `POST /api/pair`). `?access_token` authenticates the two SSE GETs.
+- `SEPIA_DRIVER_DIR` — extra driver scan dir.
+- `SEPIA_DEVIN_DB` / `SEPIA_CLINE_DIR` / `SEPIA_CLAUDE_DIR` /
+  `SEPIA_CURSOR_DIR` — store roots (devin `sessions.db`, Cline data dir,
+  `~/.claude`, `~/.cursor`).
+- `SEPIA_HOME` (default `~/.local/share/sepia`) — meta.json, node
+  identity, driver dir.
+- `SEPIA_ORIGINS`, `SEPIA_AGENT_<ID>_COMMAND` (override an agent's
+  spawn command), `SEPIA_IDLE_TTL_MS`, `SEPIA_SWEEP_MS`,
+  `SEPIA_LOCK_TTL_MS`, `SEPIA_HELD_WATCH_MS`, `SEPIA_HISTORY_LIMIT`,
+  `SEPIA_SSE_KEEPALIVE_MS`, `SEPIA_INHERIT_ENV`, `SEPIA_DEBUG`.
 
-## Security model — read this first
+A node is headless — no UI deps, idle RSS in the tens of MB. Drivers
+that crash respawn on next use; a machine with no Devin CLI just shows
+no Devin sessions.
 
-The API executes real coding agents. Anyone who can reach it can create a
-session in an arbitrary working directory and prompt an agent to modify files.
-Treat network access to the API as remote code execution.
-
-- The API binds `127.0.0.1` by default and refuses a non-loopback
-  `SEPIA_HOST` unless `SEPIA_TOKEN` is set.
-- Always set `SEPIA_TOKEN` and keep it server-side. The intended topology is a
-  reverse proxy that terminates TLS and injects
-  `Authorization: Bearer <token>` when forwarding `/api`, so the token never
-  reaches the client (see `docker-compose.yml` + `Caddyfile`).
-- Deployments without a token-injecting proxy still work: the web UI shows a
-  token gate on 401 and stores the token in `localStorage` (`sepia:token`,
-  bound to the node address it was entered for — repointing the client at a
-  different node re-prompts rather than replaying the credential elsewhere).
-  It is sent as `Authorization: Bearer` on API calls and as `?access_token=`
-  on the two SSE streams (`/api/events`, `/api/sessions/:id/stream` —
-  EventSource cannot set headers, and the server only honors the query
-  credential on those GETs). The access log only records `url.pathname`, so
-  the token never appears in logs.
-- CORS is not the gate — it only affects browsers. Auth applies to every
-  `/api/*` route except `GET /api/health` and `POST /api/pair` (the pairing
-  bootstrap, authorized by the one-time code).
-- The server opens the Devin store **read-only**; session writes happen inside
-  the agent CLIs, not sepia.
-
-## Configuration (API)
-
-| Variable                      | Default                                          | Purpose                                                                      |
-| ----------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `SEPIA_HOST`                  | `127.0.0.1`                                      | Bind address. Non-loopback requires `SEPIA_TOKEN`.                           |
-| `PORT`                        | `8787`                                           | API port.                                                                    |
-| `SEPIA_TOKEN`                 | unset                                            | Bearer token required on all `/api/*` routes when set.                       |
-| `SEPIA_DB`                    | `~/.local/share/devin/cli/sessions.db`           | Devin session store path (opened read-only).                                 |
-| `SEPIA_CLINE_DIR`             | `~/.cline/data`                                  | Cline data dir merged into the session list (read-only overlay).             |
-| `SEPIA_CLAUDE_DIR`            | `~/.claude`                                      | Claude Code dir; `<dir>/projects` merged into the session list.              |
-| `SEPIA_CURSOR_DIR`            | `~/.cursor`                                      | Cursor dir; `chats/` + `projects/` merged into the session list (read-only). |
-| `SEPIA_ORIGINS`               | `http://localhost:3000,http://127.0.0.1:3000`    | Comma-separated CORS allowlist for browser calls.                            |
-| `SEPIA_UI`                    | `on`                                             | `off`/`0`/`false` disables static UI serving (API-only node).                |
-| `SEPIA_UI_DIR`                | unset                                            | Serve a web bundle from this dir instead of the embedded one.                |
-| `SEPIA_AGENT_<ID>_COMMAND`    | `devin acp` / `cline --acp` / `claude-agent-acp` | Override the spawn argv per agent id (space-separated).                      |
-| `SEPIA_IDLE_TTL_MS`           | `600000`                                         | Detach live sessions idle this long; `0` disables.                           |
-| `SEPIA_SWEEP_MS`              | `30000`                                          | Idle-sweep interval.                                                         |
-| `SEPIA_LOCK_TTL_MS`           | `5000`                                           | Lock-probe result cache.                                                     |
-| `SEPIA_HELD_WATCH_MS`         | `5000`                                           | Re-probe interval for held sessions feeding `/api/events`; `0` disables.     |
-| `SEPIA_META`                  | `~/.local/share/sepia/meta.json`                 | Sepia-owned session metadata (title overrides via PATCH).                    |
-| `SEPIA_HISTORY_LIMIT`         | `500`                                            | Default tail limit for `GET .../history`.                                    |
-| `SEPIA_SSE_KEEPALIVE_MS`      | `15000`                                          | SSE keep-alive frame interval; `0` disables.                                 |
-| `SEPIA_INHERIT_ENV`           | unset                                            | `1` forwards the whole parent env to agents (allowlist otherwise).           |
-| `SEPIA_DEBUG`                 | unset                                            | `1` streams agent stderr into the server log.                                |
-| `SEPIA_OTEL`                  | `1`                                              | `0` disables OTLP telemetry export.                                          |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318`                          | OTLP/HTTP collector endpoint (LGTM in `lgtm/`).                              |
-| `OTEL_SERVICE_NAME`           | `sepia-server`                                   | OTel resource service name.                                                  |
-
-## Agent authentication
-
-Sessions run inside the agent CLI, which needs its own credentials:
-
-- **Devin**: `devin auth login` on the host (or `WINDSURF_API_KEY`, which is
-  forwarded to agent children through the env allowlist).
-- **Cline**: `cline --acp` uses the Cline CLI's own auth state.
-- **Claude Code**: `claude` has no native ACP mode — sepia spawns
-  `claude-agent-acp` (`npm i -g @agentclientprotocol/claude-agent-acp`),
-  which supports `session/load`/`session/list` over the JSONL transcripts.
-  It uses the Claude Code login under `~/.claude` (`HOME` is forwarded);
-  `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` pass the env allowlist.
-  Without the adapter installed, Claude sessions still list and page
-  history — attach fails at spawn.
-
-## Docker / compose
-
-`Dockerfile` builds the workspace and produces one image used by both
-services. `docker-compose.yml` runs `api` + `web` behind a `caddy` proxy that
-injects the bearer token:
+## `sepia-hub`
 
 ```bash
-SEPIA_TOKEN=$(openssl rand -hex 32) docker compose up --build
-# UI on http://localhost:8080
+SEPIA_NODES='laptop=http://10.0.0.2:8787@TOKEN;tower=http://10.0.0.3:8787' \
+SEPIA_HUB_PORT=3000 \
+  sepia-hub
 ```
 
-Mount your Devin store (read-only) and make agent CLIs reachable in the
-container — either bake them into a derived image or point
-`SEPIA_AGENT_<ID>_COMMAND` at commands that are. Sessions created by agents
-live in the agent CLI's store; mount `~/.local/share/devin` (not just the db)
-if agents must persist credentials/sessions.
+- `SEPIA_NODES` — `id=url[@token];…` for every node the hub follows.
+  `SEPIA_NODE_URL` / `SEPIA_NODE_TOKEN` is the single-node shorthand.
+- `SEPIA_HUB_HOST`/`SEPIA_HUB_PORT` (defaults `127.0.0.1:3000`;
+  `SEPIA_PORT` also accepted).
+- `SEPIA_HOME` — the hub's `hub/` dir holds `projection.db`,
+  `outbox.db`, `push.json`. State survives restarts.
+- `LEPTOS_SITE_ROOT`/`SEPIA_SITE_ROOT`, `LEPTOS_ENV` (`prod`).
 
-## Reverse proxy (non-Docker)
+The hub owns the browser's push subscription store (one VAPID pair
+regardless of node count) and the offline write queue: writes to a
+down node land in the outbox and drain per-session-FIFO on reconnect.
+Reads always come from the local projection, so the list stays instant
+and works read-only while nodes are down.
 
-Run the API and web locally, then proxy `/api` with token injection. nginx:
+**Auth.** Browser → hub auth is the hub's own token surface; node
+bearer tokens stay server-side (`SEPIA_NODES` `@token` or
+`SEPIA_NODE_TOKEN`) — the browser never stores them.
 
-```nginx
-location /api/ {
-  proxy_pass http://127.0.0.1:8787;
-  proxy_set_header Authorization "Bearer $SEPIA_TOKEN";
-  proxy_set_header Connection "";
-  proxy_http_version 1.1;
-  # SSE needs no buffering
-  proxy_buffering off;
-}
-location / {
-  proxy_pass http://127.0.0.1:3000;
-}
-```
+## PWA + push
 
-Terminate TLS at the proxy — the API itself speaks plain HTTP.
+`sepia-hub` serves `manifest.json`, `sw.js`, `icon.svg` — installing
+the PWA gives the offline shell (last projection, read-only). Enable
+push under Settings → Notifications: the browser subscribes once to
+the hub; each node's `runFinished`/`permissionRequested` feed markers
+fan out to every subscription (node-agnostic — one VAPID pair).
 
-## OS service (systemd / launchd)
+iOS requires the PWA installed on the home screen (iOS ≥ 16.4) for web
+push; plain Safari tabs don't get it.
 
-`sepia service` installs the node as a real OS service — survives reboots
-and crashes, no hand-written unit needed:
+## Drivers
+
+Each integration is a standalone binary speaking ndjson JSON-RPC over
+stdio — `session.list/get/patch`, `history`, `checkpoints`,
+`truncate` (rewind), `convert.import/export`, `manifest` — gated by a
+`capabilities` manifest. The node exposes an agent only when both the
+driver binary and its agent CLI resolve.
+
+| Driver                | Store                                       | Agent CLI             |
+| --------------------- | ------------------------------------------- | --------------------- |
+| `sepia-driver-devin`  | `sessions.db` (read-only index + write ops) | `devin acp`           |
+| `sepia-driver-cline`  | Cline task dirs + index                     | `cline --acp`         |
+| `sepia-driver-claude` | `projects/*.jsonl` transcripts              | `claude-agent-acp`    |
+| `sepia-driver-cursor` | `store.db` + transcripts                    | — (list/history only) |
+
+`sepia driver list` shows what's discovered; installing an upgrade is
+dropping a newer binary into the driver dir.
+
+## Pairing
 
 ```bash
-sepia service install     # user unit (systemd ~/.config/systemd/user,
-                          # or launchd ~/Library/LaunchAgents on macOS)
-sepia service install --system   # system-wide unit (needs sudo)
-sepia service install --linger   # + start at boot without a login
-sepia service status      # installed/enabled/active + last log lines
-sepia service logs [-f]   # journalctl --user -u sepia / log tail
-sepia service restart
-sepia service uninstall [--purge]
+sepia pair        # on the node — mints a one-time code
 ```
 
-`install` pins `ExecStart` to the compiled binary that ran it, so run it
-as `/opt/sepia/sepia service install` after `vp run build:binary` — no
-runtime install needed. From a dev checkout it refuses (the bun
-interpreter isn't service material); pass
-`--exec "/opt/bin/sepia serve"` to override the command explicitly.
+The code + node URL redeem through the hub's pair flow (or
+`POST /api/pair` directly) for a bearer token, then the token goes in
+`SEPIA_NODES` as `id=url@token`.
 
-Environment lives in `~/.config/sepia/env` (created once with a commented
-template, never overwritten on reinstall) — set `SEPIA_TOKEN`,
-`SEPIA_DB`, etc. there, then `sepia service restart`. systemd reads it
-via `EnvironmentFile=`; launchd renders it into the plist on install.
+## Service units
 
-To run under systemd without the helper, the equivalent user unit is:
-
-```ini
-[Unit]
-Description=Sepia node
-After=network-online.target
-
-[Service]
-ExecStart=/opt/sepia/sepia serve
-EnvironmentFile=-%h/.config/sepia/env
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-```
-
-SIGINT/SIGTERM/SIGHUP all trigger a graceful shutdown that closes agent
-subprocesses (releasing their session locks), so stopping the service is
-safe.
-
-## Health and logs
-
-- `GET /api/health` → `{"ok":true,"db":true}` (503 when the store is
-  unreadable). Unauthenticated; safe for load balancers.
-- Every request logs `METHOD path status ms` to stdout (`/api/health`
-  excluded).
-- Agent stderr is captured into a bounded buffer (`recentStderr`); stream it
-  live with `SEPIA_DEBUG=1`.
+`sepia service install|uninstall|status|logs` manages launchd (macOS)
+and systemd --user (Linux) units for the daemon.
