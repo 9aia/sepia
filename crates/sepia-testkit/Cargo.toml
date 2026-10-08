@@ -1,5 +1,6 @@
 [package]
 name = "sepia-testkit"
+description = "Sepia test backbone — conformance suites, golden fixtures, mock drivers/agents"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -9,3 +10,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+sepia-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
