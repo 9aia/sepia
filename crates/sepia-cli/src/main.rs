@@ -623,8 +623,12 @@ struct StoreDeleteArgs {
 
 #[derive(Subcommand)]
 enum ServiceCommands {
-    /// Install the sepia node as an OS service (systemd/launchd)
+    /// Install the sepia node (or hub, --hub) as an OS service
+    /// (systemd/launchd)
     Install {
+        /// Manage the hub unit (sepia-hub) instead of the node unit
+        #[arg(long)]
+        hub: bool,
         /// Install/manage the system-level unit instead of the per-user one
         #[arg(long)]
         system: bool,
@@ -641,6 +645,9 @@ enum ServiceCommands {
     },
     /// Stop, disable and remove the sepia service
     Uninstall {
+        /// Manage the hub unit (sepia-hub) instead of the node unit
+        #[arg(long)]
+        hub: bool,
         /// Install/manage the system-level unit instead of the per-user one
         #[arg(long)]
         system: bool,
@@ -650,18 +657,27 @@ enum ServiceCommands {
     },
     /// Show whether the sepia service is installed, enabled and running
     Status {
+        /// Manage the hub unit (sepia-hub) instead of the node unit
+        #[arg(long)]
+        hub: bool,
         /// Install/manage the system-level unit instead of the per-user one
         #[arg(long)]
         system: bool,
     },
     /// Restart the sepia service
     Restart {
+        /// Manage the hub unit (sepia-hub) instead of the node unit
+        #[arg(long)]
+        hub: bool,
         /// Install/manage the system-level unit instead of the per-user one
         #[arg(long)]
         system: bool,
     },
     /// Print (or follow, -f) the sepia service log
     Logs {
+        /// Manage the hub unit (sepia-hub) instead of the node unit
+        #[arg(long)]
+        hub: bool,
         /// Install/manage the system-level unit instead of the per-user one
         #[arg(long)]
         system: bool,
@@ -1088,15 +1104,22 @@ fn run_push(cmd: &PushCommands) -> Result<(), CliError> {
 fn run_service(cmd: &ServiceCommands) -> Result<(), CliError> {
     match cmd {
         ServiceCommands::Install {
+            hub,
             system,
             linger,
             exec,
             env_file,
-        } => service::service_install(*system, *linger, exec.as_deref(), env_file.as_deref()),
-        ServiceCommands::Uninstall { system, purge } => service::service_uninstall(*system, *purge),
-        ServiceCommands::Status { system } => service::service_status(*system),
-        ServiceCommands::Restart { system } => service::service_restart(*system),
-        ServiceCommands::Logs { system, follow } => service::service_logs(*system, *follow),
+        } => service::service_install(*hub, *system, *linger, exec.as_deref(), env_file.as_deref()),
+        ServiceCommands::Uninstall { hub, system, purge } => {
+            service::service_uninstall(*hub, *system, *purge)
+        }
+        ServiceCommands::Status { hub, system } => service::service_status(*hub, *system),
+        ServiceCommands::Restart { hub, system } => service::service_restart(*hub, *system),
+        ServiceCommands::Logs {
+            hub,
+            system,
+            follow,
+        } => service::service_logs(*hub, *system, *follow),
     }
 }
 

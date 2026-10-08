@@ -17,6 +17,7 @@ fn home() -> PathBuf {
 
 fn spec(system: bool, env_file: PathBuf) -> ServiceSpec {
     ServiceSpec {
+        name: "sepia".into(),
         exec: vec!["/usr/local/bin/sepia".into(), "serve".into()],
         env_file,
         system,
@@ -175,5 +176,8 @@ fn env_template_documents_the_knobs() {
 
 #[test]
 fn env_file_default_is_under_dot_config() {
-    assert_eq!(default_env_file(&home()), home().join(".config/sepia/env"));
+    assert_eq!(
+        default_env_file(&home(), "sepia"),
+        home().join(".config/sepia/env")
+    );
 }

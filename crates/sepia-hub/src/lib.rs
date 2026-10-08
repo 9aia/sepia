@@ -151,18 +151,28 @@ impl Default for HubConfig {
     }
 }
 
-/// The crate-local `public/` dir when running from a checkout,
-/// `target/site` after a `cargo-leptos` build, else `./public`.
+/// Order: `$LEPTOS_SITE_ROOT`/`$SEPIA_SITE_ROOT` → the `cargo xtask
+/// site` staging dir (`$SEPIA_HOME/site`) → `target/site` (dev build)
+/// → the crate-local `public/` (assets only — no wasm bundle).
 fn default_site_root() -> String {
     if let Ok(p) = std::env::var("LEPTOS_SITE_ROOT").or_else(|_| std::env::var("SEPIA_SITE_ROOT")) {
         return p;
     }
-    let bundled = concat!(env!("CARGO_MANIFEST_DIR"), "/public");
-    if std::path::Path::new(bundled).is_dir() {
-        bundled.to_string()
-    } else {
-        "public".to_string()
+    let sepia_site = std::env::var_os("SEPIA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share/sepia"))
+        })
+        .map(|h| h.join("site"));
+    for p in [sepia_site, Some(std::path::PathBuf::from("target/site"))]
+        .into_iter()
+        .flatten()
+    {
+        if p.join("pkg").is_dir() {
+            return p.to_string_lossy().into_owned();
+        }
     }
+    concat!(env!("CARGO_MANIFEST_DIR"), "/public").to_string()
 }
 
 impl HubConfig {

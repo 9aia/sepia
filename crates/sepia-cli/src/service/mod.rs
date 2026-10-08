@@ -20,6 +20,9 @@ use crate::CliError;
 /// whether it's a system-level (root) or per-user unit.
 #[derive(Clone, Debug)]
 pub struct ServiceSpec {
+    /// Unit name — `sepia` (node) or `sepia-hub`. Drives the systemd
+    /// unit file, launchd label, log path and default env file.
+    pub name: String,
     /// Absolute path the unit's ExecStart/ProgramArguments should run.
     pub exec: Vec<String>,
     /// Optional env file — systemd reads it directly; launchd renders it.
@@ -41,8 +44,9 @@ pub struct ServiceStatus {
 pub const SERVICE_NAME: &str = "sepia";
 
 /// Where `~/.config/sepia/env` lives — the EnvironmentFile/template.
-pub fn default_env_file(home: &Path) -> PathBuf {
-    home.join(".config/sepia/env")
+pub fn default_env_file(home: &Path, name: &str) -> PathBuf {
+    let file = if name == "sepia" { "env" } else { "hub-env" };
+    home.join(format!(".config/sepia/{file}"))
 }
 
 /// The stock env template — written once, never overwritten. Comments
@@ -178,7 +182,18 @@ fn backend() -> Result<Backend, CliError> {
 
 /// The command the unit runs — the compiled binary when `sepia` IS the
 /// binary (the process's own resolved path).
-fn resolve_exec() -> Result<Vec<String>, CliError> {
+fn resolve_exec(hub: bool) -> Result<Vec<String>, CliError> {
+    if hub {
+        // The hub is its own binary — resolve it on PATH.
+        let dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+        let candidate = dir
+            .map(|d| d.join("sepia-hub"))
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| std::path::PathBuf::from("sepia-hub"));
+        return Ok(vec![candidate.to_string_lossy().into_owned()]);
+    }
     let exec = std::env::current_exe()
         .and_then(|p| p.canonicalize())
         .map_err(|e| CliError(format!("cannot resolve the sepia binary path: {e}")))?;
@@ -187,10 +202,12 @@ fn resolve_exec() -> Result<Vec<String>, CliError> {
 
 // Exec is only meaningful at install time — status/logs/uninstall must
 // not resolve it (these verbs don't need it anyway).
-fn spec(system: bool, env_file: Option<&Path>) -> ServiceSpec {
+fn spec(hub: bool, system: bool, env_file: Option<&Path>) -> ServiceSpec {
+    let name = if hub { "sepia-hub" } else { "sepia" };
     ServiceSpec {
+        name: name.to_string(),
         exec: Vec::new(),
-        env_file: env_file.map_or_else(|| default_env_file(&home_dir()), Path::to_path_buf),
+        env_file: env_file.map_or_else(|| default_env_file(&home_dir(), name), Path::to_path_buf),
         system,
     }
 }
@@ -198,6 +215,7 @@ fn spec(system: bool, env_file: Option<&Path>) -> ServiceSpec {
 /// `sepia service install` — write the unit + env template, then enable
 /// + start it.
 pub fn service_install(
+    hub: bool,
     system: bool,
     linger: bool,
     exec: Option<&str>,
@@ -206,12 +224,15 @@ pub fn service_install(
     let verb = "install";
     let run = || -> Result<(), CliError> {
         let b = backend()?;
+        let name = if hub { "sepia-hub" } else { "sepia" };
         let spec = ServiceSpec {
+            name: name.to_string(),
             exec: match exec {
                 Some(cmd) => cmd.split_whitespace().map(str::to_string).collect(),
-                None => resolve_exec()?,
+                None => resolve_exec(hub)?,
             },
-            env_file: env_file.map_or_else(|| default_env_file(&home_dir()), Path::to_path_buf),
+            env_file: env_file
+                .map_or_else(|| default_env_file(&home_dir(), name), Path::to_path_buf),
             system,
         };
         b.install(&spec)?;
@@ -243,10 +264,10 @@ pub fn service_install(
 }
 
 /// `sepia service uninstall` — stop, disable and remove the service.
-pub fn service_uninstall(system: bool, purge: bool) -> Result<(), CliError> {
+pub fn service_uninstall(hub: bool, system: bool, purge: bool) -> Result<(), CliError> {
     let run = || -> Result<(), CliError> {
         let b = backend()?;
-        let spec = spec(system, None);
+        let spec = spec(hub, system, None);
         b.uninstall(&spec, purge)?;
         println!(
             "removed {} unit at {}",
@@ -265,10 +286,10 @@ pub fn service_uninstall(system: bool, purge: bool) -> Result<(), CliError> {
 }
 
 /// `sepia service status` — installed/enabled/running.
-pub fn service_status(system: bool) -> Result<(), CliError> {
+pub fn service_status(hub: bool, system: bool) -> Result<(), CliError> {
     let run = || -> Result<(), CliError> {
         let b = backend()?;
-        let st = b.status(&spec(system, None))?;
+        let st = b.status(&spec(hub, system, None))?;
         println!(
             "installed={} enabled={} active={}{}",
             st.installed,
@@ -285,10 +306,10 @@ pub fn service_status(system: bool) -> Result<(), CliError> {
 }
 
 /// `sepia service restart`.
-pub fn service_restart(system: bool) -> Result<(), CliError> {
+pub fn service_restart(hub: bool, system: bool) -> Result<(), CliError> {
     let run = || -> Result<(), CliError> {
         let b = backend()?;
-        b.restart(&spec(system, None))?;
+        b.restart(&spec(hub, system, None))?;
         println!("restarted");
         Ok(())
     };
@@ -296,10 +317,10 @@ pub fn service_restart(system: bool) -> Result<(), CliError> {
 }
 
 /// `sepia service logs` — print (or follow, `-f`) the service log.
-pub fn service_logs(system: bool, follow: bool) -> Result<(), CliError> {
+pub fn service_logs(hub: bool, system: bool, follow: bool) -> Result<(), CliError> {
     let run = || -> Result<(), CliError> {
         let b = backend()?;
-        let code = b.logs(&spec(system, None), follow)?;
+        let code = b.logs(&spec(hub, system, None), follow)?;
         if code != 0 {
             return Err(CliError(format!("logs exited {code}")));
         }

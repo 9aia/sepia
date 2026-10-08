@@ -8,9 +8,7 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use super::{CliError, SERVICE_NAME, ServiceSpec, ServiceStatus, env_template};
-
-const UNIT: &str = "sepia.service";
+use super::{CliError, ServiceSpec, ServiceStatus, env_template};
 
 fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
@@ -56,6 +54,11 @@ fn systemctl(spec: &ServiceSpec, args: &[&str]) -> Vec<String> {
     }
     cmd.extend(args.iter().map(|a| (*a).to_string()));
     cmd
+}
+
+/// `<name>.service` — the unit name systemctl/journalctl take.
+fn unit_name(spec: &ServiceSpec) -> String {
+    format!("{}.service", spec.name)
 }
 
 fn journalctl(spec: &ServiceSpec, args: &[&str]) -> Vec<String> {
@@ -131,10 +134,11 @@ fn capture(cmd: &[String]) -> Proc {
 
 /// Where the unit file lives for this spec.
 pub fn unit_path(spec: &ServiceSpec) -> PathBuf {
+    let unit = format!("{}.service", spec.name);
     if spec.system {
-        PathBuf::from(format!("/etc/systemd/system/{UNIT}"))
+        PathBuf::from(format!("/etc/systemd/system/{unit}"))
     } else {
-        home_dir().join(".config/systemd/user").join(UNIT)
+        home_dir().join(".config/systemd/user").join(unit)
     }
 }
 
@@ -198,8 +202,9 @@ pub fn install(spec: &ServiceSpec) -> Result<(), CliError> {
     run(&systemctl(spec, &["daemon-reload"]))?;
     // A prior crash loop trips the start limit — clear it or the enable
     // refuses with 'Unit ... failed' even though the unit is healthy now.
-    let _ = try_run(&systemctl(spec, &["reset-failed", SERVICE_NAME]));
-    run(&systemctl(spec, &["enable", "--now", SERVICE_NAME]))
+    let unit = unit_name(spec);
+    let _ = try_run(&systemctl(spec, &["reset-failed", &unit]));
+    run(&systemctl(spec, &["enable", "--now", &unit]))
 }
 
 /// Stop, disable, remove the unit. `purge` drops the env file too.
@@ -207,7 +212,7 @@ pub fn uninstall(spec: &ServiceSpec, purge: bool) -> Result<(), CliError> {
     require_systemd("systemctl")?;
     // Tolerate a missing/partial unit — removing the file is the source
     // of truth.
-    let _ = try_run(&systemctl(spec, &["disable", "--now", SERVICE_NAME]));
+    let _ = try_run(&systemctl(spec, &["disable", "--now", &unit_name(spec)]));
     let unit = unit_path(spec);
     let _ = std::fs::remove_file(&unit);
     run(&systemctl(spec, &["daemon-reload"]))?;
@@ -243,7 +248,8 @@ pub fn status(spec: &ServiceSpec) -> Result<ServiceStatus, CliError> {
     if !on_path("systemctl") {
         return Ok(NOT_INSTALLED);
     }
-    let enabled_proc = capture(&systemctl(spec, &["is-enabled", SERVICE_NAME]));
+    let unit = unit_name(spec);
+    let enabled_proc = capture(&systemctl(spec, &["is-enabled", &unit]));
     let enabled_state = enabled_proc.stdout.trim().to_string();
     let installed = unit_path(spec).exists()
         || KNOWN_UNIT_STATES
@@ -252,8 +258,8 @@ pub fn status(spec: &ServiceSpec) -> Result<ServiceStatus, CliError> {
     if !installed {
         return Ok(NOT_INSTALLED);
     }
-    let active_proc = capture(&systemctl(spec, &["is-active", SERVICE_NAME]));
-    let pid_proc = capture(&systemctl(spec, &["show", SERVICE_NAME, "-p", "MainPID"]));
+    let active_proc = capture(&systemctl(spec, &["is-active", &unit]));
+    let pid_proc = capture(&systemctl(spec, &["show", &unit, "-p", "MainPID"]));
     let pid = pid_proc
         .stdout
         .lines()
@@ -261,13 +267,10 @@ pub fn status(spec: &ServiceSpec) -> Result<ServiceStatus, CliError> {
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|pid| *pid > 0);
     let detail = if on_path("journalctl") {
-        capture(&journalctl(
-            spec,
-            &["-u", SERVICE_NAME, "-n", "10", "--no-pager"],
-        ))
-        .stdout
-        .trim()
-        .to_string()
+        capture(&journalctl(spec, &["-u", &unit, "-n", "10", "--no-pager"]))
+            .stdout
+            .trim()
+            .to_string()
     } else {
         String::new()
     };
@@ -282,17 +285,18 @@ pub fn status(spec: &ServiceSpec) -> Result<ServiceStatus, CliError> {
 
 pub fn restart(spec: &ServiceSpec) -> Result<(), CliError> {
     require_systemd("systemctl")?;
-    run(&systemctl(spec, &["restart", SERVICE_NAME]))
+    run(&systemctl(spec, &["restart", &unit_name(spec)]))
 }
 
 /// `-f` hands the terminal to `journalctl -f`; returns its exit code.
 pub fn logs(spec: &ServiceSpec, follow: bool) -> Result<i32, CliError> {
     require_systemd("journalctl")?;
-    let mut args = vec!["-u", SERVICE_NAME];
+    let mut args = vec!["-u".to_string(), unit_name(spec)];
     if follow {
-        args.push("-f");
+        args.push("-f".to_string());
     }
-    let cmd = journalctl(spec, &args);
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let cmd = journalctl(spec, &arg_refs);
     log_cmd(&cmd);
     let Some((program, rest)) = cmd.split_first() else {
         return Err(CliError("empty command".into()));

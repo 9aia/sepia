@@ -26,10 +26,11 @@
       OTEL. Intentionally out of scope for v0 — nodes must be directly
       reachable (`SEPIA_NODES` URLs); revisit when tailscale-less remote
       nodes matter.
-- [ ] **`cargo leptos` wasm bundle in `xtask install`** — hydration JS
-      (`pkg/sepia_web.js`) requires a cargo-leptos build; `xtask install`
-      ships SSR-only today (UI works hydrated-only-after `cargo leptos
-      build`).
+- [ ] ~~wasm bundle in install~~ — done: `cargo xtask site` (also run
+      by `install`) builds the wasm + bindgen output into `target/site`
+      and stages it at `~/.local/share/sepia/site`; `sepia-hub` picks it
+      up as its default site root. Requires `wasm-bindgen-cli` matching
+      the locked crate version.
 - [ ] **macOS verification** — all e2e ran on Linux; devin/cline path
       defaults and service install need a mac pass.
 - [ ] **Body-cap audit** — large JSON handlers are capped; sweep for any

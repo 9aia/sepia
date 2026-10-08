@@ -11,7 +11,10 @@ use std::process::{Command, Stdio};
 
 use super::{CliError, ServiceSpec, ServiceStatus, env_template};
 
-const LABEL: &str = "ai.sepia";
+/// `ai.sepia` for the node, `ai.sepia-hub` for the hub.
+fn label(spec: &ServiceSpec) -> String {
+    format!("ai.{}", spec.name.replace('-', "."))
+}
 /// `status` shows the last N log lines; `logs` prints the last N.
 const STATUS_LOG_LINES: usize = 10;
 const LOG_LINES: usize = 50;
@@ -37,25 +40,25 @@ fn domain(spec: &ServiceSpec) -> String {
 
 /// The service endpoint `print`/`kickstart` take: `gui/<uid>/ai.sepia`.
 fn service_target(spec: &ServiceSpec) -> String {
-    format!("{}/{LABEL}", domain(spec))
+    format!("{}/{}", domain(spec), label(spec))
 }
 
 fn log_path(spec: &ServiceSpec) -> PathBuf {
     if spec.system {
-        PathBuf::from("/var/log/sepia.log")
+        PathBuf::from(format!("/var/log/{}.log", spec.name))
     } else {
-        home_dir().join("Library/Logs/sepia.log")
+        home_dir().join(format!("Library/Logs/{}.log", spec.name))
     }
 }
 
 /// Where the plist file lives for this spec.
 pub fn unit_path(spec: &ServiceSpec) -> PathBuf {
     if spec.system {
-        PathBuf::from(format!("/Library/LaunchDaemons/{LABEL}.plist"))
+        PathBuf::from(format!("/Library/LaunchDaemons/{}.plist", label(spec)))
     } else {
         home_dir()
             .join("Library/LaunchAgents")
-            .join(format!("{LABEL}.plist"))
+            .join(format!("{}.plist", label(spec)))
     }
 }
 
@@ -141,7 +144,7 @@ pub fn render(spec: &ServiceSpec) -> String {
          <plist version=\"1.0\">\n\
          <dict>\n\
          \t<key>Label</key>\n\
-         \t<string>{LABEL}</string>\n\
+         \t<string>{}</string>\n\
          \t<key>ProgramArguments</key>\n\
          \t<array>\n\
          {args}\n\
@@ -158,7 +161,8 @@ pub fn render(spec: &ServiceSpec) -> String {
          \t<key>StandardErrorPath</key>\n\
          \t<string>{log}</string>\n\
          </dict>\n\
-         </plist>\n"
+         </plist>\n",
+        label(spec)
     )
 }
 
