@@ -624,7 +624,7 @@ pub async fn attach(
                         RunSpan {
                             at: now_ms_f64(),
                             agent: result.agent_id.clone(),
-                            node: state.node.id.clone(),
+                            node: state.node_identity().id,
                         },
                     );
                 }
@@ -1241,7 +1241,7 @@ pub async fn import_session(
     let run_span = RunSpan {
         at: now_ms_f64(),
         agent: target.as_str().to_string(),
-        node: state.node.id.clone(),
+        node: state.node_identity().id,
     };
     let Some(import) = &state.import_session else {
         // Convert configured but no executor wired — an internal wiring

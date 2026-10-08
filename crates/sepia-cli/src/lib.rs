@@ -4,6 +4,7 @@
 
 pub mod api;
 pub mod config_ops;
+pub mod driver;
 pub mod node_ops;
 pub mod pair;
 pub mod service;

@@ -3221,6 +3221,8 @@ dependencies = [
  "sepia-driver-cline",
  "sepia-driver-cursor",
  "sepia-driver-devin",
+ "sepia-driver-host",
+ "sepia-driver-sdk",
  "sepia-http",
  "sepia-node",
  "sepia-testkit",

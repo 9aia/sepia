@@ -39,21 +39,6 @@ impl ImportTo {
     }
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum ServerScheme {
-    Http,
-    Https,
-}
-
-impl ServerScheme {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Http => "http",
-            Self::Https => "https",
-        }
-    }
-}
-
 // --- sessions --------------------------------------------------------------
 
 /// `--agent` — scope the session id lookup to this agent's store (ids
@@ -190,23 +175,11 @@ enum SessionsCommands {
         #[command(flatten)]
         args: TargetArgs,
     },
-    /// GET /api/sessions/:id/stream — stream the live run's AG-UI events
-    /// to stdout
+    /// GET /api/sessions/:id/stream — stream the live run's session
+    /// events (sepia-proto SessionEvent JSON) to stdout
     Stream {
         #[arg(help = SESSION_ID_HELP)]
         session_id: String,
-        #[command(flatten)]
-        agent: AgentQuery,
-        #[command(flatten)]
-        args: TargetArgs,
-    },
-    /// POST /api/agent — attach, send one prompt and stream the AG-UI
-    /// run until it finishes
-    Run {
-        #[arg(help = SESSION_ID_HELP)]
-        session_id: String,
-        /// The prompt text to send
-        text: String,
         #[command(flatten)]
         agent: AgentQuery,
         #[command(flatten)]
@@ -397,53 +370,6 @@ enum ProjectsCommands {
         #[command(flatten)]
         args: TargetArgs,
     },
-    /// GET /api/projects/:id/export — the project's NDJSON bundle
-    /// (sessions as full IR)
-    Export {
-        /// Project id on the node
-        project_id: String,
-        /// Write the NDJSON bundle to this file (default: stdout)
-        #[arg(long)]
-        out: Option<String>,
-        #[command(flatten)]
-        args: TargetArgs,
-    },
-    /// POST /api/projects/import — write a bundle into the node's stores
-    /// (idempotent by id)
-    Import {
-        /// An NDJSON bundle from `projects export`
-        file: PathBuf,
-        #[command(flatten)]
-        args: NodeArgs,
-    },
-    /// POST /api/projects/pull — this node fetches the project bundle
-    /// from --from and imports it
-    Pull {
-        /// Project id on the source node
-        project_id: String,
-        /// Source node URL (e.g. http://thinkpad:8787)
-        #[arg(long)]
-        from: String,
-        /// Bearer token for the source node
-        #[arg(long)]
-        source_token: Option<String>,
-        #[command(flatten)]
-        args: TargetArgs,
-    },
-    /// POST /api/projects/:id/push — this node POSTs the bundle to
-    /// --to's /api/projects/import
-    Push {
-        /// Project id on this node
-        project_id: String,
-        /// Target node URL (e.g. http://thinkpad:8787)
-        #[arg(long)]
-        to: String,
-        /// Bearer token for the target node
-        #[arg(long)]
-        target_token: Option<String>,
-        #[command(flatten)]
-        args: TargetArgs,
-    },
     /// PATCH /api/projects/:id
     Rename {
         project_id: String,
@@ -561,112 +487,16 @@ enum ConfigCommands {
     },
 }
 
-// --- servers -----------------------------------------------------------------
-
-/// The shared `servers add`/`update` flags.
-#[derive(Clone, Args)]
-struct ServerInputFlags {
-    /// Display name for the managed server
-    #[arg(long)]
-    label: String,
-    /// Hostname or IP of the managed server
-    #[arg(long)]
-    host: String,
-    /// Port the managed server's API listens on
-    #[arg(long, default_value_t = 8787)]
-    port: u16,
-    /// Upstream protocol
-    #[arg(long, default_value = "http")]
-    scheme: ServerScheme,
-    /// Bearer token the node uses to call the managed server
-    #[arg(long)]
-    auth_token: Option<String>,
-    /// Basic-auth password for the managed server
-    #[arg(long)]
-    auth_password: Option<String>,
-    /// Basic-auth user for the managed server (default: sepia)
-    #[arg(long)]
-    auth_user: Option<String>,
-    /// Store no credential — clear auth on update
-    #[arg(long)]
-    no_auth: bool,
-    /// SSH login for the tunnel to the managed server
-    #[arg(long)]
-    ssh_user: Option<String>,
-    /// SSH host for the tunnel to the managed server
-    #[arg(long)]
-    ssh_host: Option<String>,
-    /// SSH port for the tunnel
-    #[arg(long, default_value_t = 22)]
-    ssh_port: u16,
-    /// Path to a private key, or an inline PEM
-    #[arg(long)]
-    ssh_key: Option<String>,
-    /// No SSH tunnel — clear ssh on update
-    #[arg(long)]
-    no_ssh: bool,
-}
-
-impl ServerInputFlags {
-    fn build(&self) -> Result<serde_json::Value, CliError> {
-        node_ops::build_server_input(
-            &self.label,
-            &self.host,
-            self.port,
-            self.scheme.as_str(),
-            self.auth_token.as_deref(),
-            self.auth_password.as_deref(),
-            self.auth_user.as_deref(),
-            self.no_auth,
-            self.ssh_user.as_deref(),
-            self.ssh_host.as_deref(),
-            self.ssh_port,
-            self.ssh_key.as_deref(),
-            self.no_ssh,
-        )
-    }
-}
+// --- drivers -----------------------------------------------------------------
 
 #[derive(Subcommand)]
-enum ServersCommands {
-    /// GET /api/servers — the managed-server registry
+enum DriverCommands {
+    /// List the sepia-driver-* binaries discovery finds, their probed
+    /// manifests, and whether each agent command resolves
     List {
-        #[command(flatten)]
-        args: NodeArgs,
-    },
-    /// POST /api/servers — register a managed server
-    Add {
-        #[command(flatten)]
-        server: ServerInputFlags,
-        #[command(flatten)]
-        args: TargetArgs,
-    },
-    /// PATCH /api/servers/:id — replace a registry entry (all fields
-    /// required)
-    Update {
-        server_id: String,
-        #[command(flatten)]
-        server: ServerInputFlags,
-        #[command(flatten)]
-        args: TargetArgs,
-    },
-    /// DELETE /api/servers/:id
-    Remove {
-        server_id: String,
-        #[command(flatten)]
-        args: TargetArgs,
-    },
-    /// POST /api/servers/:id/tunnel — ensure the SSH forward is up
-    TunnelUp {
-        server_id: String,
-        #[command(flatten)]
-        args: TargetArgs,
-    },
-    /// DELETE /api/servers/:id/tunnel — drop the SSH forward
-    TunnelDown {
-        server_id: String,
-        #[command(flatten)]
-        args: TargetArgs,
+        /// Print the probed manifests (plus probe problems) as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -920,10 +750,13 @@ enum Commands {
     /// diff) plus the node's server-side config (get/set)
     #[command(subcommand)]
     Config(ConfigCommands),
-    /// The managed-server registry (/api/servers) — gateway peers the
-    /// node proxies to
-    #[command(subcommand)]
-    Servers(ServersCommands),
+    /// Local driver discovery — the sepia-driver-* binaries the node
+    /// would load (SEPIA_DRIVER_DIR → ~/.local/share/sepia/drivers →
+    /// PATH). `sepia driver` alone lists them.
+    Driver {
+        #[command(subcommand)]
+        command: Option<DriverCommands>,
+    },
     /// Web-push subscription management (/api/push/*)
     #[command(subcommand)]
     Push(PushCommands),
@@ -955,13 +788,9 @@ enum Commands {
         #[arg(long, default_value_t = default_pair_url())]
         url: String,
     },
-    /// Serve the sepia node — API plus the embedded web UI on one port
-    /// (SEPIA_* env configures it)
-    Serve {
-        /// Serve only the API — do not serve the bundled web UI
-        #[arg(long)]
-        no_ui: bool,
-    },
+    /// Serve the sepia node — the `/api/*` surface (SEPIA_* env
+    /// configures it)
+    Serve,
     /// Manage the sepia node as an OS service (systemd user unit /
     /// launchd plist)
     #[command(subcommand)]
@@ -1093,12 +922,6 @@ fn run_sessions(cmd: &SessionsCommands) -> Result<(), CliError> {
             agent,
             args,
         } => node_ops::sessions_stream(session_id, agent.agent.as_deref(), args),
-        SessionsCommands::Run {
-            session_id,
-            text,
-            agent,
-            args,
-        } => node_ops::sessions_run(session_id, text, agent.agent.as_deref(), args),
         SessionsCommands::Meta {
             session_id,
             title,
@@ -1221,26 +1044,6 @@ fn run_projects(cmd: &ProjectsCommands) -> Result<(), CliError> {
         ProjectsCommands::Create { name, args } | ProjectsCommands::Init { name, args } => {
             node_ops::projects_create(name, args)
         }
-        ProjectsCommands::Export {
-            project_id,
-            out,
-            args,
-        } => node_ops::projects_export(project_id, out.as_deref(), args),
-        ProjectsCommands::Import { file, args } => {
-            node_ops::projects_import(&file.to_string_lossy(), args)
-        }
-        ProjectsCommands::Pull {
-            project_id,
-            from,
-            source_token,
-            args,
-        } => node_ops::projects_pull(project_id, from, source_token.as_deref(), args),
-        ProjectsCommands::Push {
-            project_id,
-            to,
-            target_token,
-            args,
-        } => node_ops::projects_push(project_id, to, target_token.as_deref(), args),
         ProjectsCommands::Rename {
             project_id,
             name,
@@ -1272,25 +1075,6 @@ fn run_config(cmd: &ConfigCommands) -> Result<(), CliError> {
     }
 }
 
-fn run_servers(cmd: &ServersCommands) -> Result<(), CliError> {
-    match cmd {
-        ServersCommands::List { args } => node_ops::servers_list(args),
-        ServersCommands::Add { server, args } => node_ops::servers_add(&server.build()?, args),
-        ServersCommands::Update {
-            server_id,
-            server,
-            args,
-        } => node_ops::servers_update(server_id, &server.build()?, args),
-        ServersCommands::Remove { server_id, args } => node_ops::servers_remove(server_id, args),
-        ServersCommands::TunnelUp { server_id, args } => {
-            node_ops::servers_tunnel_up(server_id, args)
-        }
-        ServersCommands::TunnelDown { server_id, args } => {
-            node_ops::servers_tunnel_down(server_id, args)
-        }
-    }
-}
-
 fn run_push(cmd: &PushCommands) -> Result<(), CliError> {
     match cmd {
         PushCommands::Vapid { args } => node_ops::push_vapid(args),
@@ -1316,15 +1100,14 @@ fn run_service(cmd: &ServiceCommands) -> Result<(), CliError> {
     }
 }
 
-fn serve(no_ui: bool) -> Result<(), CliError> {
+fn serve() -> Result<(), CliError> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
-    let mut env = sepia_http::Env::parse().map_err(|e| CliError(e.to_string()))?;
-    env.ui.enabled = env.ui.enabled && !no_ui;
+    let env = sepia_http::Env::parse().map_err(|e| CliError(e.to_string()))?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -1357,7 +1140,10 @@ fn dispatch(cli: &Cli, rt: &tokio::runtime::Runtime) -> Result<(), CliError> {
         Commands::Sessions(cmd) => run_sessions(cmd),
         Commands::Projects(cmd) => run_projects(cmd),
         Commands::Config(cmd) => run_config(cmd),
-        Commands::Servers(cmd) => run_servers(cmd),
+        Commands::Driver { command } => {
+            let json = matches!(command, Some(DriverCommands::List { json: true }));
+            sepia_cli::driver::list(rt, json)
+        }
         Commands::Push(cmd) => run_push(cmd),
         Commands::Store(cmd) => run_store(cmd, rt),
         Commands::List(a) => run_store(&StoreCommands::List(a.clone()), rt),
@@ -1371,7 +1157,7 @@ fn dispatch(cli: &Cli, rt: &tokio::runtime::Runtime) -> Result<(), CliError> {
             println!("{SEPIA_VERSION}");
             Ok(())
         }
-        Commands::Serve { no_ui } => serve(*no_ui),
+        Commands::Serve => serve(),
     }
 }
 

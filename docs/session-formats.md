@@ -5,6 +5,14 @@ current IR (`packages/sepia/src/Domain.ts`) normalizes, and a gap analysis for
 IR v2. Verified against real stores on this machine (Oct 2026) plus published
 schema references for Claude Code (no local data).
 
+> **Note (Rust rewrite).** The `*.ts` file references below
+> (`Domain.ts`, `Cline.ts`, `ClineIndex.ts`, `Devin.ts`, `SqliteStorage.ts`,
+> `Conversion.ts`, …) describe the deleted TypeScript tree
+> (`packages/*`, `apps/*`). The IR and store formats it documents still hold;
+> the Rust equivalents live under `crates/` — the session IR in
+> `crates/sepia-core`, the per-agent stores in `crates/sepia-driver-*/src`, and
+> conversion in `crates/sepia-convert`.
+
 ## What the IR captures today
 
 `Session` (`Domain.ts:40`): `id, title, workingDirectory, backendType,

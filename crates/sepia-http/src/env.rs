@@ -1,7 +1,10 @@
-//! Boot-time configuration — port of `apps/server/src/env.ts` plus the
-//! `SEPIA_*` tunables `serve.ts`/`app.ts` consume (`SEPIA_CLINE_DIR`,
-//! `SEPIA_SSE_KEEPALIVE_MS`, `SEPIA_HELD_WATCH_MS`, …). `Env::parse` fails
-//! fast on bad values, like the TS schema.
+//! Boot-time configuration — port of `apps/server/src/env.ts` minus the
+//! surfaces this crate doesn't serve (UI assets, OTEL, the servers
+//! registry, the Devin DB — the driver binary opens that itself via
+//! `SEPIA_DEVIN_DB`). Plane tunables `sepia-control`/`sepia-acp` read
+//! directly (`SEPIA_LOCK_TTL_MS`, `SEPIA_HISTORY_LIMIT`,
+//! `SEPIA_INHERIT_ENV`, `SEPIA_DEBUG`) deliberately don't ride `Env`.
+//! `Env::parse` fails fast on bad values, like the TS schema.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,8 +16,6 @@ pub const DEFAULT_SSE_KEEPALIVE_MS: u64 = 15_000;
 pub const DEFAULT_HELD_WATCH_MS: u64 = 5_000;
 pub const DEFAULT_IDLE_TTL_MS: u64 = 600_000;
 pub const DEFAULT_SWEEP_MS: u64 = 30_000;
-pub const DEFAULT_LOCK_TTL_MS: u64 = 5_000;
-pub const DEFAULT_HISTORY_LIMIT: usize = 500;
 
 const DEFAULT_ORIGINS: [&str; 2] = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
@@ -23,26 +24,9 @@ const DEFAULT_ORIGINS: [&str; 2] = ["http://localhost:3000", "http://127.0.0.1:3
 #[error("{0}")]
 pub struct EnvError(pub String);
 
-#[derive(Clone, Debug)]
-pub struct UiConfig {
-    /// `SEPIA_UI=off|0|false` makes this an API-only node.
-    pub enabled: bool,
-    /// `SEPIA_UI_DIR` points at an alternate web bundle on disk.
-    pub dir: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug)]
-pub struct OtelConfig {
-    pub enabled: bool,
-    pub endpoint: String,
-    pub service_name: String,
-}
-
 /// Parsed `SEPIA_*` environment — every field `env.ts`/`serve.ts` reads.
 #[derive(Clone, Debug)]
 pub struct Env {
-    /// `SEPIA_DB` — Devin store path; opened read-only downstream.
-    pub db_path: PathBuf,
     /// `SEPIA_PORT` (falls back to the TS `PORT`).
     pub port: u16,
     /// `SEPIA_HOST`.
@@ -57,20 +41,12 @@ pub struct Env {
     pub node_path: PathBuf,
     /// `SEPIA_NAME` — display name reported by `GET /api/node`.
     pub node_name: String,
-    /// `SEPIA_SERVERS` — managed-server registry file.
-    pub servers_path: PathBuf,
-    /// `SEPIA_SERVERS_KEY_PATH` — the key file encrypting `servers_path`.
-    pub servers_key_path: PathBuf,
     /// `SEPIA_ORIGINS` — CORS allowlist (`*` echoes any origin).
     pub origins: Vec<String>,
-    pub ui: UiConfig,
-    pub otel: OtelConfig,
-    /// `SEPIA_CLINE_DIR` (default `~/.cline/data`).
+    /// `SEPIA_CLINE_DIR` (default `~/.cline/data`) — the convert target.
     pub cline_dir: PathBuf,
-    /// `SEPIA_CLAUDE_DIR` (default `~/.claude`).
+    /// `SEPIA_CLAUDE_DIR` (default `~/.claude`) — file-history restore.
     pub claude_dir: PathBuf,
-    /// `SEPIA_CURSOR_DIR` (default `~/.cursor`).
-    pub cursor_dir: PathBuf,
     /// `SEPIA_SSE_KEEPALIVE_MS` — keep-alive cadence; `0` disables.
     pub sse_keep_alive: Duration,
     /// `SEPIA_HELD_WATCH_MS` — held-session re-probe cadence; `0` disables.
@@ -79,14 +55,6 @@ pub struct Env {
     pub idle_ttl: Duration,
     /// `SEPIA_SWEEP_MS` — idle sweep cadence (plane option).
     pub sweep: Duration,
-    /// `SEPIA_LOCK_TTL_MS` — lock-probe cache TTL (plane option).
-    pub lock_ttl: Duration,
-    /// `SEPIA_HISTORY_LIMIT` — default history page size.
-    pub history_limit: usize,
-    /// `SEPIA_INHERIT_ENV=1` — forward the whole parent env to agents.
-    pub inherit_env: bool,
-    /// `SEPIA_DEBUG=1` — forward agent stderr.
-    pub debug: bool,
     /// `<home>/pair-code` — written by `sepia pair`, consumed on read.
     pub pair_code_path: PathBuf,
     /// `<home>/tokens.json` — sha256 hashes of issued pair credentials.
@@ -130,16 +98,12 @@ fn millis_u64(raw: Option<&String>, default: u64) -> u64 {
     raw.and_then(|v| v.parse::<u64>().ok()).unwrap_or(default)
 }
 
-fn bool_flag(raw: Option<&String>) -> bool {
-    raw.is_some_and(|v| v == "1")
-}
-
 impl Env {
     /// Parse from the process environment; fails fast on bad values.
     ///
     /// # Errors
-    /// `EnvError` on empty `SEPIA_DB`, a bad port, a non-http OTEL
-    /// endpoint, or a non-loopback bind without `SEPIA_TOKEN`.
+    /// `EnvError` on a bad port or a non-loopback bind without
+    /// `SEPIA_TOKEN`.
     pub fn parse() -> Result<Self, EnvError> {
         Self::from_lookup(|key| std::env::var(key).ok())
     }
@@ -155,16 +119,6 @@ impl Env {
     /// See [`Env::parse`].
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self, EnvError> {
         let home_dir = home_dir();
-
-        let db_path = get("SEPIA_DB").unwrap_or_else(|| {
-            home_dir
-                .join(".local/share/devin/cli/sessions.db")
-                .to_string_lossy()
-                .into_owned()
-        });
-        if db_path.trim().is_empty() {
-            return Err(EnvError("SEPIA_DB must not be empty".to_string()));
-        }
 
         // TS reads PORT; the Rust surface prefers the namespaced var.
         let raw_port = get("SEPIA_PORT").or_else(|| get("PORT"));
@@ -193,27 +147,8 @@ impl Env {
             origins
         };
 
-        let otel_enabled = get("SEPIA_OTEL").as_deref() != Some("0");
-        let otel_endpoint = get("OTEL_EXPORTER_OTLP_ENDPOINT").map_or_else(
-            || "http://localhost:4318".to_string(),
-            |e| e.trim_end_matches('/').to_string(),
-        );
-        if otel_enabled
-            && !(otel_endpoint.starts_with("http://") || otel_endpoint.starts_with("https://"))
-        {
-            return Err(EnvError(format!(
-                "OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL, got \"{otel_endpoint}\""
-            )));
-        }
-
         let home =
             get("SEPIA_HOME").map_or_else(|| home_dir.join(".local/share/sepia"), PathBuf::from);
-
-        let ui_flag = get("SEPIA_UI").map(|v| v.trim().to_lowercase());
-        let ui = UiConfig {
-            enabled: !matches!(ui_flag.as_deref(), Some("0" | "off" | "false")),
-            dir: get("SEPIA_UI_DIR").map(PathBuf::from),
-        };
 
         let host = get("SEPIA_HOST").unwrap_or_else(|| DEFAULT_HOST.to_string());
         let token = get("SEPIA_TOKEN");
@@ -230,11 +165,7 @@ impl Env {
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(hostname_or_default);
 
-        let xdg_config =
-            get("XDG_CONFIG_HOME").map_or_else(|| home_dir.join(".config"), PathBuf::from);
-
         Ok(Self {
-            db_path: PathBuf::from(db_path),
             port,
             host,
             token,
@@ -243,24 +174,11 @@ impl Env {
                 .map_or_else(|| home.join("meta.json"), PathBuf::from),
             node_path: get("SEPIA_NODE").map_or_else(|| home.join("node.json"), PathBuf::from),
             node_name,
-            servers_path: get("SEPIA_SERVERS")
-                .map_or_else(|| home.join("servers.json"), PathBuf::from),
-            servers_key_path: get("SEPIA_SERVERS_KEY_PATH")
-                .map_or_else(|| xdg_config.join("sepia/servers.key"), PathBuf::from),
             origins,
-            ui,
-            otel: OtelConfig {
-                enabled: otel_enabled,
-                endpoint: otel_endpoint,
-                service_name: get("OTEL_SERVICE_NAME")
-                    .unwrap_or_else(|| "sepia-server".to_string()),
-            },
             cline_dir: get("SEPIA_CLINE_DIR")
                 .map_or_else(|| home_dir.join(".cline/data"), PathBuf::from),
             claude_dir: get("SEPIA_CLAUDE_DIR")
                 .map_or_else(|| home_dir.join(".claude"), PathBuf::from),
-            cursor_dir: get("SEPIA_CURSOR_DIR")
-                .map_or_else(|| home_dir.join(".cursor"), PathBuf::from),
             sse_keep_alive: Duration::from_millis(ms_or_default(
                 get("SEPIA_SSE_KEEPALIVE_MS").as_ref(),
                 DEFAULT_SSE_KEEPALIVE_MS,
@@ -277,15 +195,6 @@ impl Env {
                 get("SEPIA_SWEEP_MS").as_ref(),
                 DEFAULT_SWEEP_MS,
             )),
-            lock_ttl: Duration::from_millis(millis_u64(
-                get("SEPIA_LOCK_TTL_MS").as_ref(),
-                DEFAULT_LOCK_TTL_MS,
-            )),
-            history_limit: get("SEPIA_HISTORY_LIMIT")
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(DEFAULT_HISTORY_LIMIT),
-            inherit_env: bool_flag(get("SEPIA_INHERIT_ENV").as_ref()),
-            debug: bool_flag(get("SEPIA_DEBUG").as_ref()),
             pair_code_path: home.join("pair-code"),
             tokens_path: home.join("tokens.json"),
             home,

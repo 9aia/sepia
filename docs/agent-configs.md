@@ -6,6 +6,12 @@ and what the config IR (`packages/sepia/src/AgentConfig.ts`) normalizes.
 Verified against the real files on this machine (Oct 2026); the session-side
 formats live in `docs/session-formats.md`.
 
+> **Note (Rust rewrite).** The `packages/sepia/src/AgentConfig.ts` reference
+> describes the deleted TypeScript tree. The config IR and on-disk formats it
+> documents still hold; the Rust equivalents live under `crates/` (the IR in
+> `crates/sepia-core`, per-agent config adapters in `crates/sepia-driver-*/src`,
+> and the CLI verbs in `crates/sepia-cli/src/config_ops.rs`).
+
 ## The config IR
 
 `AgentConfig` — `{skills[], rules[], commands[], hooks[], agents[],

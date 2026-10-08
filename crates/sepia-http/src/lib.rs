@@ -11,7 +11,8 @@ pub mod pair;
 pub mod routes;
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
@@ -26,7 +27,9 @@ use sepia_meta::MetaStore;
 
 pub use env::{Env, EnvError};
 pub use feed::{EventFeed, HeldWatches, InstrumentedMeta, LiveListeners};
-pub use node::{NodeIdentity, PROTOCOL_VERSION, SEPIA_VERSION, load_node_identity};
+pub use node::{
+    NodeIdentity, PROTOCOL_VERSION, SEPIA_VERSION, load_node_identity, save_node_identity,
+};
 pub use pair::{Pairing, PairingStore};
 pub use routes::sessions::{ConvertSession, ImportSession, ImportTarget};
 
@@ -40,8 +43,12 @@ pub struct AppState {
     pub meta: Option<InstrumentedMeta>,
     /// Process-wide node event feed behind `GET /api/events`.
     pub feed: EventFeed,
-    /// Identity reported by `GET /api/node`.
-    pub node: NodeIdentity,
+    /// Identity reported by `GET /api/node`; `PATCH /api/node` renames
+    /// it in place (a mutex because `AppState` clones per request).
+    pub node: Arc<Mutex<NodeIdentity>>,
+    /// Where the identity persists (`SEPIA_NODE`); `None` keeps a
+    /// `PATCH /api/node` rename in-memory only.
+    pub node_path: Option<PathBuf>,
     /// Pairing backend for `POST /api/pair` + issued-credential auth.
     pub pairing: Option<Pairing>,
     /// `SEPIA_TOKEN` — `None`/empty means bearer auth is off entirely.
@@ -70,11 +77,12 @@ impl AppState {
             plane,
             meta: None,
             feed: EventFeed::new(),
-            node: NodeIdentity {
+            node: Arc::new(Mutex::new(NodeIdentity {
                 id: format!("node_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
                 name: hostname_or_unknown(),
                 version: SEPIA_VERSION.to_string(),
-            },
+            })),
+            node_path: None,
             pairing: None,
             token: None,
             origins: vec![
@@ -100,7 +108,11 @@ impl AppState {
             plane,
             meta: Some(InstrumentedMeta::new(meta, feed.clone())),
             feed,
-            node: load_node_identity(&env.node_path, &env.node_name),
+            node: Arc::new(Mutex::new(load_node_identity(
+                &env.node_path,
+                &env.node_name,
+            ))),
+            node_path: Some(env.node_path.clone()),
             pairing: Some(Pairing::open(
                 env.pair_code_path.clone(),
                 env.tokens_path.clone(),
@@ -138,8 +150,23 @@ impl AppState {
 
     #[must_use]
     pub fn with_node(mut self, node: NodeIdentity) -> Self {
-        self.node = node;
+        self.node = Arc::new(Mutex::new(node));
         self
+    }
+
+    /// Persist `PATCH /api/node` renames to `path` (`SEPIA_NODE`).
+    #[must_use]
+    pub fn with_node_path(mut self, path: PathBuf) -> Self {
+        self.node_path = Some(path);
+        self
+    }
+
+    /// Snapshot of the node identity — one lock, one clone.
+    pub fn node_identity(&self) -> NodeIdentity {
+        self.node
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     #[must_use]

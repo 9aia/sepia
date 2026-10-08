@@ -25,6 +25,26 @@ fn mint_id() -> String {
     format!("node_{}", &uuid::Uuid::new_v4().simple().to_string()[..16])
 }
 
+/// Persist `{id, name}` atomically (tmp + rename) — the same write
+/// `load_node_identity` performs on first boot and `PATCH /api/node`
+/// on rename.
+///
+/// # Errors
+/// `std::io::Error` when the file cannot be written or renamed.
+pub fn save_node_identity(path: &Path, identity: &NodeIdentity) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let json = serde_json::to_string(&serde_json::json!({
+        "id": identity.id,
+        "name": identity.name,
+    }))
+    .map_err(std::io::Error::other)?;
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)
+}
+
 /// Load or mint the node identity. A corrupt file regenerates rather
 /// than crashing; the write is atomic (tmp + rename).
 pub fn load_node_identity(path: &Path, name: &str) -> NodeIdentity {
@@ -51,17 +71,6 @@ pub fn load_node_identity(path: &Path, name: &str) -> NodeIdentity {
         name: name.to_string(),
         version: SEPIA_VERSION.to_string(),
     };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
-    if let Ok(json) = serde_json::to_string(&serde_json::json!({
-        "id": identity.id,
-        "name": identity.name,
-    })) {
-        if std::fs::write(&tmp, json).is_ok() {
-            let _ = std::fs::rename(&tmp, path);
-        }
-    }
+    let _ = save_node_identity(path, &identity);
     identity
 }

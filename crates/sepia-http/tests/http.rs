@@ -269,10 +269,6 @@ fn env_parses_defaults_and_fail_fast() {
     assert_eq!(env.host, "127.0.0.1");
     assert_eq!(env.sse_keep_alive, Duration::from_millis(15_000));
     assert_eq!(env.held_watch, Duration::from_millis(5_000));
-    assert_eq!(env.history_limit, 500);
-    assert!(env.ui.enabled);
-    assert!(env.otel.enabled);
-    assert_eq!(env.otel.endpoint, "http://localhost:4318");
     assert_eq!(
         env.origins,
         vec![
@@ -286,10 +282,6 @@ fn env_parses_defaults_and_fail_fast() {
     let err = Env::from_map(&bad).unwrap_err();
     assert!(err.to_string().contains("between 1 and 65535"));
 
-    // Empty SEPIA_DB fails fast.
-    let bad = HashMap::from([("SEPIA_DB".to_string(), "  ".to_string())]);
-    assert!(Env::from_map(&bad).is_err());
-
     // Non-loopback without a token refuses to bind.
     let bad = HashMap::from([("SEPIA_HOST".to_string(), "0.0.0.0".to_string())]);
     let err = Env::from_map(&bad).unwrap_err();
@@ -299,25 +291,6 @@ fn env_parses_defaults_and_fail_fast() {
         ("SEPIA_TOKEN".to_string(), "t".to_string()),
     ]);
     assert!(Env::from_map(&ok).is_ok());
-
-    // Bad OTEL endpoint fails fast; SEPIA_OTEL=0 skips the check.
-    let bad = HashMap::from([(
-        "OTEL_EXPORTER_OTLP_ENDPOINT".to_string(),
-        "nope".to_string(),
-    )]);
-    assert!(Env::from_map(&bad).is_err());
-    let off = HashMap::from([
-        (
-            "OTEL_EXPORTER_OTLP_ENDPOINT".to_string(),
-            "nope".to_string(),
-        ),
-        ("SEPIA_OTEL".to_string(), "0".to_string()),
-    ]);
-    assert!(!Env::from_map(&off).unwrap().otel.enabled);
-
-    // SEPIA_UI=off → API-only node.
-    let off = HashMap::from([("SEPIA_UI".to_string(), "off".to_string())]);
-    assert!(!Env::from_map(&off).unwrap().ui.enabled);
 
     // Zero keep-alive disables it.
     let zero = HashMap::from([("SEPIA_SSE_KEEPALIVE_MS".to_string(), "0".to_string())]);
@@ -1061,7 +1034,9 @@ async fn agents_projects_config_and_misc() {
     assert_eq!(body["name"], "testbox");
     assert_eq!(body["protocol"], 1);
     assert_eq!(body["agents"], json!(["devin"]));
-    assert!(body["capabilities"].as_array().unwrap().len() >= 5);
+    let caps = body["capabilities"].as_array().unwrap();
+    assert!(caps.len() >= 5);
+    assert!(!caps.contains(&json!("transfer")));
 
     // user info shape.
     let (status, _, body) = call(&app.router, get("/api/user")).await;
@@ -1149,6 +1124,53 @@ async fn meta_dependent_routes_501_without_store() {
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
     let (status, _, _) = call(&app, get("/api/config")).await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn node_patch_renames_and_persists() {
+    let (plane, _) = mk_plane(vec![], vec![MockRuntime::new("devin", &[])]);
+    let dir = tempfile::tempdir().unwrap();
+    let node_path = dir.path().join("node.json");
+    let state = AppState::new(plane.clone())
+        .with_node(sepia_http::NodeIdentity {
+            id: "node_test".into(),
+            name: "testbox".into(),
+            version: "0.0.0".into(),
+        })
+        .with_node_path(node_path.clone())
+        .with_held_watch(Duration::ZERO);
+    let app = app(state);
+
+    // Validation — missing/empty/overlong names and non-object bodies.
+    for body in [
+        json!({}),
+        json!({ "name": "" }),
+        json!({ "name": "   " }),
+        json!({ "name": 42 }),
+        json!({ "name": "x".repeat(101) }),
+        json!("just-a-string"),
+    ] {
+        let (status, _, _) = call(&app, patch("/api/node", body.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+
+    // Rename → the updated descriptor, and GET reflects it.
+    let (status, _, body) = call(&app, patch("/api/node", json!({ "name": "  renamed  " }))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"], "node_test");
+    assert_eq!(body["name"], "renamed");
+    assert_eq!(body["protocol"], 1);
+    let (status, _, body) = call(&app, get("/api/node")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["name"], "renamed");
+
+    // The identity file persisted the rename.
+    let on_disk: Value =
+        serde_json::from_str(&std::fs::read_to_string(&node_path).unwrap()).unwrap();
+    assert_eq!(on_disk["id"], "node_test");
+    assert_eq!(on_disk["name"], "renamed");
+
     plane.close_all().await;
 }
 

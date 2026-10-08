@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::AppState;
 use crate::node::PROTOCOL_VERSION;
-use crate::routes::{json_response, not_found, query_param};
+use crate::routes::{json_response, not_found, query_param, read_json_body};
 
 /// `GET /api/health` — deliberately ahead of the auth gate. The TS
 /// health check is a 1.5s-bounded session list.
@@ -150,12 +150,19 @@ pub async fn user(State(_state): State<AppState>, method: Method, _req: Request<
     )
 }
 
-/// `GET /api/node` — the node descriptor every federated client hits
-/// first (docs/protocol.md).
-pub async fn node(State(state): State<AppState>, method: Method, _req: Request<Body>) -> Response {
-    if method != Method::GET {
-        return not_found();
+/// `GET|PATCH /api/node` — the node descriptor every federated client
+/// hits first (docs/protocol.md); PATCH renames the node and persists
+/// the identity file.
+pub async fn node(State(state): State<AppState>, method: Method, req: Request<Body>) -> Response {
+    match method {
+        Method::GET => node_get(&state).await,
+        Method::PATCH => node_patch(&state, req).await,
+        _ => not_found(),
     }
+}
+
+/// The descriptor shape `GET` and a successful `PATCH` both return.
+async fn node_descriptor(state: &AppState) -> serde_json::Value {
     let agents: Vec<String> = state
         .plane
         .list_agents()
@@ -163,21 +170,62 @@ pub async fn node(State(state): State<AppState>, method: Method, _req: Request<B
         .into_iter()
         .map(|a| a.id)
         .collect();
-    let mut capabilities = vec![
-        "sessions", "projects", "push", "events", "export", "transfer",
-    ];
+    let mut capabilities = vec!["sessions", "projects", "push", "events", "export"];
     if state.pairing.is_some() {
         capabilities.push("pairing");
     }
-    json_response(
-        json!({
-            "id": state.node.id,
-            "name": state.node.name,
-            "version": state.node.version,
-            "protocol": PROTOCOL_VERSION,
-            "agents": agents,
-            "capabilities": capabilities,
-        }),
-        StatusCode::OK,
-    )
+    let identity = state.node_identity();
+    json!({
+        "id": identity.id,
+        "name": identity.name,
+        "version": identity.version,
+        "protocol": PROTOCOL_VERSION,
+        "agents": agents,
+        "capabilities": capabilities,
+    })
+}
+
+async fn node_get(state: &AppState) -> Response {
+    json_response(node_descriptor(state).await, StatusCode::OK)
+}
+
+/// `PATCH /api/node` — `{name}` renames the node, persists to
+/// `SEPIA_NODE` (`node.json`) and returns the updated descriptor.
+async fn node_patch(state: &AppState, req: Request<Body>) -> Response {
+    let body = match read_json_body(req).await {
+        Ok(b) => b,
+        Err(res) => return *res,
+    };
+    let Some(body) = body.and_then(|b| b.as_object().cloned()) else {
+        return json_response(
+            json!({ "error": "Expected a JSON object body" }),
+            StatusCode::BAD_REQUEST,
+        );
+    };
+    let Some(name) = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|n| !n.is_empty() && n.len() <= 100)
+    else {
+        return json_response(
+            json!({ "error": "name must be a non-empty string (max 100)" }),
+            StatusCode::BAD_REQUEST,
+        );
+    };
+    let mut updated = state.node_identity();
+    updated.name = name.to_string();
+    if let Some(path) = &state.node_path {
+        if let Err(e) = crate::node::save_node_identity(path, &updated) {
+            return json_response(
+                json!({ "error": format!("failed to persist node identity: {e}"), "code": "internal" }),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
+    *state
+        .node
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = updated;
+    json_response(node_descriptor(state).await, StatusCode::OK)
 }
