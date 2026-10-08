@@ -35,6 +35,9 @@ export const MessageResponse = memo(
         // wrap-anywhere keeps unbreakable tokens (long paths, identifiers,
         // inline code) inside the column instead of clipping off-viewport.
         "size-full wrap-anywhere [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        // Tailwind typography — consistent rhythm/spacing for p/ul/ol/h*/
+        // blockquote/table/code across user + assistant bubbles.
+        "prose prose-sm prose-invert max-w-none",
         className,
       )}
       plugins={streamdownPlugins}

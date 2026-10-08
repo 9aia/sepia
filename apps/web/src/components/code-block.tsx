@@ -62,6 +62,7 @@ function CodeBlock({ language, className, children, ...props }: CodeBlockProps) 
       data-slot="code-block"
       className={cn(
         "group/code overflow-hidden rounded-xl border border-border bg-muted/40",
+        "not-prose",
         className,
       )}
       {...props}

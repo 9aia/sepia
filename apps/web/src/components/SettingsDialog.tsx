@@ -201,7 +201,7 @@ function NotificationsSection() {
     <section data-spy="notifications" className="flex scroll-mt-2 flex-col gap-2">
       <h3 className="text-sm font-medium">Notifications</h3>
       {!supported ? (
-        <p className="text-xs text-muted-foreground">Push isn&apos;t supported in this browser.</p>
+        <p className="text-xs text-muted-foreground">Push isn&apos;t supported on this platform.</p>
       ) : denied ? (
         <p className="text-xs text-muted-foreground">
           Notifications are blocked — allow them in your browser&apos;s site settings.

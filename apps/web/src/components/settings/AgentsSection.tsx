@@ -108,7 +108,7 @@ function AgentGroupRow({
       title={head.label}
       badges={
         <>
-          <CountBadge count={head.models.length} title="Models on this agent" />
+          <CountBadge count={head.models.length} unit="models" title="Models on this agent" />
           {noneEnabled && <DisabledBadge />}
         </>
       }

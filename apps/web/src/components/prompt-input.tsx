@@ -1,5 +1,5 @@
 import {
-  ArrowUp01Icon,
+  SentIcon,
   AttachmentIcon,
   Cancel01Icon,
   File01Icon,
@@ -340,7 +340,7 @@ export function PromptInputSubmit({
     ) : status === "error" ? (
       <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
     ) : (
-      <HugeiconsIcon icon={ArrowUp01Icon} strokeWidth={2} />
+      <HugeiconsIcon icon={SentIcon} strokeWidth={2} />
     );
 
   const handleClick = (

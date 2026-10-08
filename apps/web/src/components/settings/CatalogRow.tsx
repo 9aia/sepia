@@ -7,10 +7,18 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 
 /** Small muted count badge — the `h-4 text-[10px]` settings convention. */
-export function CountBadge({ count, title }: { readonly count: number; readonly title: string }) {
+export function CountBadge({
+  count,
+  unit,
+  title,
+}: {
+  readonly count: number;
+  readonly unit: string;
+  readonly title: string;
+}) {
   return (
     <Badge variant="secondary" className="h-4 shrink-0 px-1.5 text-[10px]" title={title}>
-      {count}
+      {count} {count === 1 ? unit.replace(/s$/, "") : unit}
     </Badge>
   );
 }

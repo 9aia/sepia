@@ -1122,7 +1122,11 @@ export function NodesSection() {
                 </Badge>
               )}
               {localCatalog !== undefined && (
-                <CountBadge count={localCatalog.agents.length} title="Agents on this node" />
+                <CountBadge
+                  count={localCatalog.agents.length}
+                  unit="agents"
+                  title="Agents on this node"
+                />
               )}
               {!localEnabled && (
                 <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">
@@ -1184,7 +1188,11 @@ export function NodesSection() {
                     </Badge>
                   )}
                   {catalogNode !== undefined && (
-                    <CountBadge count={catalogNode.agents.length} title="Agents on this node" />
+                    <CountBadge
+                      count={catalogNode.agents.length}
+                      unit="agents"
+                      title="Agents on this node"
+                    />
                   )}
                   {!enabled && (
                     <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">

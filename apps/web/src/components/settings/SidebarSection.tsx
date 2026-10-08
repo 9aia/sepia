@@ -58,7 +58,7 @@ export function SidebarSection() {
           const defaultLimit = SIDEBAR_SECTION_LIMITS[section.id];
           return (
             <SortableItem key={section.id} value={section.id}>
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-2 py-1.5">
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-2 py-1.5">
                 <SortableItemHandle
                   tabIndex={0}
                   aria-label={`Reorder ${label}`}

@@ -55,7 +55,7 @@ function ModelGroupRow({
       title={head.auto ? "Agent default" : head.label}
       badges={
         <>
-          <CountBadge count={head.agents.length} title="Agents carrying this model" />
+          <CountBadge count={head.agents.length} unit="agents" title="Agents carrying this model" />
           {noneEnabled && <DisabledBadge />}
         </>
       }
