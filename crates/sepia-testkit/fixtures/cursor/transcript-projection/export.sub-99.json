@@ -1,0 +1,56 @@
+{
+  "id": "sub-99",
+  "title": "double-check the tag",
+  "workingDirectory": "/home/demo/proj",
+  "backendType": "cursor",
+  "agentMode": "default",
+  "model": "unknown",
+  "createdAt": 1700000320,
+  "lastActivityAt": 1700000320,
+  "mainChainId": 1,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "parentSessionId": "77777777-7777-4777-8777-777777777777",
+  "checkpoints": [],
+  "metadata": {
+    "source": "cursor",
+    "store": "transcript",
+    "project": "home-demo-proj",
+    "lossy": true,
+    "turnErrors": []
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "double-check the tag",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000320,
+      "metadata": {
+        "projection": "transcript"
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "looks right",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000320,
+      "metadata": {
+        "projection": "transcript"
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "double-check the tag",
+      "timestamp": 1700000320000,
+      "isShell": false
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "id": "22222222-2222-4222-8222-222222222222",
+  "title": "Build the dashboard",
+  "workingDirectory": "/home/dev/shop",
+  "backendType": "claude",
+  "agentMode": "plan",
+  "model": "claude-sonnet-4-5",
+  "createdAt": 1769940000,
+  "lastActivityAt": 1769940003,
+  "mainChainId": 3,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "source": "claude-code",
+    "gitBranch": "feat/dash",
+    "claudeVersion": "2.1.0",
+    "slug": "shop"
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "build the dashboard page",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1769940000,
+      "metadata": {
+        "uuid": "m1"
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "Kicking off a research subagent.",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "toolu_t1",
+          "name": "Task",
+          "arguments": {
+            "description": "chart research",
+            "prompt": "find chart libraries",
+            "subagent_type": "Explore"
+          },
+          "index": 0,
+          "kind": "function",
+          "locations": [],
+          "diffs": []
+        }
+      ],
+      "usage": {
+        "input": 900,
+        "output": 120
+      },
+      "model": "claude-sonnet-4-5",
+      "requestId": "req_m2",
+      "finishReason": "tool_use",
+      "createdAt": 1769940001,
+      "metadata": {
+        "uuid": "m2",
+        "messageId": "msg_m2"
+      }
+    },
+    {
+      "nodeId": 2,
+      "role": "user",
+      "content": "inline sidechain root",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1769940002,
+      "metadata": {
+        "uuid": "s1",
+        "isSidechain": true
+      }
+    },
+    {
+      "nodeId": 3,
+      "parentNodeId": 1,
+      "role": "assistant",
+      "content": "Subagent finished.",
+      "blocks": [],
+      "toolCalls": [],
+      "usage": {
+        "input": 300,
+        "output": 40
+      },
+      "model": "claude-sonnet-4-5",
+      "requestId": "req_m3",
+      "finishReason": "end_turn",
+      "createdAt": 1769940003,
+      "metadata": {
+        "uuid": "m3",
+        "messageId": "msg_m3"
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "build the dashboard page",
+      "timestamp": 1769940000000,
+      "isShell": false
+    },
+    {
+      "content": "inline sidechain root",
+      "timestamp": 1769940002000,
+      "isShell": false
+    }
+  ]
+}

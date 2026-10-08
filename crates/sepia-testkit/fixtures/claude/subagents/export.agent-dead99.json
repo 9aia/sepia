@@ -1,0 +1,62 @@
+{
+  "id": "agent-dead99",
+  "title": "summarize findings",
+  "workingDirectory": "/home/dev/shop",
+  "backendType": "claude",
+  "agentMode": "accept-edits",
+  "model": "claude-haiku-4-5",
+  "createdAt": 1769940020,
+  "lastActivityAt": 1769940021,
+  "mainChainId": 1,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "parentSessionId": "22222222-2222-4222-8222-222222222222",
+  "agentId": "dead99",
+  "checkpoints": [],
+  "metadata": {
+    "source": "claude-code",
+    "gitBranch": null,
+    "claudeVersion": null,
+    "slug": null
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "summarize findings",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1769940020,
+      "metadata": {
+        "uuid": "b1",
+        "isSidechain": true
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "two libraries found.",
+      "blocks": [],
+      "toolCalls": [],
+      "model": "claude-haiku-4-5",
+      "requestId": "req_b2",
+      "finishReason": "end_turn",
+      "createdAt": 1769940021,
+      "metadata": {
+        "uuid": "b2",
+        "isSidechain": true,
+        "messageId": "msg_b2"
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "summarize findings",
+      "timestamp": 1769940020000,
+      "isShell": false
+    }
+  ]
+}

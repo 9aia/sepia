@@ -1,0 +1,79 @@
+{
+  "id": "77777777-7777-4777-8777-777777777777",
+  "title": "release it",
+  "workingDirectory": "/home/demo/proj",
+  "backendType": "cursor",
+  "agentMode": "default",
+  "model": "unknown",
+  "createdAt": 1700000300,
+  "lastActivityAt": 1700000300,
+  "mainChainId": 1,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "source": "cursor",
+    "store": "transcript",
+    "project": "home-demo-proj",
+    "lossy": true,
+    "turnErrors": []
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "<user_query>\nrelease it\n</user_query>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000300,
+      "metadata": {
+        "projection": "transcript"
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "Tagging.",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "t_rel",
+          "name": "StrReplace",
+          "arguments": {
+            "path": "/home/demo/proj/VERSION",
+            "old_string": "0.1.0",
+            "new_string": "0.2.0"
+          },
+          "index": 0,
+          "kind": "function",
+          "locations": [
+            {
+              "path": "/home/demo/proj/VERSION"
+            }
+          ],
+          "diffs": [
+            {
+              "path": "/home/demo/proj/VERSION",
+              "oldText": "0.1.0",
+              "newText": "0.2.0"
+            }
+          ]
+        }
+      ],
+      "createdAt": 1700000300,
+      "metadata": {
+        "projection": "transcript"
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "release it",
+      "timestamp": 1700000300000,
+      "isShell": false
+    }
+  ]
+}

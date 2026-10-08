@@ -1,0 +1,2 @@
+{"role":"user","message":{"content":[{"type":"text","text":"double-check the tag"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"looks right"}]}}

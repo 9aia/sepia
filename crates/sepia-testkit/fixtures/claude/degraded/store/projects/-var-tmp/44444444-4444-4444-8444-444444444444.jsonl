@@ -1,0 +1,2 @@
+{"type":"user","uuid":"e1","parentUuid":null,"sessionId":"44444444-4444-4444-8444-444444444444","timestamp":"2026-03-02T09:00:00.000Z","message":{"role":"user","content":"no cwd anywhere"}}
+{"type":"assistant","uuid":"e2","parentUuid":"e1","sessionId":"44444444-4444-4444-8444-444444444444","timestamp":"2026-03-02T09:00:01.000Z","message":{"id":"msg_e2","role":"assistant","model":"claude-opus-4-5","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}}

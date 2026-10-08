@@ -1,0 +1,57 @@
+{
+  "id": "44444444-4444-4444-8444-444444444444",
+  "title": "no cwd anywhere",
+  "workingDirectory": "/var/tmp",
+  "backendType": "claude",
+  "agentMode": "accept-edits",
+  "model": "claude-opus-4-5",
+  "createdAt": 1772442000,
+  "lastActivityAt": 1772442001,
+  "mainChainId": 1,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "source": "claude-code",
+    "gitBranch": null,
+    "claudeVersion": null,
+    "slug": null
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "no cwd anywhere",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1772442000,
+      "metadata": {
+        "uuid": "e1"
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "ok",
+      "blocks": [],
+      "toolCalls": [],
+      "model": "claude-opus-4-5",
+      "finishReason": "end_turn",
+      "createdAt": 1772442001,
+      "metadata": {
+        "uuid": "e2",
+        "messageId": "msg_e2"
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "no cwd anywhere",
+      "timestamp": 1772442000000,
+      "isShell": false
+    }
+  ]
+}

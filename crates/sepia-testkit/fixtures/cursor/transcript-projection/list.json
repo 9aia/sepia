@@ -1,0 +1,115 @@
+[
+  {
+    "id": "sub-99",
+    "title": "double-check the tag",
+    "workingDirectory": "/home/demo/proj",
+    "backendType": "cursor",
+    "agentMode": "default",
+    "model": "unknown",
+    "createdAt": 1700000320,
+    "lastActivityAt": 1700000320,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "parentSessionId": "77777777-7777-4777-8777-777777777777",
+    "checkpoints": [],
+    "metadata": {
+      "source": "cursor",
+      "store": "transcript",
+      "project": "home-demo-proj",
+      "lossy": true,
+      "turnErrors": []
+    },
+    "nodes": [],
+    "promptHistory": [
+      {
+        "content": "double-check the tag",
+        "timestamp": 1700000320000,
+        "isShell": false
+      }
+    ]
+  },
+  {
+    "id": "77777777-7777-4777-8777-777777777777",
+    "title": "release it",
+    "workingDirectory": "/home/demo/proj",
+    "backendType": "cursor",
+    "agentMode": "default",
+    "model": "unknown",
+    "createdAt": 1700000300,
+    "lastActivityAt": 1700000300,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "source": "cursor",
+      "store": "transcript",
+      "project": "home-demo-proj",
+      "lossy": true,
+      "turnErrors": []
+    },
+    "nodes": [],
+    "promptHistory": [
+      {
+        "content": "release it",
+        "timestamp": 1700000300000,
+        "isShell": false
+      }
+    ]
+  },
+  {
+    "id": "66666666-6666-4666-8666-666666666666",
+    "title": "Pruned Chat",
+    "workingDirectory": "/home/demo/proj",
+    "backendType": "cursor",
+    "agentMode": "default",
+    "model": "composer-1",
+    "createdAt": 1700000100,
+    "lastActivityAt": 1700000200,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "source": "cursor",
+      "store": "chats",
+      "workspaceHash": "708f04d179942f3c21f4c07e0a56f057",
+      "agentId": "66666666-6666-4666-8666-666666666666",
+      "latestRootBlobId": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "nodes": [],
+    "promptHistory": []
+  },
+  {
+    "id": "88888888-8888-4888-8888-888888888888",
+    "title": "Empty Chat",
+    "workingDirectory": "/home/demo/other",
+    "backendType": "cursor",
+    "agentMode": "default",
+    "model": "unknown",
+    "createdAt": 1699999000,
+    "lastActivityAt": 1699999000,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "source": "cursor",
+      "store": "chats",
+      "workspaceHash": "540d12fd9bf78af29c4ff735f75ce253",
+      "agentId": null,
+      "latestRootBlobId": null
+    },
+    "nodes": [],
+    "promptHistory": []
+  }
+]

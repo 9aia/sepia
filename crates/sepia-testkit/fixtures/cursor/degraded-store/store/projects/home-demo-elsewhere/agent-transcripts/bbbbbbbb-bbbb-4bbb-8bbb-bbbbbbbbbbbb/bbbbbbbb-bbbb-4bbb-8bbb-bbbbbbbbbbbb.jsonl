@@ -1,0 +1,2 @@
+{"role":"user","message":{"content":[{"type":"text","text":"orphan chat"}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","id":"to1","name":"Write","input":{"path":"/x/f.ts","contents":"x"}}]}}

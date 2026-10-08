@@ -1,0 +1,81 @@
+[
+  {
+    "id": "44444444-4444-4444-8444-444444444444",
+    "title": "no cwd anywhere",
+    "workingDirectory": "/var/tmp",
+    "backendType": "claude",
+    "agentMode": "accept-edits",
+    "model": "claude-opus-4-5",
+    "createdAt": 1772442000,
+    "lastActivityAt": 1772442001,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "source": "claude-code",
+      "gitBranch": null,
+      "claudeVersion": null,
+      "slug": null
+    },
+    "nodes": [],
+    "promptHistory": [
+      {
+        "content": "no cwd anywhere",
+        "timestamp": 1772442000000,
+        "isShell": false
+      }
+    ]
+  },
+  {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "title": "first prompt",
+    "workingDirectory": "/tmp/scratch",
+    "backendType": "claude",
+    "agentMode": "accept-edits",
+    "model": "claude-opus-4-5",
+    "createdAt": 1772352000,
+    "lastActivityAt": 1772352003,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [
+      {
+        "ref": "snap-x",
+        "createdAt": 1772352002000,
+        "kind": "file-history-snapshot"
+      }
+    ],
+    "metadata": {
+      "source": "claude-code",
+      "gitBranch": null,
+      "claudeVersion": null,
+      "slug": null,
+      "fileHistory": {
+        "sessionId": "33333333-3333-4333-8333-333333333333",
+        "snapshots": {
+          "snap-x": {
+            "at": 1772352002000,
+            "files": {
+              "/tmp/scratch/a.txt": {
+                "backup": "h@v1"
+              }
+            }
+          }
+        }
+      }
+    },
+    "nodes": [],
+    "promptHistory": [
+      {
+        "content": "first prompt",
+        "timestamp": 1772352000000,
+        "isShell": false
+      }
+    ]
+  }
+]

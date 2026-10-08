@@ -1,0 +1,42 @@
+{
+  "id": "99999999-9999-4999-8999-999999999999",
+  "title": "Plain Meta",
+  "workingDirectory": "/home/demo/scratch",
+  "backendType": "cursor",
+  "agentMode": "agent",
+  "model": "composer-1",
+  "createdAt": 1700000700,
+  "lastActivityAt": 1700000700,
+  "mainChainId": 0,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "source": "cursor",
+    "store": "chats",
+    "workspaceHash": "46edc3d64812c7fd0a172c02d2b99c0a",
+    "agentId": "99999999-9999-4999-8999-999999999999",
+    "mode": "agent",
+    "isRunEverything": false,
+    "latestRootBlobId": "1fe2fe2d68b50d2f476a50fe8de333730a6f9a15a15ddaf3e3e88e4b8cae14d0",
+    "client": "cli",
+    "blobCount": 2,
+    "opaqueBlobs": 0
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "loose prompt",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000700,
+      "metadata": {
+        "blobId": "49881dbdd44c41f4e36b79b211a3807209fec9e566ca69cb7481c1dee22bf942"
+      }
+    }
+  ],
+  "promptHistory": []
+}

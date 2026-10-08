@@ -1,0 +1,130 @@
+{
+  "id": "66666666-6666-4666-8666-666666666666",
+  "title": "explore the repo",
+  "workingDirectory": "/home/demo/proj",
+  "backendType": "cursor",
+  "agentMode": "default",
+  "model": "unknown",
+  "createdAt": 1700000180,
+  "lastActivityAt": 1700000180,
+  "mainChainId": 3,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "source": "cursor",
+    "store": "transcript",
+    "project": "home-demo-proj",
+    "lossy": true,
+    "turnErrors": [
+      {
+        "message": "rate limited"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "<user_query>\nexplore the repo\n</user_query>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000180,
+      "metadata": {
+        "projection": "transcript"
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "I'll look around.",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "cursor-tool-1-0",
+          "name": "Glob",
+          "arguments": {
+            "glob_pattern": "src/**"
+          },
+          "index": 0,
+          "kind": "function",
+          "locations": [],
+          "diffs": []
+        },
+        {
+          "id": "t9",
+          "name": "ApplyPatch",
+          "arguments": {
+            "patch": "*** Begin Patch\n*** Update File: /home/demo/proj/a.ts\n@@\n ctx\n-old\n+new\n*** Delete File: /home/demo/proj/dead.ts\n-gone\n*** End Patch"
+          },
+          "index": 1,
+          "kind": "function",
+          "locations": [
+            {
+              "path": "/home/demo/proj/a.ts"
+            },
+            {
+              "path": "/home/demo/proj/dead.ts"
+            }
+          ],
+          "diffs": [
+            {
+              "path": "/home/demo/proj/a.ts",
+              "oldText": "ctx\nold",
+              "newText": "ctx\nnew"
+            },
+            {
+              "path": "/home/demo/proj/dead.ts",
+              "oldText": "gone"
+            }
+          ]
+        }
+      ],
+      "thinking": "[redacted]",
+      "createdAt": 1700000180,
+      "metadata": {
+        "projection": "transcript",
+        "redactedReasoning": true
+      }
+    },
+    {
+      "nodeId": 2,
+      "parentNodeId": 1,
+      "role": "user",
+      "content": "continue please",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000180,
+      "metadata": {
+        "projection": "transcript"
+      }
+    },
+    {
+      "nodeId": 3,
+      "parentNodeId": 2,
+      "role": "assistant",
+      "content": "All done.",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000180,
+      "metadata": {
+        "projection": "transcript"
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "explore the repo",
+      "timestamp": 1700000180000,
+      "isShell": false
+    },
+    {
+      "content": "continue please",
+      "timestamp": 1700000180000,
+      "isShell": false
+    }
+  ]
+}

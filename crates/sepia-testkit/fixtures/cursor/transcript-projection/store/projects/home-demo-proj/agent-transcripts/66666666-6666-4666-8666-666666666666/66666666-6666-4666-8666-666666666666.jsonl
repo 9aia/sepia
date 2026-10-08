@@ -1,0 +1,7 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nexplore the repo\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"I'll look around.\n\n[REDACTED]"},{"type":"tool_use","name":"Glob","input":{"glob_pattern":"src/**"}},{"type":"tool_use","id":"t9","name":"ApplyPatch","input":{"patch":"*** Begin Patch\n*** Update File: /home/demo/proj/a.ts\n@@\n ctx\n-old\n+new\n*** Delete File: /home/demo/proj/dead.ts\n-gone\n*** End Patch"}}]}}
+{"role":"assistant" BAD
+{"type":"turn_ended","status":"error","error":{"message":"rate limited"}}
+{"role":"user","message":{"content":[{"type":"text","text":"continue please"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"All done."}]}}
+{"type":"turn_ended","status":"completed"}

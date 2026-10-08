@@ -1,0 +1,30 @@
+{
+  "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "title": "Ghost Chat",
+  "workingDirectory": "/home/demo/scratch",
+  "backendType": "cursor",
+  "agentMode": "default",
+  "model": "unknown",
+  "createdAt": 1700000800,
+  "lastActivityAt": 1700000800,
+  "mainChainId": 0,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "source": "cursor",
+    "store": "chats",
+    "workspaceHash": "46edc3d64812c7fd0a172c02d2b99c0a",
+    "agentId": null,
+    "mode": null,
+    "isRunEverything": null,
+    "latestRootBlobId": null,
+    "client": null,
+    "blobCount": 0,
+    "opaqueBlobs": 0
+  },
+  "nodes": [],
+  "promptHistory": []
+}

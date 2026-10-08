@@ -1,0 +1,201 @@
+{
+  "id": "55555555-5555-4555-8555-555555555555",
+  "title": "Golden store chat",
+  "workingDirectory": "/home/demo/proj",
+  "backendType": "cursor",
+  "agentMode": "agent",
+  "model": "composer-1.5",
+  "createdAt": 1700000000,
+  "lastActivityAt": 1700000500,
+  "mainChainId": 7,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "source": "cursor",
+    "store": "chats",
+    "workspaceHash": "708f04d179942f3c21f4c07e0a56f057",
+    "agentId": "55555555-5555-4555-8555-555555555555",
+    "mode": "agent",
+    "isRunEverything": true,
+    "latestRootBlobId": "ce2d4574ddaa819ddce78b7af4bf263e96451a85bc317f449bcbfe6638be4a3d",
+    "client": "cli",
+    "blobCount": 11,
+    "opaqueBlobs": 2
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "system",
+      "content": "You are an AI coding assistant.",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000000,
+      "metadata": {
+        "blobId": "b44b1111dfd65daf7e40e12c146b10f58969eefcf5adbb0fd825162a8d4ab511"
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "user",
+      "content": "<user_info>\nOS Version: linux\n</user_info>",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000000,
+      "metadata": {
+        "blobId": "c83972689389f1adf2ac07e8cba5a434531007026102426807b148337c66eada",
+        "context": "user_info"
+      }
+    },
+    {
+      "nodeId": 2,
+      "parentNodeId": 1,
+      "role": "user",
+      "content": "<user_query>\ntake a screenshot\n</user_query>",
+      "blocks": [],
+      "toolCalls": [],
+      "requestId": "req-0001",
+      "createdAt": 1700000000,
+      "metadata": {
+        "blobId": "d02339bb2efed1e561b6819658f9f31d50f7202cd33712bf07106c9937760cc0"
+      }
+    },
+    {
+      "nodeId": 3,
+      "parentNodeId": 2,
+      "role": "assistant",
+      "content": "Taking a screenshot.",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "tool_1",
+          "name": "Shell",
+          "arguments": {
+            "command": "grim shot.png"
+          },
+          "index": 0,
+          "kind": "function",
+          "status": "success",
+          "durationMs": 5285,
+          "locations": [],
+          "diffs": []
+        }
+      ],
+      "thinking": "[redacted]",
+      "thinkingSignature": "opaque-payload",
+      "createdAt": 1700000000,
+      "metadata": {
+        "blobId": "14033db498beace3382635fe7492415c8ea01f5ad7863ffbc1e00bee2d3cbc1b",
+        "redactedReasoning": true
+      }
+    },
+    {
+      "nodeId": 4,
+      "parentNodeId": 3,
+      "role": "tool",
+      "content": "Exit code: 0\n\nCommand output:\n\n```\ndone\n```",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "tool_1",
+      "toolName": "Shell",
+      "toolResult": {
+        "status": "success",
+        "durationMs": 5285
+      },
+      "createdAt": 1700000000,
+      "metadata": {
+        "blobId": "e84b65a8f3c646b6e7e2788ddf33a9a1f0f341cd913695d2fbe030e446a12842",
+        "toolArguments": {
+          "command": "grim shot.png"
+        }
+      }
+    },
+    {
+      "nodeId": 5,
+      "parentNodeId": 4,
+      "role": "user",
+      "content": "now crop it",
+      "blocks": [],
+      "toolCalls": [],
+      "requestId": "req-0002",
+      "createdAt": 1700000000,
+      "metadata": {
+        "blobId": "9186d50241cc048f463f53cf0096c1e99979a7339de28f083b1bfed0b7824608"
+      }
+    },
+    {
+      "nodeId": 6,
+      "parentNodeId": 5,
+      "role": "assistant",
+      "content": "Cropping.",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "tool_2",
+          "name": "StrReplace",
+          "arguments": {
+            "path": "/home/demo/proj/src/x.ts",
+            "old_string": "let a = 1;",
+            "new_string": "let a = 2;"
+          },
+          "index": 0,
+          "kind": "function",
+          "status": "error",
+          "locations": [
+            {
+              "path": "/home/demo/proj/src/x.ts"
+            }
+          ],
+          "diffs": [
+            {
+              "path": "/home/demo/proj/src/x.ts",
+              "oldText": "let a = 1;",
+              "newText": "let a = 2;"
+            }
+          ]
+        }
+      ],
+      "createdAt": 1700000000,
+      "metadata": {
+        "blobId": "94a27cda2cb2d220e4635f223fd6a3a0102e45d789b7c7077ba650e1a16b94f7"
+      }
+    },
+    {
+      "nodeId": 7,
+      "parentNodeId": 6,
+      "role": "tool",
+      "content": "{\"error\":\"edit conflict\"}",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "tool_2",
+      "toolName": "StrReplace",
+      "toolResult": {
+        "status": "error"
+      },
+      "createdAt": 1700000000,
+      "metadata": {
+        "blobId": "05f355c484a2a948906324c442a7b1cc30909a75f52c35da5b1d776424ff4f9b",
+        "toolArguments": {
+          "path": "/home/demo/proj/src/x.ts",
+          "old_string": "let a = 1;",
+          "new_string": "let a = 2;"
+        }
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "take a screenshot",
+      "timestamp": 1700000000000,
+      "isShell": false
+    },
+    {
+      "content": "now crop it",
+      "timestamp": 1700000000000,
+      "isShell": false
+    }
+  ]
+}

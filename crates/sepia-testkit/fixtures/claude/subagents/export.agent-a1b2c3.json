@@ -1,0 +1,114 @@
+{
+  "id": "agent-a1b2c3",
+  "title": "find chart libraries",
+  "workingDirectory": "/home/dev/shop",
+  "backendType": "claude",
+  "agentMode": "accept-edits",
+  "model": "claude-haiku-4-5",
+  "createdAt": 1769940010,
+  "lastActivityAt": 1769940013,
+  "mainChainId": 3,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "parentSessionId": "22222222-2222-4222-8222-222222222222",
+  "agentId": "a1b2c3",
+  "checkpoints": [],
+  "metadata": {
+    "source": "claude-code",
+    "gitBranch": null,
+    "claudeVersion": null,
+    "slug": null
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "find chart libraries",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1769940010,
+      "metadata": {
+        "uuid": "a1",
+        "isSidechain": true
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "toolu_a1",
+          "name": "Bash",
+          "arguments": {
+            "command": "npm search chart"
+          },
+          "index": 0,
+          "kind": "function",
+          "status": "success",
+          "locations": [],
+          "diffs": []
+        }
+      ],
+      "model": "claude-haiku-4-5",
+      "requestId": "req_a2",
+      "finishReason": "tool_use",
+      "createdAt": 1769940011,
+      "metadata": {
+        "uuid": "a2",
+        "isSidechain": true,
+        "messageId": "msg_a2"
+      }
+    },
+    {
+      "nodeId": 2,
+      "parentNodeId": 1,
+      "role": "tool",
+      "content": "recharts\nchart.js\n",
+      "blocks": [],
+      "toolCalls": [],
+      "toolCallId": "toolu_a1",
+      "toolName": "Bash",
+      "toolResult": {
+        "status": "success"
+      },
+      "createdAt": 1769940012,
+      "metadata": {
+        "uuid": "a3",
+        "isSidechain": true,
+        "toolArguments": {
+          "command": "npm search chart"
+        },
+        "toolUseResult": null
+      }
+    },
+    {
+      "nodeId": 3,
+      "parentNodeId": 2,
+      "role": "assistant",
+      "content": "recharts fits.",
+      "blocks": [],
+      "toolCalls": [],
+      "model": "claude-haiku-4-5",
+      "requestId": "req_a4",
+      "finishReason": "end_turn",
+      "createdAt": 1769940013,
+      "metadata": {
+        "uuid": "a4",
+        "isSidechain": true,
+        "messageId": "msg_a4"
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "find chart libraries",
+      "timestamp": 1769940010000,
+      "isShell": false
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "id": "55555555-5555-4555-8555-555555555555",
+    "title": "Golden store chat",
+    "workingDirectory": "/home/demo/proj",
+    "backendType": "cursor",
+    "agentMode": "agent",
+    "model": "composer-1.5",
+    "createdAt": 1700000000,
+    "lastActivityAt": 1700000500,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "source": "cursor",
+      "store": "chats",
+      "workspaceHash": "708f04d179942f3c21f4c07e0a56f057",
+      "agentId": "55555555-5555-4555-8555-555555555555",
+      "latestRootBlobId": "ce2d4574ddaa819ddce78b7af4bf263e96451a85bc317f449bcbfe6638be4a3d"
+    },
+    "nodes": [],
+    "promptHistory": []
+  }
+]

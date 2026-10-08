@@ -1,0 +1,83 @@
+[
+  {
+    "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "title": "orphan chat",
+    "workingDirectory": "/home/demo/elsewhere",
+    "backendType": "cursor",
+    "agentMode": "default",
+    "model": "unknown",
+    "createdAt": 1700000900,
+    "lastActivityAt": 1700000900,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "source": "cursor",
+      "store": "transcript",
+      "project": "home-demo-elsewhere",
+      "lossy": true,
+      "turnErrors": []
+    },
+    "nodes": [],
+    "promptHistory": [
+      {
+        "content": "orphan chat",
+        "timestamp": 1700000900000,
+        "isShell": false
+      }
+    ]
+  },
+  {
+    "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "title": "Ghost Chat",
+    "workingDirectory": "/home/demo/scratch",
+    "backendType": "cursor",
+    "agentMode": "default",
+    "model": "unknown",
+    "createdAt": 1700000800,
+    "lastActivityAt": 1700000800,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "source": "cursor",
+      "store": "chats",
+      "workspaceHash": "46edc3d64812c7fd0a172c02d2b99c0a",
+      "agentId": null,
+      "latestRootBlobId": null
+    },
+    "nodes": [],
+    "promptHistory": []
+  },
+  {
+    "id": "99999999-9999-4999-8999-999999999999",
+    "title": "Plain Meta",
+    "workingDirectory": "/home/demo/scratch",
+    "backendType": "cursor",
+    "agentMode": "agent",
+    "model": "composer-1",
+    "createdAt": 1700000700,
+    "lastActivityAt": 1700000700,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [],
+    "metadata": {
+      "source": "cursor",
+      "store": "chats",
+      "workspaceHash": "46edc3d64812c7fd0a172c02d2b99c0a",
+      "agentId": "99999999-9999-4999-8999-999999999999",
+      "latestRootBlobId": "1fe2fe2d68b50d2f476a50fe8de333730a6f9a15a15ddaf3e3e88e4b8cae14d0"
+    },
+    "nodes": [],
+    "promptHistory": []
+  }
+]

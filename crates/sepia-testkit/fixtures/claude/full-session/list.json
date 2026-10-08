@@ -1,0 +1,65 @@
+[
+  {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "title": "Fix the login bug",
+    "workingDirectory": "/work/proj",
+    "backendType": "claude",
+    "agentMode": "acceptEdits",
+    "model": "claude-opus-4-5",
+    "createdAt": 1767225600,
+    "lastActivityAt": 1767225610,
+    "mainChainId": 0,
+    "shellLastSeenIndex": 0,
+    "cogsJson": "[]",
+    "workspaceDirs": "[]",
+    "hidden": 0,
+    "checkpoints": [
+      {
+        "ref": "msg_u2",
+        "createdAt": 1767225603000,
+        "kind": "file-history-snapshot"
+      }
+    ],
+    "metadata": {
+      "source": "claude-code",
+      "gitBranch": "main",
+      "claudeVersion": "2.1.0",
+      "slug": "proj",
+      "fileHistory": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "snapshots": {
+          "msg_u2": {
+            "at": 1767225603000,
+            "files": {
+              "/work/proj/src/auth.ts": {
+                "backup": "hash1@v1",
+                "version": 1
+              },
+              "/work/proj/src/deleted.ts": {
+                "backup": null,
+                "version": 2
+              },
+              "/work/proj/src/login.ts": {
+                "backup": "hash2@v1",
+                "version": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "nodes": [],
+    "promptHistory": [
+      {
+        "content": "fix the login bug please",
+        "timestamp": 1767225600000,
+        "isShell": false
+      },
+      {
+        "content": "here is the failure screenshot and notes",
+        "timestamp": 1767225604000,
+        "isShell": false
+      }
+    ]
+  }
+]

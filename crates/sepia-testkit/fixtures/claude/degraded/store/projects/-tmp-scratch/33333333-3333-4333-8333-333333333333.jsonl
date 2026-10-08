@@ -1,0 +1,11 @@
+{"type":"user"
+"just a string"
+
+{"type":"user","parentUuid":null,"sessionId":"33333333-3333-4333-8333-333333333333","cwd":"/tmp/scratch","timestamp":"2026-03-01T08:00:00.000Z","message":{"role":"user","content":"first prompt"}}
+{"type":"user","uuid":"d1","parentUuid":null,"sessionId":"33333333-3333-4333-8333-333333333333","cwd":"/tmp/scratch","userType":"external","isSidechain":false,"timestamp":"2026-03-01T08:00:01.000Z","message":{"role":"user","content":""}}
+{"type":"user","uuid":"d2","parentUuid":"d1","timestamp":"2026-03-01T08:00:01.500Z","message":{"role":"user"}}
+{"type":"user","uuid":"d3","parentUuid":"uuid-that-does-not-exist","sessionId":"33333333-3333-4333-8333-333333333333","cwd":"/tmp/scratch","userType":"external","isSidechain":false,"timestamp":"2026-03-01T08:00:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_gone","content":"late output"},{"type":"tool_result","content":42}]}}
+{"type":"file-history-snapshot","uuid":"snap-x","parentUuid":"d3","sessionId":"33333333-3333-4333-8333-333333333333","timestamp":"2026-03-01T08:00:02.500Z","snapshot":{"trackedFileBackups":{"/tmp/scratch/a.txt":{"backupFileName":"h@v1"}}}}
+{"type":"file-history-snapshot","parentUuid":"snap-x"}
+{"type":"assistant","uuid":"d4","parentUuid":"snap-x","sessionId":"33333333-3333-4333-8333-333333333333","cwd":"/tmp/scratch","userType":"external","isSidechain":false,"requestId":"req_d4","timestamp":"2026-03-01T08:00:03.000Z","message":{"id":"msg_d4","type":"message","role":"assistant","model":"claude-opus-4-5","content":[{"type":"text","text":"recovered"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":2}}}
+{"type":"assistant","uuid":"d5","message":{"role":"assis

@@ -1,0 +1,77 @@
+{
+  "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "title": "orphan chat",
+  "workingDirectory": "/home/demo/elsewhere",
+  "backendType": "cursor",
+  "agentMode": "default",
+  "model": "unknown",
+  "createdAt": 1700000900,
+  "lastActivityAt": 1700000900,
+  "mainChainId": 1,
+  "shellLastSeenIndex": 0,
+  "cogsJson": "[]",
+  "workspaceDirs": "[]",
+  "hidden": 0,
+  "checkpoints": [],
+  "metadata": {
+    "source": "cursor",
+    "store": "transcript",
+    "project": "home-demo-elsewhere",
+    "lossy": true,
+    "turnErrors": []
+  },
+  "nodes": [
+    {
+      "nodeId": 0,
+      "role": "user",
+      "content": "orphan chat",
+      "blocks": [],
+      "toolCalls": [],
+      "createdAt": 1700000900,
+      "metadata": {
+        "projection": "transcript"
+      }
+    },
+    {
+      "nodeId": 1,
+      "parentNodeId": 0,
+      "role": "assistant",
+      "content": "",
+      "blocks": [],
+      "toolCalls": [
+        {
+          "id": "to1",
+          "name": "Write",
+          "arguments": {
+            "path": "/x/f.ts",
+            "contents": "x"
+          },
+          "index": 0,
+          "kind": "function",
+          "locations": [
+            {
+              "path": "/x/f.ts"
+            }
+          ],
+          "diffs": [
+            {
+              "path": "/x/f.ts",
+              "newText": "x"
+            }
+          ]
+        }
+      ],
+      "createdAt": 1700000900,
+      "metadata": {
+        "projection": "transcript"
+      }
+    }
+  ],
+  "promptHistory": [
+    {
+      "content": "orphan chat",
+      "timestamp": 1700000900000,
+      "isShell": false
+    }
+  ]
+}
