@@ -144,6 +144,18 @@ impl DevinStore {
         })
     }
 
+    pub fn db_path(&self) -> &Path {
+        &self.db_path
+    }
+
+    pub fn has_tool_call_state(&self) -> bool {
+        self.has_tool_call_state
+    }
+
+    pub fn has_subagent_heads(&self) -> bool {
+        self.has_subagent_heads
+    }
+
     fn db_stamp(&self) -> f64 {
         if self.db_path == Path::new(":memory:") {
             return 0.0;

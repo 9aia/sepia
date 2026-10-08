@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 use crate::domain::{MessageNode, Role, Session};
 
 /// Selector for the cut point — exactly one member is set.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum RewindTarget {
     /// Keep this node and everything before it.
     NodeId(i64),
@@ -20,7 +21,8 @@ pub enum RewindTarget {
     Checkpoint(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RewindPlan {
     /// `nodes[0..keep_count)` survive.
     pub keep_count: usize,

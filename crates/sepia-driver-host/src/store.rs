@@ -28,6 +28,31 @@ impl RemoteStore {
         &self.client
     }
 
+    /// `session.rewind` — the control plane ships the pre-rewind IR, the
+    /// computed cut, and the truncated IR; the driver picks its store
+    /// mechanism (row delete, transcript slice, checkpoint re-root).
+    ///
+    /// # Errors
+    /// `CAPABILITY_UNSUPPORTED` when the driver has no rewinder.
+    pub async fn rewind(
+        &self,
+        session: &sepia_core::Session,
+        plan: &sepia_core::rewind::RewindPlan,
+        truncated: &sepia_core::Session,
+    ) -> Result<(), sepia_driver_sdk::rpc::RpcError> {
+        self.client
+            .call(
+                sepia_driver_sdk::methods::SESSION_REWIND,
+                serde_json::json!({
+                    "session": session,
+                    "plan": plan,
+                    "truncated": truncated,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
     fn err(e: rpc::RpcError) -> StorageError {
         StorageError::new(e.message)
     }

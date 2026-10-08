@@ -37,6 +37,17 @@ pub struct IdParams {
     pub agent_id: Option<String>,
 }
 
+/// `session.rewind` — the control plane ships the full pre-rewind IR, the
+/// computed cut, and the already-truncated IR; the driver picks its
+/// store mechanism.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewindParams {
+    pub session: sepia_core::Session,
+    pub plan: sepia_core::rewind::RewindPlan,
+    pub truncated: sepia_core::Session,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryParams {
@@ -54,19 +65,6 @@ pub struct HistoryParams {
 pub struct RenameParams {
     pub id: String,
     pub title: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RewindParams {
-    pub id: String,
-    /// Exactly one of nodeId/turns/checkpoint must be present.
-    #[serde(default)]
-    pub node_id: Option<i64>,
-    #[serde(default)]
-    pub turns: Option<i64>,
-    #[serde(default)]
-    pub checkpoint: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

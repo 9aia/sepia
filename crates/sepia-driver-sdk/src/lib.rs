@@ -12,4 +12,4 @@ pub mod rpc;
 pub mod serve;
 
 pub use manifest::{Capability, DRIVER_PROTOCOL, DriverManifest};
-pub use serve::{Driver, StoreDriver, serve, serve_store};
+pub use serve::{Driver, SessionTruncator, StoreDriver, serve, serve_store};

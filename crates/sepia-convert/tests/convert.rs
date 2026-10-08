@@ -4,9 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use sepia_convert::{
-    ImportedHistoryMessage, import_session, session_from_history,
-};
+use sepia_convert::{ImportedHistoryMessage, import_session, session_from_history};
 use sepia_core::storage::SessionRepository;
 use sepia_core::{Role, Session, StorageError};
 use sepia_testkit::contract;

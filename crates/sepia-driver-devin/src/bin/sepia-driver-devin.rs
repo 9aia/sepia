@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use sepia_driver_devin::DevinStore;
-use sepia_driver_sdk::{Capability, DRIVER_PROTOCOL, DriverManifest, serve_store};
+use sepia_driver_sdk::{Capability, DRIVER_PROTOCOL, DriverManifest, SessionTruncator, serve};
 
 fn db_path() -> PathBuf {
     if let Ok(path) = std::env::var("SEPIA_DEVIN_DB") {
@@ -55,6 +55,19 @@ fn main() -> std::io::Result<()> {
     let readonly = std::env::var("SEPIA_DEVIN_READONLY").is_ok_and(|v| v == "1" || v == "true");
     let store = DevinStore::open(&db_path(), readonly)
         .map_err(|e| std::io::Error::other(e.message.clone()))?;
+    let truncator = if readonly {
+        None // read-only drivers never truncate
+    } else {
+        Some(Arc::new(sepia_driver_devin::truncate::DevinTruncator::new(
+            store.db_path().to_path_buf(),
+            store.has_tool_call_state(),
+            store.has_subagent_heads(),
+        )) as Arc<dyn SessionTruncator>)
+    };
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(serve_store(manifest(), Arc::new(store)))
+    let mut driver = sepia_driver_sdk::StoreDriver::new(manifest(), Arc::new(store));
+    if let Some(truncator) = truncator {
+        driver = driver.with_truncator(truncator);
+    }
+    rt.block_on(serve(driver))
 }

@@ -33,16 +33,40 @@ pub trait Driver: Send + Sync {
     async fn handle(&self, method: &str, params: Value) -> Result<Value, RpcError>;
 }
 
+/// The store-specific truncation behind `session.rewind` — each store
+/// cuts its own way (row delete, transcript slice, checkpoint re-root).
+#[async_trait]
+pub trait SessionTruncator: Send + Sync {
+    async fn truncate(
+        &self,
+        session: &Session,
+        plan: &sepia_core::rewind::RewindPlan,
+        truncated: &Session,
+    ) -> Result<(), String>;
+}
+
 /// A driver wrapping a [`SessionRepository`]: session reads/writes map
 /// onto the port; capabilities gate optional methods.
 pub struct StoreDriver {
     manifest: DriverManifest,
     store: Arc<dyn SessionRepository>,
+    truncator: Option<Arc<dyn SessionTruncator>>,
 }
 
 impl StoreDriver {
     pub fn new(manifest: DriverManifest, store: Arc<dyn SessionRepository>) -> Self {
-        Self { manifest, store }
+        Self {
+            manifest,
+            store,
+            truncator: None,
+        }
+    }
+
+    /// Attach the backend's rewind writer — enables `session.rewind`.
+    #[must_use]
+    pub fn with_truncator(mut self, truncator: Arc<dyn SessionTruncator>) -> Self {
+        self.truncator = Some(truncator);
+        self
     }
 
     fn require(&self, capability: &Capability) -> Result<(), RpcError> {
@@ -153,7 +177,23 @@ impl Driver for StoreDriver {
                 self.store.save(&session).await.map_err(Self::store_err)?;
                 Ok(Value::Null)
             }
-            methods::SESSION_REWIND | methods::FILE_RESTORE => Err(RpcError::new(
+            methods::SESSION_REWIND => {
+                self.require(&Capability::Rewind)?;
+                let Some(truncator) = &self.truncator else {
+                    return Err(RpcError::new(
+                        rpc::CAPABILITY_UNSUPPORTED,
+                        format!("driver {} has no rewinder", self.manifest.id),
+                    ));
+                };
+                let p: methods::RewindParams = serde_json::from_value(params)
+                    .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+                truncator
+                    .truncate(&p.session, &p.plan, &p.truncated)
+                    .await
+                    .map_err(|e| RpcError::new(rpc::STORE_ERROR, e))?;
+                Ok(Value::Null)
+            }
+            methods::FILE_RESTORE => Err(RpcError::new(
                 rpc::CAPABILITY_UNSUPPORTED,
                 format!("{method} is not implemented by this driver"),
             )),
