@@ -20,6 +20,7 @@ sepia-driver-cursor = { path = "crates/sepia-driver-cursor" }
 sepia-driver-devin = { path = "crates/sepia-driver-devin" }
 sepia-meta = { path = "crates/sepia-meta" }
 sepia-node = { path = "crates/sepia-node" }
+sepia-http = { path = "crates/sepia-http" }
 sepia-outbox = { path = "crates/sepia-outbox" }
 sepia-driver-sdk = { path = "crates/sepia-driver-sdk" }
 sepia-driver-host = { path = "crates/sepia-driver-host" }
@@ -31,6 +32,7 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 thiserror = "2.0"
 async-trait = "0.1"
 tokio = { version = "1", features = [
+  "signal",
   "macros",
   "rt-multi-thread",
   "process",

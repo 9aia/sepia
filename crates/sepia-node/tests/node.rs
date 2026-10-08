@@ -1,10 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::pedantic)]
 
 //! End-to-end: the sepia-node binary discovers a real driver on
-//! SEPIA_DRIVER_DIR, merges its store, and reports the session count.
+//! SEPIA_DRIVER_DIR, merges its store, and serves /api/sessions.
 
 #[test]
-fn node_discovers_driver_and_lists_sessions() {
+fn node_serves_sessions_over_http() {
     let tmp = tempfile::tempdir().unwrap();
     let driver_dir = tmp.path().join("drivers");
     let home = tmp.path().join("home");
@@ -16,35 +16,50 @@ fn node_discovers_driver_and_lists_sessions() {
     let driver = sepia_testkit::ensure_driver_bin("sepia-driver-devin");
     std::fs::hard_link(&driver, driver_dir.join("sepia-driver-devin")).unwrap();
 
-    // Seed a devin store the driver will open.
     let db = db_dir.join("sessions.db");
     let store = sepia_driver_devin::store::DevinStore::open(&db, false).unwrap();
-    let mut session = sepia_testkit::contract::session("devin-1", "Node test", 1_700_000_000.0);
+    let mut session =
+        sepia_testkit::contract::session("devin-1", "Node test", 1_700_000_000.0);
     session.backend_type = "windsurf".into();
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
-        .block_on(sepia_core::storage::SessionRepository::save(
-            &store, &session,
-        ))
+        .block_on(sepia_core::storage::SessionRepository::save(&store, &session))
         .unwrap();
 
-    let node = sepia_testkit::ensure_driver_bin("sepia-node");
-    let output = std::process::Command::new(node)
+    let port = 18787u16;
+    let mut child = std::process::Command::new(sepia_testkit::ensure_driver_bin("sepia-node"))
         .env("SEPIA_DRIVER_DIR", &driver_dir)
         .env("SEPIA_DEVIN_DB", &db)
         .env("SEPIA_HOME", &home)
+        .env("SEPIA_META", home.join("meta.json"))
+        .env("SEPIA_NODE", home.join("node.json"))
+        .env("SEPIA_PORT", port.to_string())
+        .env("SEPIA_HOST", "127.0.0.1")
         .env("HOME", tmp.path())
-        .output()
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "sepia-node exited {:?}\nstdout: {stdout}\nstderr: {stderr}",
-        output.status
-    );
-    assert!(stdout.contains("[devin]"), "stdout: {stdout}");
-    assert!(stdout.contains("1 session(s)"), "stdout: {stdout}");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut body = String::new();
+    loop {
+        match ureq::get(format!("http://127.0.0.1:{port}/api/sessions")).call() {
+            Ok(mut resp) => {
+                body = resp.body_mut().read_to_string().unwrap();
+                break;
+            }
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                panic!("GET /api/sessions never came up: {e}");
+            }
+        }
+    }
+    let _ = child.kill();
+    assert!(body.contains("devin-1"), "body: {body}");
 }

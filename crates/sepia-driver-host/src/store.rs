@@ -12,6 +12,7 @@ use serde_json::json;
 use crate::client::DriverClient;
 
 /// A `SessionRepository` that forwards every call to a driver subprocess.
+#[derive(Clone)]
 pub struct RemoteStore {
     client: Arc<DriverClient>,
     /// The agent/backend id sessions from this store carry (`agent_id`
