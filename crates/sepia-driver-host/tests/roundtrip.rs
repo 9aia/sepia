@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use sepia_core::{Role, Session, storage::SessionRepository};
-use sepia_driver_host::{DriverClient, RemoteStore, discover::probe_manifest};
+use sepia_driver_host::{DriverClient, DriverRegistry, RemoteStore, discover::probe_manifest};
 use serde_json::{Value, json};
 
 fn binary() -> PathBuf {
@@ -108,4 +108,34 @@ async fn unknown_method_returns_method_not_found() {
     let client = DriverClient::spawn(&binary(), &[]).await.unwrap();
     let err = client.call("nope.method", json!({})).await.unwrap_err();
     assert_eq!(err.code, sepia_driver_sdk::rpc::METHOD_NOT_FOUND);
+}
+
+#[tokio::test]
+async fn registry_respawns_a_dead_driver() {
+    let mut registry = DriverRegistry::default();
+    let manifest = probe_manifest(&binary()).await.unwrap();
+    registry.insert(binary(), manifest);
+    let entry = registry.with(&sepia_driver_sdk::Capability::SessionStore)[0];
+
+    let first = entry.client().await.unwrap();
+    first
+        .call("driver.manifest", serde_json::json!({}))
+        .await
+        .unwrap();
+    // Kill the child — stdout closes, is_closed flips.
+    first.kill().await;
+    // Wait for the reader task to observe the closed stdout.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !first.is_closed() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(first.is_closed());
+
+    // Next client() call spawns a fresh process.
+    let second = entry.client().await.unwrap();
+    let manifest = second
+        .call("driver.manifest", serde_json::json!({}))
+        .await
+        .unwrap();
+    assert_eq!(manifest["id"], "memtest");
 }

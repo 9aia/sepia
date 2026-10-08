@@ -29,6 +29,9 @@ struct Inner {
     stderr_tail: Mutex<std::collections::VecDeque<String>>,
     reader: Mutex<JoinHandle<()>>,
     stderr_reader: Mutex<JoinHandle<()>>,
+    /// Set by the reader task when the child's stdout closes — the
+    /// registry watches it to respawn dead drivers.
+    closed: std::sync::atomic::AtomicBool,
 }
 
 /// A live driver subprocess. Dropping it kills the child.
@@ -83,6 +86,7 @@ impl DriverClient {
             stderr_tail: Mutex::new(std::collections::VecDeque::new()),
             reader: Mutex::new(tokio::spawn(async {})),
             stderr_reader: Mutex::new(tokio::spawn(async {})),
+            closed: std::sync::atomic::AtomicBool::new(false),
         });
 
         let reader = {
@@ -92,6 +96,9 @@ impl DriverClient {
                 while let Ok(Some(line)) = lines.next_line().await {
                     inner.dispatch(&line).await;
                 }
+                inner
+                    .closed
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 inner.fail_all_pending("driver stdout closed").await;
             })
         };
@@ -124,6 +131,18 @@ impl DriverClient {
             .iter()
             .cloned()
             .collect()
+    }
+
+    /// Kill the child process (restart supervision, crash tests).
+    /// The reader task marks the client closed; callers drop it.
+    pub async fn kill(&self) {
+        let _ = self.inner._child.lock().await.start_kill();
+    }
+
+    /// Whether the driver process exited (stdout closed) — callers
+    /// should drop this client and respawn.
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Subscribe to driver notifications.

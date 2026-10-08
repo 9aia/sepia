@@ -16,25 +16,36 @@ use crate::discover;
 pub struct DriverEntry {
     pub binary: PathBuf,
     pub manifest: DriverManifest,
-    client: tokio::sync::OnceCell<Result<Arc<DriverClient>, String>>,
+    client: tokio::sync::Mutex<Option<Result<Arc<DriverClient>, String>>>,
 }
 
 impl DriverEntry {
-    /// The live client, spawned on first use.
+    /// The spawned driver client, respawning on demand when the last
+    /// process died (stdout closed / crashed). Held under a lock so
+    /// concurrent callers share one spawn.
     ///
     /// # Errors
-    /// Carries the spawn failure string on repeated access too.
-    pub async fn client(&self) -> Result<&Arc<DriverClient>, String> {
-        self.client
-            .get_or_init(|| async {
+    /// The spawn error string from the most recent attempt.
+    pub async fn client(&self) -> Result<Arc<DriverClient>, String> {
+        let mut slot = self.client.lock().await;
+        // Respawn when the cached client died or never spawned.
+        let stale = match slot.as_ref() {
+            Some(Ok(c)) => c.is_closed(),
+            Some(Err(_)) | None => true,
+        };
+        if stale {
+            *slot = Some(
                 DriverClient::spawn(&self.binary, &[])
                     .await
                     .map(Arc::new)
-                    .map_err(|e| format!("spawn {}: {e}", self.binary.display()))
-            })
-            .await
-            .as_ref()
-            .map_err(Clone::clone)
+                    .map_err(|e| format!("spawn {}: {e}", self.binary.display())),
+            );
+        }
+        match slot.as_ref() {
+            Some(Ok(client)) => Ok(Arc::clone(client)),
+            Some(Err(e)) => Err(e.clone()),
+            None => Err("driver spawn produced no client".to_string()),
+        }
     }
 }
 
@@ -58,7 +69,7 @@ impl DriverRegistry {
                         DriverEntry {
                             binary,
                             manifest,
-                            client: tokio::sync::OnceCell::new(),
+                            client: tokio::sync::Mutex::new(None),
                         },
                     );
                 }
@@ -75,7 +86,7 @@ impl DriverRegistry {
             DriverEntry {
                 binary,
                 manifest,
-                client: tokio::sync::OnceCell::new(),
+                client: tokio::sync::Mutex::new(None),
             },
         );
     }
@@ -121,7 +132,7 @@ impl DriverRegistry {
         for entry in self.with(&Capability::SessionStore) {
             match entry.client().await {
                 Ok(client) => stores.push(crate::store::RemoteStore::new(
-                    Arc::clone(client),
+                    client,
                     entry.manifest.id.clone(),
                 )),
                 Err(e) => {

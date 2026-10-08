@@ -2681,6 +2681,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sepia-sync"
+version = "0.0.0"
+
+[[package]]
 name = "sepia-testkit"
 version = "0.0.0"
 dependencies = [

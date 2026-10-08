@@ -23,6 +23,9 @@ sepia-node = { path = "crates/sepia-node" }
 sepia-http = { path = "crates/sepia-http" }
 sepia-outbox = { path = "crates/sepia-outbox" }
 sepia-push = { path = "crates/sepia-push" }
+sepia-sync = { path = "crates/sepia-sync" }
+sepia-web = { path = "crates/sepia-web" }
+sepia-hub = { path = "crates/sepia-hub" }
 sepia-driver-sdk = { path = "crates/sepia-driver-sdk" }
 sepia-driver-host = { path = "crates/sepia-driver-host" }
 sepia-testkit = { path = "crates/sepia-testkit" }
@@ -51,6 +54,19 @@ semver = "1"
 toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 camino = { version = "1", features = ["serde1"] }
+ureq = { version = "3", features = ["json"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs"] }
+leptos = { version = "0.8.21", default-features = false }
+leptos_router = { version = "0.8.17", default-features = false }
+leptos_meta = { version = "0.8.7", default-features = false }
+leptos_axum = "0.8.10"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
+console_error_panic_hook = "0.1"
 time = { version = "0.3", features = ["formatting"] }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
