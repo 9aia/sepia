@@ -19,3 +19,7 @@ apps/server/ui-dist/
 
 # npm package staging (tools/build-npm.ts) — dist/ is covered above
 packages/sepia-node/ui/
+
+# Rust
+target/
+**/*.rs.bk

@@ -1,0 +1,77 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+repository = "https://github.com/9aia/sepia"
+
+[workspace.dependencies]
+# Internal crates.
+sepia-core = { path = "crates/sepia-core" }
+sepia-proto = { path = "crates/sepia-proto" }
+sepia-driver-sdk = { path = "crates/sepia-driver-sdk" }
+sepia-driver-host = { path = "crates/sepia-driver-host" }
+sepia-testkit = { path = "crates/sepia-testkit" }
+
+# External dependencies — pin conservative majors/minors.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+thiserror = "2.0"
+async-trait = "0.1"
+tokio = { version = "1", features = [
+  "macros",
+  "rt-multi-thread",
+  "process",
+  "io-util",
+  "io-std",
+  "sync",
+  "time",
+  "fs",
+] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+semver = "1"
+toml = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+camino = { version = "1", features = ["serde1"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+proptest = "1"
+insta = { version = "1", features = ["json", "redactions"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Hard gates: deny classes that hide real bugs.
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+# Warn-level signal, fixed as we go.
+style = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+# Pedantic lints that cost more than they catch here.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+doc_markdown = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_lossless = "allow"
+struct_excessive_bools = "allow"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "unwind" # keep unwind: tests + tokio supervise panics
