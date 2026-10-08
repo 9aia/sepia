@@ -581,6 +581,31 @@ export const make = (
         }),
       );
 
+    /**
+     * Metadata-only variant of `getSession` — a Session with empty
+     * `nodes`/`promptHistory`. For consumers that read refs/headers
+     * (checkpoints, attach); full reads go through `getSession`.
+     */
+    const getSummary = (
+      id: string,
+      getOptions?: { readonly agentId?: string },
+    ): Effect.Effect<Session, ControlError> =>
+      Effect.gen(function* () {
+        const maybe = yield* (
+          repo.summary !== undefined
+            ? repo.summary(id, getOptions?.agentId)
+            : repo.getById(id, getOptions?.agentId)
+        ).pipe(Effect.mapError(storageFail("Failed to read session")));
+        if (Option.isNone(maybe)) {
+          return yield* Effect.fail(controlError("not_found", `Unknown session: ${id}`, undefined));
+        }
+        return maybe.value;
+      }).pipe(
+        Effect.withSpan("sepia.control.get_summary", {
+          attributes: { "sepia.session.id": id },
+        }),
+      );
+
     // The default-agent fallback only applies to backends that resolve to
     // the primary agent anyway — a backend mapped to a concrete agent id
     // that has no registered runtime (e.g. "cursor", a store with no live agent)
@@ -655,9 +680,13 @@ export const make = (
     ): Promise<Either.Either<AttachResult, ControlError>> =>
       Runtime.runPromise(attachRuntime)(
         Effect.gen(function* () {
-          const maybe = yield* repo
-            .getById(id, attachOptions?.agentId)
-            .pipe(Effect.mapError(storageFail("Failed to read session")));
+          // Attach needs only cwd/backendType/title — a summary read skips
+          // parsing a backlog that can reach gigabytes on live stores.
+          const maybe = yield* (
+            repo.summary !== undefined
+              ? repo.summary(id, attachOptions?.agentId)
+              : repo.getById(id, attachOptions?.agentId)
+          ).pipe(Effect.mapError(storageFail("Failed to read session")));
           if (Option.isNone(maybe)) {
             return yield* Effect.fail(
               controlError("not_found", `Unknown session: ${id}`, undefined),
@@ -1034,9 +1063,11 @@ export const make = (
         const live = liveFor(id, deleteOptions?.agentId);
         if (live !== undefined) yield* detach(id);
 
-        const maybe = yield* repo
-          .getById(id, deleteOptions?.agentId)
-          .pipe(Effect.mapError(storageFail("Failed to read session")));
+        const maybe = yield* (
+          repo.summary !== undefined
+            ? repo.summary(id, deleteOptions?.agentId)
+            : repo.getById(id, deleteOptions?.agentId)
+        ).pipe(Effect.mapError(storageFail("Failed to read session")));
         const cwd = live?.cwd ?? (Option.isSome(maybe) ? maybe.value.workingDirectory : undefined);
         const agentId =
           deleteOptions?.agentId ??
@@ -1646,6 +1677,7 @@ export const make = (
       listSessions,
       getHistory,
       getSession,
+      getSummary,
       createSession,
       attach,
       detach,

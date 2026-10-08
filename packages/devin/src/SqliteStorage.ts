@@ -198,15 +198,30 @@ export const make = (
     };
     let listCache: { readonly stamp: number; readonly value: ReadonlyArray<Session> } | undefined;
     const SESSION_CACHE_MAX = 64;
+    /**
+     * Per-entry payload ceiling. Real sessions reach ~1 GB of raw JSON and
+     * the parsed `Session` graph retains ≥ the blob size — a 64-entry cache
+     * of those is an OOM, not a cache. Oversized sessions still serve
+     * correctly; they just re-read per request instead of pinning the heap.
+     */
+    const SESSION_CACHE_MAX_BYTES = 32 * 1024 * 1024;
     const sessionCache = new Map<string, { readonly key: string; readonly session: Session }>();
     /**
      * Call-bearing nodes per session — the calls join for history windows.
      * `message_nodes` is append-only and rows are immutable blobs, so the
      * index is exact when keyed on `max(node_id)`: any append bumps it.
+     * While a live agent appends, that bumps on every poll — `builtAt` adds
+     * a TTL grace so the index rebuilds at most every few seconds, and the
+     * byte ceiling skips retention (and the parse) for giant sessions.
      */
+    const CALLS_INDEX_TTL_MS = 15_000;
     const callsIndex = new Map<
       string,
-      { readonly maxNodeId: number; readonly nodes: ReadonlyArray<MessageNode> }
+      {
+        readonly maxNodeId: number;
+        readonly builtAt: number;
+        readonly nodes: ReadonlyArray<MessageNode>;
+      }
     >();
     const invalidateCaches = () => {
       listCache = undefined;
@@ -394,8 +409,15 @@ export const make = (
           outcomes: extras.hasToolCallState ? toolCallStateOutcomes(sqlite, id) : undefined,
           parentSessionId: parentSessionId(id),
         });
-        if (sessionCache.size >= SESSION_CACHE_MAX) sessionCache.clear();
-        sessionCache.set(id, { key: cacheKey, session });
+        const blobBytes = nodeRows.reduce(
+          (total, row) =>
+            total + String(row.chatMessage ?? "").length + String(row.metadata ?? "").length,
+          0,
+        );
+        if (blobBytes <= SESSION_CACHE_MAX_BYTES) {
+          if (sessionCache.size >= SESSION_CACHE_MAX) sessionCache.clear();
+          sessionCache.set(id, { key: cacheKey, session });
+        }
         return Option.some(session);
       }).pipe(
         Effect.mapError(
@@ -463,12 +485,50 @@ export const make = (
               new StorageError({ message: `Failed to delete session: ${String(error)}` }),
           });
 
-    const hasSession = (id: string) =>
-      Effect.map(getById(id), Option.isSome).pipe(
+    /**
+     * Metadata-only read — same projection as `list` (no `cogs_json`, no
+     * `message_nodes`), so attach headers and checkpoint refs never parse
+     * the backlog.
+     */
+    const summary = (id: string) =>
+      Effect.gen(function* () {
+        const row = db
+          .select({
+            id: schema.sessions.id,
+            workingDirectory: schema.sessions.workingDirectory,
+            backendType: schema.sessions.backendType,
+            model: schema.sessions.model,
+            agentMode: schema.sessions.agentMode,
+            createdAt: schema.sessions.createdAt,
+            lastActivityAt: schema.sessions.lastActivityAt,
+            title: schema.sessions.title,
+            mainChainId: schema.sessions.mainChainId,
+            shellLastSeenIndex: schema.sessions.shellLastSeenIndex,
+            workspaceDirs: schema.sessions.workspaceDirs,
+            hidden: schema.sessions.hidden,
+            metadata: schema.sessions.metadata,
+          })
+          .from(schema.sessions)
+          .where(eq(schema.sessions.id, id))
+          .get();
+        if (!row) return Option.none<Session>();
+        const session = yield* buildSession(row, [], [], {
+          parentSessionId: parentSessionId(id),
+        });
+        return Option.some(session);
+      }).pipe(
         Effect.mapError(
-          (error) => new StorageError({ message: `Failed to check session: ${String(error)}` }),
+          (error) => new StorageError({ message: `Failed to read session: ${String(error)}` }),
         ),
       );
+
+    // Existence is one indexed row probe — never a full parse.
+    const hasSession = (id: string) =>
+      Effect.try({
+        try: () => sessionStamp(id) !== null,
+        catch: (error) =>
+          new StorageError({ message: `Failed to check session: ${String(error)}` }),
+      });
 
     /**
      * SQL-paged history read — the window's `start/limit/before` arithmetic
@@ -553,7 +613,11 @@ export const make = (
           if (needsCalls) {
             const inWindow = new Set(nodes.map((n) => n.nodeId));
             const cached = callsIndex.get(id);
-            if (cached?.maxNodeId === stamp.maxNodeId) {
+            const fresh =
+              cached !== undefined &&
+              (cached.maxNodeId === stamp.maxNodeId ||
+                Date.now() - cached.builtAt < CALLS_INDEX_TTL_MS);
+            if (fresh) {
               toolCallNodes.push(...cached.nodes.filter((n) => !inWindow.has(n.nodeId)));
             } else {
               const callRows = sqlite
@@ -564,20 +628,32 @@ export const make = (
                     chat_message: string;
                     created_at: number;
                     metadata: string | null;
+                    bytes: number;
                   },
                   [string]
                 >(
-                  `select node_id, parent_node_id, chat_message, created_at, metadata
+                  `select node_id, parent_node_id, chat_message, created_at, metadata,
+                          length(chat_message) + coalesce(length(metadata), 0) as bytes
                  from message_nodes where session_id = ?
                    and json_array_length(chat_message, '$.tool_calls') > 0`,
                 )
                 .all(id);
-              const parsed = parseRows(callRows.filter((r) => !inWindow.has(r.node_id))).filter(
-                (n) => n.toolCalls.length > 0,
-              );
-              if (callsIndex.size >= SESSION_CACHE_MAX) callsIndex.clear();
-              callsIndex.set(id, { maxNodeId: stamp.maxNodeId, nodes: parsed });
-              toolCallNodes.push(...parsed);
+              const callBytes = callRows.reduce((total, row) => total + row.bytes, 0);
+              if (callBytes <= SESSION_CACHE_MAX_BYTES) {
+                const parsed = parseRows(callRows.filter((r) => !inWindow.has(r.node_id))).filter(
+                  (n) => n.toolCalls.length > 0,
+                );
+                if (callsIndex.size >= SESSION_CACHE_MAX) callsIndex.clear();
+                callsIndex.set(id, {
+                  maxNodeId: stamp.maxNodeId,
+                  builtAt: Date.now(),
+                  nodes: parsed,
+                });
+                toolCallNodes.push(...parsed);
+              }
+              // Oversized → window-only calls: resolution of out-of-window
+              // tool results degrades, but a ~1 GB session can't pin the
+              // heap per history poll.
             }
           }
 
@@ -600,6 +676,7 @@ export const make = (
       delete: delete_,
       hasSession,
       nodesWindow,
+      summary,
     });
   });
 

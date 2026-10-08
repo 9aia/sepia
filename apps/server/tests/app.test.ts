@@ -189,6 +189,13 @@ const makeFakePlane = (): FakePlane => {
       id === "missing"
         ? failure("session not found: missing", "not_found")
         : Effect.succeed(IR_SESSION),
+    getSummary: (id) =>
+      id === "missing"
+        ? failure("session not found: missing", "not_found")
+        : Effect.succeed(
+            // oxlint-disable-next-line no-misused-spread -- Session.make rebuilds the class
+            Session.make({ ...IR_SESSION, nodes: [], promptHistory: [] }),
+          ),
     createSession: (options) =>
       options.agentId === "bad"
         ? failure("Unknown agent: bad", "unknown_agent")

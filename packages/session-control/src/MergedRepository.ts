@@ -58,6 +58,24 @@ export const mergeRepositories = (
       return Option.none<Session>();
     }),
 
+  // Same fan-out as `getById`; repos without `summary` fall back to it.
+  summary: (id, agentId) =>
+    Effect.gen(function* () {
+      const forAgent = (session: Session): boolean =>
+        agentId === undefined || agentForBackend(session.backendType) === agentId;
+      const read = (repo: SessionRepositoryService) =>
+        repo.summary !== undefined ? repo.summary(id) : repo.getById(id);
+      const found = yield* read(primary);
+      if (Option.isSome(found) && forAgent(found.value)) return found;
+      for (const repo of extras) {
+        const hit = yield* read(repo).pipe(
+          Effect.catchAll(() => Effect.succeed(Option.none<Session>())),
+        );
+        if (Option.isSome(hit) && forAgent(hit.value)) return hit;
+      }
+      return Option.none<Session>();
+    }),
+
   hasSession: (id) =>
     Effect.gen(function* () {
       if (yield* primary.hasSession(id)) return true;

@@ -74,6 +74,7 @@ const makePlane = (): FakePlane => {
       listSessions: () => Effect.succeed(fake.summaries),
       getHistory: () => Effect.succeed({ messages: [], total: 0, start: 0 }),
       getSession: () => failure("not found", "not_found"),
+      getSummary: () => failure("not found", "not_found"),
       createSession: (options) =>
         Effect.succeed({ id: "new-1", agentId: options.agentId ?? "devin", capabilities: CAPS }),
       attach: (id, options) => {

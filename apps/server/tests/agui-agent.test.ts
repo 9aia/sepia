@@ -55,6 +55,8 @@ const makePlane = (over: Partial<ControlPlaneService> = {}): FakePlane => {
     },
     getSession: () =>
       Effect.fail(new ControlError({ code: "not_found", message: "missing", cause: undefined })),
+    getSummary: () =>
+      Effect.fail(new ControlError({ code: "not_found", message: "missing", cause: undefined })),
     createSession: () => Effect.succeed({ id: "new", agentId: "devin", capabilities: CAPS }),
     attach: (id, options) => {
       calls.attach.push({ id, agentId: options?.agentId });

@@ -22,6 +22,17 @@ export interface SessionRepositoryService {
     id: string,
     options: { readonly limit?: number; readonly before?: number; readonly agentId?: string },
   ) => Effect.Effect<Option.Option<SessionNodeWindow>, StorageError>;
+  /**
+   * Metadata-only read — a Session with empty `nodes`/`promptHistory`,
+   * enough for existence checks, attach headers and checkpoint refs.
+   * Adapters over heavy stores implement it to skip parsing the node graph
+   * (a live session's backlog can reach gigabytes); absent → consumers fall
+   * back to `getById`.
+   */
+  readonly summary?: (
+    id: string,
+    agentId?: string,
+  ) => Effect.Effect<Option.Option<Session>, StorageError>;
   readonly delete: (id: string) => Effect.Effect<void, StorageError>;
   readonly hasSession: (id: string) => Effect.Effect<boolean, StorageError>;
 }

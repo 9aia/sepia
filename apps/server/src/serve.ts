@@ -109,6 +109,11 @@ export const startServer = async (env: ServerEnv): Promise<ReturnType<typeof Bun
   const server = Bun.serve({
     hostname: env.host,
     port: env.port,
+    // Bun's default 10 s idle timeout kills every SSE stream between
+    // keepalives (SEPIA_SSE_KEEPALIVE_MS defaults to 15 s) — the client then
+    // reconnects on a ~12 s churn loop. 255 is Bun's ceiling; @types/bun
+    // 1.1.0 predates the option's typing but the runtime honors it.
+    ...({ idleTimeout: 255 } as { idleTimeout?: number }),
     fetch: createApp(plane, {
       token: env.token,
       allowedOrigins: env.origins,

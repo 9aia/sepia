@@ -702,7 +702,7 @@ export const createSessionsRoute =
         // `metadata.checkpoint` history, Claude `file-history-snapshot`
         // entries). Cheap sibling of /export for the restore UI — just the
         // refs, never the payloads.
-        return respond(run, plane.getSession(id, { agentId: agentParam }), cors, {
+        return respond(run, plane.getSummary(id, { agentId: agentParam }), cors, {
           shape: (session) => ({ checkpoints: session.checkpoints }),
           span: "http.get /api/sessions/:id/checkpoints",
         });

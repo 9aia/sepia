@@ -96,6 +96,19 @@ const planeOver = (sessions: ReadonlyArray<{ session: Session; agent: string }>)
               cause: undefined,
             }) as never,
           ),
+    getSummary: (id) =>
+      byId.has(id)
+        ? Effect.succeed(
+            // oxlint-disable-next-line no-misused-spread -- Session.make rebuilds the class
+            Session.make({ ...byId.get(id)!.session, nodes: [], promptHistory: [] }),
+          )
+        : Effect.fail(
+            Object.assign(new Error(`not found: ${id}`), {
+              _tag: "ControlError",
+              code: "not_found",
+              cause: undefined,
+            }) as never,
+          ),
     createSession: () => Effect.succeed({ id: "x", agentId: "devin", capabilities: {} as never }),
     attach: () => Effect.succeed({} as never),
     detach: () => Effect.void,

@@ -29,6 +29,8 @@ const plane: ControlPlaneService = {
   getHistory: () => Effect.succeed({ messages: [], total: 0, start: 0 }),
   getSession: () =>
     Effect.fail(new ControlError({ code: "not_found", message: "missing", cause: undefined })),
+  getSummary: () =>
+    Effect.fail(new ControlError({ code: "not_found", message: "missing", cause: undefined })),
   createSession: () => Effect.succeed({ id: "sess-new", agentId: "devin", capabilities: CAPS }),
   attach: () =>
     Effect.succeed({ attached: true, readOnly: false, agentId: "devin", capabilities: CAPS }),

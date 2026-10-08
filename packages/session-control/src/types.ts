@@ -300,6 +300,16 @@ export interface ControlPlaneService {
     options?: { readonly agentId?: string },
   ) => Effect.Effect<Session, ControlError>;
 
+  /**
+   * Metadata-only variant of `getSession` — a Session with empty
+   * `nodes`/`promptHistory`, for consumers that read refs/headers
+   * (checkpoints, attach) and must not parse a gigabyte-scale backlog.
+   */
+  readonly getSummary: (
+    id: string,
+    options?: { readonly agentId?: string },
+  ) => Effect.Effect<Session, ControlError>;
+
   /** Spawns an agent, creates a fresh session, and registers it live so it can be prompted immediately. */
   readonly createSession: (options: {
     readonly cwd: string;
