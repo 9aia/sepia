@@ -30,8 +30,6 @@ ssr = [
   "leptos_router/ssr",
   "leptos_meta/ssr",
   "dep:async-trait",
-  "dep:axum",
-  "dep:leptos_axum",
   "dep:tokio",
   "dep:ureq",
 ]
@@ -65,7 +63,5 @@ console_error_panic_hook = { workspace = true, optional = true }
 
 # ssr-only
 async-trait = { workspace = true, optional = true }
-axum = { workspace = true, optional = true }
-leptos_axum = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }

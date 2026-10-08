@@ -1,0 +1,45 @@
+[package]
+name = "sepia-hub"
+description = "SSR host binary — serves the sepia-web Leptos UI and bridges the node API over HTTP"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sepia-web = { workspace = true, features = ["ssr"] }
+leptos = { workspace = true, features = ["ssr"] }
+leptos_router = { workspace = true, features = ["ssr"] }
+leptos_meta = { workspace = true, features = ["ssr"] }
+leptos_axum.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ureq.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }
+tower = { workspace = true, features = ["util"] }
+
+# cargo-leptos wiring — `cargo leptos watch` from the workspace root builds
+# the wasm bundle into `site-root/pkg` and runs this binary with
+# `LEPTOS_*` env vars set.
+[package.metadata.leptos]
+# wasm-bindgen output base name — must match the lib crate name.
+name = "sepia_web"
+lib-package = "sepia-web"
+bin-package = "sepia-hub"
+site-root = "target/site"
+site-addr = "127.0.0.1:3000"
+reload-port = 3001
+assets-dir = "crates/sepia-hub/public"
