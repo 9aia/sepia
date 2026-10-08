@@ -3404,6 +3404,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "sepia-hub"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures",
+ "leptos",
+ "leptos_axum",
+ "leptos_meta",
+ "leptos_router",
+ "sepia-web",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "ureq",
+]
+
+[[package]]
 name = "sepia-meta"
 version = "0.0.0"
 dependencies = [
@@ -3490,6 +3512,7 @@ dependencies = [
  "sepia-control",
  "sepia-core",
  "sepia-http",
+ "sepia-meta",
  "sepia-outbox",
  "sepia-proto",
  "sepia-testkit",
@@ -3521,11 +3544,9 @@ name = "sepia-web"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "axum",
  "console_error_panic_hook",
  "js-sys",
  "leptos",
- "leptos_axum",
  "leptos_meta",
  "leptos_router",
  "sepia-core",

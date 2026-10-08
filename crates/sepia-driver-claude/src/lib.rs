@@ -1,6 +1,7 @@
 //! sepia-driver-claude — Claude Code `projects/<slug>/<sessionId>.jsonl`
 //! transcript adapter as a driver binary.
 
+pub mod config;
 pub mod store;
 pub mod transcript;
 

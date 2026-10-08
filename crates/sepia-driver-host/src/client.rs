@@ -20,7 +20,7 @@ const STDERR_RING: usize = 64;
 type PendingMap = HashMap<u64, oneshot::Sender<Result<Value, RpcError>>>;
 
 struct Inner {
-    _child: Mutex<Child>,
+    child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
     pending: Mutex<PendingMap>,
     next_id: AtomicU64,
@@ -77,7 +77,7 @@ impl DriverClient {
 
         let (notifications, _) = broadcast::channel(256);
         let inner = Arc::new(Inner {
-            _child: Mutex::new(child),
+            child: Mutex::new(child),
             stdin: Mutex::new(stdin),
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
@@ -136,7 +136,7 @@ impl DriverClient {
     /// Kill the child process (restart supervision, crash tests).
     /// The reader task marks the client closed; callers drop it.
     pub async fn kill(&self) {
-        let _ = self.inner._child.lock().await.start_kill();
+        let _ = self.inner.child.lock().await.start_kill();
     }
 
     /// Whether the driver process exited (stdout closed) — callers

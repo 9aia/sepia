@@ -1,0 +1,37 @@
+[package]
+name = "sepia-cli"
+description = "The sepia CLI — local store verbs (list/export/import/install/delete), node ops over /api/*, agent config ops, pairing, and service management (port of apps/sepia)"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sepia"
+path = "src/main.rs"
+
+[dependencies]
+sepia-core.workspace = true
+sepia-convert.workspace = true
+sepia-driver-cline.workspace = true
+sepia-driver-claude.workspace = true
+sepia-driver-cursor.workspace = true
+sepia-driver-devin.workspace = true
+sepia-http.workspace = true
+sepia-node.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+clap = { version = "4", features = ["derive"] }
+ureq.workspace = true
+time.workspace = true
+nix = { version = "0.29", default-features = false, features = ["fs", "user"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+sepia-testkit.workspace = true
+tokio = { workspace = true, features = ["rt"] }
