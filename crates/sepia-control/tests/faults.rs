@@ -5,7 +5,6 @@
 //! state survives, the plane itself never wedges) even when the
 //! subprocess misbehaves.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use sepia_control::{ControlErrorCode, ControlPlaneOptions};
@@ -86,7 +85,7 @@ async fn malformed_updates_do_not_wedge_the_turn() {
         ),
     )
     .await
-    .expect("prompt hung on malformed updates");
+    .unwrap_or_else(|_| panic!("prompt hung on malformed updates"));
     assert!(result.is_ok(), "prompt failed: {result:?}");
     plane.close_all().await;
 }

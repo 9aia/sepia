@@ -14,8 +14,8 @@ use leptos::prelude::*;
 use serde_json::Value;
 
 use crate::dto::{
-    AgentDto, HistoryPageDto, NodeInfoDto, NodeStatusDto, ProjectDto, PushSubscriptionDto,
-    SessionSummaryDto,
+    AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryPageDto, NodeInfoDto,
+    NodeStatusDto, ProjectDto, PushSubscriptionDto, SessionSummaryDto,
 };
 
 /// Port to the node's `/api/*` surface — implemented by [`HttpNodeApi`]
@@ -36,10 +36,56 @@ pub trait NodeApi: Send + Sync + 'static {
     /// `GET /api/sessions/{id}`.
     async fn get_session(&self, id: &str, agent: Option<&str>)
     -> Result<SessionSummaryDto, String>;
+    /// `POST /api/sessions` — `{cwd, agent?, title?, model?}`. `node`
+    /// pins the create to one registered node on a multi-node hub;
+    /// `None` = the primary/first.
+    async fn create_session(
+        &self,
+        cwd: &str,
+        agent: Option<&str>,
+        title: Option<&str>,
+        model: Option<&str>,
+        node: Option<&str>,
+    ) -> Result<CreateResultDto, String>;
+    /// `POST /api/sessions/{id}/attach` — `{takeover}`. `takeover`
+    /// steals a lock held by another process.
+    async fn attach(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        takeover: bool,
+    ) -> Result<AttachResultDto, String>;
+    /// `POST /api/sessions/{id}/detach` — release the live attach
+    /// (no-op when not attached).
+    async fn detach(&self, id: &str, agent: Option<&str>) -> Result<(), String>;
     /// `POST /api/sessions/{id}/prompt` — `{text}`.
     async fn prompt(&self, id: &str, agent: Option<&str>, text: &str) -> Result<(), String>;
     /// `POST /api/sessions/{id}/cancel`.
     async fn cancel(&self, id: &str, agent: Option<&str>) -> Result<(), String>;
+    /// `POST /api/sessions/{id}/permission` — `{requestId, optionId}`;
+    /// `option_id` `None` dismisses the request.
+    async fn answer_permission(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        request_id: &str,
+        option_id: Option<&str>,
+    ) -> Result<(), String>;
+    /// `PATCH /api/sessions/{id}` — the meta overlay (`{title?}`,
+    /// `{pinned?}`, `{archived?}`, `{projectIds?}`, `{model?}`).
+    async fn patch_meta(&self, id: &str, agent: Option<&str>, patch: &Value) -> Result<(), String>;
+    /// `DELETE /api/sessions/{id}`.
+    async fn delete_session(&self, id: &str, agent: Option<&str>) -> Result<(), String>;
+    /// `GET /api/sessions/{id}/checkpoints` — `{checkpoints: [...]}`.
+    async fn checkpoints(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+    ) -> Result<Vec<CheckpointDto>, String>;
+    /// `POST /api/sessions/{id}/restore` — `{confirm: true, checkpoint}`.
+    async fn restore(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String>;
+    /// `POST /api/sessions/{id}/rewind` — `{confirm: true, checkpoint}`.
+    async fn rewind(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String>;
     /// `GET /api/agents`.
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String>;
     /// `GET /api/projects`.
@@ -145,6 +191,173 @@ pub async fn send_prompt(
 pub async fn cancel_run(session_id: String, agent: Option<String>) -> Result<(), ServerFnError> {
     node_api()?
         .cancel(&session_id, agent.as_deref())
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `POST /api/sessions` — `{cwd, agent?, title?, model?}`; `node` pins
+/// the create to one registered node on a multi-node hub.
+#[server(prefix = "/hub")]
+pub async fn create_session(
+    cwd: String,
+    agent: Option<String>,
+    title: Option<String>,
+    model: Option<String>,
+    node: Option<String>,
+) -> Result<CreateResultDto, ServerFnError> {
+    let cwd = cwd.trim();
+    if cwd.is_empty() {
+        return Err(ServerFnError::new("cwd is required"));
+    }
+    let clean = |s: Option<String>| s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    node_api()?
+        .create_session(
+            cwd,
+            clean(agent).as_deref(),
+            clean(title).as_deref(),
+            clean(model).as_deref(),
+            clean(node).as_deref(),
+        )
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `POST /api/sessions/{id}/attach` — `takeover` steals a held lock.
+#[server(prefix = "/hub")]
+pub async fn attach_session(
+    session_id: String,
+    agent: Option<String>,
+    takeover: bool,
+) -> Result<AttachResultDto, ServerFnError> {
+    if session_id.is_empty() {
+        return Err(ServerFnError::new("session id is required"));
+    }
+    node_api()?
+        .attach(&session_id, agent.as_deref(), takeover)
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `POST /api/sessions/{id}/detach`.
+#[server(prefix = "/hub")]
+pub async fn detach_session(
+    session_id: String,
+    agent: Option<String>,
+) -> Result<(), ServerFnError> {
+    if session_id.is_empty() {
+        return Err(ServerFnError::new("session id is required"));
+    }
+    node_api()?
+        .detach(&session_id, agent.as_deref())
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `POST /api/sessions/{id}/permission` — `{requestId, optionId}`;
+/// `option_id` `None` dismisses the request.
+#[server(prefix = "/hub")]
+pub async fn answer_permission(
+    session_id: String,
+    agent: Option<String>,
+    request_id: String,
+    option_id: Option<String>,
+) -> Result<(), ServerFnError> {
+    if session_id.is_empty() || request_id.is_empty() {
+        return Err(ServerFnError::new("session id and request id are required"));
+    }
+    node_api()?
+        .answer_permission(
+            &session_id,
+            agent.as_deref(),
+            &request_id,
+            option_id.as_deref(),
+        )
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `PATCH /api/sessions/{id}` — `{title}` only; the meta overlay takes
+/// more, but rename is all the UI needs today.
+#[server(prefix = "/hub")]
+pub async fn rename_session(
+    session_id: String,
+    agent: Option<String>,
+    title: String,
+) -> Result<(), ServerFnError> {
+    let title = title.trim();
+    if session_id.is_empty() || title.is_empty() || title.len() > 200 {
+        return Err(ServerFnError::new(
+            "a session id and a non-empty title (max 200) are required",
+        ));
+    }
+    node_api()?
+        .patch_meta(
+            &session_id,
+            agent.as_deref(),
+            &serde_json::json!({ "title": title }),
+        )
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `DELETE /api/sessions/{id}`.
+#[server(prefix = "/hub")]
+pub async fn delete_session(
+    session_id: String,
+    agent: Option<String>,
+) -> Result<(), ServerFnError> {
+    if session_id.is_empty() {
+        return Err(ServerFnError::new("session id is required"));
+    }
+    node_api()?
+        .delete_session(&session_id, agent.as_deref())
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `GET /api/sessions/{id}/checkpoints`.
+#[server(prefix = "/hub")]
+pub async fn list_checkpoints(
+    session_id: String,
+    agent: Option<String>,
+) -> Result<Vec<CheckpointDto>, ServerFnError> {
+    if session_id.is_empty() {
+        return Err(ServerFnError::new("session id is required"));
+    }
+    node_api()?
+        .checkpoints(&session_id, agent.as_deref())
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `POST /api/sessions/{id}/restore` — `{confirm: true, checkpoint}`.
+#[server(prefix = "/hub")]
+pub async fn restore_checkpoint(
+    session_id: String,
+    agent: Option<String>,
+    checkpoint: String,
+) -> Result<(), ServerFnError> {
+    if session_id.is_empty() || checkpoint.is_empty() {
+        return Err(ServerFnError::new("session id and checkpoint are required"));
+    }
+    node_api()?
+        .restore(&session_id, agent.as_deref(), &checkpoint)
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `POST /api/sessions/{id}/rewind` — `{confirm: true, checkpoint}`.
+#[server(prefix = "/hub")]
+pub async fn rewind_session(
+    session_id: String,
+    agent: Option<String>,
+    checkpoint: String,
+) -> Result<(), ServerFnError> {
+    if session_id.is_empty() || checkpoint.is_empty() {
+        return Err(ServerFnError::new("session id and checkpoint are required"));
+    }
+    node_api()?
+        .rewind(&session_id, agent.as_deref(), &checkpoint)
         .await
         .map_err(ServerFnError::new)
 }
@@ -504,6 +717,173 @@ impl NodeApi for HttpNodeApi {
                 Ok(())
             } else {
                 Err(error_of(res, "cancel"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn create_session(
+        &self,
+        cwd: &str,
+        agent: Option<&str>,
+        title: Option<&str>,
+        model: Option<&str>,
+        _node: Option<&str>,
+    ) -> Result<CreateResultDto, String> {
+        let mut body = serde_json::json!({ "cwd": cwd });
+        if let Some(a) = agent {
+            body["agent"] = serde_json::json!(a);
+        }
+        if let Some(t) = title {
+            body["title"] = serde_json::json!(t);
+        }
+        if let Some(m) = model {
+            body["model"] = serde_json::json!(m);
+        }
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            read_json::<CreateResultDto>(
+                api.send_json("POST", "/api/sessions", &body)?,
+                "create session",
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn attach(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        takeover: bool,
+    ) -> Result<AttachResultDto, String> {
+        let path = format!("/api/sessions/{id}/attach{}", id_query(agent));
+        let api = self.clone();
+        let body = serde_json::json!({ "takeover": takeover });
+        tokio::task::spawn_blocking(move || {
+            read_json::<AttachResultDto>(api.send_json("POST", &path, &body)?, "attach")
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn detach(&self, id: &str, agent: Option<&str>) -> Result<(), String> {
+        let path = format!("/api/sessions/{id}/detach{}", id_query(agent));
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let res = api.send_json("POST", &path, &serde_json::json!({}))?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "detach"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn answer_permission(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        request_id: &str,
+        option_id: Option<&str>,
+    ) -> Result<(), String> {
+        let path = format!("/api/sessions/{id}/permission{}", id_query(agent));
+        let api = self.clone();
+        let body = serde_json::json!({ "requestId": request_id, "optionId": option_id });
+        tokio::task::spawn_blocking(move || {
+            let res = api.send_json("POST", &path, &body)?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "permission"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn patch_meta(&self, id: &str, agent: Option<&str>, patch: &Value) -> Result<(), String> {
+        let path = format!("/api/sessions/{id}{}", id_query(agent));
+        let api = self.clone();
+        let body = patch.clone();
+        tokio::task::spawn_blocking(move || {
+            let res = api.send_json("PATCH", &path, &body)?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "patch meta"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn delete_session(&self, id: &str, agent: Option<&str>) -> Result<(), String> {
+        let path = format!("/api/sessions/{}{}", url_encode(id), id_query(agent));
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let res = api
+                .request("DELETE", &path)
+                .call()
+                .map_err(|e| e.to_string())?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "delete session"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn checkpoints(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+    ) -> Result<Vec<CheckpointDto>, String> {
+        let path = format!("/api/sessions/{id}/checkpoints{}", id_query(agent));
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            #[derive(serde::Deserialize)]
+            struct CheckpointsBody {
+                #[serde(default)]
+                checkpoints: Vec<CheckpointDto>,
+            }
+            read_json::<CheckpointsBody>(api.get(&path)?, "list checkpoints").map(|b| b.checkpoints)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn restore(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String> {
+        let path = format!("/api/sessions/{id}/restore{}", id_query(agent));
+        let api = self.clone();
+        let body = serde_json::json!({ "confirm": true, "checkpoint": checkpoint });
+        tokio::task::spawn_blocking(move || {
+            let res = api.send_json("POST", &path, &body)?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "restore"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn rewind(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String> {
+        let path = format!("/api/sessions/{id}/rewind{}", id_query(agent));
+        let api = self.clone();
+        let body = serde_json::json!({ "confirm": true, "checkpoint": checkpoint });
+        tokio::task::spawn_blocking(move || {
+            let res = api.send_json("POST", &path, &body)?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "rewind"))
             }
         })
         .await

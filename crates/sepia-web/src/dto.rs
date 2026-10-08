@@ -39,10 +39,55 @@ pub struct SessionSummaryDto {
     pub parent_session_id: Option<String>,
     #[serde(default)]
     pub agent_id: Option<String>,
+    /// Never part of the plain summary GET — it arrives via the feed's
+    /// `{live: bool}` session patch (merged into the hub projection's
+    /// raw row), so absence reads as `false`.
+    #[serde(default)]
+    pub live: bool,
     /// Hub-side annotation — the node id that owns this session.
     /// Not part of the node's wire summary; absent → `None`.
     #[serde(default)]
     pub node: Option<String>,
+}
+
+/// `POST /api/sessions` → `CreateResultWire` (`{id, agentId,
+/// capabilities}` — the capabilities object is ignored here).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateResultDto {
+    pub id: String,
+    #[serde(default)]
+    pub agent_id: String,
+}
+
+/// `POST /api/sessions/{id}/attach` → `AttachResultWire`
+/// (`{attached, readOnly, agentId, capabilities}`). `read_only` means a
+/// foreign process holds the store lock.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachResultDto {
+    #[serde(default)]
+    pub attached: bool,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub agent_id: String,
+}
+
+/// `GET /api/sessions/{id}/checkpoints` row — `sepia_core::CheckpointRef`
+/// (`{ref, createdAt, runCount?, kind?}`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointDto {
+    #[serde(default)]
+    pub r#ref: String,
+    /// Epoch milliseconds.
+    #[serde(default)]
+    pub created_at: f64,
+    #[serde(default)]
+    pub run_count: Option<i64>,
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 /// `GET /api/sessions/{id}/history` page —

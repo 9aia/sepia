@@ -229,6 +229,118 @@ body {
   font-size: 0.78rem;
 }
 
+/* header action row + permission card + checkpoints */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+.action {
+  background: var(--mantle);
+  color: var(--subtext);
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+}
+.action:hover:not(:disabled) {
+  border-color: var(--surface2);
+  color: var(--text);
+}
+.action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.badge.live {
+  color: var(--green);
+  border-color: var(--green);
+}
+.rename-row {
+  margin-top: 0.55rem;
+}
+
+.permission {
+  border: 1px solid var(--yellow);
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  background: var(--mantle);
+  margin: 0.5rem 0;
+}
+.permission-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+}
+.permission-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.perm-option {
+  background: var(--surface0);
+  color: var(--text);
+  border: 1px solid var(--surface1);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+}
+.perm-option:hover:not(:disabled) {
+  border-color: var(--mauve);
+}
+.perm-option:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.checkpoints {
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  padding: 0.5rem 0.8rem;
+  background: var(--mantle);
+  margin-bottom: 0.75rem;
+}
+.checkpoint-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.checkpoint {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--surface0);
+}
+.checkpoint:last-child {
+  border-bottom: none;
+}
+.checkpoint-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.checkpoint-ref {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.checkpoint-time {
+  margin-left: auto;
+  flex: none;
+  font-size: 0.78rem;
+  color: var(--overlay);
+}
+.ok-line {
+  color: var(--green);
+  font-size: 0.8rem;
+  margin: 0.25rem 0;
+}
+
 .log {
   display: flex;
   flex-direction: column;
@@ -497,6 +609,20 @@ details.thinking > summary {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
+}
+.form-row.new-session {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.form-row.new-session .field {
+  flex: 1 1 10rem;
+}
+.form-row.new-session .agent-select {
+  flex: 0 1 12rem;
+}
+select.field {
+  appearance: none;
+  cursor: pointer;
 }
 .field {
   flex: 1;

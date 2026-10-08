@@ -98,6 +98,57 @@ pub fn relative(iso: &str, now_ms: f64) -> String {
     short_date(iso)
 }
 
+/// The [`relative`] ladder for epoch-millisecond inputs (checkpoint
+/// `createdAt` isn't an ISO string); >30d renders `"Jan 1"`-style.
+pub fn relative_ms(ms: f64, now_ms: f64) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let delta = now_ms - ms;
+    if delta < 0.0 {
+        return "just now".to_string();
+    }
+    let secs = (delta / 1000.0) as u64;
+    if secs < 5 {
+        return "just now".to_string();
+    }
+    if secs < 60 {
+        return format!("{secs}s ago");
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{mins}m ago");
+    }
+    let hours = mins / 60;
+    if hours < 24 {
+        return format!("{hours}h ago");
+    }
+    let days = hours / 24;
+    if days < 30 {
+        return format!("{days}d ago");
+    }
+    let (year, month, day) = civil_of_ms(ms);
+    match MONTHS.get(month.saturating_sub(1) as usize) {
+        Some(m) => format!("{m} {day}, {year}"),
+        None => format!("{ms:.0}"),
+    }
+}
+
+/// Days-since-epoch → `(year, month, day)` — the inverse of the
+/// civil-to-days algorithm in [`parse_iso_ms`].
+fn civil_of_ms(ms: f64) -> (i64, u32, u32) {
+    let z = (ms / 86_400_000.0).floor() as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if month <= 2 { y + 1 } else { y }, month as u32, day as u32)
+}
+
 fn short_date(iso: &str) -> String {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -156,5 +207,19 @@ mod tests {
         assert_eq!(relative(iso, 5.0 * 86_400_000.0), "5d ago");
         // >30d falls back to the event's own short date (Jan 1, 1970).
         assert_eq!(relative(iso, 60.0 * 86_400_000.0), "Jan 1");
+    }
+
+    #[test]
+    fn relative_ms_matches_the_ladder() {
+        assert_eq!(relative_ms(0.0, 0.0), "just now");
+        assert_eq!(relative_ms(0.0, 12.0 * 60_000.0), "12m ago");
+        // 2026-10-08T06:40:34.123Z rendered long after the fact.
+        assert_eq!(
+            relative_ms(
+                1_791_441_634_123.0,
+                1_791_441_634_123.0 + 60.0 * 86_400_000.0
+            ),
+            "Oct 8, 2026"
+        );
     }
 }

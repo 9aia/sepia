@@ -4,9 +4,11 @@
 
 use leptos::prelude::*;
 use leptos_meta::Title;
+use leptos_router::NavigateOptions;
 use leptos_router::components::A;
+use leptos_router::hooks::use_navigate;
 
-use crate::api::list_sessions;
+use crate::api::{create_session, list_agents, list_sessions};
 use crate::app::Now;
 use crate::dto::SessionSummaryDto;
 use crate::time::relative;
@@ -30,6 +32,7 @@ pub fn SessionListPage() -> impl IntoView {
             <header class="page-head">
                 <h1>"Sessions"</h1>
             </header>
+            <NewSessionForm on_created=move || sessions.refetch()/>
             <Suspense fallback=move || {
                 view! { <p class="loading">"Loading sessions…"</p> }
             }>
@@ -94,6 +97,137 @@ fn SessionRow(session: SessionSummaryDto) -> impl IntoView {
             </A>
         </li>
     }
+}
+
+/// `POST /api/sessions` `{cwd, agent?, title?, model?}`. The agent
+/// select encodes `node|agent` in the option value so a multi-node hub
+/// routes the create to the node advertising that agent; a bare agent
+/// id (or the empty "default") goes to the primary.
+#[component]
+fn NewSessionForm(on_created: impl Fn() + 'static + Send + Sync + Copy) -> impl IntoView {
+    let agents = Resource::new(|| (), |()| list_agents());
+    let navigate = use_navigate();
+    let cwd = RwSignal::new(String::new());
+    let title = RwSignal::new(String::new());
+    let model = RwSignal::new(String::new());
+    let agent_sel = RwSignal::new(String::new());
+    let creating = RwSignal::new(false);
+    let form_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    let create = move || {
+        let cwd_value = cwd.get().trim().to_string();
+        if cwd_value.is_empty() || creating.get() {
+            return;
+        }
+        creating.set(true);
+        form_error.set(None);
+        let sel = agent_sel.get();
+        let (node, agent_id) = match sel.split_once('|') {
+            Some((n, a)) => (Some(n.to_string()), non_empty(a)),
+            None => (None, non_empty(&sel)),
+        };
+        let title = non_empty(&title.get());
+        let model = non_empty(&model.get());
+        let navigate = navigate.clone();
+        leptos::task::spawn_local(async move {
+            match create_session(cwd_value, agent_id, title, model, node).await {
+                Ok(res) => {
+                    on_created();
+                    let href = if res.agent_id.is_empty() {
+                        format!("/sessions/{}", res.id)
+                    } else {
+                        format!("/sessions/{}?agent={}", res.id, res.agent_id)
+                    };
+                    navigate(&href, NavigateOptions::default());
+                }
+                Err(e) => {
+                    form_error.set(Some(e.to_string()));
+                    creating.set(false);
+                }
+            }
+        });
+    };
+
+    view! {
+        <form
+            class="form-row new-session"
+            on:submit=move |ev| {
+                ev.prevent_default();
+                create();
+            }
+        >
+            <input
+                class="field"
+                type="text"
+                placeholder="Working directory (required)…"
+                prop:value=move || cwd.get()
+                on:input=move |ev| cwd.set(event_target_value(&ev))
+            />
+            <input
+                class="field"
+                type="text"
+                placeholder="Title (optional)…"
+                maxlength=200
+                prop:value=move || title.get()
+                on:input=move |ev| title.set(event_target_value(&ev))
+            />
+            <select
+                class="field agent-select"
+                prop:value=move || agent_sel.get()
+                on:change=move |ev| agent_sel.set(event_target_value(&ev))
+            >
+                <option value="">"default agent"</option>
+                {move || {
+                    agents
+                        .get()
+                        .and_then(Result::ok)
+                        .map(|list| {
+                            list
+                                .into_iter()
+                                .map(|a| {
+                                    let value = match &a.node {
+                                        Some(n) if !n.is_empty() => {
+                                            format!("{n}|{}", a.id)
+                                        }
+                                        _ => a.id.clone(),
+                                    };
+                                    let base = if a.label.trim().is_empty() {
+                                        a.id.clone()
+                                    } else {
+                                        a.label.clone()
+                                    };
+                                    let label = match &a.node {
+                                        Some(n) if !n.is_empty() => format!("{base} · {n}"),
+                                        _ => base,
+                                    };
+                                    view! { <option value=value>{label}</option> }
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                }}
+            </select>
+            <input
+                class="field"
+                type="text"
+                placeholder="Model (optional)…"
+                maxlength=100
+                prop:value=move || model.get()
+                on:input=move |ev| model.set(event_target_value(&ev))
+            />
+            <button
+                class="send"
+                type="submit"
+                disabled=move || creating.get() || cwd.read().trim().is_empty()
+            >
+                {move || if creating.get() { "Creating…" } else { "New session" }}
+            </button>
+            {move || form_error.get().map(|e| view! { <p class="error">{e}</p> })}
+        </form>
+    }
+}
+
+fn non_empty(s: &str) -> Option<String> {
+    (!s.trim().is_empty()).then(|| s.trim().to_string())
 }
 
 /// `<time datetime=…>` with a live relative label.

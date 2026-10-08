@@ -32,12 +32,38 @@ pub struct LiveEntry {
     pub error: bool,
 }
 
+/// One clickable answer on a permission card — the `options` entries of
+/// `acp:permission_request` (`{optionId, name, kind}`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PermissionOptionDto {
+    pub option_id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+/// A pending `acp:permission_request` — `sepia_acp::PermissionRequest`'s
+/// wire form (`{requestId, sessionId, toolCallId?, title, options}`).
+/// Answered via `POST /api/sessions/{id}/permission`.
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PendingPermission {
+    pub request_id: String,
+    pub session_id: String,
+    pub tool_call_id: Option<String>,
+    pub title: String,
+    pub options: Vec<PermissionOptionDto>,
+}
+
 /// The accumulated live state for the detail page's SSE subscription.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LiveTranscript {
     pub entries: Vec<LiveEntry>,
     /// Between `RunStarted` and `RunFinished`.
     pub running: bool,
+    /// The agent is blocked on approval — rendered as an inline card
+    /// until answered (or the run ends).
+    pub pending_permission: Option<PendingPermission>,
 }
 
 impl LiveTranscript {
@@ -141,12 +167,24 @@ impl LiveTranscript {
             }
             SessionEvent::RunFinished { .. } => {
                 self.running = false;
+                // A turn ending settles any open request — a card left
+                // over would be unanswerable anyway.
+                self.pending_permission = None;
                 for entry in &mut self.entries {
                     entry.done = true;
                 }
             }
-            // `acp:*` escapes and unknown frames carry no transcript text.
-            SessionEvent::Custom { .. } => {}
+            // `acp:*` escapes carry no transcript text — except the
+            // permission request, which the detail page turns into an
+            // answerable card.
+            SessionEvent::Custom { name, value } => {
+                if name == "acp:permission_request"
+                    && let Ok(p) = serde_json::from_value::<PendingPermission>(value.clone())
+                    && !p.request_id.is_empty()
+                {
+                    self.pending_permission = Some(p);
+                }
+            }
         }
     }
 }
@@ -226,5 +264,39 @@ mod tests {
         assert_eq!(t.entries[1].result.as_deref(), Some("done"));
         assert!(t.entries[1].done);
         assert!(t.entries[1].error);
+    }
+
+    #[test]
+    fn permission_request_becomes_pending() {
+        let mut t = LiveTranscript::default();
+        t.apply(&SessionEvent::Custom {
+            name: "acp:permission_request".into(),
+            value: serde_json::json!({
+                "requestId": "r1",
+                "sessionId": "s1",
+                "toolCallId": "tc-1",
+                "title": "Run it",
+                "options": [
+                    { "optionId": "allow", "name": "Allow", "kind": "allow_once" },
+                    { "optionId": "deny", "name": "Deny", "kind": "reject_once" }
+                ]
+            }),
+        });
+        let p = t.pending_permission.clone().unwrap_or_default();
+        assert_eq!(p.request_id, "r1");
+        assert_eq!(p.tool_call_id.as_deref(), Some("tc-1"));
+        assert_eq!(p.options.len(), 2);
+        assert_eq!(p.options[0].option_id, "allow");
+        // Unrelated custom frames leave it alone; run end settles it.
+        t.apply(&SessionEvent::Custom {
+            name: "acp:plan".into(),
+            value: serde_json::Value::Null,
+        });
+        assert!(t.pending_permission.is_some());
+        t.apply(&SessionEvent::RunFinished {
+            thread_id: "s".into(),
+            run_id: "r".into(),
+        });
+        assert!(t.pending_permission.is_none());
     }
 }

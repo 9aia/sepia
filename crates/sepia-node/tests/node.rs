@@ -53,11 +53,14 @@ fn node_serves_sessions_over_http() {
             }
             Err(e) => {
                 let _ = child.kill();
+    let _ = child.wait();
+                let _ = child.wait();
                 panic!("GET /api/sessions never came up: {e}");
             }
         }
     };
     let _ = child.kill();
+    let _ = child.wait();
     assert!(body.contains("devin-1"), "body: {body}");
 
     // RSS smoke budget — a headless node must idle small (plan's
@@ -142,6 +145,8 @@ fn node_attach_prompt_stream_e2e() {
             }
             Err(e) => {
                 let _ = child.kill();
+    let _ = child.wait();
+                let _ = child.wait();
                 panic!("node never came up: {e}");
             }
         }
@@ -177,5 +182,6 @@ fn node_attach_prompt_stream_e2e() {
         }
     }
     let _ = child.kill();
+    let _ = child.wait();
     assert!(body.contains("echo: hello"), "stream body: {body}");
 }

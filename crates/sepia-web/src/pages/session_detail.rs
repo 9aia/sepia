@@ -3,12 +3,17 @@
 
 use leptos::prelude::*;
 use leptos_meta::Title;
+use leptos_router::NavigateOptions;
 use leptos_router::components::A;
-use leptos_router::hooks::{use_params_map, use_query_map};
+use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
-use crate::api::{get_session, send_prompt, session_history};
-use crate::dto::{HistoryMessageDto, HistoryPageDto};
-use crate::live::{LiveKind, LiveTranscript};
+use crate::api::{
+    answer_permission, attach_session, cancel_run, delete_session, detach_session, get_session,
+    list_checkpoints, rename_session, restore_checkpoint, rewind_session, send_prompt,
+    session_history,
+};
+use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
+use crate::live::{LiveKind, LiveTranscript, PendingPermission};
 use crate::markdown::Markdown;
 
 const PAGE_SIZE: i64 = 100;
@@ -19,6 +24,8 @@ pub fn SessionDetailPage() -> impl IntoView {
     let query = use_query_map();
     let session_id = move || params.read().get("id").unwrap_or_default();
     let agent = move || non_empty(&query.read().get("agent").unwrap_or_default());
+    // `StoredValue` keeps the navigate fn Copy-able into handlers.
+    let navigate = StoredValue::new_local(use_navigate());
 
     let summary = Resource::new(
         move || (session_id(), agent()),
@@ -28,6 +35,125 @@ pub fn SessionDetailPage() -> impl IntoView {
         move || (session_id(), agent()),
         |(id, agent)| async move { session_history(id, agent, None, Some(PAGE_SIZE)).await },
     );
+
+    // Action state lives at page level: a summary refetch re-runs the
+    // Suspend subtree, and signals owned inside it would reset.
+    let acting = RwSignal::new(false);
+    let action_error: RwSignal<Option<String>> = RwSignal::new(None);
+    // The summary wire has no `live` flag on plain GETs (it arrives via
+    // feed patches), so the attach/detach responses keep a local truth.
+    let live_override: RwSignal<Option<bool>> = RwSignal::new(None);
+    let renaming = RwSignal::new(false);
+    let rename_draft = RwSignal::new(String::new());
+    let confirm_delete = RwSignal::new(false);
+    let checkpoints_open = RwSignal::new(false);
+    let checkpoints = Resource::new(
+        move || (checkpoints_open.get(), session_id(), agent()),
+        |(open, id, agent)| async move {
+            if !open || id.is_empty() {
+                return Ok(Vec::new());
+            }
+            list_checkpoints(id, agent).await
+        },
+    );
+
+    let do_attach = move |takeover: bool| {
+        if acting.get() {
+            return;
+        }
+        acting.set(true);
+        action_error.set(None);
+        let id = session_id();
+        let agent = agent();
+        leptos::task::spawn_local(async move {
+            match attach_session(id, agent, takeover).await {
+                Ok(res) => {
+                    live_override.set(Some(res.attached));
+                    summary.refetch();
+                }
+                Err(e) => action_error.set(Some(e.to_string())),
+            }
+            acting.set(false);
+        });
+    };
+    let do_detach = move || {
+        if acting.get() {
+            return;
+        }
+        acting.set(true);
+        action_error.set(None);
+        let id = session_id();
+        let agent = agent();
+        leptos::task::spawn_local(async move {
+            match detach_session(id, agent).await {
+                Ok(()) => {
+                    live_override.set(Some(false));
+                    summary.refetch();
+                }
+                Err(e) => action_error.set(Some(e.to_string())),
+            }
+            acting.set(false);
+        });
+    };
+    let do_cancel = move || {
+        if acting.get() {
+            return;
+        }
+        acting.set(true);
+        action_error.set(None);
+        let id = session_id();
+        let agent = agent();
+        leptos::task::spawn_local(async move {
+            if let Err(e) = cancel_run(id, agent).await {
+                action_error.set(Some(e.to_string()));
+            }
+            acting.set(false);
+        });
+    };
+    let do_rename = move || {
+        let title = rename_draft.get().trim().to_string();
+        if title.is_empty() || acting.get() {
+            return;
+        }
+        acting.set(true);
+        action_error.set(None);
+        let id = session_id();
+        let agent = agent();
+        leptos::task::spawn_local(async move {
+            match rename_session(id, agent, title).await {
+                Ok(()) => {
+                    renaming.set(false);
+                    summary.refetch();
+                }
+                Err(e) => action_error.set(Some(e.to_string())),
+            }
+            acting.set(false);
+        });
+    };
+    let do_delete = move || {
+        if acting.get() {
+            return;
+        }
+        // Two-step confirm — one click arms, the second deletes.
+        if !confirm_delete.get() {
+            confirm_delete.set(true);
+            return;
+        }
+        acting.set(true);
+        action_error.set(None);
+        let id = session_id();
+        let agent = agent();
+        leptos::task::spawn_local(async move {
+            match delete_session(id, agent).await {
+                Ok(()) => navigate.with_value(|n| n("/", NavigateOptions::default())),
+                Err(e) => {
+                    action_error.set(Some(e.to_string()));
+                    confirm_delete.set(false);
+                    acting.set(false);
+                }
+            }
+        });
+    };
 
     // Older pages prepended on demand — `before` = the oldest loaded
     // page's `start` index.
@@ -108,12 +234,18 @@ pub fn SessionDetailPage() -> impl IntoView {
             }>
                 {move || {
                     Suspend::new(async move {
-                        let (summary, page) = (summary.await, history.await);
-                        match (summary, page) {
+                        // `summary` the Resource stays reachable for
+                        // refetch — the awaited value gets a new name.
+                        let (summary_result, page) = (summary.await, history.await);
+                        match (summary_result, page) {
                             (Err(e), _) | (_, Err(e)) => {
                                 view! { <p class="error">{e.to_string()}</p> }.into_any()
                             }
                             (Ok(session), Ok(page)) => {
+                                let locked = session.locked;
+                                let busy = session.busy;
+                                let live_flag = session.live;
+                                let title_for_rename = session.title.clone();
                                 view! {
                                     <header class="detail-head">
                                         <A href="/" attr:class="back">"← sessions"</A>
@@ -125,18 +257,158 @@ pub fn SessionDetailPage() -> impl IntoView {
                                             }}
                                         </h1>
                                         <span class="badges">
-                                            {session
-                                                .busy
+                                            {busy
                                                 .then(|| view! { <span class="badge busy">"busy"</span> })}
-                                            {session
-                                                .locked
+                                            {locked
                                                 .then(|| view! { <span class="badge locked">"locked"</span> })}
+                                            {move || {
+                                                live_override
+                                                    .get()
+                                                    .unwrap_or(live_flag)
+                                                    .then(|| view! { <span class="badge live">"live"</span> })
+                                            }}
                                         </span>
                                         <p class="detail-meta">
                                             <span class="agent">{session.agent.clone()}</span>
                                             <code class="cwd">{session.cwd.clone()}</code>
                                         </p>
+                                        <div class="actions">
+                                            {move || {
+                                                if live_override.get().unwrap_or(live_flag) {
+                                                    view! {
+                                                        <button
+                                                            class="action"
+                                                            disabled=move || acting.get()
+                                                            on:click=move |_| do_detach()
+                                                        >
+                                                            "Detach"
+                                                        </button>
+                                                    }
+                                                        .into_any()
+                                                } else if locked {
+                                                    view! {
+                                                        <button
+                                                            class="action"
+                                                            disabled=move || acting.get()
+                                                            on:click=move |_| do_attach(true)
+                                                        >
+                                                            "Attach (takeover)"
+                                                        </button>
+                                                    }
+                                                        .into_any()
+                                                } else {
+                                                    view! {
+                                                        <button
+                                                            class="action"
+                                                            disabled=move || acting.get()
+                                                            on:click=move |_| do_attach(false)
+                                                        >
+                                                            "Attach"
+                                                        </button>
+                                                    }
+                                                        .into_any()
+                                                }
+                                            }}
+                                            {move || {
+                                                (busy || running()).then(|| {
+                                                    view! {
+                                                        <button
+                                                            class="action"
+                                                            disabled=move || acting.get()
+                                                            on:click=move |_| do_cancel()
+                                                        >
+                                                            "Cancel run"
+                                                        </button>
+                                                    }
+                                                })
+                                            }}
+                                            <button
+                                                class="action"
+                                                disabled=move || acting.get()
+                                                on:click=move |_| {
+                                                    rename_draft.set(title_for_rename.clone());
+                                                    renaming.set(true);
+                                                }
+                                            >
+                                                "Rename"
+                                            </button>
+                                            <button
+                                                class="action"
+                                                on:click=move |_| checkpoints_open.update(|o| *o = !*o)
+                                            >
+                                                {move || {
+                                                    if checkpoints_open.get() {
+                                                        "Hide checkpoints"
+                                                    } else {
+                                                        "Checkpoints"
+                                                    }
+                                                }}
+                                            </button>
+                                            <button
+                                                class="danger"
+                                                disabled=move || acting.get()
+                                                on:click=move |_| do_delete()
+                                            >
+                                                {move || {
+                                                    if confirm_delete.get() {
+                                                        "Confirm delete"
+                                                    } else {
+                                                        "Delete"
+                                                    }
+                                                }}
+                                            </button>
+                                        </div>
+                                        {move || renaming.get().then(|| {
+                                            view! {
+                                                <div class="form-row rename-row">
+                                                    <input
+                                                        class="field"
+                                                        type="text"
+                                                        maxlength=200
+                                                        placeholder="Session title"
+                                                        prop:value=move || rename_draft.get()
+                                                        on:input=move |ev| rename_draft
+                                                            .set(event_target_value(&ev))
+                                                        on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                                                            if ev.key() == "Enter" {
+                                                                ev.prevent_default();
+                                                                do_rename();
+                                                            } else if ev.key() == "Escape" {
+                                                                renaming.set(false);
+                                                            }
+                                                        }
+                                                    />
+                                                    <button
+                                                        class="save small"
+                                                        disabled=move || acting.get()
+                                                        on:click=move |_| do_rename()
+                                                    >
+                                                        "Save"
+                                                    </button>
+                                                    <button
+                                                        class="action"
+                                                        on:click=move |_| renaming.set(false)
+                                                    >
+                                                        "Cancel"
+                                                    </button>
+                                                </div>
+                                            }
+                                        })}
+                                        {move || action_error.get().map(|e| {
+                                            view! { <p class="error">{e}</p> }
+                                        })}
                                     </header>
+                                    <Show when=move || checkpoints_open.get() fallback=|| ()>
+                                        <CheckpointList
+                                            checkpoints=checkpoints
+                                            session_id=session_id()
+                                            agent=agent()
+                                            on_changed=move || {
+                                                history.refetch();
+                                                summary.refetch();
+                                            }
+                                        />
+                                    </Show>
                                     <div class="log" node_ref=log_ref>
                                         <OlderButton
                                             older=older
@@ -163,6 +435,18 @@ pub fn SessionDetailPage() -> impl IntoView {
                                     {move || {
                                         running()
                                             .then(|| view! { <p class="busy-line">"working…"</p> })
+                                    }}
+                                    {move || {
+                                        live.read().pending_permission.clone().map(|p| {
+                                            view! {
+                                                <PermissionCard
+                                                    permission=p
+                                                    session_id=session_id()
+                                                    agent=agent()
+                                                    live=live
+                                                />
+                                            }
+                                        })
                                     }}
                                     <PromptBox
                                         draft=draft
@@ -364,5 +648,228 @@ fn PromptBox(
                 </button>
             </div>
         </div>
+    }
+}
+
+/// The `acp:permission_request` card — one button per option plus a
+/// dismiss (`optionId: null` settles the request without an option).
+/// Answering clears the pending request out of the live transcript.
+#[component]
+fn PermissionCard(
+    permission: PendingPermission,
+    session_id: String,
+    agent: Option<String>,
+    live: RwSignal<LiveTranscript>,
+) -> impl IntoView {
+    let answering = RwSignal::new(false);
+    let error: RwSignal<Option<String>> = RwSignal::new(None);
+    let request_id = permission.request_id.clone();
+    let respond = move |option_id: Option<String>| {
+        if answering.get() {
+            return;
+        }
+        answering.set(true);
+        error.set(None);
+        let id = session_id.clone();
+        let agent = agent.clone();
+        let request_id = request_id.clone();
+        leptos::task::spawn_local(async move {
+            match answer_permission(id, agent, request_id, option_id).await {
+                Ok(()) => live.update(|t| t.pending_permission = None),
+                Err(e) => {
+                    error.set(Some(e.to_string()));
+                    answering.set(false);
+                }
+            }
+        });
+    };
+    view! {
+        <div class="permission">
+            <p class="permission-title">
+                <span class="badge locked">"approval"</span>
+                {if permission.title.is_empty() {
+                    "Permission requested".to_string()
+                } else {
+                    permission.title.clone()
+                }}
+            </p>
+            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+            <div class="permission-options">
+                {permission
+                    .options
+                    .iter()
+                    .map(|o| {
+                        let o = o.clone();
+                        let respond = respond.clone();
+                        view! {
+                            <button
+                                class=format!("perm-option {}", o.kind)
+                                disabled=move || answering.get()
+                                on:click=move |_| respond(Some(o.option_id.clone()))
+                            >
+                                {o.name.clone()}
+                            </button>
+                        }
+                    })
+                    .collect::<Vec<_>>()}
+                <button
+                    class="action"
+                    disabled=move || answering.get()
+                    on:click=move |_| respond(None)
+                >
+                    "Dismiss"
+                </button>
+            </div>
+        </div>
+    }
+}
+
+/// The checkpoints panel — `GET /api/sessions/{id}/checkpoints` fetched
+/// lazily by the resource's `open` trigger.
+#[component]
+fn CheckpointList(
+    checkpoints: Resource<Result<Vec<CheckpointDto>, ServerFnError>>,
+    session_id: String,
+    agent: Option<String>,
+    on_changed: impl Fn() + 'static + Send + Sync + Copy,
+) -> impl IntoView {
+    view! {
+        <div class="checkpoints">
+            {move || match checkpoints.get() {
+                None => view! { <p class="loading">"Loading checkpoints…"</p> }.into_any(),
+                Some(Err(e)) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                Some(Ok(list)) if list.is_empty() => {
+                    view! { <p class="empty">"No checkpoints recorded."</p> }.into_any()
+                }
+                Some(Ok(list)) => {
+                    view! {
+                        <ul class="checkpoint-list">
+                            {list
+                                .into_iter()
+                                .map(|cp| {
+                                    view! {
+                                        <CheckpointRow
+                                            checkpoint=cp
+                                            session_id=session_id.clone()
+                                            agent=agent.clone()
+                                            on_changed=on_changed
+                                        />
+                                    }
+                                })
+                                .collect::<Vec<_>>()}
+                        </ul>
+                    }
+                        .into_any()
+                }
+            }}
+        </div>
+    }
+}
+
+/// One checkpoint row. `Restore`/`Rewind` are two-step — the first
+/// click arms ("Confirm"), the second posts with `confirm: true`.
+#[component]
+fn CheckpointRow(
+    checkpoint: CheckpointDto,
+    session_id: String,
+    agent: Option<String>,
+    on_changed: impl Fn() + 'static + Send + Sync + Copy,
+) -> impl IntoView {
+    let armed: RwSignal<Option<&'static str>> = RwSignal::new(None);
+    let busy = RwSignal::new(false);
+    let error: RwSignal<Option<String>> = RwSignal::new(None);
+    let done: RwSignal<Option<&'static str>> = RwSignal::new(None);
+    let checkpoint_ref = checkpoint.r#ref.clone();
+    let run = move |op: &'static str| {
+        if busy.get() {
+            return;
+        }
+        if armed.get() != Some(op) {
+            armed.set(Some(op));
+            return;
+        }
+        armed.set(None);
+        busy.set(true);
+        error.set(None);
+        done.set(None);
+        let id = session_id.clone();
+        let agent = agent.clone();
+        let checkpoint = checkpoint_ref.clone();
+        leptos::task::spawn_local(async move {
+            let result = if op == "restore" {
+                restore_checkpoint(id, agent, checkpoint).await
+            } else {
+                rewind_session(id, agent, checkpoint).await
+            };
+            match result {
+                Ok(()) => {
+                    done.set(Some(if op == "restore" {
+                        "Restored."
+                    } else {
+                        "Rewound."
+                    }));
+                    on_changed();
+                }
+                Err(e) => error.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+    view! {
+        <li class="checkpoint">
+            <div class="checkpoint-head">
+                <code class="checkpoint-ref">{checkpoint.r#ref.clone()}</code>
+                <span class="badges">
+                    {checkpoint.kind.clone().map(|k| view! { <span class="badge">{k}</span> })}
+                    {checkpoint
+                        .run_count
+                        .map(|n| view! { <span class="badge">{format!("{n} runs")}</span> })}
+                </span>
+                <span class="checkpoint-time">
+                    {move || {
+                        let now = use_context::<crate::app::Now>()
+                            .map_or_else(crate::time::now_ms, |n| n.0.get());
+                        crate::time::relative_ms(checkpoint.created_at, now)
+                    }}
+                </span>
+            </div>
+            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+            {move || done.get().map(|d| view! { <p class="ok-line">{d}</p> })}
+            <div class="card-actions">
+                <button
+                    class="action"
+                    disabled=move || busy.get()
+                    on:click={
+                        let run = run.clone();
+                        move |_| run("restore")
+                    }
+                >
+                    {move || {
+                        if busy.get() {
+                            "Working…"
+                        } else if armed.get() == Some("restore") {
+                            "Confirm restore"
+                        } else {
+                            "Restore"
+                        }
+                    }}
+                </button>
+                <button
+                    class="action"
+                    disabled=move || busy.get()
+                    on:click=move |_| run("rewind")
+                >
+                    {move || {
+                        if busy.get() {
+                            "Working…"
+                        } else if armed.get() == Some("rewind") {
+                            "Confirm rewind"
+                        } else {
+                            "Rewind"
+                        }
+                    }}
+                </button>
+            </div>
+        </li>
     }
 }

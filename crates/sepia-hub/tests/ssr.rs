@@ -12,8 +12,9 @@ use leptos::config::LeptosOptions;
 use sepia_hub::{HubState, router};
 use sepia_web::api::NodeApi;
 use sepia_web::dto::{
-    AgentCapabilitiesDto, AgentDto, HistoryPageDto, NodeInfoDto, NodeStatusDto, ProjectDto,
-    PromptCapabilitiesDto, PushSubscriptionDto, SessionCapabilitiesDto, SessionSummaryDto,
+    AgentCapabilitiesDto, AgentDto, AttachResultDto, CheckpointDto, CreateResultDto,
+    HistoryPageDto, NodeInfoDto, NodeStatusDto, ProjectDto, PromptCapabilitiesDto,
+    PushSubscriptionDto, SessionCapabilitiesDto, SessionSummaryDto,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -71,6 +72,91 @@ impl NodeApi for StubNodeApi {
     }
 
     async fn cancel(&self, _id: &str, _agent: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn create_session(
+        &self,
+        _cwd: &str,
+        agent: Option<&str>,
+        _title: Option<&str>,
+        _model: Option<&str>,
+        _node: Option<&str>,
+    ) -> Result<CreateResultDto, String> {
+        Ok(CreateResultDto {
+            id: "s-new".into(),
+            agent_id: agent.unwrap_or("devin").to_string(),
+        })
+    }
+
+    async fn attach(
+        &self,
+        _id: &str,
+        agent: Option<&str>,
+        _takeover: bool,
+    ) -> Result<AttachResultDto, String> {
+        Ok(AttachResultDto {
+            attached: true,
+            read_only: false,
+            agent_id: agent.unwrap_or("devin").to_string(),
+        })
+    }
+
+    async fn detach(&self, _id: &str, _agent: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn answer_permission(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        _request_id: &str,
+        _option_id: Option<&str>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn patch_meta(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        _patch: &Value,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn delete_session(&self, _id: &str, _agent: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn checkpoints(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+    ) -> Result<Vec<CheckpointDto>, String> {
+        Ok(vec![CheckpointDto {
+            r#ref: "cp-1".into(),
+            created_at: 1_791_441_634_123.0,
+            run_count: Some(2),
+            kind: Some("workspace".into()),
+        }])
+    }
+
+    async fn restore(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        _checkpoint: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn rewind(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        _checkpoint: &str,
+    ) -> Result<(), String> {
         Ok(())
     }
 
@@ -294,5 +380,45 @@ async fn nodes_ssr_shows_identity_and_health() {
     assert!(
         html.contains("down"),
         "node status should render; got:\n{html}"
+    );
+}
+
+#[tokio::test]
+async fn session_detail_ssr_renders_action_row() {
+    let app = router(test_state());
+    let (status, html) = get(app, "/sessions/s1").await;
+    assert_eq!(status, StatusCode::OK);
+    // Unlocked + not live → a plain Attach (the takeover label only
+    // shows for locked sessions); rename/delete/checkpoints always ride.
+    // (SSR wraps dynamic text in `<!--hk-->` markers — match substrings.)
+    assert!(html.contains("Attach"), "missing Attach button:\n{html}");
+    assert!(
+        !html.contains("Attach (takeover)"),
+        "unlocked session should not offer takeover:\n{html}"
+    );
+    assert!(html.contains("Rename"), "missing Rename button:\n{html}");
+    assert!(
+        html.contains("Checkpoints"),
+        "missing Checkpoints button:\n{html}"
+    );
+    assert!(html.contains("Delete"), "missing Delete button:\n{html}");
+}
+
+#[tokio::test]
+async fn session_list_ssr_renders_create_form() {
+    let app = router(test_state());
+    let (status, html) = get(app, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("new-session"),
+        "SSR'd list should contain the create form; got:\n{html}"
+    );
+    assert!(
+        html.contains("Working directory"),
+        "create form should carry the cwd input; got:\n{html}"
+    );
+    assert!(
+        html.contains("default agent"),
+        "agent select should render its fallback option; got:\n{html}"
     );
 }

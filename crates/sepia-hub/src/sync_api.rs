@@ -12,8 +12,8 @@ use sepia_sync::client::NodeClient;
 use sepia_sync::{IndexedSession, NodeWrite, OpKind, SyncHandle};
 use sepia_web::api::NodeApi;
 use sepia_web::dto::{
-    AgentDto, HistoryMessageDto, HistoryPageDto, NodeInfoDto, NodeStatusDto, ProjectDto,
-    PushSubscriptionDto, SessionSummaryDto,
+    AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryMessageDto, HistoryPageDto,
+    NodeInfoDto, NodeStatusDto, ProjectDto, PushSubscriptionDto, SessionSummaryDto,
 };
 use serde_json::Value;
 
@@ -201,6 +201,39 @@ impl SyncNodeApi {
         Ok((node_id.clone(), self.client(&node_id)?))
     }
 
+    /// `/api/sessions/{id}[/{suffix}][?agent=]` — for session-scoped ops
+    /// `NodeClient::post_op` doesn't map (attach/detach/restore/…).
+    fn session_path(id: &str, suffix: &str, agent: Option<&str>) -> String {
+        let mut path = format!("/api/sessions/{}", sepia_sync::client::encode_segment(id));
+        if !suffix.is_empty() {
+            path.push('/');
+            path.push_str(suffix);
+        }
+        if let Some(a) = agent {
+            path.push_str("?agent=");
+            path.push_str(&sepia_sync::client::encode_segment(a));
+        }
+        path
+    }
+
+    /// A session-scoped write the outbox can't carry — posted straight
+    /// to the owning node (fails fast when the node is down rather than
+    /// queueing a stale attach/restore).
+    async fn post_direct(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        suffix: &str,
+        payload: Value,
+    ) -> Result<Value, String> {
+        let (_, client) = self.resolve(id, agent)?;
+        let path = Self::session_path(id, suffix, agent);
+        tokio::task::spawn_blocking(move || client.send_json("POST", &path, &payload))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
+    }
+
     async fn submit(
         &self,
         id: &str,
@@ -307,6 +340,135 @@ impl NodeApi for SyncNodeApi {
     async fn cancel(&self, id: &str, agent: Option<&str>) -> Result<(), String> {
         self.submit(id, agent, "cancel", OpKind::Turn, serde_json::json!({}))
             .await
+    }
+
+    async fn create_session(
+        &self,
+        cwd: &str,
+        agent: Option<&str>,
+        title: Option<&str>,
+        model: Option<&str>,
+        node: Option<&str>,
+    ) -> Result<CreateResultDto, String> {
+        // A create can't route by session id — `node` (or the primary)
+        // picks the target. Goes direct: queueing a create in the
+        // outbox would hand the UI an id nothing references yet.
+        let (_, client) = self.scoped_client(node)?;
+        let mut body = serde_json::json!({ "cwd": cwd });
+        if let Some(a) = agent {
+            body["agent"] = serde_json::json!(a);
+        }
+        if let Some(t) = title {
+            body["title"] = serde_json::json!(t);
+        }
+        if let Some(m) = model {
+            body["model"] = serde_json::json!(m);
+        }
+        tokio::task::spawn_blocking(move || client.send_json("POST", "/api/sessions", &body))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
+            .and_then(|v| serde_json::from_value(v).map_err(|e| format!("decode: {e}")))
+    }
+
+    async fn attach(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        takeover: bool,
+    ) -> Result<AttachResultDto, String> {
+        // Direct post — attaching a session on a down node can't queue
+        // meaningfully (the lock state it reacts to is now, not later).
+        let body = self
+            .post_direct(
+                id,
+                agent,
+                "attach",
+                serde_json::json!({ "takeover": takeover }),
+            )
+            .await?;
+        serde_json::from_value(body).map_err(|e| format!("decode: {e}"))
+    }
+
+    async fn detach(&self, id: &str, agent: Option<&str>) -> Result<(), String> {
+        self.post_direct(id, agent, "detach", serde_json::json!({}))
+            .await
+            .map(|_| ())
+    }
+
+    async fn answer_permission(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        request_id: &str,
+        option_id: Option<&str>,
+    ) -> Result<(), String> {
+        // Turn-shaped like prompt/cancel: dead-letter on replay failure
+        // rather than answering a request the agent already dropped.
+        self.submit(
+            id,
+            agent,
+            "permission",
+            OpKind::Turn,
+            serde_json::json!({ "requestId": request_id, "optionId": option_id }),
+        )
+        .await
+    }
+
+    async fn patch_meta(&self, id: &str, agent: Option<&str>, patch: &Value) -> Result<(), String> {
+        self.submit(id, agent, "meta.patch", OpKind::Metadata, patch.clone())
+            .await
+    }
+
+    async fn delete_session(&self, id: &str, agent: Option<&str>) -> Result<(), String> {
+        // Idempotent node-side (a missing session deletes cleanly), so
+        // Metadata-kind retries are safe.
+        self.submit(id, agent, "delete", OpKind::Metadata, serde_json::json!({}))
+            .await
+    }
+
+    async fn checkpoints(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+    ) -> Result<Vec<CheckpointDto>, String> {
+        let (_, client) = self.resolve(id, agent)?;
+        let path = Self::session_path(id, "checkpoints", agent);
+        let body = tokio::task::spawn_blocking(move || client.get_json(&path))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        Ok(body
+            .get("checkpoints")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .map(|r| serde_json::from_value(r.clone()).unwrap_or_default())
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    async fn restore(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String> {
+        self.post_direct(
+            id,
+            agent,
+            "restore",
+            serde_json::json!({ "confirm": true, "checkpoint": checkpoint }),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn rewind(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String> {
+        self.post_direct(
+            id,
+            agent,
+            "rewind",
+            serde_json::json!({ "confirm": true, "checkpoint": checkpoint }),
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String> {
