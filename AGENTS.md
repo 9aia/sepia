@@ -33,8 +33,26 @@ them from a web UI over the Agent Client Protocol (ACP).
 
 ## Layout
 
-Ports-and-adapters: `sepia-core` is pure domain (no I/O, no `bun:*`), adapters
-depend only on it, and `sepia-convert`/`session-control`/apps compose ports.
+**Rust rewrite in progress** on `rust-rewrite` — `crates/` is the new
+workspace (see `project/plans/rust-rewrite.md`). The TS tree below is the
+legacy implementation it replaces; the Rust layout is ports-and-adapters
+too, plus subprocess drivers:
+
+| Path                                              | Crate     | Role                                                                                      |
+| ------------------------------------------------- | --------- | ----------------------------------------------------------------------------------------- |
+| `crates/sepia-core`                               | domain    | Session IR, `SessionRepository` port, restore/rewind planners                             |
+| `crates/sepia-proto`                              | wire      | `SessionEvent` enum + node protocol types                                                 |
+| `crates/sepia-driver-{sdk,host}`                  | plugin    | driver serve loop / discovery + spawn + respawn (ndjson JSON-RPC over stdio)              |
+| `crates/sepia-driver-{devin,cline,claude,cursor}` | drivers   | store adapters — separately installed binaries                                            |
+| `crates/sepia-acp`                                | transport | tolerant ACP client over ndjson stdio                                                     |
+| `crates/sepia-control`                            | domain    | control plane: merged lists, attach/takeover/locks, prompt/cancel/permission              |
+| `crates/sepia-{meta,convert,outbox,push,sync}`    | domain    | overlay store, cross-store conversion, durable write queue, web-push, node→hub projection |
+| `crates/sepia-http`                               | adapter   | axum REST + SSE                                                                           |
+| `crates/sepia-node`                               | app       | headless daemon (`sepia_node::serve` shared with the CLI)                                 |
+| `crates/sepia-cli`                                | app       | `sepia` binary                                                                            |
+| `crates/sepia-{web,hub}`                          | app       | Leptos UI + SSR host (in progress)                                                        |
+
+Legacy TS layout (being removed in Phase 6):
 
 | Path                       | Package                 | Role                                                                                  |
 | -------------------------- | ----------------------- | ------------------------------------------------------------------------------------- |
