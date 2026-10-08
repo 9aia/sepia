@@ -106,9 +106,9 @@ describe("serversFetch error mapping", () => {
   });
 
   it.each([
-    [400, "The server rejected that entry"],
-    [404, "Unknown server"],
-    [500, "The server hit an error — try again"],
+    [400, "The node rejected that entry"],
+    [404, "Unknown node"],
+    [500, "The node hit an error — try again"],
     [418, "Request failed (418)"],
   ])("falls back to a friendly message for HTTP %i", async (code, message) => {
     stubFetch(() => new Response("plain text", { status: code }));
@@ -124,7 +124,7 @@ describe("serversFetch error mapping", () => {
     vi.stubGlobal("fetch", async () => {
       throw new TypeError("fetch failed");
     });
-    await expect(listServers()).rejects.toThrow("Can't reach the Sepia server");
+    await expect(listServers()).rejects.toThrow("Can't reach the Sepia node");
   });
 });
 

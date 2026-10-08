@@ -548,10 +548,10 @@ const editDefaults = (peer: PeerNode, server?: ManagedServer): EditFormValues =>
  */
 const viaDescription = (peer: PeerNode, viaGateway: boolean): string => {
   if (viaGateway && peer.via === "gateway") {
-    return "Calls route through this node's server — its SSH tunnel is configured above.";
+    return "Calls route through this node — its SSH tunnel is configured above.";
   }
   if (viaGateway) {
-    return "Calls route through this node's server — the linked credential moves to its encrypted store.";
+    return "Calls route through this node — the linked credential moves to its encrypted store.";
   }
   if (peer.via === "gateway") {
     return "Calls go straight from this client — the stored credential is removed, so pick a credential above if the peer needs one.";

@@ -33,7 +33,7 @@ export function TokenGate() {
         className="m-auto max-w-xl"
         icon={LockKeyholeIcon}
         title="Authentication required"
-        description="This Sepia server is protected. Enter your SEPIA_TOKEN to continue."
+        description="This Sepia node is protected. Enter your SEPIA_TOKEN to continue."
       >
         <form onSubmit={submit} className="flex w-full max-w-xs flex-col gap-2">
           <Input

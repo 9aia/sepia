@@ -63,9 +63,9 @@ export interface ServerInput {
 }
 
 const friendlyHttpError = (status: number): string => {
-  if (status === 400) return "The server rejected that entry";
-  if (status === 404) return "Unknown server";
-  if (status >= 500) return "The server hit an error — try again";
+  if (status === 400) return "The node rejected that entry";
+  if (status === 404) return "Unknown node";
+  if (status >= 500) return "The node hit an error — try again";
   return `Request failed (${status})`;
 };
 
@@ -87,7 +87,7 @@ const serversFetch = async <T>(path: string, init?: RequestInit): Promise<T> => 
       },
     });
   } catch {
-    throw new Error("Can't reach the Sepia server — is it running?");
+    throw new Error("Can't reach the Sepia node — is it running?");
   }
   if (res.status === 401) throw new AuthError();
   if (!res.ok) {

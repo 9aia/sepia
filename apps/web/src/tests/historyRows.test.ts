@@ -147,7 +147,7 @@ describe("buildRows — run span markers", () => {
     expect(rows.map((r) => r.kind)).toEqual(["span", "history", "span", "history"]);
   });
 
-  it("draws no markers until a session has at least two spans", () => {
+  it("a single span covering the whole transcript earns no marker", () => {
     const rows = buildRows(
       [msg("user", "hi", 10)],
       [],
@@ -156,6 +156,34 @@ describe("buildRows — run span markers", () => {
       spanLabel,
     );
     expect(rows.map((r) => r.kind)).toEqual(["history"]);
+  });
+
+  it("a single span starting mid-transcript marks where the new run began", () => {
+    const rows = buildRows(
+      [msg("user", "old", 10), msg("user", "new", 30)],
+      [],
+      emptyContext,
+      [span("cline", "node-b", 25)],
+      spanLabel,
+    );
+    // The transfer-in boundary: messages before `at` belong to the prior
+    // (unlabeled) node; the span marker opens the new node's range.
+    expect(rows.map((r) => (r.kind === "span" ? r.label : r.kind))).toEqual([
+      "history",
+      "cline@node-b",
+      "history",
+    ]);
+  });
+
+  it("a single span with no history labels upcoming live rows", () => {
+    const rows = buildRows(
+      [],
+      [live("user", "streaming", "l1")],
+      emptyContext,
+      [span("cline", "node-b", 5)],
+      spanLabel,
+    );
+    expect(rows.map((r) => r.kind)).toEqual(["span", "live"]);
   });
 
   it("a span newer than the backlog trails history and labels live rows", () => {

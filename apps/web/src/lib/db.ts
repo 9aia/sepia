@@ -55,7 +55,7 @@ export const createSessionsCollection = (client: QueryClient) =>
           mutation.original.agent,
           nodeTarget(mutation.original.node),
         );
-        if (!ok) throw new Error("The server rejected the session update");
+        if (!ok) throw new Error("The node rejected the session update");
       }
       const patched = new Map(transaction.mutations.map((m) => [m.key, m.modified]));
       client.setQueryData<SessionSummary[]>(queryKeys.sessions, (old) =>

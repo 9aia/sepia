@@ -44,11 +44,11 @@ export class ApiError extends Error {
 }
 
 const friendlyHttpError = (status: number): string => {
-  if (status === 400) return "The server rejected the request";
+  if (status === 400) return "The node rejected the request";
   if (status === 403) return "Access denied";
   if (status === 404) return "Not found";
   if (status === 409) return "That operation is busy — try again in a moment";
-  if (status >= 500) return "The server hit an error — try again";
+  if (status >= 500) return "The node hit an error — try again";
   return `Request failed (${status})`;
 };
 
@@ -73,7 +73,7 @@ async function sepiaFetch(
       },
     });
   } catch {
-    throw new Error("Can't reach the Sepia server — is it running?");
+    throw new Error("Can't reach the Sepia node — is it running?");
   }
   if (res.status === 401) {
     // Peer 401s are that node's own auth problem — only the local target's

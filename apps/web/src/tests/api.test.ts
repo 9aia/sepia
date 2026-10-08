@@ -295,12 +295,12 @@ describe("POST/PATCH/DELETE wrappers", () => {
 
 describe("error mapping", () => {
   it.each([
-    [400, "The server rejected the request"],
+    [400, "The node rejected the request"],
     [403, "Access denied"],
     [404, "Not found"],
     [409, "That operation is busy — try again in a moment"],
-    [500, "The server hit an error — try again"],
-    [503, "The server hit an error — try again"],
+    [500, "The node hit an error — try again"],
+    [503, "The node hit an error — try again"],
     [418, "Request failed (418)"],
   ])("maps HTTP %i to a friendly message", async (code, message) => {
     stubFetch(status(code));
@@ -343,7 +343,7 @@ describe("error mapping", () => {
     vi.stubGlobal("fetch", async () => {
       throw new TypeError("fetch failed");
     });
-    await expect(listSessions()).rejects.toThrow("Can't reach the Sepia server");
+    await expect(listSessions()).rejects.toThrow("Can't reach the Sepia node");
   });
 });
 
@@ -629,7 +629,7 @@ describe("pairNode", () => {
   it("maps other failures through the friendly table", async () => {
     stubFetch(status(500));
     await expect(pairNode("BAD", { baseUrl: "", token: null })).rejects.toThrow(
-      "The server hit an error",
+      "The node hit an error",
     );
   });
 });
