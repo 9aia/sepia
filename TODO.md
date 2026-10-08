@@ -32,10 +32,11 @@
       infeasible — but there is no per-IP throttle; add one if the node is
       ever exposed off-LAN without a reverse proxy (deploy behind
       Caddy/nginx limits).
-- [ ] **Peer credential storage** — the LOCAL token moved to an httpOnly
-      cookie (`POST /api/auth/login`), but _peer_ tokens still live in
-      localStorage (`sepia:credentials`). Server-side credential vault on
-      the serving node (proxy injects, JS never sees) is the real fix.
+- [ ] **Direct-peer credentials** — `sepia:credentials` now only holds
+      secrets for `via: "direct"` peers the _serving node itself_ can't
+      reach (the migration vaults everything it can reach via gateway).
+      Residual: a truly direct peer's token still sits in localStorage —
+      inherent to client-side direct calls; acceptable or drop direct mode.
 
 ### Ops / QA
 

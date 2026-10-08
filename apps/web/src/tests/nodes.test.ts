@@ -11,6 +11,7 @@ import {
   listAllProjects,
   listAllSessions,
   localNodeAddress,
+  migrateDirectPeersToVault,
   nodeName,
   nodesStore,
   nodeTarget,
@@ -1629,5 +1630,96 @@ describe("updatePeerEntry routing transitions", () => {
     });
     expect(getPeers()[0]?.via).toBe("gateway");
     expect(getPeers()[0]?.serverId).toBe("srv_1");
+  });
+});
+
+describe("migrateDirectPeersToVault", () => {
+  const descriptor = {
+    id: "node_remote",
+    name: "remote-box",
+    version: "1",
+    protocol: 1,
+    agents: [],
+    capabilities: [],
+  };
+  const managed = {
+    id: "srv_1",
+    label: "remote.example",
+    host: "remote.example",
+    port: 8787,
+    scheme: "http" as const,
+    auth: null,
+    ssh: null,
+  };
+
+  it("moves a direct peer's credential into the vault and flips it to gateway", async () => {
+    const direct: PeerNode = {
+      id: "node_remote",
+      name: "remote-box",
+      url: "http://remote.example:8787",
+      alias: "work",
+      enabled: false,
+      credentialId: addCredential({ label: "remote", secret: "peer-secret" }).id,
+    };
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [direct],
+    }));
+    mockedCreateServer.mockResolvedValue(managed);
+    mockedGetNode.mockResolvedValue(descriptor);
+
+    const migrated = await migrateDirectPeersToVault();
+    expect(migrated).toBe(1);
+
+    const [flipped] = getPeers();
+    expect(flipped?.via).toBe("gateway");
+    expect(flipped?.serverId).toBe("srv_1");
+    expect(flipped?.credentialId).toBeUndefined();
+    expect(flipped?.alias).toBe("work");
+    expect(flipped?.enabled).toBe(false);
+    // The secret left localStorage — only the managed registry holds it.
+    expect(credentialById(direct.credentialId ?? "")).toBeNull();
+    expect(mockedCreateServer).toHaveBeenCalledWith({
+      label: "remote.example",
+      host: "remote.example",
+      port: 8787,
+      scheme: "http",
+      auth: { type: "token", secret: "peer-secret" },
+      ssh: null,
+    });
+  });
+
+  it("leaves a peer unreachable through the gateway direct — credential untouched", async () => {
+    const direct: PeerNode = {
+      id: "node_remote",
+      name: "remote-box",
+      url: "http://remote.example:8787",
+      credentialId: addCredential({ label: "remote", secret: "peer-secret" }).id,
+    };
+    nodesStore.setState(() => ({
+      self: null,
+      selfStatus: "unknown",
+      peers: [direct],
+    }));
+    mockedCreateServer.mockResolvedValue(managed);
+    mockedGetNode.mockRejectedValue(new Error("unreachable"));
+
+    const migrated = await migrateDirectPeersToVault();
+    expect(migrated).toBe(0);
+    const [kept] = getPeers();
+    expect(kept?.via).toBeUndefined();
+    expect(kept?.credentialId).toBe(direct.credentialId);
+    expect(peerSecret(kept ?? direct)).toBe("peer-secret");
+    // The orphaned managed entry got cleaned up.
+    expect(vi.mocked(deleteServer)).toHaveBeenCalledWith("srv_1");
+  });
+
+  it("skips unauthenticated direct peers — no secret to vault", async () => {
+    const open: PeerNode = { id: "n", name: "n", url: "http://open.example:8787" };
+    nodesStore.setState(() => ({ self: null, selfStatus: "unknown", peers: [open] }));
+    const migrated = await migrateDirectPeersToVault();
+    expect(migrated).toBe(0);
+    expect(mockedCreateServer).not.toHaveBeenCalled();
   });
 });

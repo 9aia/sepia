@@ -1,6 +1,6 @@
 import { Store } from "@tanstack/react-store";
 import { getNode, listAgents, listProjects, listSessions, pairNode } from "./api";
-import { addCredential, credentialById } from "./credentials";
+import { addCredential, credentialById, removeCredential } from "./credentials";
 import { LOCAL_NODE_ID, setLocalNodeAlias } from "./format";
 import {
   createServer,
@@ -724,6 +724,49 @@ export const pairGatewayPeer = async (url: string, code: string): Promise<PeerNo
     await deleteServer(entry.id).catch(() => undefined);
     throw error;
   }
+};
+
+/**
+ * One-shot vault migration: any direct peer holding a client-side
+ * credential (`sepia:credentials`) gets re-registered through the gateway —
+ * its secret moves into the serving node's managed registry and the local
+ * copy is deleted, so JS never holds a peer token again.
+ *
+ * The migration only lands when the peer actually answers THROUGH the
+ * gateway: a peer the serving node can't reach is exactly why direct mode
+ * exists, so a failed probe leaves the peer (and its credential) alone.
+ * Returns the number of migrated peers.
+ */
+export const migrateDirectPeersToVault = async (): Promise<number> => {
+  const candidates = nodesStore.state.peers.filter(
+    (peer) => peer.via !== "gateway" && peer.credentialId !== undefined,
+  );
+  let migrated = 0;
+  for (const peer of candidates) {
+    const secret = peerSecret(peer);
+    // Dangling credential — nothing to vault; the peer already fails its
+    // calls by design, so flipping it wouldn't fix (or leak) anything.
+    if (secret === null) continue;
+    try {
+      const gatewayPeer = await addGatewayPeer(peer.url, secret);
+      // addGatewayPeer upserts by node id/url — the direct row is already
+      // replaced. Carry over the user's alias + parked flag the fresh row
+      // doesn't know about.
+      commitPeers(
+        upsertPeer(nodesStore.state.peers, {
+          ...gatewayPeer,
+          alias: peer.alias,
+          enabled: peer.enabled,
+        }),
+      );
+      if (peer.credentialId !== undefined) removeCredential(peer.credentialId);
+      migrated += 1;
+    } catch {
+      // Unreachable through this node's server — leave the direct peer
+      // and its client-side credential exactly as they were.
+    }
+  }
+  return migrated;
 };
 
 /**

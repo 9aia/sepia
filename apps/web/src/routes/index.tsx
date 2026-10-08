@@ -15,6 +15,7 @@ import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";
 import { useHealth } from "../hooks/query/useHealth";
 import { useQueryClient } from "@tanstack/react-query";
 import { AuthError } from "../lib/api";
+import { migrateDirectPeersToVault } from "../lib/nodes";
 import { sepiaStore, setSettingsOpen, setSelectedId } from "../lib/store";
 import { sessionKey } from "../lib/format";
 
@@ -51,6 +52,15 @@ function Home() {
   // local node alias used by key resolution (previously only fetched while
   // Settings → Nodes was open).
   useSelfNode();
+  // One-shot: move any direct peer's client-side credential into the
+  // serving node's managed registry and flip the peer to gateway routing
+  // (lib/nodes.ts — peers unreachable through the node stay direct).
+  const vaultMigrated = useRef(false);
+  useEffect(() => {
+    if (vaultMigrated.current) return;
+    vaultMigrated.current = true;
+    void migrateDirectPeersToVault();
+  }, []);
   const selectedId = useStore(sepiaStore, (state) => state.selectedId);
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
