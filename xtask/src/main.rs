@@ -35,6 +35,7 @@ fn main() -> anyhow::Result<()> {
                 "sepia-driver-cline",
                 "sepia-driver-claude",
                 "sepia-driver-cursor",
+                "sepia-hub",
             ];
             for bin in &bins {
                 run("cargo", &["build", "--release", "--bin", bin])?;

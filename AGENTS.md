@@ -50,7 +50,7 @@ too, plus subprocess drivers:
 | `crates/sepia-http`                               | adapter   | axum REST + SSE                                                                           |
 | `crates/sepia-node`                               | app       | headless daemon (`sepia_node::serve` shared with the CLI)                                 |
 | `crates/sepia-cli`                                | app       | `sepia` binary                                                                            |
-| `crates/sepia-{web,hub}`                          | app       | Leptos UI + SSR host (in progress)                                                        |
+| `crates/sepia-{web,hub}`                          | app       | Leptos UI + SSR host (projection-backed, PWA, hub-owned push)                             |
 
 Legacy TS layout (being removed in Phase 6):
 
