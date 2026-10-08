@@ -1,18 +1,26 @@
 # Sepia → Rust: full rewrite plan
 
-Status: in execution on `rust-rewrite`. Landed: workspace +
-lints (0.5), golden fixtures for all four stores (0), driver SDK +
-host + discovery (1), sepia-core IR/ports (2), all four drivers
-with contract+golden suites (2), sepia-acp tolerant client (3),
-control plane (3), sepia-meta + sepia-convert, session.rewind over
-the driver wire, sepia-node serving the API end-to-end, sepia-http
-(full REST+SSE surface), sepia-push. In flight: sepia-cli, sepia-sync,
-sepia-web/hub (Leptos). Pending: hub composition, sync wiring, PWA,
-integration e2e, README story, TS deletion (Phase 6).
-Scope: **everything** — core IR, store adapters, ACP client, control plane,
-server, CLI, UI, release tooling. TypeScript deleted at the end.
-This is simultaneously a **rewrite and a redesign**: keep the phases
-decoupled so the redesign never pulls the port forward.
+Status: in execution on `rust-rewrite`. Landed: everything through
+Phase 5 core — workspace + lints, golden fixtures, driver SDK/host +
+discovery + respawn, sepia-core IR/ports, all four drivers
+(contract+golden green), tolerant sepia-acp, control plane (lock/
+takeover/idle-sweep + fault-injection + soak suites), sepia-meta +
+sepia-convert, rewind over the driver wire, sepia-node serving real
+HTTP end-to-end (real driver + mock agent e2e, RSS budget), sepia-http
+full REST+SSE surface, sepia-cli (full verb surface), sepia-outbox,
+sepia-push, sepia-sync (projection + outbox drain + reconnect,
+subscribe-before-list), sepia-web Leptos UI (list/detail + agents/
+projects/nodes/settings pages, SSR + hydrate-checked wasm), sepia-hub
+(sync-backed SyncNodeApi, session-routed proxies, hub-owned push store
+
+- feed-marker fan-out, PWA assets). Hub↔node capstone e2e passes.
+  README + DEPLOY rewritten. In flight: session-detail interactive ops
+  UI. Pending: browser e2e (deferred — thirtyfour vs playwright call),
+  TS deletion (Phase 6 final step).
+  Scope: **everything** — core IR, store adapters, ACP client, control plane,
+  server, CLI, UI, release tooling. TypeScript deleted at the end.
+  This is simultaneously a **rewrite and a redesign**: keep the phases
+  decoupled so the redesign never pulls the port forward.
 
 ## Decisions (locked)
 
