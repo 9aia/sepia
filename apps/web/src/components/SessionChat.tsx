@@ -1152,7 +1152,10 @@ function MessageRow({
             <>
               {createdAt !== undefined && <span>{formatMessageTime(createdAt)}</span>}
               {usage !== undefined && (
-                <span className="text-muted-foreground/80" title={formatUsage(usage)}>
+                <span
+                  className="whitespace-pre text-muted-foreground/80"
+                  title={formatUsage(usage)}
+                >
                   {usageLabel(usage)}
                 </span>
               )}

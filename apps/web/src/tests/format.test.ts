@@ -221,14 +221,12 @@ describe("formatCost", () => {
 
 describe("usageLabel", () => {
   it("compacts input/output with arrows", () => {
-    expect(usageLabel({ input: 1200, output: 340 })).toBe("↑ 1.2K · ↓ 340 tok");
+    expect(usageLabel({ input: 1200, output: 340 })).toBe("↑ 1.2K  ↓ 340 tok");
   });
 
   it("appends cost when priced above zero", () => {
-    expect(usageLabel({ input: 1200, output: 340, cost: 0.023 })).toBe(
-      "↑ 1.2K · ↓ 340 tok · $0.02",
-    );
-    expect(usageLabel({ input: 1200, output: 340, cost: 0 })).toBe("↑ 1.2K · ↓ 340 tok");
+    expect(usageLabel({ input: 1200, output: 340, cost: 0.023 })).toBe("↑ 1.2K  ↓ 340 tok  $0.02");
+    expect(usageLabel({ input: 1200, output: 340, cost: 0 })).toBe("↑ 1.2K  ↓ 340 tok");
   });
 });
 

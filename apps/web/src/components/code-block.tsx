@@ -1,12 +1,12 @@
 import {
+  cloneElement,
+  isValidElement,
   useRef,
   useState,
   type ComponentProps,
   type JSX,
-  type ReactElement,
   type ReactNode,
 } from "react";
-import { isValidElement } from "react";
 import { CheckIcon, Copy01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "@/lib/utils";
@@ -18,11 +18,11 @@ import { Button } from "./ui/button";
  * markup renders inside, so this adds chrome, not a second highlighter.
  */
 
-/** Pull `language-xyz` out of a <pre>'s code child, if streamdown set one. */
+/** Pull `language-xyz` off a fence's <code> element (streamdown's className). */
 const codeLanguage = (node: ReactNode): string | null => {
   if (!isValidElement<{ className?: string }>(node)) return null;
   const cls = node.props.className ?? "";
-  const match = cls.match(/language-(\w+)/);
+  const match = cls.match(/language-(\S+)/);
   return match?.[1] ?? null;
 };
 
@@ -75,10 +75,19 @@ function CodeBlock({ language, className, children, ...props }: CodeBlockProps) 
       </div>
       <div
         ref={preRef}
-        // children is the <code> element (streamdown passes it to the pre
-        // renderer) — pad the container itself; any nested pre the code
-        // plugin emits keeps chrome but no padding of its own.
-        className="overflow-x-auto p-3 [&_pre]:!m-0 [&_pre]:!rounded-none [&_pre]:!border-0 [&_pre]:!p-0"
+        // children is streamdown's own fenced-block render (container +
+        // language header + highlighted body). Our chrome replaces that
+        // chrome, so strip streamdown's container/header/body styling and
+        // keep the highlighted <pre> (its --sdm-bg theme background stays).
+        className={cn(
+          "overflow-x-auto p-3 [&_pre]:!m-0 [&_pre]:!rounded-none [&_pre]:!border-0 [&_pre]:!p-0",
+          "[&_[data-streamdown=code-block]]:!my-0 [&_[data-streamdown=code-block]]:!gap-0",
+          "[&_[data-streamdown=code-block]]:!rounded-none [&_[data-streamdown=code-block]]:!border-0",
+          "[&_[data-streamdown=code-block]]:!bg-transparent [&_[data-streamdown=code-block]]:!p-0",
+          "[&_[data-streamdown=code-block-header]]:!hidden",
+          "[&_[data-streamdown=code-block-body]]:!rounded-none [&_[data-streamdown=code-block-body]]:!border-0",
+          "[&_[data-streamdown=code-block-body]]:!bg-transparent [&_[data-streamdown=code-block-body]]:!p-0",
+        )}
       >
         {children}
       </div>
@@ -87,15 +96,23 @@ function CodeBlock({ language, className, children, ...props }: CodeBlockProps) 
 }
 
 /**
- * streamdown `pre` renderer — reads the language off its code child and wraps
- * the streamdown/Shiki output in the CodeBlock chrome.
+ * streamdown `pre` renderer. streamdown's default `pre` never emits a <pre> —
+ * it flags its <code> child with `data-block` so the `code` renderer takes
+ * the fenced-block path (shiki-highlighted body, mermaid diagram, custom
+ * renderer) instead of inline code. Forwarding children without that flag
+ * silently downgraded every fence to unhighlighted inline code — and the
+ * language sits on the code element itself, not on its children.
  */
 export function StreamdownCodeBlock({
   children,
 }: JSX.IntrinsicElements["pre"] & { readonly node?: unknown }) {
-  const child = children as ReactElement<{ children?: ReactNode }> | undefined;
-  const codeChild = child?.props?.children;
-  return <CodeBlock language={codeLanguage(codeChild)}>{children}</CodeBlock>;
+  const block = isValidElement<Record<string, unknown>>(children)
+    ? cloneElement(children, { "data-block": "true" })
+    : children;
+  const language = codeLanguage(children);
+  // A mermaid fence renders the diagram itself — no code chrome around it.
+  if (language === "mermaid") return block;
+  return <CodeBlock language={language}>{block}</CodeBlock>;
 }
 
 export { CodeBlock, CodeBlockCopy };

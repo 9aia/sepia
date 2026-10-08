@@ -73,7 +73,7 @@ export function MessageFooter({ className, ...props }: ComponentProps<"div">) {
     <div
       data-slot="message-footer"
       className={cn(
-        "flex items-center gap-1 px-1 text-xs text-muted-foreground",
+        "flex items-center gap-2 px-1 text-xs text-muted-foreground",
         // Hover-reveal on pointer devices; always visible on touch.
         "md:opacity-0 md:transition-opacity md:group-focus-within/msg:opacity-100 md:group-hover/msg:opacity-100",
         className,

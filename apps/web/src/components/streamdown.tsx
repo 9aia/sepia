@@ -41,6 +41,14 @@ export const MessageResponse = memo(
         className,
       )}
       plugins={streamdownPlugins}
+      // Dark-only app — pin both theme slots to github-dark so highlighted
+      // tokens never paint light-theme colors.
+      shikiTheme={["github-dark", "github-dark"]}
+      // StreamdownCodeBlock supplies its own header + copy button — drop
+      // streamdown's floating code controls (table/mermaid keep theirs) and
+      // the line-number gutter, which is noise inside a chat bubble.
+      controls={{ code: false }}
+      lineNumbers={false}
       components={{ pre: StreamdownCodeBlock, table: StreamdownTable }}
       {...props}
     />
