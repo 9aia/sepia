@@ -59,6 +59,21 @@ fn node_serves_sessions_over_http() {
     };
     let _ = child.kill();
     assert!(body.contains("devin-1"), "body: {body}");
+
+    // RSS smoke budget — a headless node must idle small (plan's
+    // lightweight rule; adjust if real work lands, never silently).
+    if let Ok(status) = std::fs::read_to_string(format!("/proc/{}/status", child.id())) {
+        let rss_kb = status
+            .lines()
+            .find(|l| l.starts_with("VmRSS"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        assert!(
+            rss_kb < 100 * 1024,
+            "node RSS {rss_kb} kB over 100 MB budget"
+        );
+    }
 }
 
 /// Full stack: node -> driver store + mock ACP agent over HTTP.
