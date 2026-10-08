@@ -54,9 +54,22 @@ body {
   text-decoration: none;
   letter-spacing: 0.02em;
 }
-.topbar .crumb {
-  color: var(--overlay);
+.topbar .nav {
+  display: flex;
+  gap: 0.9rem;
+  margin-left: 0.5rem;
+}
+.topbar .nav a {
+  color: var(--subtext);
+  text-decoration: none;
   font-size: 0.85rem;
+}
+.topbar .nav a:hover {
+  color: var(--text);
+}
+.topbar .nav a[aria-current="page"] {
+  color: var(--mauve);
+  border-bottom: 1px solid var(--mauve);
 }
 
 .content {
@@ -411,4 +424,218 @@ details.thinking > summary {
 
 .live-reasoning {
   border-left: 3px solid var(--yellow);
+}
+
+/* ---- cards (agents / projects / nodes) ------------------------------ */
+
+.card-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+.card {
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  background: var(--mantle);
+}
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.card-title {
+  font-weight: 550;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-meta {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--overlay);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.45rem;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+}
+.badge.cap {
+  color: var(--green);
+  border-color: var(--surface1);
+}
+.badge.status.up {
+  color: var(--green);
+  border-color: var(--green);
+}
+.badge.status.down {
+  color: var(--red);
+  border-color: var(--red);
+}
+.badge.status.unknown {
+  color: var(--overlay);
+}
+
+/* ---- forms ----------------------------------------------------------- */
+
+.form-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.field {
+  flex: 1;
+  min-width: 0;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  padding: 0.4rem 0.6rem;
+}
+.field:focus {
+  outline: none;
+  border-color: var(--mauve);
+}
+.save {
+  background: var(--mauve);
+  color: var(--crust);
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  padding: 0.4rem 1.2rem;
+  cursor: pointer;
+}
+.save.small {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+}
+.save:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.danger {
+  background: transparent;
+  color: var(--red);
+  border: 1px solid var(--surface1);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.7rem;
+  cursor: pointer;
+}
+.danger:hover:not(:disabled) {
+  border-color: var(--red);
+}
+.danger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---- settings / nodes ------------------------------------------------ */
+
+.settings-section {
+  margin-top: 1.25rem;
+}
+.section-head {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+.config-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.config-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--surface0);
+}
+.config-key {
+  flex: none;
+  width: 14rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--subtext);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.config-row .ok {
+  color: var(--green);
+  font-size: 0.78rem;
+}
+.config-row .error {
+  font-size: 0.78rem;
+}
+.hint {
+  color: var(--overlay);
+  font-size: 0.85rem;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+.facts dt {
+  color: var(--overlay);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+.facts dd {
+  margin: 0;
+  min-width: 0;
+}
+.facts dd .chips {
+  margin-top: 0;
+}
+
+.node-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.node-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.45rem 0.25rem;
+  border-bottom: 1px solid var(--surface0);
+}
+.node-label {
+  font-weight: 550;
+}
+.node-url {
+  color: var(--overlay);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-row .time {
+  margin-left: auto;
+  flex: none;
+  font-size: 0.78rem;
+  color: var(--overlay);
 }

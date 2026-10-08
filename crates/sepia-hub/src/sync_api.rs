@@ -6,10 +6,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use std::collections::BTreeMap;
+
 use sepia_sync::client::NodeClient;
 use sepia_sync::{IndexedSession, NodeWrite, OpKind, SyncHandle};
 use sepia_web::api::NodeApi;
-use sepia_web::dto::{HistoryMessageDto, HistoryPageDto, SessionSummaryDto};
+use sepia_web::dto::{
+    AgentDto, HistoryMessageDto, HistoryPageDto, NodeInfoDto, NodeStatusDto, ProjectDto,
+    PushSubscriptionDto, SessionSummaryDto,
+};
 use serde_json::Value;
 
 /// Node registry entry — url + optional bearer token.
@@ -83,6 +88,9 @@ pub struct SyncNodeApi {
     engine: SyncHandle,
     nodes: HashMap<String, HubNode>,
     clients: HashMap<String, Arc<NodeClient>>,
+    /// First configured node — the canonical target for registry
+    /// writes (projects/config/push) that have no session to route by.
+    primary: Option<String>,
 }
 
 impl SyncNodeApi {
@@ -97,6 +105,7 @@ impl SyncNodeApi {
             .collect();
         Self {
             engine,
+            primary: nodes.first().map(|n| n.id.clone()),
             nodes: nodes.into_iter().map(|n| (n.id.clone(), n)).collect(),
             clients,
         }
@@ -111,6 +120,72 @@ impl SyncNodeApi {
             .get(node_id)
             .cloned()
             .ok_or_else(|| format!("node {node_id} not registered"))
+    }
+
+    /// Every `(node_id, client)` pair, sorted by id for deterministic
+    /// merged output.
+    fn client_list(&self) -> Vec<(String, Arc<NodeClient>)> {
+        let mut list: Vec<_> = self
+            .clients
+            .iter()
+            .map(|(id, c)| (id.clone(), Arc::clone(c)))
+            .collect();
+        list.sort_by(|a, b| a.0.cmp(&b.0));
+        list
+    }
+
+    /// The client for `node` when given, else the primary's.
+    fn scoped_client(&self, node: Option<&str>) -> Result<(String, Arc<NodeClient>), String> {
+        let id = match node {
+            Some(id) if !id.is_empty() => id.to_string(),
+            _ => self
+                .primary
+                .clone()
+                .ok_or_else(|| "no nodes registered".to_string())?,
+        };
+        let client = self.client(&id)?;
+        Ok((id, client))
+    }
+
+    /// `GET {path}` on every registered node, merging the `{key}`
+    /// array each returns. Rows are annotated with the owning `node`
+    /// id; a node that fails is skipped — unless every node fails and
+    /// nothing merged, which surfaces the first error.
+    async fn merged_list(&self, path: &str, key: &str) -> Result<Vec<Value>, String> {
+        let clients = self.client_list();
+        let path = path.to_string();
+        let key = key.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut out = Vec::new();
+            let mut first_err: Option<String> = None;
+            for (node_id, client) in clients {
+                match client.get_json(&path) {
+                    Ok(body) => {
+                        let Some(rows) = body.get(&key).and_then(Value::as_array) else {
+                            continue;
+                        };
+                        for row in rows {
+                            let mut row = row.clone();
+                            if let Value::Object(m) = &mut row {
+                                m.insert("node".into(), Value::String(node_id.clone()));
+                            }
+                            out.push(row);
+                        }
+                    }
+                    Err(e) => {
+                        if first_err.is_none() {
+                            first_err = Some(format!("{node_id}: {e}"));
+                        }
+                    }
+                }
+            }
+            match (out.is_empty(), first_err) {
+                (true, Some(e)) => Err(e),
+                _ => Ok(out),
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     /// The upstream `(url, token)` for a session — the proxy uses it to
@@ -232,5 +307,173 @@ impl NodeApi for SyncNodeApi {
     async fn cancel(&self, id: &str, agent: Option<&str>) -> Result<(), String> {
         self.submit(id, agent, "cancel", OpKind::Turn, serde_json::json!({}))
             .await
+    }
+
+    async fn list_agents(&self) -> Result<Vec<AgentDto>, String> {
+        Ok(self
+            .merged_list("/api/agents", "agents")
+            .await?
+            .into_iter()
+            .map(|row| serde_json::from_value(row).unwrap_or_default())
+            .collect())
+    }
+
+    async fn list_projects(&self) -> Result<Vec<ProjectDto>, String> {
+        Ok(self
+            .merged_list("/api/projects", "projects")
+            .await?
+            .into_iter()
+            .map(|row| serde_json::from_value(row).unwrap_or_default())
+            .collect())
+    }
+
+    async fn create_project(&self, name: &str, node: Option<&str>) -> Result<ProjectDto, String> {
+        let (node_id, client) = self.scoped_client(node)?;
+        let body = serde_json::json!({ "name": name });
+        let body =
+            tokio::task::spawn_blocking(move || client.send_json("POST", "/api/projects", &body))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+        let mut row = body.get("project").cloned().unwrap_or(Value::Null);
+        if let Value::Object(m) = &mut row {
+            m.insert("node".into(), Value::String(node_id));
+        }
+        serde_json::from_value(row).map_err(|e| format!("decode: {e}"))
+    }
+
+    async fn delete_project(&self, id: &str, node: Option<&str>) -> Result<(), String> {
+        // `node` routes to the owner; absent it, idempotent-deleting on
+        // every node covers the ambiguity — ids are opaque per node.
+        let targets: Vec<(String, Arc<NodeClient>)> = match node {
+            Some(_) => vec![self.scoped_client(node)?],
+            None => self.client_list(),
+        };
+        let targets = if targets.is_empty() {
+            return Err("no nodes registered".into());
+        } else {
+            targets
+        };
+        let path = format!("/api/projects/{}", sepia_sync::client::encode_segment(id));
+        tokio::task::spawn_blocking(move || {
+            let mut first_err = None;
+            for (node_id, client) in targets {
+                if let Err(e) = client.send_json("DELETE", &path, &Value::Null) {
+                    first_err.get_or_insert(format!("{node_id}: {e}"));
+                }
+            }
+            match first_err {
+                Some(e) => Err(e),
+                None => Ok(()),
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn get_config(&self) -> Result<BTreeMap<String, Value>, String> {
+        let (_, client) = self.scoped_client(None)?;
+        tokio::task::spawn_blocking(move || {
+            let body = client.get_json("/api/config").map_err(|e| e.to_string())?;
+            let map = body
+                .get("config")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            Ok(map.into_iter().collect())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn set_config(&self, key: &str, value: &Value) -> Result<(), String> {
+        let (_, client) = self.scoped_client(None)?;
+        let path = format!("/api/config/{}", sepia_sync::client::encode_segment(key));
+        let body = serde_json::json!({ "value": value });
+        tokio::task::spawn_blocking(move || client.send_json("PATCH", &path, &body))
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    async fn node_info(&self) -> Result<NodeInfoDto, String> {
+        let (_, client) = self.scoped_client(None)?;
+        tokio::task::spawn_blocking(move || client.get_json("/api/node"))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
+            .and_then(|v| serde_json::from_value(v).map_err(|e| format!("decode: {e}")))
+    }
+
+    async fn node_status(&self) -> Result<Vec<NodeStatusDto>, String> {
+        let projection = self.projection();
+        let registry = self.nodes.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut rows: Vec<NodeStatusDto> = projection
+                .nodes()
+                .map_err(|e| format!("projection: {e}"))?
+                .into_iter()
+                .map(|n| NodeStatusDto {
+                    id: n.id,
+                    url: n.url,
+                    label: n.label,
+                    status: n.status.as_str().to_string(),
+                    last_seen_at: n.last_seen_at,
+                })
+                .collect();
+            // Registered-but-never-synced nodes still get a row.
+            for (id, node) in &registry {
+                if !rows.iter().any(|r| &r.id == id) {
+                    rows.push(NodeStatusDto {
+                        id: id.clone(),
+                        url: node.url.clone(),
+                        label: id.clone(),
+                        status: "unknown".into(),
+                        last_seen_at: None,
+                    });
+                }
+            }
+            rows.sort_by(|a, b| a.id.cmp(&b.id));
+            Ok(rows)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn push_vapid(&self) -> Result<String, String> {
+        let (_, client) = self.scoped_client(None)?;
+        tokio::task::spawn_blocking(move || client.get_json("/api/push/vapid"))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
+            .and_then(|v| {
+                v.get("publicKey")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| "vapid: missing publicKey".to_string())
+            })
+    }
+
+    async fn push_subscribe(&self, subscription: &PushSubscriptionDto) -> Result<(), String> {
+        let (_, client) = self.scoped_client(None)?;
+        let body = serde_json::to_value(subscription).map_err(|e| e.to_string())?;
+        tokio::task::spawn_blocking(move || client.send_json("POST", "/api/push/subscribe", &body))
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    async fn push_unsubscribe(&self, endpoint: &str) -> Result<(), String> {
+        let (_, client) = self.scoped_client(None)?;
+        let body = serde_json::json!({ "endpoint": endpoint });
+        tokio::task::spawn_blocking(move || {
+            client.send_json("DELETE", "/api/push/subscribe", &body)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|_| ())
+        .map_err(|e| e.to_string())
     }
 }

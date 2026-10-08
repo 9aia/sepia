@@ -8,7 +8,9 @@ use leptos_meta::{Title, provide_meta_context};
 use leptos_router::components::{A, Route, Router, Routes};
 use leptos_router::path;
 
-use crate::pages::{SessionDetailPage, SessionListPage};
+use crate::pages::{
+    AgentsPage, NodesPage, ProjectsPage, SessionDetailPage, SessionListPage, SettingsPage,
+};
 
 /// Wall-clock ticker for relative-time labels — refreshed every 30s on
 /// the client; a fixed snapshot during SSR.
@@ -40,7 +42,13 @@ pub fn App() -> impl IntoView {
             <div class="app">
                 <header class="topbar">
                     <A href="/" attr:class="brand">"sepia"</A>
-                    <span class="crumb">"sessions"</span>
+                    <nav class="nav">
+                        <A href="/" exact=true>"Sessions"</A>
+                        <A href="/agents">"Agents"</A>
+                        <A href="/projects">"Projects"</A>
+                        <A href="/nodes">"Nodes"</A>
+                        <A href="/settings">"Settings"</A>
+                    </nav>
                 </header>
                 <main class="content">
                     <Routes fallback=|| {
@@ -48,6 +56,10 @@ pub fn App() -> impl IntoView {
                     }>
                         <Route path=path!("/") view=SessionListPage/>
                         <Route path=path!("/sessions/:id") view=SessionDetailPage/>
+                        <Route path=path!("/agents") view=AgentsPage/>
+                        <Route path=path!("/projects") view=ProjectsPage/>
+                        <Route path=path!("/nodes") view=NodesPage/>
+                        <Route path=path!("/settings") view=SettingsPage/>
                     </Routes>
                 </main>
             </div>

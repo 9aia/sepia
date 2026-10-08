@@ -328,6 +328,42 @@ impl NodeClient {
         Self::expect_json(res)
     }
 
+    /// `GET {path}` — raw JSON body for endpoints without a typed
+    /// helper (`/api/agents`, `/api/projects`, `/api/config`,
+    /// `/api/node`, `/api/push/vapid`, …).
+    ///
+    /// # Errors
+    /// On transport failure or a non-2xx status.
+    pub fn get_json(&self, path: &str) -> Result<Value, NodeError> {
+        let res = self
+            .auth(self.agent.get(self.url(path)))
+            .call()
+            .map_err(NodeError::Transport)?;
+        Self::expect_json(res)
+    }
+
+    /// `{method} {path}` with a JSON body — raw JSON body back. For
+    /// non-session-scoped writes (`/api/projects`, `/api/config/{k}`,
+    /// `/api/push/subscribe`); `DELETE` may carry a body.
+    ///
+    /// # Errors
+    /// On transport failure, non-2xx, or an unbuildable request.
+    pub fn send_json(&self, method: &str, path: &str, body: &Value) -> Result<Value, NodeError> {
+        let payload = serde_json::to_vec(body).map_err(|e| NodeError::Malformed(e.to_string()))?;
+        let mut builder = ureq::http::Request::builder()
+            .method(method)
+            .uri(self.url(path));
+        if let Some(token) = &self.token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let request = builder
+            .header("content-type", "application/json")
+            .body(payload)
+            .map_err(|e| NodeError::Malformed(e.to_string()))?;
+        let res = self.agent.run(request).map_err(NodeError::Transport)?;
+        Self::expect_json(res)
+    }
+
     /// `GET /api/events` — the node-level feed. The returned reader
     /// yields [`FeedEvent`]s until EOF or the `sse_max_age` body deadline
     /// trips (then `next_event` errors and the caller reconnects).
@@ -520,7 +556,7 @@ fn classify(event: &str, data: &str) -> FeedEvent {
 
 /// RFC 3986 unreserved characters pass through; everything else is
 /// percent-encoded — session ids are opaque and may carry `:`/` `/etc.
-fn encode_segment(segment: &str) -> String {
+pub fn encode_segment(segment: &str) -> String {
     use std::fmt::Write as _;
     let mut out = String::with_capacity(segment.len());
     for byte in segment.bytes() {

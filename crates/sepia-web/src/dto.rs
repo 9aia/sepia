@@ -116,3 +116,128 @@ impl HistoryMessageDto {
             .join("")
     }
 }
+
+/// `GET /api/agents` row — `sepia_http::routes::AgentWire`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDto {
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub capabilities: Option<AgentCapabilitiesDto>,
+    /// Hub-side annotation — the node that advertises this agent
+    /// (multi-node hubs only; absent → `None`).
+    #[serde(default)]
+    pub node: Option<String>,
+}
+
+/// `AgentWire.capabilities` — `sepia_http::routes::CapabilitiesWire`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCapabilitiesDto {
+    #[serde(default)]
+    pub load_session: bool,
+    #[serde(default)]
+    pub session_list: bool,
+    #[serde(default)]
+    pub prompt_capabilities: PromptCapabilitiesDto,
+    #[serde(default)]
+    pub session_capabilities: SessionCapabilitiesDto,
+}
+
+/// `CapabilitiesWire.promptCapabilities` — `AcpPromptCapabilities`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptCapabilitiesDto {
+    #[serde(default)]
+    pub image: bool,
+    #[serde(default)]
+    pub audio: bool,
+    #[serde(default)]
+    pub embedded_context: bool,
+}
+
+/// `CapabilitiesWire.sessionCapabilities` — `AcpSessionCapabilities`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCapabilitiesDto {
+    #[serde(default)]
+    pub list: bool,
+    #[serde(default)]
+    pub delete: bool,
+    #[serde(default)]
+    pub fork: bool,
+    #[serde(default)]
+    pub resume: bool,
+    #[serde(default)]
+    pub close: bool,
+    #[serde(default)]
+    pub additional_directories: bool,
+}
+
+/// `GET /api/projects` row — `sepia_meta::Project` on the wire.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDto {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// Hub-side annotation — the node owning this project (multi-node
+    /// hubs only; absent → `None`).
+    #[serde(default)]
+    pub node: Option<String>,
+}
+
+/// `GET /api/node` — the node descriptor (`routes/node.ts` port).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeInfoDto {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub protocol: u32,
+    #[serde(default)]
+    pub agents: Vec<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+/// One row of hub-side node health — `sepia_sync::NodeRow` under the
+/// sync engine, or a synthesized single-row probe from `HttpNodeApi`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeStatusDto {
+    pub id: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub label: String,
+    /// `"up" | "down" | "unknown"`.
+    #[serde(default)]
+    pub status: String,
+    /// RFC 3339 — last successful contact (sync engines only).
+    #[serde(default)]
+    pub last_seen_at: Option<String>,
+}
+
+/// `POST /api/push/subscribe` body — `{endpoint, keys:{auth,p256dh}}`
+/// (`prefs` left at the node's default).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushSubscriptionDto {
+    pub endpoint: String,
+    pub keys: PushKeysDto,
+}
+
+/// The `keys` sub-object of a push subscription.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushKeysDto {
+    pub auth: String,
+    pub p256dh: String,
+}

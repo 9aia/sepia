@@ -280,17 +280,19 @@ pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
     let options = sepia_sync::engine::SyncOptions {
         on_event: Some(Arc::new(
             move |node_id: &str, event: &sepia_sync::client::FeedEvent| {
-                let sepia_sync::client::FeedEvent::Diff { kind, id, patch, .. } = event else {
+                let sepia_sync::client::FeedEvent::Diff {
+                    kind, id, patch, ..
+                } = event
+                else {
                     return;
                 };
                 if kind != "session" {
                     return;
                 }
-                let title = projection_for_hook
-                    .session(node_id, id)
-                    .map_or_else(|_| id.clone(), |opt| {
-                        opt.map_or_else(|| id.clone(), |r| r.title)
-                    });
+                let title = projection_for_hook.session(node_id, id).map_or_else(
+                    |_| id.clone(),
+                    |opt| opt.map_or_else(|| id.clone(), |r| r.title),
+                );
                 let url = format!("/?session={id}");
                 if patch.get("runFinished") == Some(&serde_json::Value::Bool(true)) {
                     push_for_hook.send(

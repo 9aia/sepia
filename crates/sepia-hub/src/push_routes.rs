@@ -41,27 +41,39 @@ pub async fn subscribe(
     let body: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid JSON body"})))
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Invalid JSON body"})),
+            )
                 .into_response();
         }
     };
     if method == axum::http::Method::POST {
         let Some(obj) = body.as_object() else {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid push subscription"})))
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Invalid push subscription"})),
+            )
                 .into_response();
         };
         let (Some(endpoint), Some(keys)) = (
             obj.get("endpoint").and_then(Value::as_str),
             obj.get("keys").and_then(Value::as_object),
         ) else {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid push subscription"})))
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Invalid push subscription"})),
+            )
                 .into_response();
         };
         let (Some(auth), Some(p256dh)) = (
             keys.get("auth").and_then(Value::as_str),
             keys.get("p256dh").and_then(Value::as_str),
         ) else {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid push subscription"})))
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Invalid push subscription"})),
+            )
                 .into_response();
         };
         let prefs = obj

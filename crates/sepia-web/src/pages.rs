@@ -1,7 +1,15 @@
 //! Pages — one file per route.
 
+mod agents;
+mod nodes;
+mod projects;
 mod session_detail;
 mod session_list;
+mod settings;
 
+pub use agents::AgentsPage;
+pub use nodes::NodesPage;
+pub use projects::ProjectsPage;
 pub use session_detail::SessionDetailPage;
-pub use session_list::SessionListPage;
+pub use session_list::{RelativeTime, SessionListPage};
+pub use settings::SettingsPage;

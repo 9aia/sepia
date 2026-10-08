@@ -75,7 +75,8 @@ pub enum NodeStatus {
 }
 
 impl NodeStatus {
-    fn as_str(self) -> &'static str {
+    /// The wire/storage spelling: `"unknown"`, `"up"`, `"down"`.
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Unknown => "unknown",
             Self::Up => "up",

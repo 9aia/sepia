@@ -8,9 +8,15 @@
 // with no `.await` — not ours to fix.
 #![allow(clippy::unused_async_trait_impl)]
 
-use leptos::prelude::*;
+use std::collections::BTreeMap;
 
-use crate::dto::{HistoryPageDto, SessionSummaryDto};
+use leptos::prelude::*;
+use serde_json::Value;
+
+use crate::dto::{
+    AgentDto, HistoryPageDto, NodeInfoDto, NodeStatusDto, ProjectDto, PushSubscriptionDto,
+    SessionSummaryDto,
+};
 
 /// Port to the node's `/api/*` surface — implemented by [`HttpNodeApi`]
 /// in production and by stubs in tests.
@@ -34,6 +40,33 @@ pub trait NodeApi: Send + Sync + 'static {
     async fn prompt(&self, id: &str, agent: Option<&str>, text: &str) -> Result<(), String>;
     /// `POST /api/sessions/{id}/cancel`.
     async fn cancel(&self, id: &str, agent: Option<&str>) -> Result<(), String>;
+    /// `GET /api/agents`.
+    async fn list_agents(&self) -> Result<Vec<AgentDto>, String>;
+    /// `GET /api/projects`.
+    async fn list_projects(&self) -> Result<Vec<ProjectDto>, String>;
+    /// `POST /api/projects` — `{name}`. `node` scopes the create to one
+    /// registered node; `None` = the primary/first.
+    async fn create_project(&self, name: &str, node: Option<&str>) -> Result<ProjectDto, String>;
+    /// `DELETE /api/projects/{id}` — `node` routes to the owning node
+    /// when ids collide across a merged registry.
+    async fn delete_project(&self, id: &str, node: Option<&str>) -> Result<(), String>;
+    /// `GET /api/config` — the public config map (internal keys like
+    /// `vapid`/`pushSubscriptions` are filtered node-side).
+    async fn get_config(&self) -> Result<BTreeMap<String, Value>, String>;
+    /// `PATCH /api/config/{key}` — `{value}` stored verbatim.
+    async fn set_config(&self, key: &str, value: &Value) -> Result<(), String>;
+    /// `GET /api/node` — the node descriptor (the primary node's on a
+    /// multi-node hub).
+    async fn node_info(&self) -> Result<NodeInfoDto, String>;
+    /// Per-node health rows — the sync projection's `nodes` table on a
+    /// hub, a one-row `GET /api/node` probe on a direct connection.
+    async fn node_status(&self) -> Result<Vec<NodeStatusDto>, String>;
+    /// `GET /api/push/vapid` — `{publicKey}`.
+    async fn push_vapid(&self) -> Result<String, String>;
+    /// `POST /api/push/subscribe` — `{endpoint, keys}`.
+    async fn push_subscribe(&self, subscription: &PushSubscriptionDto) -> Result<(), String>;
+    /// `DELETE /api/push/subscribe` — `{endpoint}`.
+    async fn push_unsubscribe(&self, endpoint: &str) -> Result<(), String>;
 }
 
 #[cfg(feature = "ssr")]
@@ -116,6 +149,113 @@ pub async fn cancel_run(session_id: String, agent: Option<String>) -> Result<(),
         .map_err(ServerFnError::new)
 }
 
+/// `GET /api/agents`.
+#[server(prefix = "/hub")]
+pub async fn list_agents() -> Result<Vec<AgentDto>, ServerFnError> {
+    node_api()?.list_agents().await.map_err(ServerFnError::new)
+}
+
+/// `GET /api/projects`.
+#[server(prefix = "/hub")]
+pub async fn list_projects() -> Result<Vec<ProjectDto>, ServerFnError> {
+    node_api()?
+        .list_projects()
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `POST /api/projects` — `{name}`; `node` pins the create to one
+/// registered node on a multi-node hub.
+#[server(prefix = "/hub")]
+pub async fn create_project(
+    name: String,
+    node: Option<String>,
+) -> Result<ProjectDto, ServerFnError> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 100 {
+        return Err(ServerFnError::new(
+            "name must be a non-empty string (max 100)",
+        ));
+    }
+    node_api()?
+        .create_project(name, node.as_deref())
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `DELETE /api/projects/{id}`.
+#[server(prefix = "/hub")]
+pub async fn delete_project(project_id: String, node: Option<String>) -> Result<(), ServerFnError> {
+    if project_id.is_empty() {
+        return Err(ServerFnError::new("project id is required"));
+    }
+    node_api()?
+        .delete_project(&project_id, node.as_deref())
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `GET /api/config` — the node's public config map.
+#[server(prefix = "/hub")]
+pub async fn get_config() -> Result<BTreeMap<String, Value>, ServerFnError> {
+    node_api()?.get_config().await.map_err(ServerFnError::new)
+}
+
+/// `PATCH /api/config/{key}` — `{value}`.
+#[server(prefix = "/hub")]
+pub async fn set_config(key: String, value: Value) -> Result<(), ServerFnError> {
+    if key.trim().is_empty() {
+        return Err(ServerFnError::new("config key is required"));
+    }
+    node_api()?
+        .set_config(&key, &value)
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `GET /api/node` — the primary node's descriptor.
+#[server(prefix = "/hub")]
+pub async fn node_info() -> Result<NodeInfoDto, ServerFnError> {
+    node_api()?.node_info().await.map_err(ServerFnError::new)
+}
+
+/// Per-node health rows — the hub registry + sync engine status.
+#[server(prefix = "/hub")]
+pub async fn node_status() -> Result<Vec<NodeStatusDto>, ServerFnError> {
+    node_api()?.node_status().await.map_err(ServerFnError::new)
+}
+
+/// `GET /api/push/vapid` — the public key push subscriptions are made
+/// against.
+#[server(prefix = "/hub")]
+pub async fn push_vapid_key() -> Result<String, ServerFnError> {
+    node_api()?.push_vapid().await.map_err(ServerFnError::new)
+}
+
+/// `POST /api/push/subscribe` — register a browser push endpoint.
+#[server(prefix = "/hub")]
+pub async fn push_subscribe(subscription: PushSubscriptionDto) -> Result<(), ServerFnError> {
+    if subscription.endpoint.is_empty() {
+        return Err(ServerFnError::new("push endpoint is required"));
+    }
+    node_api()?
+        .push_subscribe(&subscription)
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `DELETE /api/push/subscribe` — drop a browser push endpoint.
+#[server(prefix = "/hub")]
+pub async fn push_unsubscribe(endpoint: String) -> Result<(), ServerFnError> {
+    if endpoint.is_empty() {
+        return Err(ServerFnError::new("push endpoint is required"));
+    }
+    node_api()?
+        .push_unsubscribe(&endpoint)
+        .await
+        .map_err(ServerFnError::new)
+}
+
 /* ---- ssr: HTTP client ------------------------------------------------*/
 
 /// `NodeApi` backed by the node daemon's HTTP API (`ureq` — the same
@@ -161,21 +301,57 @@ impl HttpNodeApi {
         req
     }
 
-    fn post_json(
+    fn send_json(
         &self,
+        method: &str,
         path: &str,
         body: &serde_json::Value,
     ) -> Result<ureq::http::Response<ureq::Body>, String> {
         let url = format!("{}{}", self.base, path);
-        let mut req = self.agent.post(&url);
+        let mut req = match method {
+            "PATCH" => self.agent.patch(&url),
+            "PUT" => self.agent.put(&url),
+            _ => self.agent.post(&url),
+        };
         if let Some(token) = &self.token {
             req = req.header("Authorization", format!("Bearer {token}"));
         }
         req.send_json(body).map_err(|e| e.to_string())
     }
 
+    /// `DELETE` with a JSON body — ureq's `delete` builder is
+    /// body-less, so the request is assembled by hand.
+    fn delete_json(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<ureq::http::Response<ureq::Body>, String> {
+        let url = format!("{}{}", self.base, path);
+        let bytes = serde_json::to_vec(body).map_err(|e| e.to_string())?;
+        let mut builder = ureq::http::Request::builder().method("DELETE").uri(&url);
+        if let Some(token) = &self.token {
+            builder = builder.header("Authorization", format!("Bearer {token}"));
+        }
+        let req = builder
+            .header("Content-Type", "application/json")
+            .body(bytes)
+            .map_err(|e| e.to_string())?;
+        self.agent.run(req).map_err(|e| e.to_string())
+    }
+
     fn get(&self, path: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
         self.request("GET", path).call().map_err(|e| e.to_string())
+    }
+
+    /// The single-node registry row for an unreachable upstream.
+    fn down_row(&self) -> NodeStatusDto {
+        NodeStatusDto {
+            id: "node".into(),
+            url: self.base.clone(),
+            label: self.base.clone(),
+            status: "down".into(),
+            last_seen_at: None,
+        }
     }
 }
 
@@ -308,7 +484,7 @@ impl NodeApi for HttpNodeApi {
         let api = self.clone();
         let body = serde_json::json!({ "text": text });
         tokio::task::spawn_blocking(move || {
-            let res = api.post_json(&path, &body)?;
+            let res = api.send_json("POST", &path, &body)?;
             if res.status().is_success() {
                 Ok(())
             } else {
@@ -323,11 +499,182 @@ impl NodeApi for HttpNodeApi {
         let path = format!("/api/sessions/{id}/cancel{}", id_query(agent));
         let api = self.clone();
         tokio::task::spawn_blocking(move || {
-            let res = api.post_json(&path, &serde_json::json!({}))?;
+            let res = api.send_json("POST", &path, &serde_json::json!({}))?;
             if res.status().is_success() {
                 Ok(())
             } else {
                 Err(error_of(res, "cancel"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn list_agents(&self) -> Result<Vec<AgentDto>, String> {
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            #[derive(serde::Deserialize)]
+            struct AgentsBody {
+                #[serde(default)]
+                agents: Vec<AgentDto>,
+            }
+            read_json::<AgentsBody>(api.get("/api/agents")?, "list agents").map(|b| b.agents)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn list_projects(&self) -> Result<Vec<ProjectDto>, String> {
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            #[derive(serde::Deserialize)]
+            struct ProjectsBody {
+                #[serde(default)]
+                projects: Vec<ProjectDto>,
+            }
+            read_json::<ProjectsBody>(api.get("/api/projects")?, "list projects")
+                .map(|b| b.projects)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn create_project(&self, name: &str, _node: Option<&str>) -> Result<ProjectDto, String> {
+        let api = self.clone();
+        let body = serde_json::json!({ "name": name });
+        tokio::task::spawn_blocking(move || {
+            #[derive(serde::Deserialize)]
+            struct CreatedBody {
+                project: ProjectDto,
+            }
+            let res = api.send_json("POST", "/api/projects", &body)?;
+            read_json::<CreatedBody>(res, "create project").map(|b| b.project)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn delete_project(&self, id: &str, _node: Option<&str>) -> Result<(), String> {
+        let api = self.clone();
+        let path = format!("/api/projects/{}", url_encode(id));
+        tokio::task::spawn_blocking(move || {
+            let res = api
+                .request("DELETE", &path)
+                .call()
+                .map_err(|e| e.to_string())?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "delete project"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn get_config(&self) -> Result<BTreeMap<String, Value>, String> {
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            #[derive(serde::Deserialize)]
+            struct ConfigBody {
+                #[serde(default)]
+                config: BTreeMap<String, Value>,
+            }
+            read_json::<ConfigBody>(api.get("/api/config")?, "get config").map(|b| b.config)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn set_config(&self, key: &str, value: &Value) -> Result<(), String> {
+        let api = self.clone();
+        let path = format!("/api/config/{}", url_encode(key));
+        let body = serde_json::json!({ "value": value });
+        tokio::task::spawn_blocking(move || {
+            let res = api.send_json("PATCH", &path, &body)?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "set config"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn node_info(&self) -> Result<NodeInfoDto, String> {
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            read_json::<NodeInfoDto>(api.get("/api/node")?, "get node")
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn node_status(&self) -> Result<Vec<NodeStatusDto>, String> {
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            // A direct connection sees exactly one node — probe it so a
+            // down node still renders as a `down` row instead of an
+            // erroring page.
+            let row = match api.get("/api/node") {
+                Ok(res) => match read_json::<NodeInfoDto>(res, "get node") {
+                    Ok(info) => NodeStatusDto {
+                        id: info.id,
+                        url: api.base.clone(),
+                        label: info.name,
+                        status: "up".into(),
+                        last_seen_at: None,
+                    },
+                    Err(_) => api.down_row(),
+                },
+                Err(_) => api.down_row(),
+            };
+            Ok(vec![row])
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn push_vapid(&self) -> Result<String, String> {
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            #[derive(serde::Deserialize)]
+            struct VapidBody {
+                #[serde(rename = "publicKey")]
+                public_key: String,
+            }
+            read_json::<VapidBody>(api.get("/api/push/vapid")?, "get vapid key")
+                .map(|b| b.public_key)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn push_subscribe(&self, subscription: &PushSubscriptionDto) -> Result<(), String> {
+        let api = self.clone();
+        let body = serde_json::to_value(subscription).map_err(|e| e.to_string())?;
+        tokio::task::spawn_blocking(move || {
+            let res = api.send_json("POST", "/api/push/subscribe", &body)?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "push subscribe"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn push_unsubscribe(&self, endpoint: &str) -> Result<(), String> {
+        let api = self.clone();
+        let body = serde_json::json!({ "endpoint": endpoint });
+        tokio::task::spawn_blocking(move || {
+            let res = api.delete_json("/api/push/subscribe", &body)?;
+            if res.status().is_success() {
+                Ok(())
+            } else {
+                Err(error_of(res, "push unsubscribe"))
             }
         })
         .await

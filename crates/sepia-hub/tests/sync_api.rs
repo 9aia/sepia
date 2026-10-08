@@ -147,7 +147,9 @@ fn hub_e2e_over_a_real_node() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(sepia_core::storage::SessionRepository::save(&store, &session))
+        .block_on(sepia_core::storage::SessionRepository::save(
+            &store, &session,
+        ))
         .unwrap();
 
     let node_port = 18790u16;
@@ -168,7 +170,10 @@ fn hub_e2e_over_a_real_node() {
     let hub_port = 18791u16;
     let mut hub = std::process::Command::new(sepia_testkit::ensure_driver_bin("sepia-hub"))
         .env("SEPIA_NODE_URL", format!("http://127.0.0.1:{node_port}"))
-        .env("SEPIA_NODES", format!("laptop=http://127.0.0.1:{node_port}"))
+        .env(
+            "SEPIA_NODES",
+            format!("laptop=http://127.0.0.1:{node_port}"),
+        )
         .env("SEPIA_HOME", tmp.path().join("hub-home"))
         .env("SEPIA_HUB_PORT", hub_port.to_string())
         .env("SEPIA_HUB_HOST", "127.0.0.1")
@@ -184,10 +189,7 @@ fn hub_e2e_over_a_real_node() {
         .new_agent();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let body = loop {
-        match client
-            .get(format!("http://127.0.0.1:{hub_port}/"))
-            .call()
-        {
+        match client.get(format!("http://127.0.0.1:{hub_port}/")).call() {
             Ok(mut resp) => {
                 let text = resp.body_mut().read_to_string().unwrap();
                 if text.contains("Capstone session") {

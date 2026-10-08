@@ -1,7 +1,7 @@
 // sepia service worker — deliberately small. Static assets are
 // cache-first; navigations are network-first with a cached index as
 // the offline shell; /api and /hub traffic always hits the network.
-const CACHE = "sepia-v1";
+const CACHE = "sepia-v2";
 const ASSETS = ["/", "/style.css", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -56,5 +56,34 @@ self.addEventListener("fetch", (event) => {
           return res;
         }),
     ),
+  );
+});
+
+// Push notifications — the node sends {title, body, url, tag} JSON
+// payloads (`url` is e.g. `/?session=<id>`); clicking focuses an open
+// window or opens the link.
+self.addEventListener("push", (event) => {
+  const data = event.data ? event.data.json() : {};
+  const options = {
+    body: data.body || "",
+    icon: "/icon.svg",
+    tag: data.tag,
+    data: { url: data.url || "/" },
+  };
+  event.waitUntil(self.registration.showNotification(data.title || "sepia", options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      const existing = clients.find((c) => c.url.startsWith(location.origin));
+      if (existing) {
+        void existing.focus();
+        return existing.navigate(url);
+      }
+      return self.clients.openWindow(url);
+    }),
   );
 });
