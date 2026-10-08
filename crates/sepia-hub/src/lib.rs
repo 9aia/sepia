@@ -12,6 +12,7 @@
 //!   `sw.js`, `icon.svg`, `pkg/` when cargo-leptos has run).
 
 pub mod proxy;
+pub mod sync_api;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -22,18 +23,25 @@ use axum::routing::{any, get};
 use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
 use leptos_axum::{LeptosRoutes, file_and_error_handler_with_context, generate_route_list};
-use sepia_web::api::{HttpNodeApi, NodeApi};
+use sepia_web::api::NodeApi;
 use sepia_web::app::{App, shell};
 
 /// Everything the router needs — the leptos render options plus the
 /// node-API port (`NodeApi` is a trait so tests can stub it) and the
 /// upstream address for the HTTP/SSE bridges.
+/// Session id → `(url, token)` of the owning node.
+pub type SessionRouter = Arc<dyn Fn(&str) -> Option<(String, Option<String>)> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct HubState {
     pub options: LeptosOptions,
     pub node: Arc<dyn NodeApi>,
     pub node_url: Arc<str>,
     pub node_token: Option<Arc<str>>,
+    /// Multi-node routing — resolves a session id to its owning
+    /// node's `(url, token)` for session-scoped proxy calls.
+    /// `None` → everything uses `node_url` (single-node mode).
+    pub session_router: Option<SessionRouter>,
     /// Long-lived streams: no global deadline, but a 30s body-recv
     /// timeout so a half-dead client is detected on the next ping.
     sse_agent: ureq::Agent,
@@ -71,9 +79,25 @@ impl HubState {
             node,
             node_url: node_url.into(),
             node_token,
+            session_router: None,
             sse_agent,
             http_agent,
         }
+    }
+
+    /// Route a session-scoped request: the owning node's url+token when
+    /// a [`session_router`](Self::session_router) resolves, else the
+    /// default upstream.
+    pub(crate) fn session_upstream(&self, id: &str) -> (String, Option<String>) {
+        self.session_router
+            .as_ref()
+            .and_then(|r| r(id))
+            .unwrap_or_else(|| {
+                (
+                    self.node_url.to_string(),
+                    self.node_token.as_ref().map(ToString::to_string),
+                )
+            })
     }
 
     /// Agent configured for open-ended SSE reads.
@@ -198,9 +222,72 @@ pub fn router(state: HubState) -> Router {
         .with_state(state)
 }
 
-/// HubState for a running hub: `HttpNodeApi` over `SEPIA_NODE_URL`.
-pub fn hub_state(config: &HubConfig) -> HubState {
-    let options = LeptosOptions::builder()
+/// HubState for a running hub: the sync engine + [`SyncNodeApi`].
+/// `SEPIA_NODES` (`id=url[:token];…`) wins; `SEPIA_NODE_URL`/`SEPIA_NODE_TOKEN`
+/// is the single-node shorthand. The projection + outbox live under
+/// `$SEPIA_HOME/hub/` so they survive restarts.
+///
+/// # Errors
+/// `String` on a missing/empty node list or a projection/outbox open failure.
+pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
+    let nodes = std::env::var("SEPIA_NODES")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(|raw| sync_api::parse_nodes(&raw))
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            vec![sync_api::HubNode {
+                id: "node".to_string(),
+                url: config.node_url.clone(),
+                token: config.node_token.clone(),
+            }]
+        });
+    let home = std::env::var_os("SEPIA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share/sepia"))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from(".sepia"))
+        .join("hub");
+    std::fs::create_dir_all(&home).map_err(|e| format!("create {}: {e}", home.display()))?;
+    let projection = sepia_sync::ProjectionStore::open(&home.join("projection.db"))
+        .map_err(|e| format!("projection open: {e}"))?;
+    let outbox = sepia_outbox::Outbox::open(&home.join("outbox.db")).map_err(|e| e.to_string())?;
+    let targets = nodes.iter().map(|n| {
+        let node = sepia_sync::NodeRef {
+            id: n.id.clone(),
+            url: n.url.clone(),
+            label: n.id.clone(),
+        };
+        match &n.token {
+            Some(t) => sepia_sync::engine::NodeTarget::with_token(node, t.clone()),
+            None => sepia_sync::engine::NodeTarget::new(node),
+        }
+    });
+    let engine = sepia_sync::SyncEngine::spawn(
+        projection,
+        outbox,
+        targets,
+        sepia_sync::engine::SyncOptions::default(),
+    );
+    let options = leptos_options(config);
+    let Some(upstream) = nodes.first().cloned() else {
+        return Err("no nodes configured".into());
+    };
+    let api = Arc::new(sync_api::SyncNodeApi::new(engine, nodes));
+    let mut state = HubState::new(
+        options,
+        Arc::clone(&api) as Arc<dyn NodeApi>,
+        upstream.url.as_str(),
+        upstream.token.clone().map(Into::into),
+    );
+    let router_api = Arc::clone(&api);
+    state.session_router = Some(Arc::new(move |id| router_api.node_url_for(id, None)));
+    Ok(state)
+}
+
+fn leptos_options(config: &HubConfig) -> LeptosOptions {
+    LeptosOptions::builder()
         // wasm-bindgen names the bundle after the *lib* crate.
         .output_name("sepia_web")
         .site_root(config.site_root.clone())
@@ -210,16 +297,7 @@ pub fn hub_state(config: &HubConfig) -> HubState {
         } else {
             leptos::config::Env::PROD
         })
-        .build();
-    HubState::new(
-        options,
-        Arc::new(HttpNodeApi::new(
-            &config.node_url,
-            config.node_token.clone(),
-        )),
-        config.node_url.as_str(),
-        config.node_token.clone().map(Into::into),
-    )
+        .build()
 }
 
 /// The embedded stylesheet — one source of truth in

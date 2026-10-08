@@ -41,17 +41,20 @@ fn auth_header(state: &HubState, headers: &HeaderMap) -> Option<String> {
 /// `GET /api/events` — the node feed (`event:`-named frames).
 pub async fn sse_events(State(state): State<HubState>, req: Request<Body>) -> Response {
     let path = path_and_query(&req, "/api/events");
-    sse_bridge(&state, &upstream_url(&state, &path), req.headers())
+    sse_bridge(&state, &upstream_url(&state, &path), req.headers(), None)
 }
 
-/// `GET /api/sessions/{id}/stream` — `SessionEvent` frames.
+/// `GET /api/sessions/{id}/stream` — `SessionEvent` frames, routed to
+/// the session's owning node in multi-node setups.
 pub async fn sse_session_stream(
     State(state): State<HubState>,
     Path(id): Path<String>,
     req: Request<Body>,
 ) -> Response {
+    let (base, token) = state.session_upstream(&id);
     let path = path_and_query(&req, &format!("/api/sessions/{id}/stream"));
-    sse_bridge(&state, &upstream_url(&state, &path), req.headers())
+    let url = format!("{base}{path}");
+    sse_bridge(&state, &url, req.headers(), token.as_deref())
 }
 
 fn path_and_query(req: &Request<Body>, path: &str) -> String {
@@ -62,8 +65,15 @@ fn path_and_query(req: &Request<Body>, path: &str) -> String {
 }
 
 /// Open the upstream SSE connection and copy frames to the client.
-fn sse_bridge(state: &HubState, url: &str, headers: &HeaderMap) -> Response {
-    let auth = auth_header(state, headers);
+fn sse_bridge(
+    state: &HubState,
+    url: &str,
+    headers: &HeaderMap,
+    token_override: Option<&str>,
+) -> Response {
+    let auth = token_override
+        .map(|t| format!("Bearer {t}"))
+        .or_else(|| auth_header(state, headers));
     let mut req = state.sse_agent().get(url);
     if let Some(auth) = auth {
         req = req.header(header::AUTHORIZATION.as_str(), auth);

@@ -26,6 +26,9 @@ tracing-subscriber.workspace = true
 ureq.workspace = true
 futures.workspace = true
 async-trait.workspace = true
+sepia-sync.workspace = true
+sepia-outbox.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt"] }

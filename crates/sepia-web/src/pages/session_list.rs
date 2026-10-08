@@ -80,6 +80,7 @@ fn SessionRow(session: SessionSummaryDto) -> impl IntoView {
                 <span class="session-top">
                     <span class="session-title">{title}</span>
                     <span class="badges">
+                        {session.node.clone().map(|n| view! { <span class="badge node">{n}</span> })}
                         {session.busy.then(|| view! { <span class="badge busy">"busy"</span> })}
                         {session.locked.then(|| view! { <span class="badge locked">"locked"</span> })}
                         {session.pinned.then(|| view! { <span class="badge pinned">"pinned"</span> })}

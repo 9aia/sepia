@@ -39,6 +39,10 @@ pub struct SessionSummaryDto {
     pub parent_session_id: Option<String>,
     #[serde(default)]
     pub agent_id: Option<String>,
+    /// Hub-side annotation — the node id that owns this session.
+    /// Not part of the node's wire summary; absent → `None`.
+    #[serde(default)]
+    pub node: Option<String>,
 }
 
 /// `GET /api/sessions/{id}/history` page —

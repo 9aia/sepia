@@ -181,6 +181,10 @@ body {
   color: var(--green);
   border-color: var(--green);
 }
+.badge.node {
+  color: var(--blue);
+  border-color: var(--blue);
+}
 
 /* ---- detail --------------------------------------------------------- */
 

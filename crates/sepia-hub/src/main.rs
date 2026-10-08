@@ -21,7 +21,7 @@ async fn main() -> std::io::Result<()> {
 
     let config = HubConfig::from_env().map_err(std::io::Error::other)?;
     let addr = config.socket_addr().map_err(std::io::Error::other)?;
-    let state = hub_state(&config);
+    let state = hub_state(&config).map_err(std::io::Error::other)?;
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

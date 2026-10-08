@@ -3414,6 +3414,8 @@ dependencies = [
  "leptos_axum",
  "leptos_meta",
  "leptos_router",
+ "sepia-outbox",
+ "sepia-sync",
  "sepia-web",
  "serde",
  "serde_json",
@@ -3423,6 +3425,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "uuid",
 ]
 
 [[package]]
