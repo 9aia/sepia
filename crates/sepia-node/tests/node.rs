@@ -45,13 +45,9 @@ fn node_serves_sessions_over_http() {
         .unwrap();
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    let mut body = String::new();
-    loop {
+    let body = loop {
         match ureq::get(format!("http://127.0.0.1:{port}/api/sessions")).call() {
-            Ok(mut resp) => {
-                body = resp.body_mut().read_to_string().unwrap();
-                break;
-            }
+            Ok(mut resp) => break resp.body_mut().read_to_string().unwrap(),
             Err(_) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
@@ -60,7 +56,7 @@ fn node_serves_sessions_over_http() {
                 panic!("GET /api/sessions never came up: {e}");
             }
         }
-    }
+    };
     let _ = child.kill();
     assert!(body.contains("devin-1"), "body: {body}");
 }
