@@ -1,6 +1,14 @@
 # Sepia → Rust: full rewrite plan
 
-Status: approved direction, pre-implementation.
+Status: in execution on `rust-rewrite`. Landed: workspace +
+lints (0.5), golden fixtures for all four stores (0), driver SDK +
+host + discovery (1), sepia-core IR/ports (2), all four drivers
+with contract+golden suites (2), sepia-acp tolerant client (3),
+control plane (3), sepia-meta + sepia-convert, session.rewind over
+the driver wire, sepia-node serving the API end-to-end, sepia-http
+(full REST+SSE surface), sepia-push. In flight: sepia-cli, sepia-sync,
+sepia-web/hub (Leptos). Pending: hub composition, sync wiring, PWA,
+integration e2e, README story, TS deletion (Phase 6).
 Scope: **everything** — core IR, store adapters, ACP client, control plane,
 server, CLI, UI, release tooling. TypeScript deleted at the end.
 This is simultaneously a **rewrite and a redesign**: keep the phases
