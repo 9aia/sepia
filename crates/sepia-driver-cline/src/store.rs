@@ -473,12 +473,7 @@ impl ClineStore {
     ///
     /// # Errors
     /// `StorageError` on live-owner refusal (without `force`) or I/O.
-    pub async fn install(
-        &self,
-        session: &Session,
-        id: &str,
-        force: bool,
-    ) -> Result<(), StorageError> {
+    pub fn install(&self, session: &Session, id: &str, force: bool) -> Result<(), StorageError> {
         let dir = self.sessions_dir().join(id);
         let messages_path = dir.join(format!("{id}.messages.json"));
 
@@ -491,10 +486,10 @@ impl ClineStore {
                 }
             }
         }
-        self.install_inner(session, id, &dir, &messages_path).await
+        self.install_inner(session, id, &dir, &messages_path)
     }
 
-    async fn install_inner(
+    fn install_inner(
         &self,
         session: &Session,
         id: &str,
@@ -536,7 +531,7 @@ impl SessionRepository for ClineStore {
     /// `db/sessions.db` index row. Refuses to overwrite a session that
     /// still belongs to a live owner.
     async fn save(&self, session: &Session) -> Result<(), StorageError> {
-        self.install(session, &session.id, false).await
+        self.install(session, &session.id, false)
     }
 
     async fn get_by_id(

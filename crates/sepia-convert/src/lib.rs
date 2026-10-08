@@ -328,7 +328,6 @@ pub async fn install_cline(
     let store = sepia_driver_cline::ClineStore::new(data_dir.to_path_buf());
     store
         .install(&session, &id, force)
-        .await
         .map_err(|e| ConversionError {
             message: format!("Install failed: {}", e.message),
             cause: Some(e.message.clone()),
