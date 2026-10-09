@@ -17,10 +17,7 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 #[cfg(feature = "hydrate")]
 use crate::api::list_agents;
-use crate::api::{
-    create_session, delete_session, fs_dirs, list_sessions, pending_writes, pin_session,
-    rename_session,
-};
+use crate::api::{create_session, delete_session, fs_dirs, pin_session, rename_session};
 use crate::app::Now;
 use crate::components::icons::Icon;
 use crate::components::toast::use_toast;
@@ -45,8 +42,9 @@ type MenuTarget = Option<(String, Option<String>, f64, f64)>;
 
 #[component]
 pub fn SessionListPage() -> impl IntoView {
-    let sessions = Resource::new(|| (), |()| list_sessions());
-    let pending = Resource::new(|| (), |()| pending_writes());
+    let client = crate::api::query_client();
+    let sessions = client.resource(crate::api::sessions_scope, || ());
+    let pending = client.resource(crate::api::pending_scope, || ());
     let query = use_query_map();
     // Selected session — `?session=<id>` (+ optional `?agent=`).
     let selected = move || {

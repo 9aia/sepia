@@ -5,7 +5,6 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::api::{node_info, node_status, pending_writes};
 use crate::components::{
     Badge, BadgeVariant, Card, CardContent, CardHeader, CardTitle, PageDescription, PageHead,
     PageTitle, Skeleton,
@@ -15,9 +14,10 @@ use crate::pages::RelativeTime;
 
 #[component]
 pub fn NodesPage() -> impl IntoView {
-    let info = Resource::new(|| (), |()| node_info());
-    let status = Resource::new(|| (), |()| node_status());
-    let pending = Resource::new(|| (), |()| pending_writes());
+    let client = crate::api::query_client();
+    let info = client.resource(crate::api::node_info_scope, || ());
+    let status = client.resource(crate::api::node_status_scope, || ());
+    let pending = client.resource(crate::api::pending_scope, || ());
 
     #[cfg(feature = "hydrate")]
     {

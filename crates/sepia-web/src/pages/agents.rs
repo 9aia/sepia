@@ -4,7 +4,6 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::api::list_agents;
 use crate::components::{
     Badge, BadgeVariant, Card, CardContent, CardHeader, CardTitle, PageDescription, PageHead,
     PageTitle, Skeleton,
@@ -13,7 +12,8 @@ use crate::dto::{AgentCapabilitiesDto, AgentDto};
 
 #[component]
 pub fn AgentsPage() -> impl IntoView {
-    let agents = Resource::new(|| (), |()| list_agents());
+    let client = crate::api::query_client();
+    let agents = client.resource(crate::api::agents_scope, || ());
 
     view! {
         <Title text="agents — sepia"/>

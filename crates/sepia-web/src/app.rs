@@ -98,6 +98,9 @@ pub fn App() -> impl IntoView {
     provide_meta_context();
     provide_toaster();
     crate::theme::provide_theme();
+    // Shared async cache — keyed queries dedupe across components and
+    // survive remounts; mutations invalidate by scope fn.
+    leptos_fetch::QueryClient::new().provide();
     let now = RwSignal::new(crate::time::now_ms());
     provide_context(Now(now));
     #[cfg(feature = "hydrate")]

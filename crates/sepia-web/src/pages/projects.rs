@@ -5,7 +5,7 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::api::{create_project, delete_project, list_projects, list_sessions};
+use crate::api::{create_project, delete_project};
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardHeader,
     CardTitle, Input, PageDescription, PageHead, PageTitle, Skeleton,
@@ -14,8 +14,9 @@ use crate::dto::{ProjectDto, SessionSummaryDto};
 
 #[component]
 pub fn ProjectsPage() -> impl IntoView {
-    let projects = Resource::new(|| (), |()| list_projects());
-    let sessions = Resource::new(|| (), |()| list_sessions());
+    let client = crate::api::query_client();
+    let projects = client.resource(crate::api::projects_scope, || ());
+    let sessions = client.resource(crate::api::sessions_scope, || ());
 
     let draft = RwSignal::new(String::new());
     let busy = RwSignal::new(false);

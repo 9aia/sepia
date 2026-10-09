@@ -8,9 +8,8 @@ use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
 use crate::api::{
-    answer_permission, attach_session, cancel_run, delete_session, detach_session, get_session,
-    list_checkpoints, pending_writes, rename_session, restore_checkpoint, rewind_session,
-    send_prompt, session_history,
+    answer_permission, attach_session, cancel_run, delete_session, detach_session, rename_session,
+    restore_checkpoint, rewind_session, send_prompt, session_history,
 };
 use crate::components::icons::Icon;
 use crate::components::{
@@ -134,17 +133,12 @@ pub fn SessionPanel(
     // `StoredValue` keeps the navigate fn Copy-able into handlers.
     let navigate = StoredValue::new_local(use_navigate());
 
-    let summary = Resource::new(
-        move || (session_id(), agent()),
-        |(id, agent)| async move { get_session(id, agent).await },
-    );
-    let history = Resource::new(
-        move || (session_id(), agent()),
-        |(id, agent)| async move { session_history(id, agent, None, Some(PAGE_SIZE)).await },
-    );
+    let client = crate::api::query_client();
+    let summary = client.resource(crate::api::session_scope, move || (session_id(), agent()));
+    let history = client.resource(crate::api::history_scope, move || (session_id(), agent()));
     // Hub outbox rows — filtered to this session for the queued/failed
     // badges. Not session-scoped server-side; the list is small.
-    let pending = Resource::new(|| (), |()| pending_writes());
+    let pending = client.resource(crate::api::pending_scope, || ());
 
     // Action state lives at page level: a summary refetch re-runs the
     // Suspend subtree, and signals owned inside it would reset.
@@ -158,15 +152,9 @@ pub fn SessionPanel(
     // The right-hand "Details" sheet: rename, checkpoints, danger zone.
     let details_open = RwSignal::new(false);
     let checkpoints_open = Signal::derive(move || details_open.get());
-    let checkpoints = Resource::new(
-        move || (checkpoints_open.get(), session_id(), agent()),
-        |(open, id, agent)| async move {
-            if !open || id.is_empty() {
-                return Ok(Vec::new());
-            }
-            list_checkpoints(id, agent).await
-        },
-    );
+    let checkpoints = client.resource(crate::api::checkpoints_scope, move || {
+        (checkpoints_open.get(), session_id(), agent())
+    });
 
     let do_attach = move |takeover: bool| {
         if acting.get() {
@@ -180,6 +168,7 @@ pub fn SessionPanel(
             match attach_session(id, agent, takeover).await {
                 Ok(res) => {
                     live_override.set(Some(res.attached));
+                    client.invalidate_query(crate::api::sessions_scope, ());
                     summary.refetch();
                 }
                 Err(e) => action_error.set(Some(e.to_string())),
@@ -199,6 +188,7 @@ pub fn SessionPanel(
             match detach_session(id, agent).await {
                 Ok(()) => {
                     live_override.set(Some(false));
+                    client.invalidate_query(crate::api::sessions_scope, ());
                     summary.refetch();
                 }
                 Err(e) => action_error.set(Some(e.to_string())),
@@ -233,6 +223,7 @@ pub fn SessionPanel(
         leptos::task::spawn_local(async move {
             match rename_session(id, agent, title).await {
                 Ok(()) => {
+                    client.invalidate_query(crate::api::sessions_scope, ());
                     summary.refetch();
                 }
                 Err(e) => action_error.set(Some(e.to_string())),
@@ -250,7 +241,10 @@ pub fn SessionPanel(
         let agent = agent();
         leptos::task::spawn_local(async move {
             match delete_session(id, agent).await {
-                Ok(()) => navigate.with_value(|n| n("/", NavigateOptions::default())),
+                Ok(()) => {
+                    client.invalidate_query(crate::api::sessions_scope, ());
+                    navigate.with_value(|n| n("/", NavigateOptions::default()));
+                }
                 Err(e) => {
                     action_error.set(Some(e.to_string()));
                     acting.set(false);
@@ -342,6 +336,8 @@ pub fn SessionPanel(
                 Ok(()) => {
                     draft.set(String::new());
                     live.update(|t| t.push_user(&text));
+                    client.invalidate_query(crate::api::pending_scope, ());
+                    client.invalidate_query(crate::api::sessions_scope, ());
                 }
                 Err(e) => send_error.set(Some(e.to_string())),
             }

@@ -124,6 +124,51 @@ pub trait NodeApi: Send + Sync + 'static {
     async fn push_unsubscribe(&self, endpoint: &str) -> Result<(), String>;
 }
 
+// leptos-fetch query scopes — nameable fns so mutations can call
+// `QueryClient::invalidate_query(scope, &key)` to refresh every
+// component sharing the key (the SSE feed also invalidates these).
+pub async fn sessions_scope((): ()) -> Result<Vec<SessionSummaryDto>, ServerFnError> {
+    list_sessions().await
+}
+pub async fn pending_scope((): ()) -> Result<Vec<PendingWriteDto>, ServerFnError> {
+    pending_writes().await
+}
+pub async fn agents_scope((): ()) -> Result<Vec<AgentDto>, ServerFnError> {
+    list_agents().await
+}
+pub async fn projects_scope((): ()) -> Result<Vec<ProjectDto>, ServerFnError> {
+    list_projects().await
+}
+pub async fn node_info_scope((): ()) -> Result<NodeInfoDto, ServerFnError> {
+    node_info().await
+}
+pub async fn node_status_scope((): ()) -> Result<Vec<NodeStatusDto>, ServerFnError> {
+    node_status().await
+}
+pub async fn session_scope(
+    key: (String, Option<String>),
+) -> Result<SessionSummaryDto, ServerFnError> {
+    get_session(key.0, key.1).await
+}
+pub async fn checkpoints_scope(
+    (open, id, agent): (bool, String, Option<String>),
+) -> Result<Vec<CheckpointDto>, ServerFnError> {
+    if !open || id.is_empty() {
+        return Ok(Vec::new());
+    }
+    list_checkpoints(id, agent).await
+}
+pub async fn history_scope(key: (String, Option<String>)) -> Result<HistoryPageDto, ServerFnError> {
+    // Matches the detail panel's page size.
+    session_history(key.0, key.1, None, Some(100)).await
+}
+
+/// The shared async cache — `QueryClient` provided once in `App`.
+/// Every page reads through it: `client.resource(scope, key)`.
+pub fn query_client() -> leptos_fetch::QueryClient {
+    leptos::prelude::expect_context::<leptos_fetch::QueryClient>()
+}
+
 #[cfg(feature = "ssr")]
 fn node_api() -> Result<std::sync::Arc<dyn NodeApi>, ServerFnError> {
     use_context::<std::sync::Arc<dyn NodeApi>>()

@@ -9,9 +9,7 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 use serde_json::Value;
 
-use crate::api::{
-    get_config, list_agents, node_info, node_status, pending_writes, push_vapid_key, set_config,
-};
+use crate::api::{get_config, push_vapid_key, set_config};
 use crate::app::SHORTCUTS;
 use crate::components::toast::use_toast;
 use crate::components::{
@@ -110,8 +108,9 @@ fn AppearanceSection() -> impl IntoView {
 /// talking to and whether the link is up.
 #[component]
 fn NodeSection() -> impl IntoView {
-    let info = Resource::new(|| (), |()| node_info());
-    let status = Resource::new(|| (), |()| node_status());
+    let client = crate::api::query_client();
+    let info = client.resource(crate::api::node_info_scope, || ());
+    let status = client.resource(crate::api::node_status_scope, || ());
 
     view! {
         <Card>
@@ -218,7 +217,8 @@ fn NodeSection() -> impl IntoView {
 /// (label, id, owning node, capability chips).
 #[component]
 fn AgentsSection() -> impl IntoView {
-    let agents = Resource::new(|| (), |()| list_agents());
+    let client = crate::api::query_client();
+    let agents = client.resource(crate::api::agents_scope, || ());
 
     view! {
         <Card>
@@ -306,7 +306,8 @@ fn AgentRow(agent: AgentDto) -> impl IntoView {
 /// Empty on a direct (non-sync) connection.
 #[component]
 fn OutboxSection() -> impl IntoView {
-    let pending = Resource::new(|| (), |()| pending_writes());
+    let client = crate::api::query_client();
+    let pending = client.resource(crate::api::pending_scope, || ());
 
     view! {
         <Card>
