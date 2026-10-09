@@ -388,9 +388,24 @@ pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
 }
 
 fn leptos_options(config: &HubConfig) -> LeptosOptions {
+    // `xtask site` renames the bundle `sepia_web_<hash>.{js,bg.wasm}`;
+    // discover the stem so SSR emits hashed URLs — a stale cached
+    // bundle can never hydrate against a newer page.
+    let output_name = std::fs::read_dir(std::path::Path::new(&config.site_root).join("pkg"))
+        .ok()
+        .into_iter()
+        .flat_map(std::iter::Iterator::flatten)
+        .filter_map(|f| {
+            let n = f.file_name().to_string_lossy().into_owned();
+            n.strip_suffix(".js")
+                .filter(|stem| stem.starts_with("sepia_web_"))
+                .map(str::to_owned)
+        })
+        .max()
+        .unwrap_or_else(|| "sepia_web".to_string());
     LeptosOptions::builder()
         // wasm-bindgen names the bundle after the *lib* crate.
-        .output_name("sepia_web")
+        .output_name(output_name)
         .site_root(config.site_root.clone())
         .site_pkg_dir("pkg")
         .env(if config.dev {

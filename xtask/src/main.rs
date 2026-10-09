@@ -145,6 +145,40 @@ fn build_site() -> anyhow::Result<()> {
             "target/wasm32-unknown-unknown/release/sepia_web.wasm",
         ],
     )?;
+    // Content-hash the bundle stem (`sepia_web_<hash>`) so a stale
+    // service-worker/browser cache can never hydrate old wasm against
+    // new SSR HTML. The hub discovers the stem by scanning pkg/.
+    let wasm = site.join("pkg/sepia_web_bg.wasm");
+    let hash = {
+        use sha2::Digest;
+        let bytes = std::fs::read(&wasm)?;
+        let digest = sha2::Sha256::digest(&bytes);
+        digest[..4]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let stem = format!("sepia_web_{hash}");
+    let js = site.join("pkg/sepia_web.js");
+    let js_hashed = site.join(format!("pkg/{stem}.js"));
+    let wasm_hashed = site.join(format!("pkg/{stem}_bg.wasm"));
+    // The loader fetches `<stem>_bg.wasm` relative to itself.
+    let js_src =
+        std::fs::read_to_string(&js)?.replace("sepia_web_bg.wasm", &format!("{stem}_bg.wasm"));
+    std::fs::write(&js_hashed, js_src)?;
+    std::fs::rename(&wasm, &wasm_hashed)?;
+    std::fs::remove_file(&js)?;
+    if let Ok(d) = std::fs::read_dir(site.join("pkg")) {
+        for f in d.flatten() {
+            let name = f.file_name().to_string_lossy().into_owned();
+            if name.starts_with("sepia_web")
+                && name != format!("{stem}.js")
+                && name != format!("{stem}_bg.wasm")
+            {
+                let _ = std::fs::remove_file(f.path());
+            }
+        }
+    }
     // PWA assets ship in the crate's public/ dir.
     for file in ["manifest.json", "sw.js", "icon.svg"] {
         let src = format!("crates/sepia-hub/public/{file}");
@@ -159,6 +193,8 @@ fn build_site() -> anyhow::Result<()> {
         })
         .unwrap_or_else(|| std::path::PathBuf::from(".sepia"));
     let dst = home.join("site");
+    // pkg/ is bundle-only — wipe it so stale hashed stems don't pile up.
+    let _ = std::fs::remove_dir_all(dst.join("pkg"));
     std::fs::create_dir_all(&dst)?;
     copy_dir(site, &dst)?;
     println!("site staged to {}", dst.display());
