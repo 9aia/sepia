@@ -10,8 +10,11 @@ use leptos_router::NavigateOptions;
 use leptos_router::components::A;
 use leptos_router::hooks::use_navigate;
 
-use crate::api::{create_session, list_agents, list_sessions, pending_writes};
+#[cfg(feature = "hydrate")]
+use crate::api::list_agents;
+use crate::api::{create_session, list_sessions, pending_writes};
 use crate::app::Now;
+use crate::dto::AgentDto;
 use crate::dto::SessionSummaryDto;
 use crate::time::relative;
 
@@ -157,7 +160,7 @@ fn SessionRow(session: SessionSummaryDto, queued: usize, failed: usize) -> impl 
 fn NewSessionForm(on_created: impl Fn() + 'static + Send + Sync + Copy) -> impl IntoView {
     // Filled post-hydration — a Resource here resolves during SSR
     // differently than hydrate (tachys option-vs-comment mismatch).
-    let agents = RwSignal::new(Vec::new());
+    let agents = RwSignal::new(Vec::<AgentDto>::new());
     #[cfg(feature = "hydrate")]
     wasm_bindgen_futures::spawn_local(async move {
         if let Ok(list) = list_agents().await {
