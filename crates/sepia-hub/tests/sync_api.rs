@@ -124,6 +124,45 @@ async fn prompt_queues_when_the_node_is_down() {
     // The test runtime drop aborts the engine loops.
 }
 
+#[tokio::test]
+async fn pending_writes_reports_queued_and_dead() {
+    let nodes = vec![node("laptop", "http://127.0.0.1:9")];
+    let (engine, projection, outbox) = engine_with(nodes.clone());
+    seed(&projection);
+    let api = SyncNodeApi::new(engine, nodes);
+
+    // One queued write via the API, one forced dead-letter straight
+    // into the outbox (a `turn` op dies on its first failure).
+    api.prompt("s1", None, "hello offline").await.unwrap();
+    let dead = outbox
+        .enqueue(
+            "laptop",
+            "s1",
+            "cancel",
+            sepia_outbox::OpKind::Turn,
+            json!({}),
+            "dead-key",
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        outbox.mark_failed(&dead.id, "node refused").unwrap(),
+        sepia_outbox::Status::Dead
+    );
+
+    let writes = api.pending_writes().await.unwrap();
+    assert_eq!(writes.len(), 2);
+    let queued = writes.iter().find(|w| w.op == "prompt").unwrap();
+    assert_eq!(queued.status, "queued");
+    assert_eq!(queued.node_id, "laptop");
+    assert_eq!(queued.session_id, "s1");
+    assert_eq!(queued.kind, "turn");
+    let failed = writes.iter().find(|w| w.op == "cancel").unwrap();
+    assert_eq!(failed.status, "failed");
+    assert_eq!(failed.last_error.as_deref(), Some("node refused"));
+    // The test runtime drop aborts the engine loops.
+}
+
 /// The whole stack: sepia-node (devin driver + mock agent) serving,
 /// sepia-hub projecting it, GET / SSRs the session title.
 #[test]

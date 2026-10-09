@@ -1,4 +1,4 @@
-//! Port of `apps/sepia/src/service/systemd.ts` — per-user units at
+//! Per-user systemd units at
 //! `~/.config/systemd/user` (the default: no root, `EnvironmentFile` can
 //! use the `%h` specifier) or system units at `/etc/systemd/system`.
 //! `enable --now` starts the service on install and at boot/login;

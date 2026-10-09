@@ -72,6 +72,8 @@ tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 proptest = "1"
 insta = { version = "1", features = ["json", "redactions"] }
+# Browser e2e (sepia-hub tests). Pinned exact: 0.37.6+ shipped <7 days ago.
+thirtyfour = "=0.37.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

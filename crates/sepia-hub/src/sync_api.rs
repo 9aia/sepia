@@ -9,11 +9,12 @@ use std::sync::Arc;
 use std::collections::BTreeMap;
 
 use sepia_sync::client::NodeClient;
-use sepia_sync::{IndexedSession, NodeWrite, OpKind, SyncHandle};
+use sepia_sync::{IndexedSession, NodeWrite, OpKind, OutboxEntry, OutboxStatus, SyncHandle};
 use sepia_web::api::NodeApi;
 use sepia_web::dto::{
     AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryMessageDto, HistoryPageDto,
-    NodeInfoDto, NodeStatusDto, ProjectDto, PushSubscriptionDto, SessionSummaryDto,
+    NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto,
+    SessionSummaryDto,
 };
 use serde_json::Value;
 
@@ -257,6 +258,31 @@ impl SyncNodeApi {
             .await
             .map(|_| ())
             .map_err(|e| e.to_string())
+    }
+}
+
+/// `OutboxEntry` → the UI row — pending and in-flight entries read as
+/// `queued`; dead-letters surface as `failed` with their last error.
+fn pending_dto(e: &OutboxEntry) -> PendingWriteDto {
+    PendingWriteDto {
+        id: e.id.clone(),
+        node_id: e.node_id.clone(),
+        session_id: e.session_id.clone(),
+        op: e.op.clone(),
+        kind: match e.kind {
+            OpKind::Metadata => "metadata",
+            OpKind::Turn => "turn",
+        }
+        .to_string(),
+        status: if e.status == OutboxStatus::Dead {
+            "failed"
+        } else {
+            "queued"
+        }
+        .to_string(),
+        enqueued_at: e.created_at.clone(),
+        attempts: e.attempts,
+        last_error: e.last_error.clone(),
     }
 }
 
@@ -598,6 +624,29 @@ impl NodeApi for SyncNodeApi {
             }
             rows.sort_by(|a, b| a.id.cmp(&b.id));
             Ok(rows)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn pending_writes(&self) -> Result<Vec<PendingWriteDto>, String> {
+        // Pending entries are addressable per node; dead-letters are a
+        // single list. Entries queued for a since-removed node have no
+        // reader — the outbox has no scan-all for `pending`.
+        let outbox = self.engine.outbox();
+        let mut node_ids: Vec<String> = self.nodes.keys().cloned().collect();
+        node_ids.sort_unstable();
+        tokio::task::spawn_blocking(move || -> Result<Vec<PendingWriteDto>, String> {
+            let mut out = Vec::new();
+            for id in &node_ids {
+                for entry in &outbox.pending_for_node(id).map_err(|e| e.to_string())? {
+                    out.push(pending_dto(entry));
+                }
+            }
+            for entry in &outbox.dead_letters().map_err(|e| e.to_string())? {
+                out.push(pending_dto(entry));
+            }
+            Ok(out)
         })
         .await
         .map_err(|e| e.to_string())?

@@ -1,7 +1,6 @@
-//! Port of `apps/sepia/src/api-client.ts` — the HTTP client every
-//! node verb runs through. One-shot JSON requests plus the SSE stream
-//! reader; errors decode the server's `{error, code}` payload into
-//! [`ApiError`] like the TS `toApiError`.
+//! The HTTP client every node verb runs through. One-shot JSON
+//! requests plus the SSE stream reader; errors decode the server's
+//! `{error, code}` payload into [`ApiError`].
 
 use std::io::Read;
 
@@ -39,7 +38,8 @@ pub fn resolve_target(node: &str, token: Option<&str>) -> NodeTarget {
 
 /// A non-OK API response with the server's payload decoded — `status` is
 /// the HTTP code, `code` the ControlError tag (`invalid`, `locked`,
-/// `busy`…) when the body carried one. Mirrors `apps/web/src/lib/api.ts`.
+/// `busy`…) when the body carried one — the same shape the web UI
+/// surfaces.
 #[derive(Debug)]
 pub struct ApiError {
     pub message: String,

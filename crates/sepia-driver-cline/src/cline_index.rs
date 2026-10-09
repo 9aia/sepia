@@ -1,4 +1,4 @@
-//! `ClineIndex.ts` port — the `sessions.db` index row and DDL in one place,
+//! The `sessions.db` index row and DDL in one place,
 //! so the driver writes exactly the shape the Cline CLI itself reads.
 
 use sepia_core::domain::Session;
@@ -172,8 +172,8 @@ pub fn session_row(
 
 /// True for a pid this process can still signal. `/proc/<pid>` standing in
 /// for `process.kill(pid, 0)` — on Linux an existing entry means the
-/// process exists (including one owned by another user, matching the
-/// `EPERM` branch of the TS).
+/// process exists (including one owned by another user — the `EPERM`
+/// case).
 pub fn is_pid_alive(pid: i64) -> bool {
     if pid <= 0 || pid > 9_007_199_254_740_991 {
         return false;

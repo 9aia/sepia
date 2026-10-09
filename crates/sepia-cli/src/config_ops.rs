@@ -1,4 +1,4 @@
-//! Port of `apps/sepia/src/config-commands.ts` — the `sepia config`
+//! The `sepia config`
 //! verbs over *local* agent config stores (skills, rules, commands,
 //! hooks, subagents, MCP servers) via the drivers' config modules and
 //! the config IR. Pure file ops: no running node, no sessions touched.

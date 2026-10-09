@@ -1,4 +1,4 @@
-//! `ClaudeConfig.ts` port — Claude Code config store: `dir` is a
+//! Claude Code config store: `dir` is a
 //! `.claude` directory, `~/.claude` (user scope) or `<repo>/.claude`
 //! (project scope).
 //!
@@ -302,7 +302,7 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
             serde_json::to_string_pretty(&Value::Object(merged)).unwrap_or_default()
         );
         // `write_file_action` already resolves an identical file to
-        // `unchanged` — same shape the TS branch pushed by hand.
+        // `unchanged`.
         actions.push(sdk_fs::write_file_action(&path, &text)?);
     }
 

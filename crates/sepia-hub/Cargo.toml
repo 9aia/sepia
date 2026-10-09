@@ -25,6 +25,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 ureq.workspace = true
 futures.workspace = true
+form_urlencoded = "1"
 async-trait.workspace = true
 sepia-sync.workspace = true
 sepia-outbox.workspace = true
@@ -41,6 +42,7 @@ sepia-core.workspace = true
 sepia-http = { workspace = true }
 ureq = { workspace = true }
 tempfile = { workspace = true }
+thirtyfour.workspace = true
 
 # cargo-leptos wiring — `cargo leptos watch` from the workspace root builds
 # the wasm bundle into `site-root/pkg` and runs this binary with

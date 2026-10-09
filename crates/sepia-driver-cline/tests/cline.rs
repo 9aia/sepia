@@ -1,8 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::pedantic, clippy::too_many_arguments)]
 
-//! `Cline.test.ts` + `ClineExtra.test.ts` ports — import parsing, the
-//! tool-call/result alignment, manifest + transcript writers, and the
-//! transcript-validity checker.
+//! Import parsing, the tool-call/result alignment, manifest +
+//! transcript writers, and the transcript-validity checker.
 
 use std::path::{Path, PathBuf};
 

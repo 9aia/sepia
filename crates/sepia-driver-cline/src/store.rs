@@ -1,13 +1,12 @@
-//! `ClineRepository.ts` port — the `SessionRepository` over Cline's
-//! on-disk session dirs under `<dataDir>/sessions/<id>/`.
+//! The `SessionRepository` over Cline's on-disk session dirs under
+//! `<dataDir>/sessions/<id>/`.
 //!
-//! Reads mirror the TS exactly: `list` summarizes manifests behind a
-//! dir-stamp cache, `get_by_id` parses the full transcript. The write side
-//! is where the driver diverges from the TS repository (which is
-//! read-only): `save` runs the `ClineStore.install` pipeline — manifest +
-//! transcript pair plus the `db/sessions.db` index row — and embeds the
-//! full IR under a `sepia` key in the transcript so a `save` round-trips
-//! faithfully. `delete` removes the session dir and its index row.
+//! `list` summarizes manifests behind a dir-stamp cache; `get_by_id`
+//! parses the full transcript. On the write side `save` runs the
+//! `ClineStore.install` pipeline — manifest + transcript pair plus the
+//! `db/sessions.db` index row — and embeds the full IR under a `sepia`
+//! key in the transcript so a `save` round-trips faithfully. `delete`
+//! removes the session dir and its index row.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
@@ -34,7 +33,7 @@ pub struct ClineStore {
     data_dir: PathBuf,
     /// Read cache — `list` reads and parses every session's manifest on
     /// each call. The directory walk is cheap, so the parsed array is
-    /// keyed on a stamp of it (mirrors the TS mtime/file-listing stamp).
+    /// keyed on an mtime/file-listing stamp of it.
     list_cache: Mutex<Option<(String, Vec<Session>)>>,
 }
 
@@ -63,7 +62,7 @@ fn now_seconds() -> f64 {
 }
 
 /// `new Date(value).getTime()/1000` for the manifest's ISO strings —
-/// anything unparseable is `None`, exactly like `toSeconds` in the TS.
+/// anything unparseable is `None`.
 fn to_seconds(value: &Value) -> Option<f64> {
     value
         .as_str()

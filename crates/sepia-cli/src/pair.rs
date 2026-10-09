@@ -1,4 +1,4 @@
-//! Port of `apps/sepia/src/pair.ts` — the mint half of pairing
+//! The mint half of pairing
 //! (docs/protocol.md "Auth — pairing"): `sepia pair` runs on the node
 //! itself and writes `$SEPIA_HOME/pair-code` — `{code, expiresAt}` —
 //! which the running server consumes on the next `POST /api/pair`. The

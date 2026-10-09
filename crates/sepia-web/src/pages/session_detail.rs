@@ -9,8 +9,8 @@ use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
 use crate::api::{
     answer_permission, attach_session, cancel_run, delete_session, detach_session, get_session,
-    list_checkpoints, rename_session, restore_checkpoint, rewind_session, send_prompt,
-    session_history,
+    list_checkpoints, pending_writes, rename_session, restore_checkpoint, rewind_session,
+    send_prompt, session_history,
 };
 use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
 use crate::live::{LiveKind, LiveTranscript, PendingPermission};
@@ -35,6 +35,9 @@ pub fn SessionDetailPage() -> impl IntoView {
         move || (session_id(), agent()),
         |(id, agent)| async move { session_history(id, agent, None, Some(PAGE_SIZE)).await },
     );
+    // Hub outbox rows — filtered to this session for the queued/failed
+    // badges. Not session-scoped server-side; the list is small.
+    let pending = Resource::new(|| (), |()| pending_writes());
 
     // Action state lives at page level: a summary refetch re-runs the
     // Suspend subtree, and signals owned inside it would reset.
@@ -175,6 +178,8 @@ pub fn SessionDetailPage() -> impl IntoView {
                 live.set(LiveTranscript::default());
             },
         ));
+        // Outbox drain/enqueue emits no feed event — poll slowly.
+        crate::app::every_ms(30_000, move || pending.refetch());
     }
 
     // Auto-scroll the log while new live entries stream in.
@@ -236,7 +241,9 @@ pub fn SessionDetailPage() -> impl IntoView {
                     Suspend::new(async move {
                         // `summary` the Resource stays reachable for
                         // refetch — the awaited value gets a new name.
-                        let (summary_result, page) = (summary.await, history.await);
+                        // A broken outbox read never sinks the page.
+                        let (summary_result, page, pending_result) =
+                            (summary.await, history.await, pending.await);
                         match (summary_result, page) {
                             (Err(e), _) | (_, Err(e)) => {
                                 view! { <p class="error">{e.to_string()}</p> }.into_any()
@@ -246,6 +253,24 @@ pub fn SessionDetailPage() -> impl IntoView {
                                 let busy = session.busy;
                                 let live_flag = session.live;
                                 let title_for_rename = session.title.clone();
+                                // Outbox rows for this session — match
+                                // the owning node too when both name one
+                                // (session ids can collide across nodes).
+                                let mut queued = 0usize;
+                                let mut failed = 0usize;
+                                for w in pending_result.unwrap_or_default() {
+                                    let same_node = match (&session.node, w.node_id.is_empty()) {
+                                        (Some(n), false) => *n == w.node_id,
+                                        _ => true,
+                                    };
+                                    if w.session_id == session.id && same_node {
+                                        if w.status == "failed" {
+                                            failed += 1;
+                                        } else {
+                                            queued += 1;
+                                        }
+                                    }
+                                }
                                 view! {
                                     <header class="detail-head">
                                         <A href="/" attr:class="back">"← sessions"</A>
@@ -261,6 +286,12 @@ pub fn SessionDetailPage() -> impl IntoView {
                                                 .then(|| view! { <span class="badge busy">"busy"</span> })}
                                             {locked
                                                 .then(|| view! { <span class="badge locked">"locked"</span> })}
+                                            {(queued > 0).then(|| {
+                                                view! { <span class="badge queued">"queued"</span> }
+                                            })}
+                                            {(failed > 0).then(|| {
+                                                view! { <span class="badge failed">"failed"</span> }
+                                            })}
                                             {move || {
                                                 live_override
                                                     .get()

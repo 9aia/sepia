@@ -1,6 +1,6 @@
 [package]
 name = "sepia-cli"
-description = "The sepia CLI — local store verbs (list/export/import/install/delete), node ops over /api/*, agent config ops, pairing, and service management (port of apps/sepia)"
+description = "The sepia CLI — local store verbs (list/export/import/install/delete), node ops over /api/*, agent config ops, pairing, and service management"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true

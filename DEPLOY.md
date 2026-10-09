@@ -70,7 +70,15 @@ SEPIA_HUB_PORT=3000 \
 - `SEPIA_NODES` — `id=url[@token];…` for every node the hub follows.
   `SEPIA_NODE_URL` / `SEPIA_NODE_TOKEN` is the single-node shorthand.
 - `SEPIA_HUB_HOST`/`SEPIA_HUB_PORT` (defaults `127.0.0.1:3000`;
-  `SEPIA_PORT` also accepted).
+  `SEPIA_PORT` also accepted). A non-loopback `SEPIA_HUB_HOST`
+  (`0.0.0.0`, `::`, a LAN IP) refuses to boot without `SEPIA_HUB_TOKEN`.
+- `SEPIA_HUB_TOKEN` — browser→hub auth on every non-asset route.
+  Accepted as `Authorization: Bearer`, `?token=`, or the httpOnly
+  `sepia_hub` cookie. Authorize a browser once by opening
+  `http://<hub>/login?token=<token>` (or any page with `?token=` — it
+  plants the cookie); `GET /login` validates then redirects to `/`.
+  Static assets (`/style.css`, `/manifest.json`, `/sw.js`, `/icon.svg`,
+  `/pkg/*`) stay open so the service worker works pre-auth.
 - `SEPIA_HOME` — the hub's `hub/` dir holds `projection.db`,
   `outbox.db`, `push.json`. State survives restarts.
 - `LEPTOS_SITE_ROOT`/`SEPIA_SITE_ROOT`, `LEPTOS_ENV` (`prod`).
@@ -81,9 +89,12 @@ down node land in the outbox and drain per-session-FIFO on reconnect.
 Reads always come from the local projection, so the list stays instant
 and works read-only while nodes are down.
 
-**Auth.** Browser → hub auth is the hub's own token surface; node
-bearer tokens stay server-side (`SEPIA_NODES` `@token` or
-`SEPIA_NODE_TOKEN`) — the browser never stores them.
+**Auth.** Browser → hub auth is the hub's own token surface:
+`SEPIA_HUB_TOKEN` (above) gates everything except static assets — one
+`?token=` visit or `GET /login?token=…` plants an httpOnly cookie and
+the browser stores nothing else. Node bearer tokens stay server-side
+(`SEPIA_NODES` `@token` or `SEPIA_NODE_TOKEN`) — the browser never
+stores them.
 
 ## PWA + push
 

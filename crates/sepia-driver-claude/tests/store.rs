@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::pedantic)]
 
-//! Port of `packages/claude/tests/ClaudeCodeRepository.test.ts` — the
-//! filesystem-scanning repository plus `truncateClaudeTranscript`.
+//! The filesystem-scanning repository plus `truncateClaudeTranscript`.
 
 use std::path::{Path, PathBuf};
 
@@ -35,8 +34,7 @@ fn user_entry(uuid: &str, parent: Value, content: Value, extra: Value) -> Value 
 }
 
 /// Write `files` (relative path → content) under a fresh temp dir; returns
-/// (TempDir, projectsDir equivalent = the root itself, matching the TS
-/// `makeStore` convention where the root plays the projects dir).
+/// (TempDir, projects dir = the root itself).
 fn make_store(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     let root = tempfile::tempdir().unwrap();
     for (rel, content) in files {

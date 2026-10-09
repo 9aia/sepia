@@ -1,4 +1,4 @@
-//! Port of `apps/sepia/src/node-commands.ts` — the node-op verbs; every
+//! The node-op verbs; every
 //! handler here talks to a running sepia node's REST API
 //! (docs/protocol.md). Each takes `--node`/`--token` (defaults:
 //! `SEPIA_NODE_URL` → http://127.0.0.1:8787, `SEPIA_TOKEN` → none).

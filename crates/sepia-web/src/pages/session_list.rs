@@ -2,13 +2,15 @@
 //! client the list refreshes when `/api/events` says a session row
 //! changed, and on a 30s ticker (relative timestamps).
 
+use std::collections::BTreeMap;
+
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::NavigateOptions;
 use leptos_router::components::A;
 use leptos_router::hooks::use_navigate;
 
-use crate::api::{create_session, list_agents, list_sessions};
+use crate::api::{create_session, list_agents, list_sessions, pending_writes};
 use crate::app::Now;
 use crate::dto::SessionSummaryDto;
 use crate::time::relative;
@@ -16,6 +18,7 @@ use crate::time::relative;
 #[component]
 pub fn SessionListPage() -> impl IntoView {
     let sessions = Resource::new(|| (), |()| list_sessions());
+    let pending = Resource::new(|| (), |()| pending_writes());
 
     // Refresh when the node feed reports a session/meta/project change.
     // Closed with the page (EventSource has no Drop impl).
@@ -23,7 +26,12 @@ pub fn SessionListPage() -> impl IntoView {
     {
         // `EventStream` isn't `Send` (wasm closures); `new_local` keeps
         // it in the component's arena and its `Drop` closes the feed.
-        let _feed = StoredValue::new_local(crate::sse::node_feed(move || sessions.refetch()));
+        let _feed = StoredValue::new_local(crate::sse::node_feed(move || {
+            sessions.refetch();
+            pending.refetch();
+        }));
+        // Outbox drain/enqueue emits no feed event — poll slowly.
+        crate::app::every_ms(30_000, move || pending.refetch());
     }
 
     view! {
@@ -38,6 +46,8 @@ pub fn SessionListPage() -> impl IntoView {
             }>
                 {move || {
                     Suspend::new(async move {
+                        // A broken outbox read never sinks the list.
+                        let pending_result = pending.await.unwrap_or_default();
                         match sessions.await {
                             Err(e) => {
                                 view! { <p class="error">{e.to_string()}</p> }.into_any()
@@ -47,11 +57,35 @@ pub fn SessionListPage() -> impl IntoView {
                                     .into_any()
                             }
                             Ok(list) => {
+                                // `(queued, failed)` per session id.
+                                let mut writes: BTreeMap<String, (usize, usize)> =
+                                    BTreeMap::new();
+                                for w in &pending_result {
+                                    let entry =
+                                        writes.entry(w.session_id.clone()).or_default();
+                                    if w.status == "failed" {
+                                        entry.1 += 1;
+                                    } else {
+                                        entry.0 += 1;
+                                    }
+                                }
                                 view! {
                                     <ul class="session-list">
                                         {list
                                             .into_iter()
-                                            .map(|s| view! { <SessionRow session=s/> })
+                                            .map(|s| {
+                                                let (queued, failed) = writes
+                                                    .get(&s.id)
+                                                    .copied()
+                                                    .unwrap_or_default();
+                                                view! {
+                                                    <SessionRow
+                                                        session=s
+                                                        queued=queued
+                                                        failed=failed
+                                                    />
+                                                }
+                                            })
                                             .collect::<Vec<_>>()}
                                     </ul>
                                 }
@@ -66,7 +100,7 @@ pub fn SessionListPage() -> impl IntoView {
 }
 
 #[component]
-fn SessionRow(session: SessionSummaryDto) -> impl IntoView {
+fn SessionRow(session: SessionSummaryDto, queued: usize, failed: usize) -> impl IntoView {
     let title = if session.title.trim().is_empty() {
         "Untitled session".to_string()
     } else {
@@ -86,6 +120,22 @@ fn SessionRow(session: SessionSummaryDto) -> impl IntoView {
                         {session.node.clone().map(|n| view! { <span class="badge node">{n}</span> })}
                         {session.busy.then(|| view! { <span class="badge busy">"busy"</span> })}
                         {session.locked.then(|| view! { <span class="badge locked">"locked"</span> })}
+                        {(queued > 0).then(|| {
+                            let label = if queued > 1 {
+                                format!("queued ×{queued}")
+                            } else {
+                                "queued".to_string()
+                            };
+                            view! { <span class="badge queued">{label}</span> }
+                        })}
+                        {(failed > 0).then(|| {
+                            let label = if failed > 1 {
+                                format!("failed ×{failed}")
+                            } else {
+                                "failed".to_string()
+                            };
+                            view! { <span class="badge failed">{label}</span> }
+                        })}
                         {session.pinned.then(|| view! { <span class="badge pinned">"pinned"</span> })}
                     </span>
                 </span>

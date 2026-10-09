@@ -1,17 +1,28 @@
-//! `/nodes` — the node's identity (`GET /api/node`) plus per-node
-//! health from the hub registry / sync projection.
+//! `/nodes` — the node's identity (`GET /api/node`), per-node health
+//! from the hub registry / sync projection, and the hub's queued
+//! writes (the outbox a down node's prompts/cancels wait in).
 
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::api::{node_info, node_status};
-use crate::dto::NodeStatusDto;
+use crate::api::{node_info, node_status, pending_writes};
+use crate::dto::{NodeStatusDto, PendingWriteDto};
 use crate::pages::RelativeTime;
 
 #[component]
 pub fn NodesPage() -> impl IntoView {
     let info = Resource::new(|| (), |()| node_info());
     let status = Resource::new(|| (), |()| node_status());
+    let pending = Resource::new(|| (), |()| pending_writes());
+
+    #[cfg(feature = "hydrate")]
+    {
+        // Outbox drain/enqueue emits no feed event — poll slowly.
+        crate::app::every_ms(30_000, move || {
+            status.refetch();
+            pending.refetch();
+        });
+    }
 
     view! {
         <Title text="nodes — sepia"/>
@@ -24,7 +35,8 @@ pub fn NodesPage() -> impl IntoView {
             }>
                 {move || {
                     Suspend::new(async move {
-                        let (info, status) = (info.await, status.await);
+                        let (info, status, pending) =
+                            (info.await, status.await, pending.await);
                         let info_view = match info {
                             Err(e) => {
                                 Some(view! { <p class="error">{e.to_string()}</p> }.into_any())
@@ -100,9 +112,37 @@ pub fn NodesPage() -> impl IntoView {
                                     .into_any()
                             }
                         };
+                        let pending_view = match pending {
+                            Err(e) => {
+                                view! { <p class="error">{e.to_string()}</p> }.into_any()
+                            }
+                            Ok(rows) => {
+                                view! {
+                                    <section class="settings-section">
+                                        <h2 class="section-head">"Queued writes"</h2>
+                                        {if rows.is_empty() {
+                                            view! { <p class="empty">"No queued writes."</p> }
+                                                .into_any()
+                                        } else {
+                                            view! {
+                                                <ul class="node-list">
+                                                    {rows
+                                                        .into_iter()
+                                                        .map(|w| view! { <WriteRow write=w/> })
+                                                        .collect::<Vec<_>>()}
+                                                </ul>
+                                            }
+                                                .into_any()
+                                        }}
+                                    </section>
+                                }
+                                    .into_any()
+                            }
+                        };
                         view! {
                             {info_view}
                             {status_view}
+                            {pending_view}
                         }
                     })
                 }}
@@ -128,6 +168,34 @@ fn NodeRow(row: NodeStatusDto) -> impl IntoView {
                 .last_seen_at
                 .clone()
                 .map(|t| view! { <RelativeTime iso=t/> })}
+        </li>
+    }
+}
+
+/// One outbox row — `queued` writes replay when the node returns;
+/// `failed` (dead-lettered) ones carry the error they died on.
+#[component]
+fn WriteRow(write: PendingWriteDto) -> impl IntoView {
+    let failed = write.status == "failed";
+    let class = if failed {
+        "badge failed"
+    } else {
+        "badge queued"
+    };
+    let status = write.status.clone();
+    let attempts = write.attempts;
+    let detail = format!("{} → {}", write.node_id, write.session_id);
+    view! {
+        <li class="node-row">
+            <span class=class>{status}</span>
+            <code class="node-label">{write.op.clone()}</code>
+            <span class="node-url">{detail}</span>
+            {write
+                .last_error
+                .clone()
+                .map(|e| view! { <span class="write-error">{e}</span> })}
+            <span class="node-url">{format!("{attempts} attempt(s)")}</span>
+            <RelativeTime iso=write.enqueued_at.clone()/>
         </li>
     }
 }

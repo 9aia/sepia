@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::pedantic)]
 
-//! Port of `packages/claude/tests/ClaudeCode.test.ts` +
-//! `ClaudeCodeWriter.test.ts` — the JSONL reader/writer behavior spec.
+//! The JSONL reader/writer behavior spec.
 
 use sepia_core::domain::{Block, MessageNode, REDACTED_THINKING, Role, Session, ToolCallStatus};
 use sepia_driver_claude::{

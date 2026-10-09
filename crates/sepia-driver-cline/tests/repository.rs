@@ -1,11 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::pedantic)]
 
-//! `ClineRepository.test.ts` ports — the repository surface over a real
-//! temp data dir, plus the `truncate_session` refusal paths.
-//!
-//! Divergence from the TS repository: `save`/`delete` are writable here
-//! (the driver declares `SessionWrite` and the shared contract requires
-//! them); the TS repository is read-only.
+//! The repository surface over a real temp data dir, plus the
+//! `truncate_session` refusal paths. Unlike the original upstream
+//! adapter, `save`/`delete` are writable (the driver declares
+//! `SessionWrite` and the shared contract requires them).
 
 use std::path::Path;
 

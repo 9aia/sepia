@@ -1,4 +1,4 @@
-//! sepia — the CLI. Port of `apps/sepia`: local store verbs over the
+//! sepia — the CLI. Local store verbs over the
 //! Devin/Cline/Claude/Cursor stores, node ops against a running node's
 //! `/api/*` surface, agent config IR verbs, pairing, `serve` (the node
 //! itself, shared with `sepia-node`), and `service` management

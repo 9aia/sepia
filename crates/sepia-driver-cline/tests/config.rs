@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::pedantic)]
 
-//! `ClineConfig.test.ts` ports — `.clinerules` (file and dir forms),
+//! `.clinerules` (file and dir forms),
 //! `workflows/` commands, and `cline_mcp_settings.json` merging.
 
 use sepia_core::agent_config::{

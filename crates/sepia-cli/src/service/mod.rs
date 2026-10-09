@@ -1,5 +1,4 @@
-//! Port of `apps/sepia/src/service/` + `service-commands.ts` — install
-//! the node as an OS service so it survives reboots and session idles
+//! Install the node as an OS service so it survives reboots and session idles
 //! (systemd user units on Linux, launchd plists on macOS). `install`
 //! writes the unit plus a `~/.config/sepia/env` template (created once,
 //! never overwritten — secrets stay out of the unit), then enables +

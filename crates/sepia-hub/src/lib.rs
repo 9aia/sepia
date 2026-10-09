@@ -11,15 +11,18 @@
 //! - everything else — static files from the site root (`manifest.json`,
 //!   `sw.js`, `icon.svg`, `pkg/` when cargo-leptos has run).
 
+pub mod auth;
 pub mod proxy;
 pub mod push_routes;
 pub mod sync_api;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::FromRef;
+use axum::middleware;
 use axum::routing::{any, get};
 use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
@@ -45,6 +48,9 @@ pub struct HubState {
     pub session_router: Option<SessionRouter>,
     /// Hub-owned push subscription store — `None` → `/api/push/*` 501s.
     pub push: Option<Arc<sepia_push::PushStore>>,
+    /// `SEPIA_HUB_TOKEN` — the browser→hub gate. `None` → every route
+    /// is open (loopback-only deployments).
+    pub hub_token: Option<Arc<str>>,
     /// Long-lived streams: no global deadline, but a 30s body-recv
     /// timeout so a half-dead client is detected on the next ping.
     sse_agent: ureq::Agent,
@@ -84,6 +90,7 @@ impl HubState {
             node_token,
             session_router: None,
             push: None,
+            hub_token: None,
             sse_agent,
             http_agent,
         }
@@ -132,6 +139,10 @@ pub struct HubConfig {
     pub node_url: String,
     /// `SEPIA_NODE_TOKEN` — bearer token forwarded hub → node.
     pub node_token: Option<String>,
+    /// `SEPIA_HUB_TOKEN` — browser→hub auth; required on non-loopback
+    /// binds, honored as bearer header, `?token=` query, or the
+    /// `sepia_hub` cookie.
+    pub hub_token: Option<String>,
     /// `SEPIA_SITE_ROOT`/`LEPTOS_SITE_ROOT` — static assets dir.
     pub site_root: String,
     /// `LEPTOS_ENV`/`SEPIA_HUB_ENV` — `dev` or `prod`.
@@ -145,6 +156,7 @@ impl Default for HubConfig {
             port: 3000,
             node_url: "http://127.0.0.1:8787".into(),
             node_token: None,
+            hub_token: None,
             site_root: default_site_root(),
             dev: true,
         }
@@ -175,30 +187,54 @@ fn default_site_root() -> String {
     concat!(env!("CARGO_MANIFEST_DIR"), "/public").to_string()
 }
 
+/// Loopback binds may serve tokenless; anything else requires
+/// `SEPIA_HUB_TOKEN` (mirrors `sepia_http::env::is_loopback_host`).
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost" || host == "::1" || host == "[::1]" || host.starts_with("127.")
+}
+
 impl HubConfig {
-    /// Parse from env. `Err` on malformed port/address — fail fast.
+    /// Parse from env. `Err` on a malformed port/address or a
+    /// non-loopback bind without `SEPIA_HUB_TOKEN` — fail fast.
     pub fn from_env() -> Result<Self, String> {
+        Self::from_lookup(|k| std::env::var(k).ok())
+    }
+
+    /// Test seam — parse from a key/value map instead of `std::env`.
+    pub fn from_map(vars: &HashMap<String, String>) -> Result<Self, String> {
+        Self::from_lookup(|key| vars.get(key).cloned())
+    }
+
+    /// Shared parser behind [`from_env`](Self::from_env).
+    pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         let mut cfg = Self::default();
-        if let Ok(v) = std::env::var("SEPIA_HUB_HOST") {
+        if let Some(v) = get("SEPIA_HUB_HOST") {
             cfg.host = v;
         }
-        if let Ok(v) = std::env::var("SEPIA_HUB_PORT").or_else(|_| std::env::var("SEPIA_PORT")) {
+        if let Some(v) = get("SEPIA_HUB_PORT").or_else(|| get("SEPIA_PORT")) {
             cfg.port = v.parse::<u16>().map_err(|_| {
                 format!("SEPIA_HUB_PORT/SEPIA_PORT must be a port number, got {v:?}")
             })?;
         }
-        if let Ok(v) = std::env::var("SEPIA_NODE_URL") {
+        if let Some(v) = get("SEPIA_NODE_URL") {
             cfg.node_url = v.trim_end_matches('/').to_string();
         }
-        cfg.node_token = std::env::var("SEPIA_NODE_TOKEN")
-            .ok()
-            .filter(|t| !t.is_empty());
+        cfg.node_token = get("SEPIA_NODE_TOKEN").filter(|t| !t.is_empty());
+        cfg.hub_token = get("SEPIA_HUB_TOKEN").filter(|t| !t.is_empty());
         cfg.dev = !matches!(
-            std::env::var("LEPTOS_ENV")
-                .or_else(|_| std::env::var("SEPIA_HUB_ENV"))
+            get("LEPTOS_ENV")
+                .or_else(|| get("SEPIA_HUB_ENV"))
                 .as_deref(),
-            Ok("prod" | "PROD" | "production")
+            Some("prod" | "PROD" | "production")
         );
+        // The node's bind guard, applied to the browser surface: a
+        // wildcard/LAN bind with no hub token would expose the UI.
+        if !is_loopback_host(&cfg.host) && cfg.hub_token.is_none() {
+            return Err(format!(
+                "sepia-hub refuses to bind {} without SEPIA_HUB_TOKEN. Set SEPIA_HUB_TOKEN or bind a loopback address (SEPIA_HUB_HOST=127.0.0.1).",
+                cfg.host
+            ));
+        }
         Ok(cfg)
     }
 
@@ -224,6 +260,9 @@ pub fn router(state: HubState) -> Router {
     };
     Router::new()
         .route("/style.css", get(serve_css))
+        // Credential bootstrap — validates `?token=`, plants the
+        // `sepia_hub` cookie, redirects to `/`. Pre-auth by definition.
+        .route("/login", get(auth::login))
         // SSE bridges — must be registered before the `/api/*` wildcard.
         .route("/api/events", get(proxy::sse_events))
         .route("/api/sessions/{id}/stream", get(proxy::sse_session_stream))
@@ -236,6 +275,11 @@ pub fn router(state: HubState) -> Router {
         .fallback(file_and_error_handler_with_context::<HubState, _>(
             provide_node,
             shell,
+        ))
+        // Browser gate — a no-op until `hub_token` is set.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_gate,
         ))
         .with_state(state)
 }
@@ -337,6 +381,7 @@ pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
         upstream.token.clone().map(Into::into),
     );
     state.push = Some(push);
+    state.hub_token = config.hub_token.clone().map(Into::into);
     let router_api = Arc::clone(&api);
     state.session_router = Some(Arc::new(move |id| router_api.node_url_for(id, None)));
     Ok(state)

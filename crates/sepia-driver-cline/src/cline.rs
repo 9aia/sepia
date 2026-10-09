@@ -1,4 +1,4 @@
-//! `Cline.ts` port — Cline session-dir parsing → session IR, plus the
+//! Cline session-dir parsing → session IR, plus the
 //! manifest/transcript writers an export needs.
 //!
 //! A Cline session lives in `<dataDir>/sessions/<session-id>/` as a pair:
@@ -65,7 +65,7 @@ fn js_string(value: &Value) -> String {
     }
 }
 
-/// JS truthiness — used where the TS guards on a bare value (`c.text`).
+/// JS truthiness — used for guards on a bare value (`c.text`).
 fn js_truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
@@ -947,7 +947,7 @@ fn now_seconds() -> f64 {
 
 /// Epoch seconds for an ISO-8601 string the way `new Date(x).getTime()/1000`
 /// reads it. Only RFC 3339 input is recognized — anything else returns
-/// `None` where the TS yields `NaN` (serde_json cannot emit NaN, so the
+/// `None` where `Date` would yield `NaN` (serde_json cannot emit NaN, so the
 /// callers substitute "now" instead of propagating an unserializable date).
 pub fn iso_to_seconds(text: &str) -> Option<f64> {
     let parsed =
@@ -993,7 +993,7 @@ fn build_session(
         .unwrap_or("Imported session")
         .to_string();
     // `meta.model ?? "glm-5-2"` then `.replace(...)` — a non-string model
-    // throws in the TS too (the "Failed to build session" path).
+    // fails the build (the "Failed to build session" path).
     let raw_model = match meta.get("model") {
         None | Some(Value::Null) => "glm-5-2".to_string(),
         Some(Value::String(s)) => s.clone(),
@@ -1059,8 +1059,8 @@ fn build_session(
                 first_user_index = i64::try_from(index).unwrap_or(i64::MAX);
                 first_user_text = match c.get("text") {
                     Some(Value::String(s)) => clean_user_text(s),
-                    // A truthy non-string `text` crashes `cleanUserText` in the
-                    // TS — surface the same build failure.
+                    // A truthy non-string `text` can't be cleaned — surface
+                    // the build failure Cline's importer would throw.
                     Some(_) => {
                         return Err("cleanUserText: text.startsWith is not a function".into());
                     }
@@ -1484,7 +1484,7 @@ fn to_cline_tool_result_content(node: &MessageNode, tool_name: &str) -> Value {
 
     // A call whose arguments carry none of these keys has no query to name it by;
     // the output then stands on its own rather than next to an empty label.
-    // (`query.length === 0` in the TS — a non-string payload passes through.)
+    // (A non-string payload passes through.)
     if query.is_null() || query.as_str() == Some("") {
         return json!(node.content);
     }

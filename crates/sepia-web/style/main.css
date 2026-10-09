@@ -198,6 +198,14 @@ body {
   color: var(--blue);
   border-color: var(--blue);
 }
+.badge.queued {
+  color: var(--mauve);
+  border-color: var(--mauve);
+}
+.badge.failed {
+  color: var(--red);
+  border-color: var(--red);
+}
 
 /* ---- detail --------------------------------------------------------- */
 
@@ -764,4 +772,12 @@ select.field {
   flex: none;
   font-size: 0.78rem;
   color: var(--overlay);
+}
+.node-row .write-error {
+  color: var(--red);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -2,8 +2,7 @@
 //!
 //! `--manifest` prints the manifest; with no flags it serves the
 //! driver-wire protocol on stdio. The data dir comes from
-//! `SEPIA_CLINE_DIR` (default `~/.cline/data`), matching the `apps/server`
-//! env contract.
+//! `SEPIA_CLINE_DIR` (default `~/.cline/data`).
 
 use std::path::PathBuf;
 use std::sync::Arc;

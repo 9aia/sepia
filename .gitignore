@@ -2,6 +2,10 @@
 target/
 **/*.rs.bk
 
+# Browser e2e tooling (chromedriver etc.) — redundant with target/ but
+# keeps the dir ignored if the target layout ever changes.
+target/webdriver/
+
 # misc
 *.log
 .history_*.md

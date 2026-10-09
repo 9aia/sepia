@@ -270,6 +270,38 @@ pub struct NodeStatusDto {
     pub last_seen_at: Option<String>,
 }
 
+/// One row of the hub's durable write queue — `sepia_outbox`'s
+/// `pending_for_node` + `dead_letters` flattened for the UI. Only
+/// sync-engine hubs have an outbox; a single-node `HttpNodeApi` returns
+/// `[]`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingWriteDto {
+    pub id: String,
+    /// The node the write is queued for.
+    #[serde(default)]
+    pub node_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    /// Free-form op name (`prompt`, `cancel`, `meta.patch`, …).
+    #[serde(default)]
+    pub op: String,
+    /// `"metadata" | "turn"` — the replay conflict policy.
+    #[serde(default)]
+    pub kind: String,
+    /// `"queued"` (pending/in-flight) or `"failed"` (dead-lettered).
+    #[serde(default)]
+    pub status: String,
+    /// RFC 3339 — when the write was queued.
+    #[serde(default)]
+    pub enqueued_at: String,
+    #[serde(default)]
+    pub attempts: i64,
+    /// The last replay error — what dead-letters failed with.
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
 /// `POST /api/push/subscribe` body — `{endpoint, keys:{auth,p256dh}}`
 /// (`prefs` left at the node's default).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -285,4 +317,35 @@ pub struct PushSubscriptionDto {
 pub struct PushKeysDto {
     pub auth: String,
     pub p256dh: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_write_serializes_with_wire_names() {
+        let dto = PendingWriteDto {
+            id: "w1".into(),
+            node_id: "tower".into(),
+            session_id: "s1".into(),
+            op: "prompt".into(),
+            kind: "turn".into(),
+            status: "failed".into(),
+            enqueued_at: "2026-10-08T06:40:34.123Z".into(),
+            attempts: 5,
+            last_error: Some("node unreachable".into()),
+        };
+        let v = serde_json::to_value(&dto).unwrap_or_default();
+        assert_eq!(v["nodeId"], "tower");
+        assert_eq!(v["sessionId"], "s1");
+        assert_eq!(v["enqueuedAt"], "2026-10-08T06:40:34.123Z");
+        assert_eq!(v["lastError"], "node unreachable");
+        // Tolerant decode — a missing field defaults, extra fields drop.
+        let parsed: PendingWriteDto =
+            serde_json::from_str(r#"{"id":"w2","op":"cancel","extra":1}"#).unwrap_or_default();
+        assert_eq!(parsed.id, "w2");
+        assert_eq!(parsed.status, "");
+        assert_eq!(parsed.attempts, 0);
+    }
 }

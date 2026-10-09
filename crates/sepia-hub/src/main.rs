@@ -3,6 +3,7 @@
 //! (`SEPIA_NODE_URL`).
 //!
 //! Env: `SEPIA_HUB_HOST`/`SEPIA_HUB_PORT` (or `SEPIA_PORT`),
+//! `SEPIA_HUB_TOKEN` (required on non-loopback binds),
 //! `SEPIA_NODE_URL`, `SEPIA_NODE_TOKEN`, `SEPIA_SITE_ROOT`
 //! (or `LEPTOS_SITE_ROOT`), `LEPTOS_ENV`/`SEPIA_HUB_ENV`.
 //! `cargo-leptos` sets the `LEPTOS_*` vars when run via

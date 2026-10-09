@@ -1,4 +1,4 @@
-//! Port of `apps/sepia/src/service/launchd.ts` — one `ai.sepia` job: a
+//! One `ai.sepia` job: a
 //! LaunchAgent under `~/Library/LaunchAgents` for `--user` (the only
 //! sensible default for a dev tool) or a LaunchDaemon under
 //! `/Library/LaunchDaemons` for `--system`. Unlike systemd, launchd has
@@ -193,8 +193,7 @@ struct Proc {
     stderr: String,
 }
 
-/// One launchctl invocation, echoed before it runs (launchd logs go to
-/// stdout — `console.log` in the TS port).
+/// One launchctl invocation, echoed to stdout before it runs.
 fn spawn(argv: &[&str]) -> Proc {
     println!("launchd: $ {}", argv.join(" "));
     let Some((program, args)) = argv.split_first() else {

@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use crate::dto::{
     AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryPageDto, NodeInfoDto,
-    NodeStatusDto, ProjectDto, PushSubscriptionDto, SessionSummaryDto,
+    NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto, SessionSummaryDto,
 };
 
 /// Port to the node's `/api/*` surface — implemented by [`HttpNodeApi`]
@@ -107,6 +107,11 @@ pub trait NodeApi: Send + Sync + 'static {
     /// Per-node health rows — the sync projection's `nodes` table on a
     /// hub, a one-row `GET /api/node` probe on a direct connection.
     async fn node_status(&self) -> Result<Vec<NodeStatusDto>, String>;
+    /// Queued (`"queued"`) and dead-lettered (`"failed"`) writes in the
+    /// hub's durable outbox — the multi-node surface for "the node is
+    /// down, your prompt will replay". Direct connections have no
+    /// outbox and return `[]`.
+    async fn pending_writes(&self) -> Result<Vec<PendingWriteDto>, String>;
     /// `GET /api/push/vapid` — `{publicKey}`.
     async fn push_vapid(&self) -> Result<String, String>;
     /// `POST /api/push/subscribe` — `{endpoint, keys}`.
@@ -436,6 +441,16 @@ pub async fn node_info() -> Result<NodeInfoDto, ServerFnError> {
 #[server(prefix = "/hub")]
 pub async fn node_status() -> Result<Vec<NodeStatusDto>, ServerFnError> {
     node_api()?.node_status().await.map_err(ServerFnError::new)
+}
+
+/// Queued/failed outbox writes across every registered node — `[]` on a
+/// single-node hub, where writes fail inline instead of queueing.
+#[server(prefix = "/hub")]
+pub async fn pending_writes() -> Result<Vec<PendingWriteDto>, ServerFnError> {
+    node_api()?
+        .pending_writes()
+        .await
+        .map_err(ServerFnError::new)
 }
 
 /// `GET /api/push/vapid` — the public key push subscriptions are made
@@ -1014,6 +1029,12 @@ impl NodeApi for HttpNodeApi {
         })
         .await
         .map_err(|e| e.to_string())?
+    }
+
+    async fn pending_writes(&self) -> Result<Vec<PendingWriteDto>, String> {
+        // Single-node mode has no outbox — a write either lands or the
+        // caller sees the error immediately.
+        Ok(Vec::new())
     }
 
     async fn push_vapid(&self) -> Result<String, String> {

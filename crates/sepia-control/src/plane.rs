@@ -1,8 +1,6 @@
 //! `ControlPlane` — live-session ownership, lock probing, attach/takeover,
-//! prompt/cancel/permission, restore/rewind. Port of
-//! `packages/session-control/src/ControlPlane.ts` — the state machine is
-//! identical; Effect's fibers and finalizers map to tokio tasks, mutexes,
-//! and drop.
+//! prompt/cancel/permission, restore/rewind. The state machine runs on
+//! tokio tasks, mutexes, and drop-based cleanup.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

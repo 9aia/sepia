@@ -16,3 +16,19 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo check -p sepia-web --target wasm32-unknown-unknown
+
+  # Real-browser e2e (thirtyfour + chromedriver against the real
+  # node → hub SSR stack). ubuntu-latest ships Chrome preinstalled;
+  # setup-chromedriver puts the matching driver on PATH.
+  browser-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: nanasess/setup-chromedriver@v2
+      # Headless-Chrome timing in CI is unproven — don't gate PRs on it yet.
+      - run: cargo test -p sepia-hub --test browser_e2e -- --ignored
+        continue-on-error: true
+        env:
+          SEPIA_BROWSER_E2E: "1"

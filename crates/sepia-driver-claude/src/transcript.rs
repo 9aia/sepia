@@ -1,5 +1,4 @@
-//! Claude Code JSONL transcript reader/writer — port of
-//! `packages/claude/src/ClaudeCode.ts`.
+//! Claude Code JSONL transcript reader/writer.
 //!
 //! Claude Code keeps one append-only JSONL transcript per session at
 //! `~/.claude/projects/<slug>/<session-uuid>.jsonl`, where `<slug>` is the
@@ -1194,8 +1193,9 @@ fn block_to_claude(block: &Block) -> Option<Value> {
 /// with `sessionId` naming the parent, the layout contract of
 /// `<uuid>/subagents/*.jsonl` files.
 ///
-/// Divergence from the TS writer: `tool_use` items additionally persist the
-/// recorded IR `locations`/`diffs` when present so a save→read round-trip
+/// Sepia extension over the stock writer: `tool_use` items additionally
+/// persist the recorded IR `locations`/`diffs` when present so a
+/// save→read round-trip
 /// keeps revertable file changes even for tool names `toolFileRefs` does not
 /// derive from (`edit`, Cline's `editor`, …). Real transcripts never carry
 /// the fields, so reading is unchanged.

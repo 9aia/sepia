@@ -1,6 +1,6 @@
 //! Tolerant ACP normalization — real agents emit malformed/partial
 //! updates; every field degrades to a default instead of failing the
-//! stream. Port of `packages/acp/src/normalize.ts`.
+//! stream.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

@@ -1,4 +1,4 @@
-//! `ClineConfig.ts` port — Cline workspace config: `dir` is the workspace
+//! Cline workspace config: `dir` is the workspace
 //! root (where a session runs), not `~/.cline/data`: Cline's portable
 //! config lives next to the code.
 //!

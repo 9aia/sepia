@@ -1,6 +1,6 @@
-//! `SessionRepository` over Claude Code's on-disk transcripts — port of
-//! `packages/claude/src/ClaudeCodeRepository.ts`. The store has no manifest,
-//! so `list()` reads each `.jsonl` and summarizes it without building nodes;
+//! `SessionRepository` over Claude Code's on-disk transcripts. The store
+//! has no manifest, so `list()` reads each `.jsonl` and summarizes it
+//! without building nodes;
 //! `get_by_id` parses the full transcript.
 //!
 //! Layout handled: `<projects>/<slug>/<uuid>.jsonl` main sessions plus
@@ -51,8 +51,7 @@ fn exists(path: &Path) -> bool {
     std::fs::metadata(path).is_ok()
 }
 
-/// Directory entry names; an unreadable dir degrades to empty (the
-/// `orElseSucceed([])` convention of the TS adapter).
+/// Directory entry names; an unreadable dir degrades to empty.
 fn read_dir_names(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();

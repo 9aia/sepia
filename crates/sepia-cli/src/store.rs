@@ -1,4 +1,4 @@
-//! Port of `apps/sepia/src/main.ts`'s local-store verbs — `list`,
+//! The local-store verbs — `list`,
 //! `export`, `import`, `install`, `delete` over the four on-disk agent
 //! stores (devin/cline/claude/cursor), plus the `--*-dir` store-selector
 //! resolution rules. No running node involved.

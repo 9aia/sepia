@@ -7,13 +7,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderMap, Request, StatusCode};
 use leptos::config::LeptosOptions;
-use sepia_hub::{HubState, router};
+use sepia_hub::{HubConfig, HubState, router};
 use sepia_web::api::NodeApi;
 use sepia_web::dto::{
     AgentCapabilitiesDto, AgentDto, AttachResultDto, CheckpointDto, CreateResultDto,
-    HistoryPageDto, NodeInfoDto, NodeStatusDto, ProjectDto, PromptCapabilitiesDto,
+    HistoryPageDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PromptCapabilitiesDto,
     PushSubscriptionDto, SessionCapabilitiesDto, SessionSummaryDto,
 };
 use serde_json::{Value, json};
@@ -250,6 +250,33 @@ impl NodeApi for StubNodeApi {
         ])
     }
 
+    async fn pending_writes(&self) -> Result<Vec<PendingWriteDto>, String> {
+        Ok(vec![
+            PendingWriteDto {
+                id: "w1".into(),
+                node_id: "tower".into(),
+                session_id: "s1".into(),
+                op: "prompt".into(),
+                kind: "turn".into(),
+                status: "queued".into(),
+                enqueued_at: "2026-10-08T06:45:00.000Z".into(),
+                attempts: 1,
+                last_error: None,
+            },
+            PendingWriteDto {
+                id: "w2".into(),
+                node_id: "tower".into(),
+                session_id: "s2".into(),
+                op: "meta.patch".into(),
+                kind: "metadata".into(),
+                status: "failed".into(),
+                enqueued_at: "2026-10-08T06:46:00.000Z".into(),
+                attempts: 5,
+                last_error: Some("expired".into()),
+            },
+        ])
+    }
+
     async fn push_vapid(&self) -> Result<String, String> {
         Ok("BJxNdlXStubVapidKeyForTestsOnly_0123456789abcdef".into())
     }
@@ -273,16 +300,43 @@ fn test_state() -> HubState {
     HubState::new(options, Arc::new(StubNodeApi), "http://127.0.0.1:9", None)
 }
 
+/// The hub's own token — unrelated to any node credential.
+const HUB_TOKEN: &str = "test-hub-token";
+
+fn authed_state() -> HubState {
+    let mut state = test_state();
+    state.hub_token = Some(Arc::from(HUB_TOKEN));
+    state
+}
+
 async fn get(app: axum::Router, uri: &str) -> (StatusCode, String) {
+    let ((status, _), body) = request(app, uri, &[]).await;
+    (status, body)
+}
+
+/// Full response — status, headers, body — for auth assertions.
+async fn request(
+    app: axum::Router,
+    uri: &str,
+    headers: &[(&str, &str)],
+) -> ((StatusCode, HeaderMap), String) {
+    let mut builder = Request::builder().uri(uri);
+    for (k, v) in headers {
+        builder = builder.header(*k, *v);
+    }
     let res = app
-        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .oneshot(builder.body(Body::empty()).unwrap())
         .await
         .unwrap();
     let status = res.status();
+    let headers = res.headers().clone();
     let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
         .await
         .unwrap();
-    (status, String::from_utf8_lossy(&bytes).into_owned())
+    (
+        (status, headers),
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
 }
 
 #[tokio::test]
@@ -420,5 +474,222 @@ async fn session_list_ssr_renders_create_form() {
     assert!(
         html.contains("default agent"),
         "agent select should render its fallback option; got:\n{html}"
+    );
+}
+
+// ── browser → hub auth (SEPIA_HUB_TOKEN) ─────────────────────────────
+
+#[tokio::test]
+async fn unauthenticated_request_is_unauthorized() {
+    let app = router(authed_state());
+    let ((status, headers), body) = request(app, "/", &[]).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(headers["www-authenticate"], "Bearer");
+    assert!(
+        body.contains("\"unauthorized\""),
+        "401 body should be the json error; got:\n{body}"
+    );
+    // Non-page routes gate identically.
+    let app = router(authed_state());
+    let (status, _) = get(app, "/sessions/s1").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let app = router(authed_state());
+    let ((status, _), _) = request(app, "/api/events", &[]).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn query_token_authenticates_and_sets_cookie() {
+    let app = router(authed_state());
+    let ((status, headers), html) = request(app, "/?token=test-hub-token", &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Seeded Session Title"));
+    let cookie = headers["set-cookie"].to_str().unwrap();
+    assert!(
+        cookie.starts_with("sepia_hub=test-hub-token"),
+        "query token should plant the cookie; got: {cookie}"
+    );
+    assert!(cookie.contains("HttpOnly"), "cookie must be HttpOnly");
+}
+
+#[tokio::test]
+async fn wrong_token_is_unauthorized() {
+    for headers in [
+        vec![("authorization", "Bearer wrong")],
+        vec![("cookie", "sepia_hub=wrong")],
+        vec![],
+    ] {
+        let app = router(authed_state());
+        let ((status, _), _) = request(app, "/?token=wrong", &headers).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "headers: {headers:?}");
+    }
+}
+
+#[tokio::test]
+async fn bearer_header_and_cookie_authenticate() {
+    let app = router(authed_state());
+    let (status, _) = get_with(app, "/", &[("authorization", "Bearer test-hub-token")]).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let app = router(authed_state());
+    let (status, _) = get_with(app, "/", &[("cookie", "sepia_hub=test-hub-token; other=x")]).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+async fn get_with(app: axum::Router, uri: &str, headers: &[(&str, &str)]) -> (StatusCode, String) {
+    let ((status, _), body) = request(app, uri, headers).await;
+    (status, body)
+}
+
+#[tokio::test]
+async fn static_assets_stay_open() {
+    // The PWA shell + service worker must load before any credential.
+    for path in ["/style.css", "/manifest.json", "/sw.js", "/icon.svg"] {
+        let app = router(authed_state());
+        let (status, _) = get(app, path).await;
+        assert_eq!(status, StatusCode::OK, "{path} should stay open");
+    }
+    // The wasm bundle dir is likewise ungated (404 here — no pkg staged
+    // in the test site root — but never 401).
+    let app = router(authed_state());
+    let (status, _) = get(app, "/pkg/sepia_web.js").await;
+    assert_ne!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn login_validates_then_redirects_with_cookie() {
+    let app = router(authed_state());
+    let ((status, headers), _) = request(app, "/login?token=test-hub-token", &[]).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers["location"], "/");
+    assert!(
+        headers["set-cookie"]
+            .to_str()
+            .unwrap()
+            .contains("sepia_hub=")
+    );
+
+    let app = router(authed_state());
+    let (status, _) = get(app, "/login?token=wrong").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn sse_bridge_accepts_query_token() {
+    // EventSource can't set headers. The stub upstream is unreachable
+    // (127.0.0.1:9), so a passed gate surfaces as 502, never 401.
+    let app = router(authed_state());
+    let (status, _) = get(app, "/api/events?token=test-hub-token").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let app = router(authed_state());
+    let (status, _) = get(app, "/api/sessions/s1/stream?token=test-hub-token").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+}
+
+#[tokio::test]
+async fn hub_fns_require_auth_too() {
+    // Leptos server fns ride the browser cookie same-origin — no creds,
+    // no call.
+    let app = router(authed_state());
+    let ((status, _), _) = request(app, "/hub/list_sessions", &[]).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let app = router(authed_state());
+    let ((status, _), _) = request(
+        app,
+        "/hub/list_sessions",
+        &[("cookie", "sepia_hub=test-hub-token")],
+    )
+    .await;
+    // Past the gate — the body/route itself may still 404/405, but auth
+    // must not be what fails it.
+    assert_ne!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn tokenless_hub_stays_open() {
+    // Loopback-only mode — every surface behaves exactly as before.
+    let app = router(test_state());
+    let (status, html) = get(app, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Seeded Session Title"));
+}
+
+#[test]
+fn hub_config_refuses_non_loopback_without_token() {
+    use std::collections::HashMap;
+    let cfg = |pairs: &[(&str, &str)]| {
+        HubConfig::from_map(
+            &pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect::<HashMap<_, _>>(),
+        )
+    };
+    for host in ["0.0.0.0", "::", "192.168.1.10"] {
+        let err = cfg(&[("SEPIA_HUB_HOST", host)]).unwrap_err();
+        assert!(
+            err.contains("SEPIA_HUB_TOKEN"),
+            "{host} should demand the token: {err}"
+        );
+        assert!(cfg(&[("SEPIA_HUB_HOST", host), ("SEPIA_HUB_TOKEN", "t")]).is_ok());
+    }
+    for host in ["127.0.0.1", "localhost", "::1", "127.0.0.2"] {
+        assert!(
+            cfg(&[("SEPIA_HUB_HOST", host)]).is_ok(),
+            "{host} may serve tokenless"
+        );
+    }
+    // Default bind stays open; the token parses through.
+    let c = cfg(&[("SEPIA_HUB_TOKEN", "secret")]).unwrap();
+    assert_eq!(c.hub_token.as_deref(), Some("secret"));
+    assert_eq!(c.host, "127.0.0.1");
+    // Empty token counts as unset.
+    assert!(cfg(&[("SEPIA_HUB_HOST", "0.0.0.0"), ("SEPIA_HUB_TOKEN", "")]).is_err());
+}
+
+// ── outbox visibility (queued/failed writes) ─────────────────────────
+
+#[tokio::test]
+async fn session_list_ssr_marks_queued_writes() {
+    let app = router(test_state());
+    let (status, html) = get(app, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    // The stub queues a `prompt` for s1 and a dead-lettered
+    // `meta.patch` for s2 — both badges render on their rows.
+    assert!(
+        html.contains("badge queued"),
+        "SSR'd list should carry the queued badge; got:\n{html}"
+    );
+    assert!(
+        html.contains("badge failed"),
+        "SSR'd list should carry the failed badge; got:\n{html}"
+    );
+}
+
+#[tokio::test]
+async fn session_detail_ssr_shows_queued_badge() {
+    let app = router(test_state());
+    let (status, html) = get(app, "/sessions/s1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("badge queued"),
+        "SSR'd detail should carry the queued badge; got:\n{html}"
+    );
+}
+
+#[tokio::test]
+async fn nodes_ssr_lists_queued_writes() {
+    let app = router(test_state());
+    let (status, html) = get(app, "/nodes").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("Queued writes"),
+        "nodes page should have the queued-writes section; got:\n{html}"
+    );
+    // Pending op row + the dead-letter's error text.
+    assert!(html.contains("prompt"), "queued op should list: {html}");
+    assert!(
+        html.contains("expired"),
+        "dead-letter error should render; got:\n{html}"
     );
 }

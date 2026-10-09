@@ -17,25 +17,33 @@ use crate::pages::{
 #[derive(Clone, Copy)]
 pub struct Now(pub RwSignal<f64>);
 
+/// A `setInterval` whose handle clears when the calling owner unmounts
+/// (page-scoped polling). The callback closure itself leaks — intervals
+/// can't carry a destructor — but a dead timer is cheap.
+#[cfg(feature = "hydrate")]
+pub fn every_ms(ms: i32, f: impl FnMut() + 'static) {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let tick = Closure::<dyn FnMut()>::new(f);
+    let Ok(id) = window
+        .set_interval_with_callback_and_timeout_and_arguments_0(tick.as_ref().unchecked_ref(), ms)
+    else {
+        return;
+    };
+    tick.forget();
+    on_cleanup(move || window.clear_interval_with_handle(id));
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
     let now = RwSignal::new(crate::time::now_ms());
     provide_context(Now(now));
     #[cfg(feature = "hydrate")]
-    {
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen::closure::Closure;
-        let tick = Closure::<dyn FnMut()>::new(move || now.set(crate::time::now_ms()));
-        if let Some(window) = web_sys::window() {
-            let _ = window.set_interval_with_callback_and_timeout_and_arguments_0(
-                tick.as_ref().unchecked_ref(),
-                30_000,
-            );
-        }
-        // App-lifetime ticker — leaking the closure keeps it alive.
-        tick.forget();
-    }
+    every_ms(30_000, move || now.set(crate::time::now_ms()));
     view! {
         <Title text="sepia"/>
         <Router>

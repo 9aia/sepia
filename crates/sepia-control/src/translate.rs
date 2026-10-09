@@ -1,7 +1,7 @@
 //! `Translator` — ACP session updates → protocol-v2 `SessionEvent`s.
-//! Port of the AG-UI translator's state machine: mints message ids,
-//! closes open frames on transitions, synthesizes a `ToolCallStart` for
-//! mid-attach updates.
+//! The state machine mints message ids, closes open frames on
+//! transitions, and synthesizes a `ToolCallStart` for mid-attach
+//! updates.
 
 use std::collections::HashSet;
 
