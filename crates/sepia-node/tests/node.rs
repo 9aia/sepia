@@ -3,6 +3,16 @@
 //! End-to-end: the sepia-node binary discovers a real driver on
 //! SEPIA_DRIVER_DIR, merges its store, and serves /api/sessions.
 
+/// An ephemeral port — racy if something binds between probe and
+/// spawn, but far less collision-prone than fixed test ports (a live
+/// node on the default 18787 answers the test's HTTP poll instead).
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .unwrap_or(18787)
+}
+
 #[test]
 fn node_serves_sessions_over_http() {
     let tmp = tempfile::tempdir().unwrap();
@@ -29,7 +39,7 @@ fn node_serves_sessions_over_http() {
         ))
         .unwrap();
 
-    let port = 18787u16;
+    let port = free_port();
     let mut child = std::process::Command::new(sepia_testkit::ensure_driver_bin("sepia-node"))
         .env("SEPIA_DRIVER_DIR", &driver_dir)
         .env("SEPIA_DEVIN_DB", &db)
@@ -109,7 +119,7 @@ fn node_attach_prompt_stream_e2e() {
         ))
         .unwrap();
 
-    let port = 18788u16;
+    let port = free_port();
     let mut child = std::process::Command::new(sepia_testkit::ensure_driver_bin("sepia-node"))
         .env("SEPIA_DRIVER_DIR", &driver_dir)
         .env("SEPIA_DEVIN_DB", &db)

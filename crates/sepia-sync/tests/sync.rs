@@ -413,6 +413,19 @@ async fn node_down_enqueue_then_up_drains_in_order() {
     .await;
 
     // Order + effect: last-writer-wins landed both patches, in order.
+    // Poll — "outbox drained" only means *submitted*; the stub applies
+    // submitted ops asynchronously, so a direct read races the apply
+    // (flakes under load).
+    wait_until(
+        || {
+            stub.meta.of("s1").is_some_and(|m| {
+                m.title.as_deref() == Some("queued rename") && m.pinned == Some(true)
+            })
+        },
+        Duration::from_secs(10),
+        "both meta patches applied in order",
+    )
+    .await;
     let meta = stub.meta.of("s1").unwrap();
     assert_eq!(meta.title.as_deref(), Some("queued rename"));
     assert_eq!(meta.pinned, Some(true));

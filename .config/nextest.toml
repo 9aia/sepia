@@ -1,3 +1,5 @@
 [profile.default]
-slow-timeout = { period = "30s", terminate-after = "120s" }
+# terminate-after counts `period`s (4 × 30s = 120s); it must be an
+# integer — a duration string fails config parsing.
+slow-timeout = { period = "30s", terminate-after = 4 }
 failure-output = "final"
