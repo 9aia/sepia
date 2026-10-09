@@ -98,6 +98,43 @@ pub fn App() -> impl IntoView {
     every_ms(30_000, move || now.set(crate::time::now_ms()));
 
     let sidebar_open = RwSignal::new(false);
+    let help_open = RwSignal::new(false);
+
+    // `?` opens the shortcut cheat-sheet (skipped while typing).
+    #[cfg(feature = "hydrate")]
+    {
+        let _k = leptos_use::use_event_listener(
+            document(),
+            leptos::ev::keydown,
+            move |ev: leptos::ev::KeyboardEvent| {
+                if ev.key() != "?" || ev.ctrl_key() || ev.meta_key() || ev.alt_key() {
+                    return;
+                }
+                let typing = ev
+                    .target()
+                    .and_then(|t| {
+                        wasm_bindgen::JsCast::dyn_ref::<web_sys::HtmlElement>(&t).map(|el| {
+                            matches!(el.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT")
+                                || el.is_content_editable()
+                        })
+                    })
+                    .unwrap_or(false);
+                if !typing {
+                    ev.prevent_default();
+                    help_open.update(|o| *o = !*o);
+                }
+            },
+        );
+        let _esc = leptos_use::use_event_listener(
+            document(),
+            leptos::ev::keydown,
+            move |ev: leptos::ev::KeyboardEvent| {
+                if ev.key() == "Escape" {
+                    help_open.set(false);
+                }
+            },
+        );
+    }
 
     view! {
         <Title text="sepia"/>
@@ -165,8 +202,66 @@ pub fn App() -> impl IntoView {
                     </SheetBody>
                 </Sheet>
                 <Toaster/>
+                <ShortcutsHelp open=help_open/>
             </div>
         </Router>
+    }
+}
+
+/// `?` — the shortcut cheat-sheet. Always rendered, visibility via
+/// class (SSR and hydrate agree on a closed dialog).
+#[component]
+fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
+    let rows: &[(&str, &str)] = &[
+        ("n", "focus the new-session field"),
+        ("⌘K", "focus the session filter"),
+        ("Esc", "clear filter / close session"),
+        ("⌘B", "toggle the session list"),
+        ("↑ / ↓", "cycle sessions"),
+        ("?", "this sheet"),
+    ];
+    view! {
+        <div
+            class=move || {
+                if open.get() {
+                    "fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 opacity-100 transition-opacity"
+                } else {
+                    "fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 opacity-0 pointer-events-none transition-opacity"
+                }
+            }
+            on:click=move |_| open.set(false)
+        >
+            <div
+                class="w-full max-w-sm rounded-xl border bg-popover p-5 shadow-xl"
+                on:click=move |ev| ev.stop_propagation()
+            >
+                <div class="flex items-center justify-between">
+                    <h3 class="text-sm font-semibold">"Keyboard shortcuts"</h3>
+                    <button
+                        type="button"
+                        class="text-xs text-muted-foreground hover:text-foreground"
+                        on:click=move |_| open.set(false)
+                    >
+                        "✕"
+                    </button>
+                </div>
+                <dl class="mt-3 space-y-1.5">
+                    {rows
+                        .iter()
+                        .map(|(k, d)| {
+                            view! {
+                                <div class="flex items-center gap-3">
+                                    <kbd class="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+                                        {*k}
+                                    </kbd>
+                                    <dd class="text-xs text-muted-foreground">{*d}</dd>
+                                </div>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                </dl>
+            </div>
+        </div>
     }
 }
 
