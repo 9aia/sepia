@@ -218,13 +218,7 @@ fn render_block(block: MdBlock) -> impl IntoView {
         MdBlock::Paragraph(spans) => {
             view! { <p>{spans.into_iter().map(render_inline).collect::<Vec<_>>()}</p> }.into_any()
         }
-        MdBlock::Code { lang, code } => view! {
-            <pre class="relative overflow-x-auto rounded-md border bg-secondary/60 p-3 font-mono text-xs leading-relaxed">
-                {lang.map(|l| view! { <span class="absolute right-2 top-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">{l}</span> })}
-                <code>{code}</code>
-            </pre>
-        }
-        .into_any(),
+        MdBlock::Code { lang, code } => view! { <CodeBlock lang=lang code=code/> }.into_any(),
         MdBlock::List { ordered, items } => {
             let items = items
                 .into_iter()
@@ -238,6 +232,54 @@ fn render_block(block: MdBlock) -> impl IntoView {
                 view! { <ul>{items}</ul> }.into_any()
             }
         }
+    }
+}
+
+/// Clipboard write — browser-only. The ssr stub keeps the `on:click`
+/// handler compiling; it emits no markup, so SSR/hydrate agree.
+#[cfg(feature = "hydrate")]
+fn copy_to_clipboard(text: &str) {
+    let _ = window().navigator().clipboard().write_text(text);
+}
+
+#[cfg(not(feature = "hydrate"))]
+fn copy_to_clipboard(_: &str) {}
+
+/// Fenced code block — a header strip carries the copy affordance and
+/// the right-aligned language badge; the `<pre>` sits below it.
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+#[component]
+fn CodeBlock(#[prop(into)] lang: Option<String>, #[prop(into)] code: String) -> impl IntoView {
+    let copied = RwSignal::new(false);
+    // `use_timeout_fn` is SSR-safe — its callback never fires server-side.
+    let reset = leptos_use::use_timeout_fn(move |()| copied.set(false), 1_500.0).start;
+    let on_copy = {
+        let code = code.clone();
+        move |_| {
+            copy_to_clipboard(&code);
+            copied.set(true);
+            reset(());
+        }
+    };
+    view! {
+        <div class="overflow-hidden rounded-md border bg-secondary/60">
+            <div class="flex items-center justify-end gap-2 border-b border-border/60 px-3 py-1">
+                {lang.map(|l| view! {
+                    <span class="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {l}
+                    </span>
+                })}
+                <button
+                    type="button"
+                    aria-label="Copy code"
+                    class="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    on:click=on_copy
+                >
+                    {move || if copied.get() { "copied" } else { "copy" }}
+                </button>
+            </div>
+            <pre class="overflow-x-auto p-3 font-mono text-xs leading-relaxed"><code>{code}</code></pre>
+        </div>
     }
 }
 

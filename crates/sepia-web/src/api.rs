@@ -305,6 +305,26 @@ pub async fn rename_session(
         .map_err(ServerFnError::new)
 }
 
+/// `PATCH /api/sessions/{id}` — `{pinned}` on the meta overlay.
+#[server(prefix = "/hub")]
+pub async fn pin_session(
+    session_id: String,
+    agent: Option<String>,
+    pinned: bool,
+) -> Result<(), ServerFnError> {
+    if session_id.is_empty() {
+        return Err(ServerFnError::new("session id is required"));
+    }
+    node_api()?
+        .patch_meta(
+            &session_id,
+            agent.as_deref(),
+            &serde_json::json!({ "pinned": pinned }),
+        )
+        .await
+        .map_err(ServerFnError::new)
+}
+
 /// `DELETE /api/sessions/{id}`.
 #[server(prefix = "/hub")]
 pub async fn delete_session(

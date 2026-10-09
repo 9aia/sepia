@@ -17,13 +17,30 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 #[cfg(feature = "hydrate")]
 use crate::api::list_agents;
-use crate::api::{create_session, list_sessions, pending_writes};
+use crate::api::{
+    create_session, delete_session, list_sessions, pending_writes, pin_session, rename_session,
+};
 use crate::app::Now;
-use crate::components::{Badge, BadgeVariant, Button, EmptyState, Input, SELECT_CLASS, Skeleton};
+use crate::components::icons::Icon;
+use crate::components::toast::use_toast;
+use crate::components::{
+    Badge, BadgeVariant, Button, ConfirmDialog, EmptyState, Input, SELECT_CLASS, Skeleton,
+};
 use crate::dto::AgentDto;
 use crate::dto::SessionSummaryDto;
 use crate::pages::SessionPanel;
 use crate::time::relative;
+
+/// Context-menu item styling — same look as `MenuItem`, minus the
+/// `<details>` close hook (the row menu isn't a `<details>`).
+const MENU_ITEM_CLS: &str =
+    "flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent cursor-pointer";
+const MENU_ITEM_DESTRUCTIVE_CLS: &str = "flex w-full items-center rounded-sm px-2 py-1.5 text-sm \
+                                        text-destructive hover:bg-destructive/10 cursor-pointer";
+
+/// Context-menu state — `(session id, agent, clientX, clientY)`.
+/// `None` while the menu is closed.
+type MenuTarget = Option<(String, Option<String>, f64, f64)>;
 
 #[component]
 pub fn SessionListPage() -> impl IntoView {
@@ -65,6 +82,44 @@ pub fn SessionListPage() -> impl IntoView {
     // `n` focuses the new-session cwd input; `⌘K`/`Escape` the filter.
     let cwd_input_ref = NodeRef::<leptos::html::Input>::new();
     let filter_input_ref = NodeRef::<leptos::html::Input>::new();
+    // Row context menu — one instance repositioned to the pointer:
+    // `(session id, agent, clientX, clientY)`, `None` when closed.
+    let menu_for: RwSignal<MenuTarget> = RwSignal::new(None);
+    let menu_ref = NodeRef::<leptos::html::Div>::new();
+    // Inline rename — the id whose row title is swapped for an input.
+    let renaming: RwSignal<Option<String>> = RwSignal::new(None);
+    let rename_draft = RwSignal::new(String::new());
+    // Delete flow — the dialog reads `pending_delete`; see the flag +
+    // Effect dance below (`ConfirmDialog::on_confirm` must be `Send`,
+    // `use_navigate` isn't).
+    let confirm_delete = RwSignal::new(false);
+    let delete_confirmed = RwSignal::new(false);
+    let pending_delete: RwSignal<Option<(String, Option<String>)>> = RwSignal::new(None);
+    let navigate = StoredValue::new_local(use_navigate());
+    let toast = use_toast();
+
+    // Runs inside the component owner, so `!Send` captures are fine.
+    let do_delete = move || {
+        let Some((id, agent)) = pending_delete.get_untracked() else {
+            return;
+        };
+        pending_delete.set(None);
+        leptos::task::spawn_local(async move {
+            match delete_session(id, agent).await {
+                Ok(()) => {
+                    sessions.refetch();
+                    navigate.with_value(|n| n("/", NavigateOptions::default()));
+                }
+                Err(e) => toast.error(e.to_string()),
+            }
+        });
+    };
+    Effect::new(move |_| {
+        if delete_confirmed.get() {
+            delete_confirmed.set(false);
+            do_delete();
+        }
+    });
 
     // Ordered `(id, agent)` of the rows currently on screen —
     // filtered, sorted, grouped, and with collapsed sections skipped —
@@ -98,6 +153,10 @@ pub fn SessionListPage() -> impl IntoView {
             pending.refetch();
         }));
         crate::app::every_ms(30_000, move || pending.refetch());
+        // Clicking anywhere outside the menu closes it (the right-click
+        // that opens it precedes `contextmenu`, not a `click`, so it
+        // can't immediately re-close).
+        let _outside = leptos_use::on_click_outside(menu_ref, move |_| menu_for.set(None));
     }
 
     // Persist collapsed groups in localStorage. The Effect's first run
@@ -141,8 +200,14 @@ pub fn SessionListPage() -> impl IntoView {
                     ev.prevent_default();
                     list_collapsed.update(|v| *v = !*v);
                 } else if key == "Escape" {
-                    // Escape — clear + blur the filter when focused,
-                    // otherwise drop the `?session=` selection.
+                    // Escape — close the row menu first, then clear +
+                    // blur the filter when focused, otherwise drop the
+                    // `?session=` selection. (The inline rename input
+                    // stops propagation on its own Escape.)
+                    if menu_for.get_untracked().is_some() {
+                        menu_for.set(None);
+                        return;
+                    }
                     let filter_active = filter_input_ref
                         .get()
                         .zip(leptos::prelude::document().active_element())
@@ -414,6 +479,12 @@ pub fn SessionListPage() -> impl IntoView {
                                                                         queued=queued
                                                                         failed=failed
                                                                         selected=is_selected
+                                                                        menu=menu_for
+                                                                        renaming=renaming
+                                                                        rename_draft=rename_draft
+                                                                        on_changed=move || {
+                                                                            sessions.refetch();
+                                                                        }
                                                                     />
                                                                 }
                                                             })
@@ -543,16 +614,176 @@ pub fn SessionListPage() -> impl IntoView {
                 }
                 .into_any()
             }
+            // Row context menu — a single fixed-position instance moved
+            // to the pointer on `contextmenu`. Always rendered (`hidden`
+            // while closed) so SSR and hydrate emit identical DOM;
+            // closes on outside click and Escape.
+            {
+                view! {
+            <div
+                node_ref=menu_ref
+                role="menu"
+                class=move || {
+                    if menu_for.read().is_some() {
+                        "fixed z-50 w-44 rounded-md border bg-popover p-1 shadow-lg"
+                    } else {
+                        "hidden"
+                    }
+                }
+                style=move || {
+                    menu_for.get().map_or_else(String::new, |(_, _, x, y)| {
+                        // CSS `min()` keeps the menu inside the viewport.
+                        format!(
+                            "left:min({x}px, calc(100vw - 12rem)); top:min({y}px, calc(100vh - 14rem))"
+                        )
+                    })
+                }
+            >
+                {move || {
+                    menu_for.get().map(|(id, agent, _x, _y)| {
+                        let open_href = match &agent {
+                            Some(a) => format!("/?session={id}&agent={a}"),
+                            None => format!("/?session={id}"),
+                        };
+                        let detail_href = match &agent {
+                            Some(a) => format!("/sessions/{id}?agent={a}"),
+                            None => format!("/sessions/{id}"),
+                        };
+                        let pinned_now = all_sessions
+                            .read()
+                            .iter()
+                            .find(|s| s.id == id)
+                            .is_some_and(|s| s.pinned);
+                        view! {
+                            <button
+                                type="button"
+                                role="menuitem"
+                                class=MENU_ITEM_CLS
+                                on:click={
+                                    let href = open_href.clone();
+                                    move |_| {
+                                        menu_for.set(None);
+                                        navigate.with_value(|n| {
+                                            n(&href, NavigateOptions::default());
+                                        });
+                                    }
+                                }
+                            >
+                                "Open"
+                            </button>
+                            <button
+                                type="button"
+                                role="menuitem"
+                                class=MENU_ITEM_CLS
+                                on:click={
+                                    let id = id.clone();
+                                    move |_| {
+                                        menu_for.set(None);
+                                        let draft = all_sessions
+                                            .read()
+                                            .iter()
+                                            .find(|s| s.id == id)
+                                            .map_or_else(String::new, |s| s.title.clone());
+                                        rename_draft.set(draft);
+                                        renaming.set(Some(id.clone()));
+                                    }
+                                }
+                            >
+                                "Rename…"
+                            </button>
+                            <button
+                                type="button"
+                                role="menuitem"
+                                class=MENU_ITEM_CLS
+                                on:click={
+                                    let id = id.clone();
+                                    let agent = agent.clone();
+                                    move |_| {
+                                        menu_for.set(None);
+                                        let id = id.clone();
+                                        let agent = agent.clone();
+                                        leptos::task::spawn_local(async move {
+                                            match pin_session(id, agent, !pinned_now).await {
+                                                Ok(()) => sessions.refetch(),
+                                                Err(e) => toast.error(e.to_string()),
+                                            }
+                                        });
+                                    }
+                                }
+                            >
+                                {if pinned_now { "Unpin" } else { "Pin" }}
+                            </button>
+                            <button
+                                type="button"
+                                role="menuitem"
+                                class=MENU_ITEM_DESTRUCTIVE_CLS
+                                on:click={
+                                    let id = id.clone();
+                                    let agent = agent.clone();
+                                    move |_| {
+                                        menu_for.set(None);
+                                        pending_delete.set(Some((id.clone(), agent.clone())));
+                                        confirm_delete.set(true);
+                                    }
+                                }
+                            >
+                                "Delete…"
+                            </button>
+                            <button
+                                type="button"
+                                role="menuitem"
+                                class=MENU_ITEM_CLS
+                                on:click={
+                                    let href = detail_href.clone();
+                                    move |_| {
+                                        menu_for.set(None);
+                                        navigate.with_value(|n| {
+                                            n(&href, NavigateOptions::default());
+                                        });
+                                    }
+                                }
+                            >
+                                "Details"
+                            </button>
+                        }
+                    })
+                }}
+            </div>
+                }
+                .into_any()
+            }
+            {
+                view! {
+            <ConfirmDialog
+                open=confirm_delete
+                title="Delete this session?"
+                body="This permanently deletes the session and its history from the store."
+                confirm_label="Delete"
+                destructive=true
+                on_confirm=move || delete_confirmed.set(true)
+            />
+                }
+                .into_any()
+            }
         </div>
     }
 }
 
 #[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
 fn SessionRow(
     session: SessionSummaryDto,
     queued: usize,
     failed: usize,
     selected: Signal<bool>,
+    /// Page-level menu state — the row writes `(id, agent, x, y)` on
+    /// `contextmenu` and the single menu instance renders against it.
+    menu: RwSignal<MenuTarget>,
+    /// Page-level: the id whose title is swapped for a rename input.
+    renaming: RwSignal<Option<String>>,
+    rename_draft: RwSignal<String>,
+    /// Runs after a mutation lands — `sessions.refetch()`.
+    on_changed: impl Fn() + Send + Sync + Copy + 'static,
 ) -> impl IntoView {
     let title = if session.title.trim().is_empty() {
         "Untitled session".to_string()
@@ -571,15 +802,112 @@ fn SessionRow(
             "block rounded-md p-2.5 transition-colors hover:bg-accent/60"
         }
     };
+    let row_id = session.id.clone();
+    let menu_id = session.id.clone();
+    let menu_agent = non_empty(&session.agent);
+    let orig_title = session.title.clone();
+    let commit_id = session.id.clone();
+    let commit_agent = menu_agent.clone();
+    let rename_ref = NodeRef::<leptos::html::Input>::new();
+    let toast = use_toast();
+
+    // Focus + select the inline rename input once it mounts.
+    #[cfg(feature = "hydrate")]
+    {
+        let focus_id = session.id.clone();
+        Effect::new(move |_| {
+            if renaming.get().as_deref() == Some(focus_id.as_str())
+                && let Some(el) = rename_ref.get()
+            {
+                let _ = el.focus();
+                el.select();
+            }
+        });
+    }
+
     view! {
-        <li>
+        <li on:contextmenu=move |ev| {
+            ev.prevent_default();
+            menu.set(Some((
+                menu_id.clone(),
+                menu_agent.clone(),
+                f64::from(ev.client_x()),
+                f64::from(ev.client_y()),
+            )));
+        }>
             <A
                 href=href
                 attr:class=row_cls
                 attr:aria-current=move || selected.get().then_some("true")
             >
                 <span class="flex items-center justify-between gap-2">
-                    <span class="min-w-0 truncate text-sm font-medium">{title}</span>
+                    {move || {
+                        if renaming.get().as_deref() == Some(row_id.as_str()) {
+                            // Per-render clones for the `move` handlers
+                            // below — capturing the outer `String`s
+                            // directly would make this closure `FnOnce`.
+                            let orig = orig_title.clone();
+                            let cid = commit_id.clone();
+                            let cagent = commit_agent.clone();
+                            view! {
+                                // `prevent_default` on click keeps the
+                                // anchor from navigating while editing;
+                                // keydown stops propagation so the page
+                                // hotkeys (Escape/n/arrows) stay out.
+                                <input
+                                    node_ref=rename_ref
+                                    type="text"
+                                    maxlength="200"
+                                    class="h-6 w-full min-w-0 rounded-sm border border-input bg-transparent px-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring"
+                                    prop:value=move || rename_draft.get()
+                                    on:input=move |ev| {
+                                        rename_draft.set(event_target_value(&ev));
+                                    }
+                                    on:click=move |ev| ev.prevent_default()
+                                    on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                                        match ev.key().as_str() {
+                                            "Enter" => {
+                                                ev.prevent_default();
+                                                ev.stop_propagation();
+                                                renaming.set(None);
+                                                let new_title =
+                                                    rename_draft.get_untracked().trim().to_string();
+                                                if new_title.is_empty()
+                                                    || new_title == orig.trim()
+                                                {
+                                                    return;
+                                                }
+                                                let id = cid.clone();
+                                                let agent = cagent.clone();
+                                                leptos::task::spawn_local(async move {
+                                                    match rename_session(id, agent, new_title)
+                                                        .await
+                                                    {
+                                                        Ok(()) => on_changed(),
+                                                        Err(e) => toast.error(e.to_string()),
+                                                    }
+                                                });
+                                            }
+                                            "Escape" => {
+                                                ev.prevent_default();
+                                                ev.stop_propagation();
+                                                renaming.set(None);
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                />
+                            }
+                                .into_any()
+                        } else {
+                            view! {
+                                <span class="min-w-0 truncate text-sm font-medium">
+                                    {title.clone()}
+                                </span>
+                            }
+                                .into_any()
+                        }
+                    }}
                     <span class="flex shrink-0 flex-wrap items-center justify-end gap-1">
                         {session
                             .node
@@ -608,7 +936,12 @@ fn SessionRow(
                             view! { <Badge variant=BadgeVariant::Destructive>{label}</Badge> }
                         })}
                         {session.pinned.then(|| {
-                            view! { <Badge variant=BadgeVariant::Success>"pinned"</Badge> }
+                            view! {
+                                <Badge variant=BadgeVariant::Success>
+                                    <Icon name="pin" class="size-2.5"/>
+                                    "pinned"
+                                </Badge>
+                            }
                         })}
                     </span>
                 </span>
@@ -763,6 +1096,7 @@ fn NewSessionForm(
                         creating.get() || cwd.read().trim().is_empty()
                     })
                 >
+                    <Icon name="plus" class="size-3.5"/>
                     {move || if creating.get() { "…" } else { "New" }}
                 </Button>
             </div>

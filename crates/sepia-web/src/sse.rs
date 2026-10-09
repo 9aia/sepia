@@ -88,7 +88,7 @@ pub fn session_stream(
                                 }
                             }
                             Err(e) => {
-                                leptos::logging::warn!("bad session event: {e}: {data}")
+                                leptos::logging::warn!("bad session event: {e}: {data}");
                             }
                         }
                     }

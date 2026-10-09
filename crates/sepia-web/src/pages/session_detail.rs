@@ -12,6 +12,7 @@ use crate::api::{
     list_checkpoints, pending_writes, rename_session, restore_checkpoint, rewind_session,
     send_prompt, session_history,
 };
+use crate::components::icons::Icon;
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
     CardHeader, CardTitle, ConfirmDialog, Dropdown, Input, MenuItem, Sheet, SheetBody, SheetHeader,
@@ -29,6 +30,13 @@ const ERROR_BOX: &str =
 /// Shared `<pre>` body for tool output and thinking dumps.
 const TOOL_PRE: &str = "max-h-80 overflow-auto whitespace-pre-wrap break-words border-t \
                         border-border/60 px-3 py-2 font-mono text-xs text-muted-foreground";
+/// `TOOL_PRE` minus the top border — for sections under a `TOOL_LABEL`
+/// heading inside a tool `<details>` (the label draws the separator).
+const TOOL_PRE_BARE: &str = "max-h-80 overflow-auto whitespace-pre-wrap break-words px-3 py-2 \
+                             font-mono text-xs text-muted-foreground";
+/// Section label inside a tool `<details>` — "arguments" / "result".
+const TOOL_LABEL: &str = "border-t border-border/60 px-3 pt-1.5 text-[10px] font-semibold \
+                          uppercase tracking-wide text-muted-foreground";
 
 /// `/sessions/:id` — standalone deep link: renders the panel inside
 /// the app shell (the same component `/` embeds next to the list).
@@ -50,6 +58,66 @@ pub fn SessionDetailPage() -> impl IntoView {
 
 fn non_empty_str(s: &str) -> Option<String> {
     (!s.trim().is_empty()).then(|| s.trim().to_string())
+}
+
+/// One-line preview of a tool call for the `<summary>` strip. When the
+/// raw text is JSON args, prefer a human-readable field (`command`,
+/// `path`, …) over the raw `{"command": …}` blob; either way the
+/// result is whitespace-collapsed and truncated to ~80 chars.
+fn tool_snippet(raw: &str) -> String {
+    const MAX: usize = 80;
+    let picked = serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| {
+            ["command", "cmd", "path", "file_path", "query", "pattern"]
+                .iter()
+                .find_map(|k| {
+                    v.get(*k)
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+        })
+        .unwrap_or_else(|| raw.to_string());
+    let collapsed = picked.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= MAX {
+        collapsed
+    } else {
+        let mut s: String = collapsed.chars().take(MAX).collect();
+        s.push('…');
+        s
+    }
+}
+
+/// The body of a tool `<details>` — labeled `arguments`/`result`
+/// `<pre>`s when args are known, a single output `<pre>` when that's
+/// all the wire gave us, and a muted placeholder when empty.
+fn tool_body(args: Option<String>, result: Option<String>) -> impl IntoView {
+    let args = args.filter(|a| !a.trim().is_empty());
+    let result = result.filter(|r| !r.is_empty());
+    let labeled = args.is_some();
+    let empty = args.is_none() && result.is_none();
+    view! {
+        {args.map(|a| view! {
+            <p class=TOOL_LABEL>"arguments"</p>
+            <pre class=TOOL_PRE_BARE>{a}</pre>
+        })}
+        {result.map(|r| {
+            if labeled {
+                view! {
+                    <p class=TOOL_LABEL>"result"</p>
+                    <pre class=TOOL_PRE_BARE>{r}</pre>
+                }
+                .into_any()
+            } else {
+                view! { <pre class=TOOL_PRE>{r}</pre> }.into_any()
+            }
+        })}
+        {empty.then(|| view! {
+            <p class="border-t border-border/60 px-3 py-2 text-xs italic text-muted-foreground">
+                "no output"
+            </p>
+        })}
+    }
 }
 
 /// The session chat panel — transcript + prompt + ops. Embedded in the
@@ -463,6 +531,7 @@ pub fn SessionPanel(
                                                     size=ButtonSize::Sm
                                                     on_click=Box::new(move || details_open.set(true))
                                                 >
+                                                    <Icon name="details"/>
                                                     "Details"
                                                 </Button>
                                                 <Dropdown label="Actions">
@@ -722,24 +791,40 @@ fn HistoryRow(message: HistoryMessageDto) -> impl IntoView {
     if role == "tool" {
         let name = message.tool_name.clone().unwrap_or_else(|| "tool".into());
         let status = message.tool_status.clone().unwrap_or_default();
+        let args = message.args.clone();
+        let output = (!text.is_empty()).then(|| text.clone());
         let class = if status == "error" {
             "rounded-md border border-destructive/40 bg-destructive/10"
         } else {
-            "rounded-md border border-border bg-muted/30"
+            "rounded-md border border-border bg-muted/40"
         };
+        let status_cls = if status == "error" {
+            "text-destructive"
+        } else {
+            "text-muted-foreground"
+        };
+        let preview = tool_snippet(args.as_deref().unwrap_or(&text));
         view! {
-            <details class=class>
+            // `open` keeps SSR/hydrate markup identical — collapsing
+            // stays a client-side, native `<details>` toggle.
+            <details class=class open>
                 <summary class="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-xs">
-                    <span class="font-semibold text-info">{name}</span>
+                    <span class="shrink-0 font-semibold text-info">{name}</span>
+                    {(!status.is_empty()).then(move || view! {
+                        <span class=format!("shrink-0 text-[10px] uppercase tracking-wide {status_cls}")>
+                            {status}
+                        </span>
+                    })}
                     {message
                         .exit_code
                         .map(|c| view! {
-                            <span class="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-secondary-foreground">
+                            <span class="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] text-secondary-foreground">
                                 {format!("exit {c}")}
                             </span>
                         })}
+                    <span class="min-w-0 flex-1 truncate text-muted-foreground">{preview}</span>
                 </summary>
-                <pre class=TOOL_PRE>{text}</pre>
+                {tool_body(args, output)}
             </details>
         }
         .into_any()
@@ -762,7 +847,7 @@ fn HistoryRow(message: HistoryMessageDto) -> impl IntoView {
                     .filter(|t| !t.is_empty())
                     .map(|t| {
                         view! {
-                            <details class="mb-1 rounded border border-border/60 bg-muted/30">
+                            <details class="mb-1 rounded border border-border/60 bg-muted/30" open>
                                 <summary class="cursor-pointer select-none px-2 py-1 font-mono text-xs italic text-muted-foreground">
                                     "thinking"
                                 </summary>
@@ -787,53 +872,93 @@ fn LiveLog(live: RwSignal<LiveTranscript>) -> impl IntoView {
                     .entries
                     .iter()
                     .map(|e| {
-                        let surface = if e.error {
-                            "border-destructive/50 bg-destructive/10"
-                        } else {
-                            match e.kind {
-                                LiveKind::Assistant => "border-info/30 bg-info/5",
-                                LiveKind::Reasoning => {
-                                    "border-border/60 bg-muted/40 text-muted-foreground"
+                        match e.kind {
+                            LiveKind::Assistant => {
+                                let surface = if e.error {
+                                    "border-destructive/50 bg-destructive/10"
+                                } else {
+                                    "border-info/30 bg-info/5"
+                                };
+                                view! {
+                                    <article class=format!("rounded-md border px-3 py-2 {surface}")>
+                                        <header class="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                            {(!e.done).then(|| view! {
+                                                <span class="size-1.5 animate-pulse rounded-full bg-info"></span>
+                                            })}
+                                            {e.title.clone()}
+                                            {e.error.then(|| view! {
+                                                <Badge variant=BadgeVariant::Destructive>"error"</Badge>
+                                            })}
+                                        </header>
+                                        <Markdown text=e.text.clone()/>
+                                    </article>
                                 }
-                                LiveKind::Tool => "border-border bg-muted/30",
-                            }
-                        };
-                        let class = format!("rounded-md border px-3 py-2 {surface}");
-                        let body = if e.kind == LiveKind::Tool {
-                            view! {
-                                <details
-                                    class="mt-1 rounded border border-border/60 bg-background/60"
-                                    open=!e.done
-                                >
-                                    <summary class="cursor-pointer select-none px-2 py-1 font-mono text-xs text-muted-foreground">
-                                        {e.title.clone()}
-                                    </summary>
-                                    <pre class=TOOL_PRE>
-                                        {if e.text.is_empty() {
-                                            e.result.clone().unwrap_or_default()
-                                        } else {
-                                            e.text.clone()
-                                        }}
-                                    </pre>
-                                </details>
-                            }
                                 .into_any()
-                        } else {
-                            view! { <Markdown text=e.text.clone()/> }.into_any()
-                        };
-                        view! {
-                            <article class=class>
-                                <header class="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                    {(!e.done).then(|| view! {
-                                        <span class="size-1.5 animate-pulse rounded-full bg-info"></span>
-                                    })}
-                                    {e.title.clone()}
-                                    {e.error.then(|| view! {
-                                        <Badge variant=BadgeVariant::Destructive>"error"</Badge>
-                                    })}
-                                </header>
-                                {body}
-                            </article>
+                            }
+                            LiveKind::Reasoning => {
+                                let class = if e.error {
+                                    "rounded-md border border-destructive/50 bg-destructive/10"
+                                } else {
+                                    "rounded-md border border-border/60 bg-muted/40"
+                                };
+                                view! {
+                                    // Open while streaming; settles
+                                    // closed once the thinking ends.
+                                    <details class=class open=!e.done>
+                                        <summary class="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-xs italic text-muted-foreground">
+                                            {(!e.done).then(|| view! {
+                                                <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-info"></span>
+                                            })}
+                                            "thinking"
+                                        </summary>
+                                        <pre class=TOOL_PRE>{e.text.clone()}</pre>
+                                    </details>
+                                }
+                                .into_any()
+                            }
+                            LiveKind::Tool => {
+                                let class = if e.error {
+                                    "rounded-md border border-destructive/50 bg-destructive/10"
+                                } else {
+                                    "rounded-md border border-border bg-muted/40"
+                                };
+                                let (status, status_cls) = if !e.done {
+                                    ("running…", "text-muted-foreground")
+                                } else if e.error {
+                                    ("error", "text-destructive")
+                                } else {
+                                    ("done", "text-muted-foreground")
+                                };
+                                // `text` accumulates the args deltas;
+                                // `result` lands on ToolCallResult.
+                                let args = (!e.text.trim().is_empty()).then(|| e.text.clone());
+                                let result = e.result.clone().filter(|r| !r.is_empty());
+                                let preview = tool_snippet(
+                                    args.as_deref().or(result.as_deref()).unwrap_or(""),
+                                );
+                                view! {
+                                    <details class=class open=!e.done>
+                                        <summary class="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-xs">
+                                            {(!e.done).then(|| view! {
+                                                <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-info"></span>
+                                            })}
+                                            <span class="shrink-0 font-semibold text-info">
+                                                {e.title.clone()}
+                                            </span>
+                                            <span class=format!(
+                                                "shrink-0 text-[10px] uppercase tracking-wide {status_cls}"
+                                            )>
+                                                {status}
+                                            </span>
+                                            <span class="min-w-0 flex-1 truncate text-muted-foreground">
+                                                {preview}
+                                            </span>
+                                        </summary>
+                                        {tool_body(args, result)}
+                                    </details>
+                                }
+                                .into_any()
+                            }
                         }
                     })
                     .collect::<Vec<_>>()
@@ -1145,5 +1270,33 @@ fn CheckpointRow(
                 on_confirm=run_rewind
             />
         </li>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tool_snippet;
+
+    #[test]
+    fn snippet_collapses_and_truncates() {
+        assert_eq!(tool_snippet("  hello\n\tworld  "), "hello world");
+        assert_eq!(tool_snippet(""), "");
+        let long = "x".repeat(200);
+        let got = tool_snippet(&long);
+        assert_eq!(got.chars().count(), 81);
+        assert!(got.ends_with('…'));
+    }
+
+    #[test]
+    fn snippet_prefers_command_field() {
+        // JSON args surface their human-readable field…
+        assert_eq!(
+            tool_snippet(r#"{"command":"cargo test -p sepia-web","timeout":30}"#),
+            "cargo test -p sepia-web"
+        );
+        assert_eq!(tool_snippet(r#"{"file_path":"src/lib.rs"}"#), "src/lib.rs");
+        // …while plain args and unrecognized JSON pass through.
+        assert_eq!(tool_snippet("plain args"), "plain args");
+        assert_eq!(tool_snippet(r#"{"n":1}"#), r#"{"n":1}"#);
     }
 }

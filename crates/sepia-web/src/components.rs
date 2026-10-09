@@ -253,6 +253,83 @@ pub fn ConfirmDialog(
     }
 }
 
+/// Inline SVG icons — lucide-style 24×24 stroke glyphs, hand-embedded
+/// so no icon crate is needed. Everything inherits `currentColor`.
+pub mod icons {
+    use leptos::prelude::*;
+
+    /// A 24×24 stroke icon. Known `name`s: `sessions` (default),
+    /// `agents`, `projects`, `nodes`, `settings`, `pin`, `plus`,
+    /// `details`.
+    #[component]
+    #[allow(clippy::needless_pass_by_value)] // component props are owned
+    pub fn Icon(
+        #[prop(into)] name: String,
+        #[prop(into, optional)] class: String,
+    ) -> impl IntoView {
+        let class = tw_merge::tw_merge!("size-4 shrink-0", class);
+        view! {
+            <svg
+                class=class
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+            >
+                {match name.as_str() {
+                    "agents" => view! {
+                        <path d="M12 8V4H8"/>
+                        <rect width="16" height="12" x="4" y="8" rx="2"/>
+                        <path d="M2 14h2"/>
+                        <path d="M20 14h2"/>
+                        <path d="M15 13v2"/>
+                        <path d="M9 13v2"/>
+                    }
+                        .into_any(),
+                    "projects" => view! {
+                        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                    }
+                        .into_any(),
+                    "nodes" => view! {
+                        <rect width="20" height="8" x="2" y="2" rx="2"/>
+                        <rect width="20" height="8" x="2" y="14" rx="2"/>
+                        <line x1="6" x2="6.01" y1="6" y2="6"/>
+                        <line x1="6" x2="6.01" y1="18" y2="18"/>
+                    }
+                        .into_any(),
+                    "settings" => view! {
+                        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    }
+                        .into_any(),
+                    "pin" => view! {
+                        <path d="M12 17v5"/>
+                        <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V5h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/>
+                    }
+                        .into_any(),
+                    "plus" => view! {
+                        <path d="M5 12h14"/>
+                        <path d="M12 5v14"/>
+                    }
+                        .into_any(),
+                    "details" => view! {
+                        <rect width="18" height="18" x="3" y="3" rx="2"/>
+                        <path d="M15 3v18"/>
+                    }
+                        .into_any(),
+                    _ => view! {
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    }
+                        .into_any(),
+                }}
+            </svg>
+        }
+    }
+}
+
 pub mod toast {
     //! Thin wrapper over `leptos_toaster` (sonner-style) — call
     //! `provide_toaster()` in `App`, `use_toast()` for

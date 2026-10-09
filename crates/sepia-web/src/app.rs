@@ -12,6 +12,7 @@ use leptos_router::components::{A, Route, Router, Routes};
 use leptos_router::path;
 use tw_merge::IntoTailwindClass;
 
+use crate::components::icons::Icon;
 use crate::components::toast::{Toaster, provide_toaster};
 use crate::components::{
     ButtonClass, ButtonSize, ButtonVariant, Sheet, SheetBody, SheetHeader, SheetTitle,
@@ -69,18 +70,23 @@ fn nav_items(extra: &str, on_nav: Option<std::sync::Arc<dyn Fn() + Send + Sync>>
             }
         >
             <A href="/" exact=true attr:class=nav_link("w-full")>
+                <Icon name="sessions"/>
                 "Sessions"
             </A>
             <A href="/agents" attr:class=nav_link("w-full")>
+                <Icon name="agents"/>
                 "Agents"
             </A>
             <A href="/projects" attr:class=nav_link("w-full")>
+                <Icon name="projects"/>
                 "Projects"
             </A>
             <A href="/nodes" attr:class=nav_link("w-full")>
+                <Icon name="nodes"/>
                 "Nodes"
             </A>
             <A href="/settings" attr:class=nav_link("w-full")>
+                <Icon name="settings"/>
                 "Settings"
             </A>
         </nav>
