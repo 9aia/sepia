@@ -3,3 +3,10 @@
 # integer — a duration string fails config parsing.
 slow-timeout = { period = "30s", terminate-after = 4 }
 failure-output = "final"
+
+# The e2e binary cold-builds sepia-node/sepia-hub/sepia-driver-devin on
+# first spawn — give it real headroom (15 min) instead of the 120s
+# default kill.
+[[profile.default.overrides]]
+filter = 'binary_id(/e2e$/)'
+slow-timeout = { period = "5m", terminate-after = 3 }

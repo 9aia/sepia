@@ -44,6 +44,22 @@ components in `sepia-web/src/components.rs` via the `leptos_ui`
 Git hooks live in `.hooks/` (`core.hooksPath` = `.hooks`):
 pre-commit runs `cargo fmt --check`, pre-push `cargo xtask check`.
 
+## Browser smoke
+
+`tools/browser-smoke.py` — headless Chrome console probe. Agents MUST
+run it after any `sepia-web`/hub UI change and before reporting done:
+
+```bash
+python3 tools/browser-smoke.py                    # all routes, :3000
+python3 tools/browser-smoke.py URL                # one URL
+SMOKE_SETTLE=8 python3 tools/browser-smoke.py URL # longer hydration wait
+```
+
+Exit 0 = clean console; SEVERE entries (wasm panics, hydration
+mismatches, 4xx/5xx asset failures) fail it. Needs chromedriver at
+`target/webdriver/chromedriver` (or `SEPIA_CHROMEDRIVER`) and Chrome
+(`CHROME_BIN` or PATH).
+
 ## Rules
 
 - Workspace lints are strict (pedantic + `unwrap_used` deny-ish in
