@@ -1,7 +1,7 @@
 // sepia service worker — deliberately small. Static assets are
 // cache-first; navigations are network-first with a cached index as
 // the offline shell; /api and /hub traffic always hits the network.
-const CACHE = "sepia-v2";
+const CACHE = "sepia-v3";
 const ASSETS = ["/", "/style.css", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -39,6 +39,24 @@ self.addEventListener("fetch", (event) => {
           return res;
         })
         .catch(() => caches.match("/")),
+    );
+    return;
+  }
+
+  // The wasm/js bundle is not content-hashed — a cache-first hit on
+  // a stale bundle would hydrate against fresh SSR HTML and panic.
+  // Network-first (cache fallback for the offline shell only).
+  if (url.pathname.startsWith("/pkg/")) {
+    event.respondWith(
+      fetch(event.request)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            void caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(event.request)),
     );
     return;
   }
