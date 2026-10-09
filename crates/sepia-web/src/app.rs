@@ -214,18 +214,22 @@ pub fn App() -> impl IntoView {
     }
 }
 
+/// The global shortcut list — rendered by the `?` cheat-sheet and,
+/// read-only, by `/settings`.
+pub const SHORTCUTS: &[(&str, &str)] = &[
+    ("n", "focus the new-session field"),
+    ("⌘K", "focus the session filter"),
+    ("Esc", "clear filter / close session"),
+    ("⌘B", "toggle the session list"),
+    ("↑ / ↓", "cycle sessions"),
+    ("?", "this sheet"),
+];
+
 /// `?` — the shortcut cheat-sheet. Always rendered, visibility via
 /// class (SSR and hydrate agree on a closed dialog).
 #[component]
 fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
-    let rows: &[(&str, &str)] = &[
-        ("n", "focus the new-session field"),
-        ("⌘K", "focus the session filter"),
-        ("Esc", "clear filter / close session"),
-        ("⌘B", "toggle the session list"),
-        ("↑ / ↓", "cycle sessions"),
-        ("?", "this sheet"),
-    ];
+    let rows = SHORTCUTS;
     view! {
         <div
             class=move || {

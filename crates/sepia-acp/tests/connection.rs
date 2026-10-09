@@ -41,6 +41,21 @@ async fn initialize_captures_capabilities() {
 }
 
 #[tokio::test]
+async fn initialize_tolerates_missing_capability_objects() {
+    let mut spec = mock_spec();
+    spec.env = Some(
+        [("MOCK_MINIMAL_CAPS".to_string(), "1".to_string())]
+            .into_iter()
+            .collect(),
+    );
+    let conn = spawn_agent(&spec, &options()).await.unwrap();
+    let caps = conn.capabilities().await;
+    assert!(!caps.session_capabilities.list);
+    assert!(!caps.prompt_capabilities.image);
+    Arc::new(conn).close().await;
+}
+
+#[tokio::test]
 async fn session_ops_round_trip() {
     let conn = Arc::new(spawn_agent(&mock_spec(), &options()).await.unwrap());
     let session_id = conn.new_session("/work").await.unwrap();

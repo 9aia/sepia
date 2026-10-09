@@ -123,23 +123,28 @@ fn main() {
                 if has("delete") {
                     session_caps["delete"] = json!({});
                 }
+                // MOCK_MINIMAL_CAPS → omit capability objects; some
+                // real agents don't advertise them at all (conn.rs
+                // used to panic on `caps["sessionCapabilities"]`).
+                let caps = if env("MOCK_MINIMAL_CAPS").is_some() {
+                    json!({ "loadSession": has("load") })
+                } else {
+                    json!({
+                        "loadSession": has("load"),
+                        "promptCapabilities": {
+                            "image": has("image"),
+                            "audio": has("audio"),
+                            "embeddedContext": has("resource")
+                        },
+                        "sessionCapabilities": session_caps
+                    })
+                };
                 let _ = writeln!(
                     out,
                     "{}",
                     respond(
                         id,
-                        json!({
-                            "protocolVersion": 1,
-                            "agentCapabilities": {
-                                "loadSession": has("load"),
-                                "promptCapabilities": {
-                                    "image": has("image"),
-                                    "audio": has("audio"),
-                                    "embeddedContext": has("resource")
-                                },
-                                "sessionCapabilities": session_caps
-                            }
-                        })
+                        json!({ "protocolVersion": 1, "agentCapabilities": caps })
                     )
                 );
                 if env("MOCK_EXIT_AFTER_INIT").is_some() {

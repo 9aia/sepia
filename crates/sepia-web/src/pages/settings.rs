@@ -1,23 +1,41 @@
-//! `/settings` — the node's public `GET /api/config` surface, edited
-//! generically (one row per key), plus the push-notification toggle.
-//! The `PushManager` calls are hydrate-only; SSR renders the controls
-//! inert.
+//! `/settings` — the settings surface: appearance (theme), node
+//! identity + connection health, the agent catalog, the hub's queued
+//! writes, the public `GET /api/config` map edited generically (one
+//! row per key), push notifications, and the keyboard-shortcut
+//! reference. Browser-only pieces (`PushManager`, the theme signal)
+//! are hydrate-only; SSR renders identical markup, inert.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
 use serde_json::Value;
 
-use crate::api::{get_config, push_vapid_key, set_config};
+use crate::api::{
+    get_config, list_agents, node_info, node_status, pending_writes, push_vapid_key, set_config,
+};
+use crate::app::SHORTCUTS;
 use crate::components::toast::use_toast;
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
-    CardHeader, CardTitle, Input, PageDescription, PageHead, PageTitle, Skeleton,
+    CardHeader, CardTitle, Input, PageDescription, PageHead, PageTitle, SELECT_CLASS, Skeleton,
 };
+use crate::dto::AgentDto;
+use crate::pages::agents::capability_chips;
+use crate::pages::nodes::{NodeRow, WriteRow};
+use crate::theme::Theme;
+
+/// Error body shared by the async sections — one destructive-tinted
+/// paragraph instead of a broken card.
+fn err_view(e: &ServerFnError) -> AnyView {
+    view! {
+        <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {e.to_string()}
+        </p>
+    }
+    .into_any()
+}
 
 #[component]
 pub fn SettingsPage() -> impl IntoView {
-    let config = Resource::new(|| (), |()| get_config());
-
     view! {
         <Title text="settings — sepia"/>
         <section class="mx-auto w-full max-w-5xl space-y-6 p-4 md:p-6">
@@ -25,59 +43,403 @@ pub fn SettingsPage() -> impl IntoView {
                 <div>
                     <PageTitle>"Settings"</PageTitle>
                     <PageDescription>
-                        "Public node configuration and browser notifications."
+                        "Appearance, node identity, agents, outbox, and notifications."
                     </PageDescription>
                 </div>
             </PageHead>
-            <Suspense fallback=move || {
-                view! { <Skeleton class="h-56 w-full"/> }
-            }>
-                {move || {
-                    Suspend::new(async move {
-                        match config.await {
-                            Err(e) => {
-                                view! {
-                                    <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                                        {e.to_string()}
-                                    </p>
+            <AppearanceSection/>
+            <NodeSection/>
+            <AgentsSection/>
+            <OutboxSection/>
+            <ConfigSection/>
+            <PushSection/>
+            <ShortcutsSection/>
+        </section>
+    }
+}
+
+/// Theme picker. The `RwSignal<Theme>` context only exists on the
+/// `hydrate` build (`provide_theme` is an SSR stub), so SSR renders
+/// the same `<select>` disabled with `dark` pre-selected — the shell
+/// always emits `class="dark"` and hydrate reconciles.
+#[component]
+fn AppearanceSection() -> impl IntoView {
+    let theme = use_context::<RwSignal<Theme>>();
+    let current = move || theme.map_or(Theme::Dark, |t| t.get());
+    let on_change = move |ev| {
+        if let Some(theme) = theme {
+            theme.set(match event_target_value(&ev).as_str() {
+                "light" => Theme::Light,
+                "dark" => Theme::Dark,
+                _ => Theme::System,
+            });
+        }
+    };
+
+    view! {
+        <Card>
+            <CardHeader>
+                <CardTitle>"Appearance"</CardTitle>
+                <CardDescription>"Color scheme for this browser."</CardDescription>
+            </CardHeader>
+            <CardContent>
+                <label class="flex max-w-56 flex-col gap-1.5 text-sm">
+                    <span class="text-muted-foreground">"Theme"</span>
+                    <select
+                        class=SELECT_CLASS
+                        disabled=theme.is_none()
+                        on:change=on_change
+                    >
+                        <option value="system" selected=move || current() == Theme::System>
+                            "System"
+                        </option>
+                        <option value="dark" selected=move || current() == Theme::Dark>
+                            "Dark"
+                        </option>
+                        <option value="light" selected=move || current() == Theme::Light>
+                            "Light"
+                        </option>
+                    </select>
+                </label>
+            </CardContent>
+        </Card>
+    }
+}
+
+/// `GET /api/node` + the hub's per-node health — who this hub is
+/// talking to and whether the link is up.
+#[component]
+fn NodeSection() -> impl IntoView {
+    let info = Resource::new(|| (), |()| node_info());
+    let status = Resource::new(|| (), |()| node_status());
+
+    view! {
+        <Card>
+            <CardHeader>
+                <CardTitle>"Node"</CardTitle>
+                <CardDescription>"Identity and connection health."</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-4">
+                <Suspense fallback=move || {
+                    view! { <Skeleton class="h-28 w-full"/> }
+                }>
+                    {move || {
+                        Suspend::new(async move {
+                            let (info, status) = (info.await, status.await);
+                            let info_view = match info {
+                                Err(e) => err_view(&e),
+                                Ok(n) => {
+                                    let title = if n.name.is_empty() {
+                                        "—".to_string()
+                                    } else {
+                                        n.name.clone()
+                                    };
+                                    let version =
+                                        format!("{} (protocol {})", n.version, n.protocol);
+                                    let agents = n.agents.len();
+                                    view! {
+                                        <dl class="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2.5 text-sm">
+                                            <dt class="text-muted-foreground">"id"</dt>
+                                            <dd class="font-mono text-xs">{n.id.clone()}</dd>
+                                            <dt class="text-muted-foreground">"name"</dt>
+                                            <dd>{title}</dd>
+                                            <dt class="text-muted-foreground">"version"</dt>
+                                            <dd>{version}</dd>
+                                            <dt class="text-muted-foreground">"agents"</dt>
+                                            <dd>{format!("{agents} registered")}</dd>
+                                            {if n.capabilities.is_empty() {
+                                                None
+                                            } else {
+                                                Some(
+                                                    view! {
+                                                        <dt class="text-muted-foreground">"capabilities"</dt>
+                                                        <dd>
+                                                            <div class="flex flex-wrap gap-1.5">
+                                                                {n
+                                                                    .capabilities
+                                                                    .iter()
+                                                                    .map(|c| {
+                                                                        let c = c.clone();
+                                                                        view! {
+                                                                            <Badge variant=BadgeVariant::Muted>{c}</Badge>
+                                                                        }
+                                                                    })
+                                                                    .collect::<Vec<_>>()}
+                                                            </div>
+                                                        </dd>
+                                                    },
+                                                )
+                                            }}
+                                        </dl>
+                                    }
+                                        .into_any()
                                 }
-                                    .into_any()
-                            }
-                            Ok(map) if map.is_empty() => {
-                                view! {
-                                    <p class="text-sm text-muted-foreground">
-                                        "No settings exposed."
-                                    </p>
+                            };
+                            let status_view = match status {
+                                Err(e) => err_view(&e),
+                                Ok(rows) if rows.is_empty() => {
+                                    view! {
+                                        <p class="text-sm text-muted-foreground">
+                                            "No connection status reported."
+                                        </p>
+                                    }
+                                        .into_any()
                                 }
-                                    .into_any()
-                            }
-                            Ok(map) => {
-                                view! {
-                                    <Card>
-                                        <CardHeader>
-                                            <CardTitle>"Configuration"</CardTitle>
-                                            <CardDescription>
-                                                "Public config keys exposed by the node."
-                                            </CardDescription>
-                                        </CardHeader>
-                                        <CardContent>
+                                Ok(rows) => {
+                                    view! {
+                                        <div>
+                                            <h4 class="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                                "Connection"
+                                            </h4>
                                             <ul class="divide-y divide-border">
-                                                {map
+                                                {rows
                                                     .into_iter()
-                                                    .map(|(k, v)| view! { <ConfigRow key=k value=v/> })
+                                                    .map(|r| view! { <NodeRow row=r/> })
                                                     .collect::<Vec<_>>()}
                                             </ul>
-                                        </CardContent>
-                                    </Card>
+                                        </div>
+                                    }
+                                        .into_any()
                                 }
-                                    .into_any()
+                            };
+                            view! {
+                                {info_view}
+                                {status_view}
                             }
-                        }
-                    })
+                        })
+                    }}
+                </Suspense>
+            </CardContent>
+        </Card>
+    }
+}
+
+/// `GET /api/agents` — the merged catalog, one compact row per runtime
+/// (label, id, owning node, capability chips).
+#[component]
+fn AgentsSection() -> impl IntoView {
+    let agents = Resource::new(|| (), |()| list_agents());
+
+    view! {
+        <Card>
+            <CardHeader>
+                <CardTitle>"Agents"</CardTitle>
+                <CardDescription>
+                    "Agent runtimes advertised by the connected nodes."
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                <Suspense fallback=move || {
+                    view! { <Skeleton class="h-24 w-full"/> }
+                }>
+                    {move || {
+                        Suspend::new(async move {
+                            match agents.await {
+                                Err(e) => err_view(&e),
+                                Ok(list) if list.is_empty() => {
+                                    view! {
+                                        <p class="text-sm text-muted-foreground">
+                                            "No agents configured."
+                                        </p>
+                                    }
+                                        .into_any()
+                                }
+                                Ok(list) => {
+                                    view! {
+                                        <ul class="divide-y divide-border">
+                                            {list
+                                                .into_iter()
+                                                .map(|a| view! { <AgentRow agent=a/> })
+                                                .collect::<Vec<_>>()}
+                                        </ul>
+                                    }
+                                        .into_any()
+                                }
+                            }
+                        })
+                    }}
+                </Suspense>
+            </CardContent>
+        </Card>
+    }
+}
+
+/// Compact agent row — same chip set as `/agents`, flatter layout.
+#[component]
+fn AgentRow(agent: AgentDto) -> impl IntoView {
+    let label = if agent.label.trim().is_empty() {
+        agent.id.clone()
+    } else {
+        agent.label.clone()
+    };
+    let chips = capability_chips(agent.capabilities.as_ref());
+    view! {
+        <li class="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-3 first:pt-0 last:pb-0">
+            <span class="text-sm font-medium">{label}</span>
+            <code class="font-mono text-xs text-muted-foreground">{agent.id.clone()}</code>
+            {agent
+                .node
+                .clone()
+                .map(|n| view! { <Badge variant=BadgeVariant::Info>{n}</Badge> })}
+            <span class="ml-auto flex flex-wrap gap-1.5">
+                {if chips.is_empty() {
+                    view! {
+                        <span class="text-xs text-muted-foreground">
+                            "capabilities not probed"
+                        </span>
+                    }
+                        .into_any()
+                } else {
+                    chips
+                        .into_iter()
+                        .map(|c| view! { <Badge variant=BadgeVariant::Muted>{c}</Badge> })
+                        .collect::<Vec<_>>()
+                        .into_any()
                 }}
-            </Suspense>
-            <PushSection/>
-        </section>
+            </span>
+        </li>
+    }
+}
+
+/// The hub's durable write queue — `queued` rows replay when the node
+/// returns, `failed` ones are dead letters carrying the last error.
+/// Empty on a direct (non-sync) connection.
+#[component]
+fn OutboxSection() -> impl IntoView {
+    let pending = Resource::new(|| (), |()| pending_writes());
+
+    view! {
+        <Card>
+            <CardHeader>
+                <CardTitle>"Queued writes"</CardTitle>
+                <CardDescription>
+                    "Prompts and edits waiting on an unreachable node."
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                <Suspense fallback=move || {
+                    view! { <Skeleton class="h-16 w-full"/> }
+                }>
+                    {move || {
+                        Suspend::new(async move {
+                            match pending.await {
+                                Err(e) => err_view(&e),
+                                Ok(rows) if rows.is_empty() => {
+                                    view! {
+                                        <p class="text-sm text-muted-foreground">
+                                            "No queued writes."
+                                        </p>
+                                    }
+                                        .into_any()
+                                }
+                                Ok(rows) => {
+                                    view! {
+                                        <ul class="divide-y divide-border">
+                                            {rows
+                                                .into_iter()
+                                                .map(|w| view! { <WriteRow write=w/> })
+                                                .collect::<Vec<_>>()}
+                                        </ul>
+                                    }
+                                        .into_any()
+                                }
+                            }
+                        })
+                    }}
+                </Suspense>
+            </CardContent>
+        </Card>
+    }
+}
+
+/// The node's public `GET /api/config` map — generic key rows.
+#[component]
+fn ConfigSection() -> impl IntoView {
+    let config = Resource::new(|| (), |()| get_config());
+
+    view! {
+        <Suspense fallback=move || {
+            view! { <Skeleton class="h-40 w-full"/> }
+        }>
+            {move || {
+                Suspend::new(async move {
+                    match config.await {
+                        Err(e) => err_view(&e),
+                        Ok(map) if map.is_empty() => {
+                            view! {
+                                <Card>
+                                    <CardHeader>
+                                        <CardTitle>"Configuration"</CardTitle>
+                                        <CardDescription>
+                                            "Public config keys exposed by the node."
+                                        </CardDescription>
+                                    </CardHeader>
+                                    <CardContent>
+                                        <p class="text-sm text-muted-foreground">
+                                            "No settings exposed."
+                                        </p>
+                                    </CardContent>
+                                </Card>
+                            }
+                                .into_any()
+                        }
+                        Ok(map) => {
+                            view! {
+                                <Card>
+                                    <CardHeader>
+                                        <CardTitle>"Configuration"</CardTitle>
+                                        <CardDescription>
+                                            "Public config keys exposed by the node."
+                                        </CardDescription>
+                                    </CardHeader>
+                                    <CardContent>
+                                        <ul class="divide-y divide-border">
+                                            {map
+                                                .into_iter()
+                                                .map(|(k, v)| view! { <ConfigRow key=k value=v/> })
+                                                .collect::<Vec<_>>()}
+                                        </ul>
+                                    </CardContent>
+                                </Card>
+                            }
+                                .into_any()
+                        }
+                    }
+                })
+            }}
+        </Suspense>
+    }
+}
+
+/// Read-only mirror of the `?` cheat-sheet (`app::SHORTCUTS`).
+#[component]
+fn ShortcutsSection() -> impl IntoView {
+    view! {
+        <Card>
+            <CardHeader>
+                <CardTitle>"Keyboard shortcuts"</CardTitle>
+                <CardDescription>
+                    "Global keys — press ? anywhere to see the same list."
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                <dl class="space-y-1.5">
+                    {SHORTCUTS
+                        .iter()
+                        .map(|(k, d)| {
+                            view! {
+                                <div class="flex items-center gap-3">
+                                    <kbd class="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+                                        {*k}
+                                    </kbd>
+                                    <dd class="text-xs text-muted-foreground">{*d}</dd>
+                                </div>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                </dl>
+            </CardContent>
+        </Card>
     }
 }
 

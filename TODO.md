@@ -43,9 +43,15 @@
 
 ### UI/UX parity with the TS app
 
-Ecosystem libs adopted (leptos-use `use_event_source`/`use_interval_fn`,
-leptos_toaster; floating-ui-leptos + leptos_darkmode + leptos-fetch
-available for the items below):
+Ecosystem libs adopted — leptos-use (`use_event_source`,
+`use_interval_fn`, `use_event_listener`, `on_click_outside`,
+`use_local_storage`, `use_media_query`, `use_timeout_fn`),
+leptos_toaster, floating-ui-leptos (menus/popovers), codee (SSE
+codecs). Deliberately skipped: leptos_sse (syncs leptos *signals*;
+ours is a domain SessionEvent stream), leptos_darkmode (bool-only,
+no tri-state) and leptos_hotkeys (pins leptos 0.6). leptos-fetch:
+adopt next pass — shared QueryClient replaces the Resource+manual
+refetch plumbing (cross-component invalidation on SSE/ops).
 
 Landing (agents in flight):
 
@@ -63,20 +69,22 @@ Landing (agents in flight):
 
 Missing (queued next):
 
-- [ ] Row context menus — right-click → rename/pin/delete/details/
-      add-to-project
-- [ ] Icon set — TS used hugeicons; currently text glyphs only
-- [~] Chat polish — tool-call blocks w/ collapsible args, reasoning
-      blocks, syntax-highlighted code fences. ✓ scroller: pinned-bottom
-      auto-scroll + "Jump to bottom" pill landed
-- [ ] Prompt input — cwd autocomplete (CwdPicker), model picker,
-      multiline textarea submit UX
+- [x] Row context menus — right-click → open/rename/pin/delete/details
+- [x] Icon set — inline lucide-style SVG Icon component (nav, pinned, actions)
+- [~] Chat polish — ✓ collapsible tool-call blocks (args/result),
+      ✓ reasoning blocks, ✓ scroller pin + "Jump to bottom", ✓ code-fence
+      lang badge + copy button. Left: real syntax highlighting (needs a
+      highlight crate)
+- [~] Prompt input — ✓ auto-grow textarea, Shift+Enter hint, cwd/model
+      chips, queued-write note. Deferred: real cwd autocomplete needs a
+      node fs-list port; model picker needs models on the agent DTO.
 - [x] Theme toggle — light/dark/system (`sepia-theme` localStorage +
       `use_media_query`, `.light` Catppuccin Latte token block, toggle
       in sidebar + mobile topbar; prose is `dark:prose-invert`)
-- [ ] Customizable keybinds + help dialog (settings override map)
-- [ ] Settings depth — credentials, agent catalog, model config
-      sections (was SettingsDialog)
+- [~] Customizable keybinds + help dialog — ✓ `?` cheat-sheet landed;
+      keybind *remapping* still open
+- [x] Settings depth — appearance (theme select), node identity +
+      connection, agent catalog, outbox writes, push, shortcuts table
 - [ ] Session context tabs
 - [ ] EmptyScreen/ErrorBanner parity
 

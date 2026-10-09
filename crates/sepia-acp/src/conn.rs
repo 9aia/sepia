@@ -228,8 +228,9 @@ impl AcpConnection {
             )
             .await?;
         let caps = as_record(&result["agentCapabilities"]);
-        let prompt = as_record(&caps["promptCapabilities"]);
-        let session = as_record(&caps["sessionCapabilities"]);
+        // Missing capability objects mean "not supported" — never index.
+        let prompt = as_record(caps.get("promptCapabilities").unwrap_or(&Value::Null));
+        let session = as_record(caps.get("sessionCapabilities").unwrap_or(&Value::Null));
         // Each session method is advertised by a (possibly empty) entry
         // object — presence is the capability.
         let present = |key: &str| !session.get(key).is_none_or(Value::is_null);

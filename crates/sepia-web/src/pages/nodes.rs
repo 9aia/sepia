@@ -216,7 +216,7 @@ pub fn NodesPage() -> impl IntoView {
 }
 
 /// Maps the node's reported status string onto a badge variant.
-fn status_variant(status: &str) -> BadgeVariant {
+pub(crate) fn status_variant(status: &str) -> BadgeVariant {
     match status {
         "ok" | "up" | "connected" => BadgeVariant::Success,
         "idle" | "queued" => BadgeVariant::Info,
@@ -227,7 +227,7 @@ fn status_variant(status: &str) -> BadgeVariant {
 }
 
 #[component]
-fn NodeRow(row: NodeStatusDto) -> impl IntoView {
+pub(crate) fn NodeRow(row: NodeStatusDto) -> impl IntoView {
     let variant = status_variant(&row.status);
     let label = if row.label.is_empty() || row.label == row.id {
         row.id.clone()
@@ -252,7 +252,8 @@ fn NodeRow(row: NodeStatusDto) -> impl IntoView {
 /// One outbox row — `queued` writes replay when the node returns;
 /// `failed` (dead-lettered) ones carry the error they died on.
 #[component]
-fn WriteRow(write: PendingWriteDto) -> impl IntoView {
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+pub(crate) fn WriteRow(write: PendingWriteDto) -> impl IntoView {
     let failed = write.status == "failed";
     let variant = if failed {
         BadgeVariant::Destructive

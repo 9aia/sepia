@@ -115,8 +115,9 @@ fn AgentCard(agent: AgentDto) -> impl IntoView {
 }
 
 /// The display-facing capability chips — a flat name list derived from
-/// the wire's `capabilities` object.
-fn capability_chips(caps: Option<&AgentCapabilitiesDto>) -> Vec<&'static str> {
+/// the wire's `capabilities` object. Shared with `/settings`'s compact
+/// agent catalog.
+pub(crate) fn capability_chips(caps: Option<&AgentCapabilitiesDto>) -> Vec<&'static str> {
     let Some(c) = caps else {
         return Vec::new();
     };

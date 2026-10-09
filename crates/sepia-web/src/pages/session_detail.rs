@@ -390,6 +390,11 @@ pub fn SessionPanel(
                                 let busy = session.busy;
                                 let live_flag = session.live;
                                 let title_for_rename = session.title.clone();
+                                // Cloned up front — the macro's move
+                                // closures can't reach `session` fields
+                                // once the tree above has captured them.
+                                let prompt_cwd = session.cwd.clone();
+                                let prompt_model = session.model.clone();
                                 // Outbox rows for this session — match
                                 // the owning node too when both name one
                                 // (session ids can collide across nodes).
@@ -712,6 +717,10 @@ pub fn SessionPanel(
                                         draft=draft
                                         sending=sending
                                         send_error=send_error
+                                        cwd=prompt_cwd.clone()
+                                        model=prompt_model.clone()
+                                        queued=queued
+                                        failed=failed
                                         submit=submit
                                     />
                                 }
@@ -967,11 +976,23 @@ fn LiveLog(live: RwSignal<LiveTranscript>) -> impl IntoView {
     }
 }
 
+/// The prompt composer — multiline textarea (Enter sends, Shift+Enter
+/// adds a newline) that auto-grows to ~10 lines in the browser, plus a
+/// footer strip with the session's `cwd`/model as context chips and the
+/// send button. `cwd` is display-only: the node's `/api/fs` listing
+/// exists but no `NodeApi` port method reaches it, so there's no picker
+/// to drive. `model` is likewise display-only — `send_prompt` takes no
+/// model argument. `queued`/`failed` are this session's outbox counts,
+/// surfaced as a one-line note while writes wait on a down node.
 #[component]
 fn PromptBox(
     draft: RwSignal<String>,
     sending: RwSignal<bool>,
     send_error: RwSignal<Option<String>>,
+    cwd: String,
+    model: Option<String>,
+    queued: usize,
+    failed: usize,
     submit: impl Fn() + 'static + Send + Sync + Copy,
 ) -> impl IntoView {
     // Enter sends; Shift+Enter inserts a newline.
@@ -981,9 +1002,59 @@ fn PromptBox(
             submit();
         }
     };
+    let area_ref = NodeRef::<leptos::html::Textarea>::new();
+    // Auto-grow, browser only: refit the height to the content on every
+    // draft change (keystrokes and the clear-after-send reset), capped
+    // at ~10 `text-sm` lines. SSR keeps the `rows=3` markup untouched —
+    // effects never run there.
+    #[cfg(feature = "hydrate")]
+    {
+        /// 10 lines at `text-sm`'s 20px line-height + `py-2` padding.
+        const MAX_HEIGHT_PX: i32 = 216;
+        Effect::new(move |_| {
+            let _ = draft.read();
+            if let Some(el) = area_ref.get() {
+                // `el` is a tachys `HtmlElement` — `style()` would
+                // resolve to its builder trait; go through web_sys.
+                let style = web_sys::HtmlElement::style(&el);
+                let _ = style.set_property("height", "auto");
+                let full = el.scroll_height();
+                let _ = style.set_property("height", &format!("{}px", full.min(MAX_HEIGHT_PX)));
+                let _ = style.set_property(
+                    "overflow-y",
+                    if full > MAX_HEIGHT_PX {
+                        "auto"
+                    } else {
+                        "hidden"
+                    },
+                );
+            }
+        });
+    }
     view! {
         <div class="space-y-2">
             {move || send_error.get().map(|e| view! { <p class=ERROR_BOX>{e}</p> })}
+            {(queued > 0).then(|| {
+                view! {
+                    <p class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <span class="size-1.5 shrink-0 rounded-full bg-warning"></span>
+                        {format!(
+                            "{queued} {} queued — will send when the node is up",
+                            if queued == 1 { "write" } else { "writes" },
+                        )}
+                    </p>
+                }
+            })}
+            {(failed > 0).then(|| {
+                view! {
+                    <p class="text-xs text-destructive">
+                        {format!(
+                            "{failed} {} failed to reach the node",
+                            if failed == 1 { "write" } else { "writes" },
+                        )}
+                    </p>
+                }
+            })}
             <textarea
                 class=TEXTAREA_CLASS
                 placeholder="Message the agent…  (Enter to send, Shift+Enter for newline)"
@@ -991,8 +1062,33 @@ fn PromptBox(
                 on:input=move |ev| draft.set(event_target_value(&ev))
                 on:keydown=on_keydown
                 rows=3
+                node_ref=area_ref
             ></textarea>
-            <div class="flex justify-end">
+            <div class="flex items-center gap-2">
+                {(!cwd.is_empty()).then(|| cwd.clone()).map(|c| {
+                    let tip = c.clone();
+                    view! {
+                        <code
+                            class="min-w-0 max-w-52 shrink truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                            title=tip
+                        >
+                            {c}
+                        </code>
+                    }
+                })}
+                {model.map(|m| {
+                    view! {
+                        <span
+                            class="shrink-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                            title="model"
+                        >
+                            {m}
+                        </span>
+                    }
+                })}
+                <span class="ml-auto hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+                    "Shift+Enter for newline"
+                </span>
                 <Button
                     size=ButtonSize::Sm
                     disabled=move || sending.get() || draft.read().trim().is_empty()
