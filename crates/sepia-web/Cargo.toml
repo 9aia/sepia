@@ -69,3 +69,5 @@ console_error_panic_hook = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }
+leptos_ui = "0.3.22"
+tw_merge = "0.1"

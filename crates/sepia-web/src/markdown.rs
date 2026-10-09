@@ -195,7 +195,7 @@ fn inlines(text: &str) -> Vec<MdInline> {
 fn render_inline(span: MdInline) -> impl IntoView {
     match span {
         MdInline::Text(t) => view! { <span>{t}</span> }.into_any(),
-        MdInline::Code(c) => view! { <code class="md-code">{c}</code> }.into_any(),
+        MdInline::Code(c) => view! { <code class="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-info">{c}</code> }.into_any(),
         MdInline::Strong(s) => view! { <strong>{s}</strong> }.into_any(),
         MdInline::Em(s) => view! { <em>{s}</em> }.into_any(),
         MdInline::Link { text, href } => view! {
@@ -219,8 +219,8 @@ fn render_block(block: MdBlock) -> impl IntoView {
             view! { <p>{spans.into_iter().map(render_inline).collect::<Vec<_>>()}</p> }.into_any()
         }
         MdBlock::Code { lang, code } => view! {
-            <pre class="md-pre">
-                {lang.map(|l| view! { <span class="md-lang">{l}</span> })}
+            <pre class="relative overflow-x-auto rounded-md border bg-secondary/60 p-3 font-mono text-xs leading-relaxed">
+                {lang.map(|l| view! { <span class="absolute right-2 top-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">{l}</span> })}
                 <code>{code}</code>
             </pre>
         }
@@ -247,7 +247,7 @@ fn render_block(block: MdBlock) -> impl IntoView {
 pub fn Markdown(#[prop(into)] text: String) -> impl IntoView {
     let blocks = parse(&text);
     view! {
-        <div class="md">
+        <div class="prose prose-invert prose-sm max-w-none text-foreground prose-headings:text-foreground prose-p:my-2 prose-a:text-info prose-strong:text-foreground">
             {blocks.into_iter().map(render_block).collect::<Vec<_>>()}
         </div>
     }

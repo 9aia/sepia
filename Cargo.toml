@@ -100,6 +100,8 @@ too_many_lines = "allow"
 cast_precision_loss = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
+# `leptos_ui::variants!` derives Clone on Copy types inside its expansion.
+expl_impl_clone_on_copy = "allow"
 cast_lossless = "allow"
 struct_excessive_bools = "allow"
 

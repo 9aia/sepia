@@ -30,9 +30,16 @@ depend on it; `sepia-node`/`sepia-cli`/`sepia-hub` compose ports.
 ```bash
 cargo xtask check          # fmt + clippy -D warnings
 cargo xtask test           # whole suite (nextest if present)
-cargo xtask install        # release-build binaries → ~/.local/bin
-cargo leptos watch         # hub dev loop (wasm → target/site)
+cargo xtask install        # release-build binaries + site → ~/.local
+bun install && bun run css # tailwind v4 → sepia-web/style/main.css
+                           # (xtask site/install runs this via bunx/npx)
 ```
+
+UI stack: Tailwind v4 + `@tailwindcss/typography` (input:
+`crates/sepia-web/style/input.css` — shadcn tokens, Catppuccin dark);
+components in `sepia-web/src/components.rs` via the `leptos_ui`
+`clx!`/`variants!`/`tw_merge` toolkit (rust-ui registry style).
+`main.css` is generated — edit `input.css` + classes, never `main.css`.
 
 Git hooks live in `.hooks/` (`core.hooksPath` = `.hooks`):
 pre-commit runs `cargo fmt --check`, pre-push `cargo xtask check`.

@@ -12,11 +12,22 @@ use crate::api::{
     list_checkpoints, pending_writes, rename_session, restore_checkpoint, rewind_session,
     send_prompt, session_history,
 };
+use crate::components::{
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
+    CardHeader, CardTitle, ConfirmDialog, Dropdown, Input, MenuItem, Skeleton, TEXTAREA_CLASS,
+};
 use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
 use crate::live::{LiveKind, LiveTranscript, PendingPermission};
 use crate::markdown::Markdown;
 
 const PAGE_SIZE: i64 = 100;
+
+/// Inline error box — persistent until the next action clears it.
+const ERROR_BOX: &str =
+    "rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive";
+/// Shared `<pre>` body for tool output and thinking dumps.
+const TOOL_PRE: &str = "max-h-80 overflow-auto whitespace-pre-wrap break-words border-t \
+                        border-border/60 px-3 py-2 font-mono text-xs text-muted-foreground";
 
 #[component]
 pub fn SessionDetailPage() -> impl IntoView {
@@ -137,11 +148,6 @@ pub fn SessionDetailPage() -> impl IntoView {
         if acting.get() {
             return;
         }
-        // Two-step confirm — one click arms, the second deletes.
-        if !confirm_delete.get() {
-            confirm_delete.set(true);
-            return;
-        }
         acting.set(true);
         action_error.set(None);
         let id = session_id();
@@ -151,12 +157,22 @@ pub fn SessionDetailPage() -> impl IntoView {
                 Ok(()) => navigate.with_value(|n| n("/", NavigateOptions::default())),
                 Err(e) => {
                     action_error.set(Some(e.to_string()));
-                    confirm_delete.set(false);
                     acting.set(false);
                 }
             }
         });
     };
+    // `ConfirmDialog::on_confirm` requires `Send`, but `do_delete`
+    // captures `use_navigate` (the router context holds `!Send`
+    // browser handles on wasm), so the dialog flips this flag and the
+    // effect performs the delete inside the component owner.
+    let delete_confirmed = RwSignal::new(false);
+    Effect::new(move |_| {
+        if delete_confirmed.get() {
+            delete_confirmed.set(false);
+            do_delete();
+        }
+    });
 
     // Older pages prepended on demand — `before` = the oldest loaded
     // page's `start` index.
@@ -233,9 +249,14 @@ pub fn SessionDetailPage() -> impl IntoView {
 
     view! {
         <Title text="session — sepia"/>
-        <section class="page detail">
+        <section class="mx-auto w-full max-w-4xl space-y-4 px-4 py-6">
             <Suspense fallback=move || {
-                view! { <p class="loading">"Loading session…"</p> }
+                view! {
+                    <div class="space-y-3">
+                        <Skeleton class="h-32 w-full"/>
+                        <Skeleton class="h-72 w-full"/>
+                    </div>
+                }
             }>
                 {move || {
                     Suspend::new(async move {
@@ -246,7 +267,7 @@ pub fn SessionDetailPage() -> impl IntoView {
                             (summary.await, history.await, pending.await);
                         match (summary_result, page) {
                             (Err(e), _) | (_, Err(e)) => {
-                                view! { <p class="error">{e.to_string()}</p> }.into_any()
+                                view! { <p class=ERROR_BOX>{e.to_string()}</p> }.into_any()
                             }
                             (Ok(session), Ok(page)) => {
                                 let locked = session.locked;
@@ -272,163 +293,203 @@ pub fn SessionDetailPage() -> impl IntoView {
                                     }
                                 }
                                 view! {
-                                    <header class="detail-head">
-                                        <A href="/" attr:class="back">"← sessions"</A>
-                                        <h1 class="detail-title">
-                                            {if session.title.trim().is_empty() {
-                                                "Untitled session".to_string()
-                                            } else {
-                                                session.title.clone()
-                                            }}
-                                        </h1>
-                                        <span class="badges">
-                                            {busy
-                                                .then(|| view! { <span class="badge busy">"busy"</span> })}
-                                            {locked
-                                                .then(|| view! { <span class="badge locked">"locked"</span> })}
-                                            {(queued > 0).then(|| {
-                                                view! { <span class="badge queued">"queued"</span> }
-                                            })}
-                                            {(failed > 0).then(|| {
-                                                view! { <span class="badge failed">"failed"</span> }
-                                            })}
-                                            {move || {
-                                                live_override
-                                                    .get()
-                                                    .unwrap_or(live_flag)
-                                                    .then(|| view! { <span class="badge live">"live"</span> })
-                                            }}
-                                        </span>
-                                        <p class="detail-meta">
-                                            <span class="agent">{session.agent.clone()}</span>
-                                            <code class="cwd">{session.cwd.clone()}</code>
-                                        </p>
-                                        <div class="actions">
-                                            {move || {
-                                                if live_override.get().unwrap_or(live_flag) {
-                                                    view! {
-                                                        <button
-                                                            class="action"
-                                                            disabled=move || acting.get()
-                                                            on:click=move |_| do_detach()
-                                                        >
-                                                            "Detach"
-                                                        </button>
-                                                    }
-                                                        .into_any()
-                                                } else if locked {
-                                                    view! {
-                                                        <button
-                                                            class="action"
-                                                            disabled=move || acting.get()
-                                                            on:click=move |_| do_attach(true)
-                                                        >
-                                                            "Attach (takeover)"
-                                                        </button>
-                                                    }
-                                                        .into_any()
-                                                } else {
-                                                    view! {
-                                                        <button
-                                                            class="action"
-                                                            disabled=move || acting.get()
-                                                            on:click=move |_| do_attach(false)
-                                                        >
-                                                            "Attach"
-                                                        </button>
-                                                    }
-                                                        .into_any()
-                                                }
-                                            }}
-                                            {move || {
-                                                (busy || running()).then(|| {
-                                                    view! {
-                                                        <button
-                                                            class="action"
-                                                            disabled=move || acting.get()
-                                                            on:click=move |_| do_cancel()
-                                                        >
-                                                            "Cancel run"
-                                                        </button>
-                                                    }
-                                                })
-                                            }}
-                                            <button
-                                                class="action"
-                                                disabled=move || acting.get()
-                                                on:click=move |_| {
-                                                    rename_draft.set(title_for_rename.clone());
-                                                    renaming.set(true);
-                                                }
+                                    <Card>
+                                        <CardHeader class="gap-2">
+                                            <A
+                                                href="/"
+                                                attr:class="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
                                             >
-                                                "Rename"
-                                            </button>
-                                            <button
-                                                class="action"
-                                                on:click=move |_| checkpoints_open.update(|o| *o = !*o)
-                                            >
-                                                {move || {
-                                                    if checkpoints_open.get() {
-                                                        "Hide checkpoints"
+                                                "← sessions"
+                                            </A>
+                                            <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                                <CardTitle class="break-words text-base sm:text-lg">
+                                                    {if session.title.trim().is_empty() {
+                                                        "Untitled session".to_string()
                                                     } else {
-                                                        "Checkpoints"
-                                                    }
-                                                }}
-                                            </button>
-                                            <button
-                                                class="danger"
-                                                disabled=move || acting.get()
-                                                on:click=move |_| do_delete()
-                                            >
-                                                {move || {
-                                                    if confirm_delete.get() {
-                                                        "Confirm delete"
-                                                    } else {
-                                                        "Delete"
-                                                    }
-                                                }}
-                                            </button>
-                                        </div>
-                                        {move || renaming.get().then(|| {
-                                            view! {
-                                                <div class="form-row rename-row">
-                                                    <input
-                                                        class="field"
-                                                        type="text"
-                                                        maxlength=200
-                                                        placeholder="Session title"
-                                                        prop:value=move || rename_draft.get()
-                                                        on:input=move |ev| rename_draft
-                                                            .set(event_target_value(&ev))
-                                                        on:keydown=move |ev: leptos::ev::KeyboardEvent| {
-                                                            if ev.key() == "Enter" {
-                                                                ev.prevent_default();
-                                                                do_rename();
-                                                            } else if ev.key() == "Escape" {
-                                                                renaming.set(false);
-                                                            }
+                                                        session.title.clone()
+                                                    }}
+                                                </CardTitle>
+                                                <div class="flex flex-wrap items-center gap-1.5">
+                                                    {busy
+                                                        .then(|| view! {
+                                                            <Badge variant=BadgeVariant::Info>"busy"</Badge>
+                                                        })}
+                                                    {locked
+                                                        .then(|| view! {
+                                                            <Badge variant=BadgeVariant::Warning>"locked"</Badge>
+                                                        })}
+                                                    {(queued > 0).then(|| {
+                                                        view! {
+                                                            <Badge variant=BadgeVariant::Secondary>
+                                                                "queued"
+                                                            </Badge>
                                                         }
-                                                    />
-                                                    <button
-                                                        class="save small"
-                                                        disabled=move || acting.get()
-                                                        on:click=move |_| do_rename()
-                                                    >
-                                                        "Save"
-                                                    </button>
-                                                    <button
-                                                        class="action"
-                                                        on:click=move |_| renaming.set(false)
-                                                    >
-                                                        "Cancel"
-                                                    </button>
+                                                    })}
+                                                    {(failed > 0).then(|| {
+                                                        view! {
+                                                            <Badge variant=BadgeVariant::Destructive>
+                                                                "failed"
+                                                            </Badge>
+                                                        }
+                                                    })}
+                                                    {move || {
+                                                        live_override
+                                                            .get()
+                                                            .unwrap_or(live_flag)
+                                                            .then(|| view! {
+                                                                <Badge variant=BadgeVariant::Success>"live"</Badge>
+                                                            })
+                                                    }}
                                                 </div>
-                                            }
-                                        })}
-                                        {move || action_error.get().map(|e| {
-                                            view! { <p class="error">{e}</p> }
-                                        })}
-                                    </header>
+                                            </div>
+                                            <CardDescription class="flex flex-wrap items-center gap-2">
+                                                <Badge variant=BadgeVariant::Outline>
+                                                    {session.agent.clone()}
+                                                </Badge>
+                                                {session
+                                                    .node
+                                                    .clone()
+                                                    .map(|n| view! {
+                                                        <Badge variant=BadgeVariant::Outline>{n}</Badge>
+                                                    })}
+                                                <code class="break-all font-mono text-xs text-muted-foreground">
+                                                    {session.cwd.clone()}
+                                                </code>
+                                            </CardDescription>
+                                        </CardHeader>
+                                        <CardContent class="space-y-3">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                {move || {
+                                                    if live_override.get().unwrap_or(live_flag) {
+                                                        view! {
+                                                            <Button
+                                                                variant=ButtonVariant::Secondary
+                                                                size=ButtonSize::Sm
+                                                                disabled=acting
+                                                                on_click=Box::new(do_detach)
+                                                            >
+                                                                "Detach"
+                                                            </Button>
+                                                        }
+                                                            .into_any()
+                                                    } else if locked {
+                                                        view! {
+                                                            <Button
+                                                                size=ButtonSize::Sm
+                                                                disabled=acting
+                                                                on_click=Box::new(move || do_attach(true))
+                                                            >
+                                                                "Attach (takeover)"
+                                                            </Button>
+                                                        }
+                                                            .into_any()
+                                                    } else {
+                                                        view! {
+                                                            <Button
+                                                                size=ButtonSize::Sm
+                                                                disabled=acting
+                                                                on_click=Box::new(move || do_attach(false))
+                                                            >
+                                                                "Attach"
+                                                            </Button>
+                                                        }
+                                                            .into_any()
+                                                    }
+                                                }}
+                                                {move || {
+                                                    (busy || running()).then(|| {
+                                                        view! {
+                                                            <Button
+                                                                variant=ButtonVariant::Outline
+                                                                size=ButtonSize::Sm
+                                                                disabled=acting
+                                                                on_click=Box::new(do_cancel)
+                                                            >
+                                                                "Cancel run"
+                                                            </Button>
+                                                        }
+                                                    })
+                                                }}
+                                                <Button
+                                                    variant=ButtonVariant::Outline
+                                                    size=ButtonSize::Sm
+                                                    on_click=Box::new(move || {
+                                                        checkpoints_open.update(|o| *o = !*o);
+                                                    })
+                                                >
+                                                    {move || {
+                                                        if checkpoints_open.get() {
+                                                            "Hide checkpoints"
+                                                        } else {
+                                                            "Checkpoints"
+                                                        }
+                                                    }}
+                                                </Button>
+                                                <Dropdown label="Actions">
+                                                    <MenuItem
+                                                        label="Rename…"
+                                                        on_click=Box::new(move || {
+                                                            rename_draft.set(title_for_rename.clone());
+                                                            renaming.set(true);
+                                                        })
+                                                    />
+                                                    <MenuItem
+                                                        label="Delete session"
+                                                        destructive=true
+                                                        on_click=Box::new(move || confirm_delete.set(true))
+                                                    />
+                                                </Dropdown>
+                                            </div>
+                                            {move || renaming.get().then(|| {
+                                                view! {
+                                                    <div class="flex flex-wrap items-center gap-2">
+                                                        <Input
+                                                            class="h-8 max-w-xs"
+                                                            attr:r#type="text"
+                                                            attr:maxlength="200"
+                                                            attr:placeholder="Session title"
+                                                            prop:value=move || rename_draft.get()
+                                                            on:input=move |ev| rename_draft
+                                                                .set(event_target_value(&ev))
+                                                            on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                                                                if ev.key() == "Enter" {
+                                                                    ev.prevent_default();
+                                                                    do_rename();
+                                                                } else if ev.key() == "Escape" {
+                                                                    renaming.set(false);
+                                                                }
+                                                            }
+                                                        />
+                                                        <Button
+                                                            size=ButtonSize::Sm
+                                                            disabled=acting
+                                                            on_click=Box::new(do_rename)
+                                                        >
+                                                            "Save"
+                                                        </Button>
+                                                        <Button
+                                                            variant=ButtonVariant::Ghost
+                                                            size=ButtonSize::Sm
+                                                            on_click=Box::new(move || renaming.set(false))
+                                                        >
+                                                            "Cancel"
+                                                        </Button>
+                                                    </div>
+                                                }
+                                            })}
+                                            {move || action_error.get().map(|e| {
+                                                view! { <p class=ERROR_BOX>{e}</p> }
+                                            })}
+                                        </CardContent>
+                                    </Card>
+                                    <ConfirmDialog
+                                        open=confirm_delete
+                                        title="Delete this session?"
+                                        body="This permanently deletes the session and its history from the store."
+                                        confirm_label="Delete"
+                                        destructive=true
+                                        on_confirm=move || delete_confirmed.set(true)
+                                    />
                                     <Show when=move || checkpoints_open.get() fallback=|| ()>
                                         <CheckpointList
                                             checkpoints=checkpoints
@@ -440,7 +501,10 @@ pub fn SessionDetailPage() -> impl IntoView {
                                             }
                                         />
                                     </Show>
-                                    <div class="log" node_ref=log_ref>
+                                    <div
+                                        class="flex max-h-[70vh] min-h-40 flex-col gap-2 overflow-y-auto rounded-lg border bg-card p-3"
+                                        node_ref=log_ref
+                                    >
                                         <OlderButton
                                             older=older
                                             latest_start=latest_start
@@ -465,7 +529,12 @@ pub fn SessionDetailPage() -> impl IntoView {
                                     </div>
                                     {move || {
                                         running()
-                                            .then(|| view! { <p class="busy-line">"working…"</p> })
+                                            .then(|| view! {
+                                                <p class="flex items-center gap-2 text-sm text-info">
+                                                    <span class="size-1.5 animate-pulse rounded-full bg-info"></span>
+                                                    "working…"
+                                                </p>
+                                            })
                                     }}
                                     {move || {
                                         live.read().pending_permission.clone().map(|p| {
@@ -511,7 +580,7 @@ fn OlderButton(
     has_older: impl Fn() -> bool + 'static + Send + Sync + Copy,
 ) -> impl IntoView {
     let loading = RwSignal::new(false);
-    let onclick = move |_| {
+    let load = move || {
         let before = older.read().first().map_or_else(latest_start, |p| p.start);
         if before == 0 {
             return;
@@ -533,17 +602,28 @@ fn OlderButton(
             loading.set(false);
         });
     };
+    let load = std::sync::Arc::new(load);
     view! {
         <Show when=move || has_older() fallback=|| ()>
-            <button class="older" disabled=move || loading.get() on:click=onclick.clone()>
-                {move || {
-                    if loading.get() {
-                        "Loading…"
-                    } else {
-                        "Load earlier messages"
-                    }
-                }}
-            </button>
+            <div class="flex justify-center">
+                <Button
+                    variant=ButtonVariant::Ghost
+                    size=ButtonSize::Sm
+                    disabled=loading
+                    on_click=Box::new({
+                        let load = load.clone();
+                        move || load()
+                    })
+                >
+                    {move || {
+                        if loading.get() {
+                            "Loading…"
+                        } else {
+                            "Load earlier messages"
+                        }
+                    }}
+                </Button>
+            </div>
         </Show>
     }
 }
@@ -556,34 +636,50 @@ fn HistoryRow(message: HistoryMessageDto) -> impl IntoView {
         let name = message.tool_name.clone().unwrap_or_else(|| "tool".into());
         let status = message.tool_status.clone().unwrap_or_default();
         let class = if status == "error" {
-            "msg tool error"
+            "rounded-md border border-destructive/40 bg-destructive/10"
         } else {
-            "msg tool"
+            "rounded-md border border-border bg-muted/30"
         };
         view! {
             <details class=class>
-                <summary>
-                    <span class="tool-name">{name}</span>
+                <summary class="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-xs">
+                    <span class="font-semibold text-info">{name}</span>
                     {message
                         .exit_code
-                        .map(|c| view! { <span class="tool-code">{format!("exit {c}")}</span> })}
+                        .map(|c| view! {
+                            <span class="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-secondary-foreground">
+                                {format!("exit {c}")}
+                            </span>
+                        })}
                 </summary>
-                <pre class="tool-body">{text}</pre>
+                <pre class=TOOL_PRE>{text}</pre>
             </details>
         }
         .into_any()
     } else {
         let thinking = message.thinking.clone();
+        let class = match role.as_str() {
+            "user" => "rounded-md border border-info/30 bg-info/5 px-3 py-2",
+            "system" => {
+                "rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-sm \
+                 text-muted-foreground"
+            }
+            _ => "rounded-md px-1 py-2",
+        };
         view! {
-            <article class=format!("msg {role}")>
-                <header class="msg-role">{role.clone()}</header>
+            <article class=class>
+                <header class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {role.clone()}
+                </header>
                 {thinking
                     .filter(|t| !t.is_empty())
                     .map(|t| {
                         view! {
-                            <details class="thinking">
-                                <summary>"thinking"</summary>
-                                <pre class="tool-body">{t}</pre>
+                            <details class="mb-1 rounded border border-border/60 bg-muted/30">
+                                <summary class="cursor-pointer select-none px-2 py-1 font-mono text-xs italic text-muted-foreground">
+                                    "thinking"
+                                </summary>
+                                <pre class=TOOL_PRE>{t}</pre>
                             </details>
                         }
                     })}
@@ -598,27 +694,34 @@ fn HistoryRow(message: HistoryMessageDto) -> impl IntoView {
 #[component]
 fn LiveLog(live: RwSignal<LiveTranscript>) -> impl IntoView {
     view! {
-        <div class="live">
+        <div class="contents">
             {move || {
                 live.read()
                     .entries
                     .iter()
                     .map(|e| {
-                        let class = format!(
-                            "msg live-{}{}{}",
+                        let surface = if e.error {
+                            "border-destructive/50 bg-destructive/10"
+                        } else {
                             match e.kind {
-                                LiveKind::Assistant => "assistant",
-                                LiveKind::Reasoning => "reasoning",
-                                LiveKind::Tool => "tool",
-                            },
-                            if e.done { " done" } else { "" },
-                            if e.error { " error" } else { "" },
-                        );
+                                LiveKind::Assistant => "border-info/30 bg-info/5",
+                                LiveKind::Reasoning => {
+                                    "border-border/60 bg-muted/40 text-muted-foreground"
+                                }
+                                LiveKind::Tool => "border-border bg-muted/30",
+                            }
+                        };
+                        let class = format!("rounded-md border px-3 py-2 {surface}");
                         let body = if e.kind == LiveKind::Tool {
                             view! {
-                                <details class="tool-live" open=!e.done>
-                                    <summary>{e.title.clone()}</summary>
-                                    <pre class="tool-body">
+                                <details
+                                    class="mt-1 rounded border border-border/60 bg-background/60"
+                                    open=!e.done
+                                >
+                                    <summary class="cursor-pointer select-none px-2 py-1 font-mono text-xs text-muted-foreground">
+                                        {e.title.clone()}
+                                    </summary>
+                                    <pre class=TOOL_PRE>
                                         {if e.text.is_empty() {
                                             e.result.clone().unwrap_or_default()
                                         } else {
@@ -633,7 +736,15 @@ fn LiveLog(live: RwSignal<LiveTranscript>) -> impl IntoView {
                         };
                         view! {
                             <article class=class>
-                                <header class="msg-role">{e.title.clone()}</header>
+                                <header class="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    {(!e.done).then(|| view! {
+                                        <span class="size-1.5 animate-pulse rounded-full bg-info"></span>
+                                    })}
+                                    {e.title.clone()}
+                                    {e.error.then(|| view! {
+                                        <Badge variant=BadgeVariant::Destructive>"error"</Badge>
+                                    })}
+                                </header>
                                 {body}
                             </article>
                         }
@@ -659,24 +770,24 @@ fn PromptBox(
         }
     };
     view! {
-        <div class="composer">
-            {move || send_error.get().map(|e| view! { <p class="error">{e}</p> })}
+        <div class="space-y-2">
+            {move || send_error.get().map(|e| view! { <p class=ERROR_BOX>{e}</p> })}
             <textarea
-                class="prompt"
+                class=TEXTAREA_CLASS
                 placeholder="Message the agent…  (Enter to send, Shift+Enter for newline)"
                 prop:value=move || draft.get()
                 on:input=move |ev| draft.set(event_target_value(&ev))
                 on:keydown=on_keydown
                 rows=3
             ></textarea>
-            <div class="composer-bar">
-                <button
-                    class="send"
+            <div class="flex justify-end">
+                <Button
+                    size=ButtonSize::Sm
                     disabled=move || sending.get() || draft.read().trim().is_empty()
-                    on:click=move |_| submit()
+                    on_click=Box::new(submit)
                 >
                     {move || if sending.get() { "Sending…" } else { "Send" }}
-                </button>
+                </Button>
             </div>
         </div>
     }
@@ -715,43 +826,62 @@ fn PermissionCard(
         });
     };
     view! {
-        <div class="permission">
-            <p class="permission-title">
-                <span class="badge locked">"approval"</span>
-                {if permission.title.is_empty() {
-                    "Permission requested".to_string()
-                } else {
-                    permission.title.clone()
-                }}
-            </p>
-            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
-            <div class="permission-options">
-                {permission
-                    .options
-                    .iter()
-                    .map(|o| {
-                        let o = o.clone();
-                        let respond = respond.clone();
-                        view! {
-                            <button
-                                class=format!("perm-option {}", o.kind)
-                                disabled=move || answering.get()
-                                on:click=move |_| respond(Some(o.option_id.clone()))
-                            >
-                                {o.name.clone()}
-                            </button>
-                        }
-                    })
-                    .collect::<Vec<_>>()}
-                <button
-                    class="action"
-                    disabled=move || answering.get()
-                    on:click=move |_| respond(None)
-                >
-                    "Dismiss"
-                </button>
-            </div>
-        </div>
+        <Card class="border-warning/40">
+            <CardHeader class="gap-2">
+                <div class="flex items-center gap-2">
+                    <Badge variant=BadgeVariant::Warning>"approval"</Badge>
+                    <CardTitle class="text-sm font-medium">
+                        {if permission.title.is_empty() {
+                            "Permission requested".to_string()
+                        } else {
+                            permission.title.clone()
+                        }}
+                    </CardTitle>
+                </div>
+                {move || error.get().map(|e| view! { <p class=ERROR_BOX>{e}</p> })}
+            </CardHeader>
+            <CardContent>
+                <div class="flex flex-wrap items-center gap-2">
+                    {permission
+                        .options
+                        .iter()
+                        .map(|o| {
+                            let o = o.clone();
+                            let respond = respond.clone();
+                            let (variant, extra) = if o.kind.contains("reject") {
+                                (
+                                    ButtonVariant::Outline,
+                                    "border-destructive/40 text-destructive hover:bg-destructive/10",
+                                )
+                            } else if o.kind.contains("always") {
+                                (ButtonVariant::Default, "")
+                            } else {
+                                (ButtonVariant::Secondary, "")
+                            };
+                            view! {
+                                <Button
+                                    variant=variant
+                                    size=ButtonSize::Sm
+                                    class=extra.to_string()
+                                    disabled=answering
+                                    on_click=Box::new(move || respond(Some(o.option_id.clone())))
+                                >
+                                    {o.name.clone()}
+                                </Button>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                    <Button
+                        variant=ButtonVariant::Ghost
+                        size=ButtonSize::Sm
+                        disabled=answering
+                        on_click=Box::new(move || respond(None))
+                    >
+                        "Dismiss"
+                    </Button>
+                </div>
+            </CardContent>
+        </Card>
     }
 }
 
@@ -765,40 +895,61 @@ fn CheckpointList(
     on_changed: impl Fn() + 'static + Send + Sync + Copy,
 ) -> impl IntoView {
     view! {
-        <div class="checkpoints">
-            {move || match checkpoints.get() {
-                None => view! { <p class="loading">"Loading checkpoints…"</p> }.into_any(),
-                Some(Err(e)) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
-                Some(Ok(list)) if list.is_empty() => {
-                    view! { <p class="empty">"No checkpoints recorded."</p> }.into_any()
-                }
-                Some(Ok(list)) => {
-                    view! {
-                        <ul class="checkpoint-list">
-                            {list
-                                .into_iter()
-                                .map(|cp| {
-                                    view! {
-                                        <CheckpointRow
-                                            checkpoint=cp
-                                            session_id=session_id.clone()
-                                            agent=agent.clone()
-                                            on_changed=on_changed
-                                        />
-                                    }
-                                })
-                                .collect::<Vec<_>>()}
-                        </ul>
+        <Card>
+            <CardHeader>
+                <CardTitle class="text-sm">"Checkpoints"</CardTitle>
+                <CardDescription>
+                    "Restore the store state or rewind the transcript to a recorded checkpoint."
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                {move || match checkpoints.get() {
+                    None => {
+                        view! {
+                            <div class="space-y-2">
+                                <Skeleton class="h-20 w-full"/>
+                                <Skeleton class="h-20 w-full"/>
+                            </div>
+                        }
+                            .into_any()
                     }
-                        .into_any()
-                }
-            }}
-        </div>
+                    Some(Err(e)) => view! { <p class=ERROR_BOX>{e.to_string()}</p> }.into_any(),
+                    Some(Ok(list)) if list.is_empty() => {
+                        view! {
+                            <p class="text-sm text-muted-foreground">
+                                "No checkpoints recorded."
+                            </p>
+                        }
+                            .into_any()
+                    }
+                    Some(Ok(list)) => {
+                        view! {
+                            <ul class="space-y-2">
+                                {list
+                                    .into_iter()
+                                    .map(|cp| {
+                                        view! {
+                                            <CheckpointRow
+                                                checkpoint=cp
+                                                session_id=session_id.clone()
+                                                agent=agent.clone()
+                                                on_changed=on_changed
+                                            />
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()}
+                            </ul>
+                        }
+                            .into_any()
+                    }
+                }}
+            </CardContent>
+        </Card>
     }
 }
 
-/// One checkpoint row. `Restore`/`Rewind` are two-step — the first
-/// click arms ("Confirm"), the second posts with `confirm: true`.
+/// One checkpoint row. `Restore`/`Rewind` ask for confirmation via a
+/// `ConfirmDialog` before posting.
 #[component]
 fn CheckpointRow(
     checkpoint: CheckpointDto,
@@ -806,20 +957,16 @@ fn CheckpointRow(
     agent: Option<String>,
     on_changed: impl Fn() + 'static + Send + Sync + Copy,
 ) -> impl IntoView {
-    let armed: RwSignal<Option<&'static str>> = RwSignal::new(None);
     let busy = RwSignal::new(false);
     let error: RwSignal<Option<String>> = RwSignal::new(None);
     let done: RwSignal<Option<&'static str>> = RwSignal::new(None);
+    let confirm_restore = RwSignal::new(false);
+    let confirm_rewind = RwSignal::new(false);
     let checkpoint_ref = checkpoint.r#ref.clone();
     let run = move |op: &'static str| {
         if busy.get() {
             return;
         }
-        if armed.get() != Some(op) {
-            armed.set(Some(op));
-            return;
-        }
-        armed.set(None);
         busy.set(true);
         error.set(None);
         done.set(None);
@@ -846,17 +993,27 @@ fn CheckpointRow(
             busy.set(false);
         });
     };
+    let run_restore = {
+        let run = run.clone();
+        move || run("restore")
+    };
+    let run_rewind = move || run("rewind");
     view! {
-        <li class="checkpoint">
-            <div class="checkpoint-head">
-                <code class="checkpoint-ref">{checkpoint.r#ref.clone()}</code>
-                <span class="badges">
-                    {checkpoint.kind.clone().map(|k| view! { <span class="badge">{k}</span> })}
-                    {checkpoint
-                        .run_count
-                        .map(|n| view! { <span class="badge">{format!("{n} runs")}</span> })}
-                </span>
-                <span class="checkpoint-time">
+        <li class="space-y-2 rounded-md border border-border/60 bg-background/40 p-3">
+            <div class="flex flex-wrap items-center gap-2">
+                <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-info">
+                    {checkpoint.r#ref.clone()}
+                </code>
+                {checkpoint
+                    .kind
+                    .clone()
+                    .map(|k| view! { <Badge variant=BadgeVariant::Info>{k}</Badge> })}
+                {checkpoint
+                    .run_count
+                    .map(|n| view! {
+                        <Badge variant=BadgeVariant::Muted>{format!("{n} runs")}</Badge>
+                    })}
+                <span class="ml-auto text-xs text-muted-foreground">
                     {move || {
                         let now = use_context::<crate::app::Now>()
                             .map_or_else(crate::time::now_ms, |n| n.0.get());
@@ -864,43 +1021,42 @@ fn CheckpointRow(
                     }}
                 </span>
             </div>
-            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
-            {move || done.get().map(|d| view! { <p class="ok-line">{d}</p> })}
-            <div class="card-actions">
-                <button
-                    class="action"
-                    disabled=move || busy.get()
-                    on:click={
-                        let run = run.clone();
-                        move |_| run("restore")
-                    }
+            {move || error.get().map(|e| view! { <p class=ERROR_BOX>{e}</p> })}
+            {move || done.get().map(|d| view! { <p class="text-sm text-success">{d}</p> })}
+            <div class="flex items-center gap-2">
+                <Button
+                    variant=ButtonVariant::Outline
+                    size=ButtonSize::Sm
+                    disabled=busy
+                    on_click=Box::new(move || confirm_restore.set(true))
                 >
-                    {move || {
-                        if busy.get() {
-                            "Working…"
-                        } else if armed.get() == Some("restore") {
-                            "Confirm restore"
-                        } else {
-                            "Restore"
-                        }
-                    }}
-                </button>
-                <button
-                    class="action"
-                    disabled=move || busy.get()
-                    on:click=move |_| run("rewind")
+                    {move || if busy.get() { "Working…" } else { "Restore" }}
+                </Button>
+                <Button
+                    variant=ButtonVariant::Outline
+                    size=ButtonSize::Sm
+                    class="border-warning/40 text-warning hover:bg-warning/10".to_string()
+                    disabled=busy
+                    on_click=Box::new(move || confirm_rewind.set(true))
                 >
-                    {move || {
-                        if busy.get() {
-                            "Working…"
-                        } else if armed.get() == Some("rewind") {
-                            "Confirm rewind"
-                        } else {
-                            "Rewind"
-                        }
-                    }}
-                </button>
+                    {move || if busy.get() { "Working…" } else { "Rewind" }}
+                </Button>
             </div>
+            <ConfirmDialog
+                open=confirm_restore
+                title="Restore this checkpoint?"
+                body="The store state is reset to this checkpoint; the transcript is unchanged."
+                confirm_label="Restore"
+                on_confirm=run_restore
+            />
+            <ConfirmDialog
+                open=confirm_rewind
+                title="Rewind to this checkpoint?"
+                body="History after this checkpoint is removed from the transcript."
+                confirm_label="Rewind"
+                destructive=true
+                on_confirm=run_rewind
+            />
         </li>
     }
 }

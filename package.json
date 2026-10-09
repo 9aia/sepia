@@ -1,0 +1,13 @@
+{
+  "name": "sepia-ui",
+  "private": true,
+  "scripts": {
+    "css": "tailwindcss -i crates/sepia-web/style/input.css -o crates/sepia-web/style/main.css --minify",
+    "css:watch": "tailwindcss -i crates/sepia-web/style/input.css -o crates/sepia-web/style/main.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4",
+    "@tailwindcss/typography": "^0.5",
+    "tailwindcss": "^4"
+  }
+}

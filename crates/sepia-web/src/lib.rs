@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod app;
+pub mod components;
 pub mod dto;
 pub mod live;
 pub mod markdown;
@@ -35,4 +36,18 @@ pub fn hydrate() {
 fn register_service_worker() {
     let window = leptos::prelude::window();
     let _ = window.navigator().service_worker().register("/sw.js");
+}
+
+/// `setTimeout`-backed async sleep (wasm only).
+#[cfg(feature = "hydrate")]
+pub async fn sleep_ms(ms: u32) {
+    use wasm_bindgen_futures::JsFuture;
+
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        let _ = leptos::prelude::window().set_timeout_with_callback_and_timeout_and_arguments_0(
+            &resolve,
+            i32::try_from(ms).unwrap_or(i32::MAX),
+        );
+    });
+    let _ = JsFuture::from(promise).await;
 }

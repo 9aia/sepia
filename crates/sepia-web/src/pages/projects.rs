@@ -6,6 +6,10 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::api::{create_project, delete_project, list_projects, list_sessions};
+use crate::components::{
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardHeader,
+    CardTitle, Input, PageDescription, PageHead, PageTitle, Skeleton,
+};
 use crate::dto::{ProjectDto, SessionSummaryDto};
 
 #[component]
@@ -38,50 +42,75 @@ pub fn ProjectsPage() -> impl IntoView {
 
     view! {
         <Title text="projects — sepia"/>
-        <section class="page">
-            <header class="page-head">
-                <h1>"Projects"</h1>
-            </header>
+        <section class="space-y-6">
+            <PageHead class="mb-0">
+                <div>
+                    <PageTitle>"Projects"</PageTitle>
+                    <PageDescription>"Named groups over session metadata."</PageDescription>
+                </div>
+            </PageHead>
             <form
-                class="form-row"
+                class="flex items-center gap-2"
                 on:submit=move |ev| {
                     ev.prevent_default();
                     create();
                 }
             >
-                <input
-                    class="field"
-                    type="text"
-                    placeholder="New project name…"
-                    maxlength=100
+                <Input
+                    class="w-full max-w-xs"
+                    attr:r#type="text"
+                    attr:placeholder="New project name…"
+                    attr:maxlength=100
                     prop:value=move || draft.get()
                     on:input=move |ev| draft.set(event_target_value(&ev))
                 />
-                <button
-                    class="send"
-                    type="submit"
+                <Button
+                    button_type="submit"
                     disabled=move || busy.get() || draft.read().trim().is_empty()
                 >
                     {move || if busy.get() { "Creating…" } else { "Create" }}
-                </button>
+                </Button>
             </form>
-            {move || form_error.get().map(|e| view! { <p class="error">{e}</p> })}
+            {move || {
+                form_error.get().map(|e| {
+                    view! {
+                        <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                            {e}
+                        </p>
+                    }
+                })
+            }}
             <Suspense fallback=move || {
-                view! { <p class="loading">"Loading projects…"</p> }
+                view! {
+                    <div class="grid gap-3">
+                        <Skeleton class="h-28 w-full"/>
+                        <Skeleton class="h-28 w-full"/>
+                    </div>
+                }
             }>
                 {move || {
                     Suspend::new(async move {
                         let sessions_list = sessions.await.unwrap_or_default();
                         match projects.await {
                             Err(e) => {
-                                view! { <p class="error">{e.to_string()}</p> }.into_any()
+                                view! {
+                                    <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                                        {e.to_string()}
+                                    </p>
+                                }
+                                    .into_any()
                             }
                             Ok(list) if list.is_empty() => {
-                                view! { <p class="empty">"No projects yet."</p> }.into_any()
+                                view! {
+                                    <p class="text-sm text-muted-foreground">
+                                        "No projects yet."
+                                    </p>
+                                }
+                                    .into_any()
                             }
                             Ok(list) => {
                                 view! {
-                                    <ul class="card-list">
+                                    <ul class="grid gap-3">
                                         {list
                                             .into_iter()
                                             .map(|p| {
@@ -130,7 +159,7 @@ fn ProjectRow(
     let error: RwSignal<Option<String>> = RwSignal::new(None);
     let id = project.id.clone();
     let node = project.node.clone();
-    let on_delete = move |_| {
+    let on_delete = move || {
         if deleting.get() {
             return;
         }
@@ -149,27 +178,41 @@ fn ProjectRow(
         });
     };
     view! {
-        <li class="card">
-            <div class="card-head">
-                <span class="card-title">{project.name.clone()}</span>
-                <span class="badges">
-                    {project.node.clone().map(|n| view! { <span class="badge node">{n}</span> })}
-                    <span class="badge">{format!("{count} sessions")}</span>
-                </span>
-            </div>
-            <p class="card-meta">
-                <code>{project.id.clone()}</code>
-            </p>
-            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
-            <div class="card-actions">
-                <button
-                    class="danger"
-                    disabled=move || deleting.get()
-                    on:click=on_delete
-                >
-                    {move || if deleting.get() { "Deleting…" } else { "Delete" }}
-                </button>
-            </div>
+        <li>
+            <Card>
+                <CardHeader class="flex-row items-center justify-between gap-3">
+                    <CardTitle>{project.name.clone()}</CardTitle>
+                    <div class="flex items-center gap-1.5">
+                        {project
+                            .node
+                            .clone()
+                            .map(|n| view! { <Badge variant=BadgeVariant::Info>{n}</Badge> })}
+                        <Badge variant=BadgeVariant::Secondary>
+                            {format!("{count} sessions")}
+                        </Badge>
+                    </div>
+                </CardHeader>
+                <CardContent class="flex flex-col gap-3">
+                    <div class="flex items-center justify-between gap-3">
+                        <p class="font-mono text-xs text-muted-foreground">
+                            {project.id.clone()}
+                        </p>
+                        <Button
+                            variant=ButtonVariant::Destructive
+                            size=ButtonSize::Sm
+                            disabled=move || deleting.get()
+                            on_click=Box::new(on_delete)
+                        >
+                            {move || if deleting.get() { "Deleting…" } else { "Delete" }}
+                        </Button>
+                    </div>
+                    {move || {
+                        error
+                            .get()
+                            .map(|e| view! { <p class="text-sm text-destructive">{e}</p> })
+                    }}
+                </CardContent>
+            </Card>
         </li>
     }
 }

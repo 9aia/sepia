@@ -14,6 +14,10 @@ use leptos_router::hooks::use_navigate;
 use crate::api::list_agents;
 use crate::api::{create_session, list_sessions, pending_writes};
 use crate::app::Now;
+use crate::components::{
+    Badge, BadgeVariant, Button, Input, PageDescription, PageHead, PageTitle, SELECT_CLASS,
+    Skeleton,
+};
 use crate::dto::AgentDto;
 use crate::dto::SessionSummaryDto;
 use crate::time::relative;
@@ -39,13 +43,24 @@ pub fn SessionListPage() -> impl IntoView {
 
     view! {
         <Title text="sessions — sepia"/>
-        <section class="page">
-            <header class="page-head">
-                <h1>"Sessions"</h1>
-            </header>
+        <section>
+            <PageHead>
+                <div>
+                    <PageTitle>"Sessions"</PageTitle>
+                    <PageDescription>
+                        "Agent sessions across all of your nodes."
+                    </PageDescription>
+                </div>
+            </PageHead>
             <NewSessionForm on_created=move || sessions.refetch()/>
             <Suspense fallback=move || {
-                view! { <p class="loading">"Loading sessions…"</p> }
+                view! {
+                    <div class="flex flex-col gap-2">
+                        <Skeleton class="h-16 w-full"/>
+                        <Skeleton class="h-16 w-full"/>
+                        <Skeleton class="h-16 w-full"/>
+                    </div>
+                }
             }>
                 {move || {
                     Suspend::new(async move {
@@ -53,10 +68,19 @@ pub fn SessionListPage() -> impl IntoView {
                         let pending_result = pending.await.unwrap_or_default();
                         match sessions.await {
                             Err(e) => {
-                                view! { <p class="error">{e.to_string()}</p> }.into_any()
+                                view! {
+                                    <p class="whitespace-pre-wrap font-mono text-sm text-destructive">
+                                        {e.to_string()}
+                                    </p>
+                                }
+                                    .into_any()
                             }
                             Ok(list) if list.is_empty() => {
-                                view! { <p class="empty">"No sessions yet."</p> }
+                                view! {
+                                    <p class="text-sm text-muted-foreground">
+                                        "No sessions yet."
+                                    </p>
+                                }
                                     .into_any()
                             }
                             Ok(list) => {
@@ -73,7 +97,7 @@ pub fn SessionListPage() -> impl IntoView {
                                     }
                                 }
                                 view! {
-                                    <ul class="session-list">
+                                    <ul class="flex flex-col gap-2">
                                         {list
                                             .into_iter()
                                             .map(|s| {
@@ -115,21 +139,31 @@ fn SessionRow(session: SessionSummaryDto, queued: usize, failed: usize) -> impl 
     };
     let iso = session.updated_at.clone();
     view! {
-        <li class="session">
-            <A href=href attr:class="session-link">
-                <span class="session-top">
-                    <span class="session-title">{title}</span>
-                    <span class="badges">
-                        {session.node.clone().map(|n| view! { <span class="badge node">{n}</span> })}
-                        {session.busy.then(|| view! { <span class="badge busy">"busy"</span> })}
-                        {session.locked.then(|| view! { <span class="badge locked">"locked"</span> })}
+        <li>
+            <A
+                href=href
+                attr:class="block rounded-lg border bg-card p-3 transition-colors hover:bg-accent/50"
+            >
+                <span class="flex items-center justify-between gap-2">
+                    <span class="min-w-0 truncate font-medium">{title}</span>
+                    <span class="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                        {session
+                            .node
+                            .clone()
+                            .map(|n| view! { <Badge variant=BadgeVariant::Info>{n}</Badge> })}
+                        {session
+                            .busy
+                            .then(|| view! { <Badge variant=BadgeVariant::Warning>"busy"</Badge> })}
+                        {session.locked.then(|| {
+                            view! { <Badge variant=BadgeVariant::Warning>"locked"</Badge> }
+                        })}
                         {(queued > 0).then(|| {
                             let label = if queued > 1 {
                                 format!("queued ×{queued}")
                             } else {
                                 "queued".to_string()
                             };
-                            view! { <span class="badge queued">{label}</span> }
+                            view! { <Badge variant=BadgeVariant::Default>{label}</Badge> }
                         })}
                         {(failed > 0).then(|| {
                             let label = if failed > 1 {
@@ -137,15 +171,23 @@ fn SessionRow(session: SessionSummaryDto, queued: usize, failed: usize) -> impl 
                             } else {
                                 "failed".to_string()
                             };
-                            view! { <span class="badge failed">{label}</span> }
+                            view! { <Badge variant=BadgeVariant::Destructive>{label}</Badge> }
                         })}
-                        {session.pinned.then(|| view! { <span class="badge pinned">"pinned"</span> })}
+                        {session.pinned.then(|| {
+                            view! { <Badge variant=BadgeVariant::Success>"pinned"</Badge> }
+                        })}
                     </span>
                 </span>
-                <span class="session-meta">
-                    <span class="agent">{session.agent.clone()}</span>
-                    <span class="cwd">{session.cwd.clone()}</span>
-                    <RelativeTime iso=iso/>
+                <span class="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span class="shrink-0 rounded-sm border border-border bg-muted px-1.5 py-px font-mono text-[11px] text-info">
+                        {session.agent.clone()}
+                    </span>
+                    <span class="min-w-0 truncate [direction:rtl] text-left">
+                        {session.cwd.clone()}
+                    </span>
+                    <span class="ml-auto shrink-0">
+                        <RelativeTime iso=iso/>
+                    </span>
                 </span>
             </A>
         </li>
@@ -211,29 +253,29 @@ fn NewSessionForm(on_created: impl Fn() + 'static + Send + Sync + Copy) -> impl 
 
     view! {
         <form
-            class="form-row new-session"
+            class="mb-6 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"
             on:submit=move |ev| {
                 ev.prevent_default();
                 create();
             }
         >
-            <input
-                class="field"
-                type="text"
-                placeholder="Working directory (required)…"
+            <Input
+                attr:r#type="text"
+                attr:placeholder="Working directory (required)…"
+                class="sm:flex-[2]"
                 prop:value=move || cwd.get()
                 on:input=move |ev| cwd.set(event_target_value(&ev))
             />
-            <input
-                class="field"
-                type="text"
-                placeholder="Title (optional)…"
-                maxlength=200
+            <Input
+                attr:r#type="text"
+                attr:placeholder="Title (optional)…"
+                attr:maxlength="200"
+                class="sm:flex-1"
                 prop:value=move || title.get()
                 on:input=move |ev| title.set(event_target_value(&ev))
             />
             <select
-                class="field agent-select"
+                class=format!("{SELECT_CLASS} sm:w-44 sm:shrink-0")
                 prop:value=move || agent_sel.get()
                 on:change=move |ev| agent_sel.set(event_target_value(&ev))
             >
@@ -263,22 +305,29 @@ fn NewSessionForm(on_created: impl Fn() + 'static + Send + Sync + Copy) -> impl 
                         .collect::<Vec<_>>()
                 }}
             </select>
-            <input
-                class="field"
-                type="text"
-                placeholder="Model (optional)…"
-                maxlength=100
+            <Input
+                attr:r#type="text"
+                attr:placeholder="Model (optional)…"
+                attr:maxlength="100"
+                class="sm:flex-1"
                 prop:value=move || model.get()
                 on:input=move |ev| model.set(event_target_value(&ev))
             />
-            <button
-                class="send"
-                type="submit"
-                disabled=move || creating.get() || cwd.read().trim().is_empty()
+            <Button
+                button_type="submit"
+                disabled=Signal::derive(move || {
+                    creating.get() || cwd.read().trim().is_empty()
+                })
             >
                 {move || if creating.get() { "Creating…" } else { "New session" }}
-            </button>
-            {move || form_error.get().map(|e| view! { <p class="error">{e}</p> })}
+            </Button>
+            {move || {
+                form_error
+                    .get()
+                    .map(|e| view! {
+                        <p class="basis-full text-sm text-destructive">{e}</p>
+                    })
+            }}
         </form>
     }
 }
@@ -296,7 +345,7 @@ pub fn RelativeTime(#[prop(into)] iso: String) -> impl IntoView {
         relative(&stamp, now)
     };
     view! {
-        <time class="time" datetime=iso.clone() title=iso>
+        <time datetime=iso.clone() title=iso>
             {label}
         </time>
     }

@@ -5,6 +5,10 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::api::list_agents;
+use crate::components::{
+    Badge, BadgeVariant, Card, CardContent, CardHeader, CardTitle, PageDescription, PageHead,
+    PageTitle, Skeleton,
+};
 use crate::dto::{AgentCapabilitiesDto, AgentDto};
 
 #[component]
@@ -13,25 +17,45 @@ pub fn AgentsPage() -> impl IntoView {
 
     view! {
         <Title text="agents — sepia"/>
-        <section class="page">
-            <header class="page-head">
-                <h1>"Agents"</h1>
-            </header>
+        <section class="space-y-6">
+            <PageHead class="mb-0">
+                <div>
+                    <PageTitle>"Agents"</PageTitle>
+                    <PageDescription>
+                        "Agent runtimes advertised by the connected nodes."
+                    </PageDescription>
+                </div>
+            </PageHead>
             <Suspense fallback=move || {
-                view! { <p class="loading">"Loading agents…"</p> }
+                view! {
+                    <div class="grid gap-3">
+                        <Skeleton class="h-28 w-full"/>
+                        <Skeleton class="h-28 w-full"/>
+                    </div>
+                }
             }>
                 {move || {
                     Suspend::new(async move {
                         match agents.await {
                             Err(e) => {
-                                view! { <p class="error">{e.to_string()}</p> }.into_any()
+                                view! {
+                                    <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                                        {e.to_string()}
+                                    </p>
+                                }
+                                    .into_any()
                             }
                             Ok(list) if list.is_empty() => {
-                                view! { <p class="empty">"No agents configured."</p> }.into_any()
+                                view! {
+                                    <p class="text-sm text-muted-foreground">
+                                        "No agents configured."
+                                    </p>
+                                }
+                                    .into_any()
                             }
                             Ok(list) => {
                                 view! {
-                                    <ul class="card-list">
+                                    <ul class="grid gap-3">
                                         {list
                                             .into_iter()
                                             .map(|a| view! { <AgentCard agent=a/> })
@@ -57,27 +81,35 @@ fn AgentCard(agent: AgentDto) -> impl IntoView {
     };
     let chips = capability_chips(agent.capabilities.as_ref());
     view! {
-        <li class="card">
-            <div class="card-head">
-                <span class="card-title">{label}</span>
-                <span class="badges">
-                    {agent.node.clone().map(|n| view! { <span class="badge node">{n}</span> })}
-                </span>
-            </div>
-            <p class="card-meta">
-                <code>{agent.id.clone()}</code>
-            </p>
-            <div class="chips">
-                {if chips.is_empty() {
-                    view! { <span class="empty">"capabilities not probed"</span> }.into_any()
-                } else {
-                    chips
-                        .into_iter()
-                        .map(|c| view! { <span class="badge cap">{c}</span> })
-                        .collect::<Vec<_>>()
-                        .into_any()
-                }}
-            </div>
+        <li>
+            <Card>
+                <CardHeader class="flex-row items-center justify-between gap-3">
+                    <CardTitle>{label}</CardTitle>
+                    {agent
+                        .node
+                        .clone()
+                        .map(|n| view! { <Badge variant=BadgeVariant::Info>{n}</Badge> })}
+                </CardHeader>
+                <CardContent class="flex flex-col gap-3">
+                    <p class="font-mono text-xs text-muted-foreground">{agent.id.clone()}</p>
+                    <div class="flex flex-wrap gap-1.5">
+                        {if chips.is_empty() {
+                            view! {
+                                <span class="text-xs text-muted-foreground">
+                                    "capabilities not probed"
+                                </span>
+                            }
+                                .into_any()
+                        } else {
+                            chips
+                                .into_iter()
+                                .map(|c| view! { <Badge variant=BadgeVariant::Muted>{c}</Badge> })
+                                .collect::<Vec<_>>()
+                                .into_any()
+                        }}
+                    </div>
+                </CardContent>
+            </Card>
         </li>
     }
 }

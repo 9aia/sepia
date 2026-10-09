@@ -8,6 +8,11 @@ use leptos_meta::Title;
 use serde_json::Value;
 
 use crate::api::{get_config, push_vapid_key, set_config};
+use crate::components::toast::use_toast;
+use crate::components::{
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
+    CardHeader, CardTitle, Input, PageDescription, PageHead, PageTitle, Skeleton,
+};
 
 #[component]
 pub fn SettingsPage() -> impl IntoView {
@@ -15,30 +20,55 @@ pub fn SettingsPage() -> impl IntoView {
 
     view! {
         <Title text="settings — sepia"/>
-        <section class="page">
-            <header class="page-head">
-                <h1>"Settings"</h1>
-            </header>
+        <section class="space-y-6">
+            <PageHead class="mb-0">
+                <div>
+                    <PageTitle>"Settings"</PageTitle>
+                    <PageDescription>
+                        "Public node configuration and browser notifications."
+                    </PageDescription>
+                </div>
+            </PageHead>
             <Suspense fallback=move || {
-                view! { <p class="loading">"Loading settings…"</p> }
+                view! { <Skeleton class="h-56 w-full"/> }
             }>
                 {move || {
                     Suspend::new(async move {
                         match config.await {
                             Err(e) => {
-                                view! { <p class="error">{e.to_string()}</p> }.into_any()
+                                view! {
+                                    <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                                        {e.to_string()}
+                                    </p>
+                                }
+                                    .into_any()
                             }
                             Ok(map) if map.is_empty() => {
-                                view! { <p class="empty">"No settings exposed."</p> }.into_any()
+                                view! {
+                                    <p class="text-sm text-muted-foreground">
+                                        "No settings exposed."
+                                    </p>
+                                }
+                                    .into_any()
                             }
                             Ok(map) => {
                                 view! {
-                                    <ul class="config-list">
-                                        {map
-                                            .into_iter()
-                                            .map(|(k, v)| view! { <ConfigRow key=k value=v/> })
-                                            .collect::<Vec<_>>()}
-                                    </ul>
+                                    <Card>
+                                        <CardHeader>
+                                            <CardTitle>"Configuration"</CardTitle>
+                                            <CardDescription>
+                                                "Public config keys exposed by the node."
+                                            </CardDescription>
+                                        </CardHeader>
+                                        <CardContent>
+                                            <ul class="divide-y divide-border">
+                                                {map
+                                                    .into_iter()
+                                                    .map(|(k, v)| view! { <ConfigRow key=k value=v/> })
+                                                    .collect::<Vec<_>>()}
+                                            </ul>
+                                        </CardContent>
+                                    </Card>
                                 }
                                     .into_any()
                             }
@@ -68,7 +98,7 @@ fn ConfigRow(key: String, value: Value) -> impl IntoView {
 
     let on_save = {
         let key = key.clone();
-        move |_| {
+        move || {
             if saving.get() {
                 return;
             }
@@ -91,28 +121,37 @@ fn ConfigRow(key: String, value: Value) -> impl IntoView {
     };
 
     view! {
-        <li class="config-row">
-            <label class="config-key">{key}</label>
-            <input
-                class="field"
-                type="text"
+        <li class="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0">
+            <span
+                class="w-56 shrink-0 truncate font-mono text-xs font-medium"
+                title=key
+            >
+                {key.clone()}
+            </span>
+            <Input
+                class="min-w-48 flex-1"
+                attr:r#type="text"
                 prop:value=move || draft.get()
                 on:input=move |ev| {
                     draft.set(event_target_value(&ev));
                     status.set(None);
                 }
             />
-            <button
-                class="save small"
+            <Button
+                size=ButtonSize::Sm
                 disabled=move || saving.get() || !dirty()
-                on:click=on_save
+                on_click=Box::new(on_save)
             >
                 {move || if saving.get() { "Saving…" } else { "Save" }}
-            </button>
+            </Button>
             {move || {
                 status.get().map(|s| match s {
-                    Ok(()) => view! { <span class="ok">"saved"</span> }.into_any(),
-                    Err(e) => view! { <span class="error">{e}</span> }.into_any(),
+                    Ok(()) => {
+                        view! { <span class="text-xs text-success">"saved"</span> }.into_any()
+                    }
+                    Err(e) => {
+                        view! { <span class="text-xs text-destructive">{e}</span> }.into_any()
+                    }
                 })
             }}
         </li>
@@ -127,7 +166,9 @@ fn PushSection() -> impl IntoView {
     let vapid = Resource::new(|| (), |()| push_vapid_key());
     let subscribed: RwSignal<Option<bool>> = RwSignal::new(None);
     let busy = RwSignal::new(false);
-    let message: RwSignal<Option<String>> = RwSignal::new(None);
+    let toast = use_toast();
+    #[cfg(not(feature = "hydrate"))]
+    let _ = toast;
 
     #[cfg(feature = "hydrate")]
     {
@@ -140,84 +181,103 @@ fn PushSection() -> impl IntoView {
     }
 
     view! {
-        <section class="settings-section">
-            <h2 class="section-head">"Push notifications"</h2>
-            <Suspense fallback=move || {
-                view! { <p class="loading">"Checking push support…"</p> }
-            }>
-                {move || {
-                    Suspend::new(async move {
-                        match vapid.await {
-                            Err(_) => {
-                                view! {
-                                    <p class="empty">"Push isn't configured on this node."</p>
-                                }
-                                    .into_any()
-                            }
-                            Ok(key) => {
-                                let on_click = move |_| {
-                                    if busy.get() {
-                                        return;
+        <Card>
+            <CardHeader>
+                <CardTitle>"Push notifications"</CardTitle>
+                <CardDescription>
+                    "Send session notifications to this browser."
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                <Suspense fallback=move || {
+                    view! { <Skeleton class="h-9 w-44"/> }
+                }>
+                    {move || {
+                        Suspend::new(async move {
+                            match vapid.await {
+                                Err(_) => {
+                                    view! {
+                                        <p class="text-sm text-muted-foreground">
+                                            "Push isn't configured on this node."
+                                        </p>
                                     }
-                                    busy.set(true);
-                                    message.set(None);
-                                    let key = key.clone();
-                                    leptos::task::spawn_local(async move {
-                                        #[cfg(feature = "hydrate")]
-                                        {
-                                            let result = if subscribed.get() == Some(true) {
-                                                push::unsubscribe().await
-                                            } else {
-                                                push::subscribe(&key).await
-                                            };
-                                            match result {
-                                                Ok(()) => {
-                                                    let now = subscribed.get() != Some(true);
-                                                    subscribed.set(Some(now));
-                                                    message.set(Some(
-                                                        if now {
-                                                            "Notifications enabled.".to_string()
-                                                        } else {
-                                                            "Notifications disabled.".to_string()
-                                                        },
-                                                    ));
-                                                }
-                                                Err(e) => message.set(Some(e)),
-                                            }
-                                        }
-                                        #[cfg(not(feature = "hydrate"))]
-                                        let _ = key;
-                                        busy.set(false);
-                                    });
-                                };
-                                view! {
-                                    <p class="hint">
-                                        "Send session notifications to this browser."
-                                    </p>
-                                    {move || {
-                                        message.get().map(|m| view! { <p class="hint">{m}</p> })
-                                    }}
-                                    <button
-                                        class="save"
-                                        disabled=move || busy.get()
-                                        on:click=on_click
-                                    >
-                                        {move || {
-                                            match (busy.get(), subscribed.get()) {
-                                                (true, _) => "Working…",
-                                                (false, Some(true)) => "Disable notifications",
-                                                _ => "Enable notifications",
-                                            }
-                                        }}
-                                    </button>
+                                        .into_any()
                                 }
-                                    .into_any()
+                                Ok(key) => {
+                                    let toggle = move || {
+                                        if busy.get() {
+                                            return;
+                                        }
+                                        busy.set(true);
+                                        let key = key.clone();
+                                        leptos::task::spawn_local(async move {
+                                            #[cfg(feature = "hydrate")]
+                                            {
+                                                let result = if subscribed.get() == Some(true) {
+                                                    push::unsubscribe().await
+                                                } else {
+                                                    push::subscribe(&key).await
+                                                };
+                                                match result {
+                                                    Ok(()) => {
+                                                        let now = subscribed.get() != Some(true);
+                                                        subscribed.set(Some(now));
+                                                        if now {
+                                                            toast.success(
+                                                                "Notifications enabled.",
+                                                            );
+                                                        } else {
+                                                            toast.info("Notifications disabled.");
+                                                        }
+                                                    }
+                                                    Err(e) => toast.error(e),
+                                                }
+                                            }
+                                            #[cfg(not(feature = "hydrate"))]
+                                            let _ = key;
+                                            busy.set(false);
+                                        });
+                                    };
+                                    view! {
+                                        <div class="flex items-center gap-3">
+                                            <Button
+                                                variant=ButtonVariant::Outline
+                                                disabled=move || busy.get()
+                                                on_click=Box::new(toggle)
+                                            >
+                                                {move || {
+                                                    match (busy.get(), subscribed.get()) {
+                                                        (true, _) => "Working…",
+                                                        (false, Some(true)) => "Disable notifications",
+                                                        _ => "Enable notifications",
+                                                    }
+                                                }}
+                                            </Button>
+                                            {move || {
+                                                subscribed
+                                                    .get()
+                                                    .map(|on| {
+                                                        view! {
+                                                            <Badge variant=if on {
+                                                                BadgeVariant::Success
+                                                            } else {
+                                                                BadgeVariant::Muted
+                                                            }>
+                                                                {if on { "enabled" } else { "disabled" }}
+                                                            </Badge>
+                                                        }
+                                                    })
+                                            }}
+                                        </div>
+                                    }
+                                        .into_any()
+                                }
                             }
-                        }
-                    })
-                }}
-            </Suspense>
-        </section>
+                        })
+                    }}
+                </Suspense>
+            </CardContent>
+        </Card>
     }
 }
 

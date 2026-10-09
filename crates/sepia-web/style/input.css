@@ -1,0 +1,79 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* shadcn/rust-ui tokens — Catppuccin Mocha palette. Dark-first:
+   `:root` carries the dark values (the app ships `class="dark"`);
+   `.light` is provided for a future toggle. */
+:root {
+  --radius: 0.5rem;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  --background: oklch(0.221 0.015 281);      /* #1e1e2e base */
+  --foreground: oklch(0.889 0.035 281);      /* #cdd6f4 text */
+  --card: oklch(0.184 0.015 281);            /* #181825 mantle */
+  --card-foreground: oklch(0.889 0.035 281);
+  --popover: oklch(0.184 0.015 281);
+  --popover-foreground: oklch(0.889 0.035 281);
+  --primary: oklch(0.744 0.138 305);         /* #cba6f7 mauve */
+  --primary-foreground: oklch(0.152 0.013 281);
+  --secondary: oklch(0.301 0.022 281);       /* #313244 surface0 */
+  --secondary-foreground: oklch(0.889 0.035 281);
+  --muted: oklch(0.301 0.022 281);
+  --muted-foreground: oklch(0.731 0.032 281); /* #a6adc8 subtext */
+  --accent: oklch(0.359 0.023 281);          /* #45475a surface1 */
+  --accent-foreground: oklch(0.889 0.035 281);
+  --destructive: oklch(0.702 0.13 10);       /* #f38ba8 red */
+  --destructive-foreground: oklch(0.152 0.013 281);
+  --border: oklch(0.301 0.022 281);
+  --input: oklch(0.359 0.023 281);
+  --ring: oklch(0.744 0.138 305 / 60%);
+
+  /* extra semantic colors used by the app */
+  --success: oklch(0.845 0.151 140);         /* #a6e3a1 green */
+  --warning: oklch(0.863 0.104 92);          /* #f9e2af yellow */
+  --info: oklch(0.746 0.108 258);            /* #89b4fa blue */
+  --overlay: oklch(0.554 0.028 281);         /* #6c7086 */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-overlay: var(--overlay);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}

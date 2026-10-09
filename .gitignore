@@ -12,3 +12,6 @@ target/webdriver/
 *.log
 .history_*.md
 .hook-cache/
+
+# UI toolchain (tailwind v4 via bun/npm)
+node_modules/

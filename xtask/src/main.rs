@@ -95,6 +95,31 @@ fn main() -> anyhow::Result<()> {
 /// site root. Requires `wasm-bindgen-cli` — its version must match the
 /// locked `wasm-bindgen` crate (`cargo metadata`-checked).
 fn build_site() -> anyhow::Result<()> {
+    // Tailwind v4 → crates/sepia-web/style/main.css (embedded via
+    // include_str!). Needs node_modules installed (`bun install` /
+    // `npm i`); uses whatever `tailwindcss` binary is on PATH via bunx
+    // or npx — checked in that order.
+    let tw = ["bun", "x", "tailwindcss"];
+    let tw_npm = ["npx", "tailwindcss"];
+    let (tool, pre) = if which_available(tw[0]) {
+        (&tw[..1], &tw[1..])
+    } else if which_available(tw_npm[0]) {
+        (&tw_npm[..1], &tw_npm[1..])
+    } else {
+        anyhow::bail!(
+            "tailwind css build needs bun or npx on PATH              (install deps with `bun install` in the repo root)"
+        );
+    };
+    let mut args: Vec<&str> = pre.to_vec();
+    args.extend([
+        "-i",
+        "crates/sepia-web/style/input.css",
+        "-o",
+        "crates/sepia-web/style/main.css",
+        "--minify",
+    ]);
+    run(tool[0], &args)?;
+
     let site = std::path::Path::new("target/site");
     std::fs::create_dir_all(site.join("pkg"))?;
     run(
@@ -153,4 +178,13 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> 
         }
     }
     Ok(())
+}
+
+fn which_available(bin: &str) -> bool {
+    std::process::Command::new(bin)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }

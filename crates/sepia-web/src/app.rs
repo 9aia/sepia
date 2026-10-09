@@ -7,7 +7,10 @@ use leptos_meta::MetaTags;
 use leptos_meta::{Title, provide_meta_context};
 use leptos_router::components::{A, Route, Router, Routes};
 use leptos_router::path;
+use tw_merge::IntoTailwindClass;
 
+use crate::components::toast::{Toaster, provide_toaster};
+use crate::components::{ButtonClass, ButtonSize, ButtonVariant};
 use crate::pages::{
     AgentsPage, NodesPage, ProjectsPage, SessionDetailPage, SessionListPage, SettingsPage,
 };
@@ -40,27 +43,56 @@ pub fn every_ms(ms: i32, f: impl FnMut() + 'static) {
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+    provide_toaster();
     let now = RwSignal::new(crate::time::now_ms());
     provide_context(Now(now));
     #[cfg(feature = "hydrate")]
     every_ms(30_000, move || now.set(crate::time::now_ms()));
+    // Ghost-button nav links: muted until hovered, full foreground on
+    // the active route (`<A>` sets `aria-current="page"`).
+    let nav_link = tw_merge::tw_merge!(
+        ButtonClass {
+            variant: ButtonVariant::Ghost,
+            size: ButtonSize::Sm,
+        }
+        .to_class(),
+        "text-muted-foreground hover:text-foreground aria-[current]:text-foreground"
+    );
     view! {
         <Title text="sepia"/>
         <Router>
-            <div class="app">
-                <header class="topbar">
-                    <A href="/" attr:class="brand">"sepia"</A>
-                    <nav class="nav">
-                        <A href="/" exact=true>"Sessions"</A>
-                        <A href="/agents">"Agents"</A>
-                        <A href="/projects">"Projects"</A>
-                        <A href="/nodes">"Nodes"</A>
-                        <A href="/settings">"Settings"</A>
-                    </nav>
+            <div class="flex min-h-dvh flex-col">
+                <header class="sticky top-0 z-40 border-b bg-card/80 backdrop-blur">
+                    <div class="mx-auto flex h-14 w-full max-w-5xl items-center gap-3 px-4">
+                        <A href="/" attr:class="text-primary font-bold tracking-tight">
+                            "sepia"
+                        </A>
+                        <nav class="flex min-w-0 items-center gap-1 overflow-x-auto">
+                            <A href="/" exact=true attr:class=nav_link.clone()>
+                                "Sessions"
+                            </A>
+                            <A href="/agents" attr:class=nav_link.clone()>
+                                "Agents"
+                            </A>
+                            <A href="/projects" attr:class=nav_link.clone()>
+                                "Projects"
+                            </A>
+                            <A href="/nodes" attr:class=nav_link.clone()>
+                                "Nodes"
+                            </A>
+                            <A href="/settings" attr:class=nav_link.clone()>
+                                "Settings"
+                            </A>
+                        </nav>
+                    </div>
                 </header>
-                <main class="content">
+                <main class="mx-auto w-full max-w-5xl flex-1 px-4 py-6">
                     <Routes fallback=|| {
-                        view! { <p class="empty">"That page doesn't exist."</p> }
+                        view! {
+                            <p class="text-sm text-muted-foreground">
+                                "That page doesn't exist."
+                            </p>
+                        }
                     }>
                         <Route path=path!("/") view=SessionListPage/>
                         <Route path=path!("/sessions/:id") view=SessionDetailPage/>
@@ -70,6 +102,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/settings") view=SettingsPage/>
                     </Routes>
                 </main>
+                <Toaster/>
             </div>
         </Router>
     }
