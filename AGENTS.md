@@ -28,7 +28,7 @@ depend on it; `sepia-node`/`sepia-cli`/`sepia-hub` compose ports.
 ## Commands
 
 ```bash
-cargo xtask check          # fmt + clippy -D warnings + check
+cargo xtask check          # fmt + clippy -D warnings
 cargo xtask test           # whole suite (nextest if present)
 cargo xtask install        # release-build binaries → ~/.local/bin
 cargo leptos watch         # hub dev loop (wasm → target/site)

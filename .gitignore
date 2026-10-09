@@ -1,5 +1,7 @@
 # Rust
 target/
+# swept-aside build dir (was accidentally committed once — keep it out)
+target-sweep/
 **/*.rs.bk
 
 # Browser e2e tooling (chromedriver etc.) — redundant with target/ but

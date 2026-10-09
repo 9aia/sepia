@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn run(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
     let status = Command::new(cmd).args(args).status()?;
@@ -6,9 +6,26 @@ fn run(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// True when the `cargo-nextest` subcommand is installed. Probed up
+/// front so a *failing* nextest run reports its own failure instead of
+/// silently re-running the whole suite a second time under `cargo test`.
+fn nextest_available() -> bool {
+    match Command::new("cargo")
+        .args(["nextest", "--version"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(status) => status.success(),
+        Err(_) => false,
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("check") => {
+            // clippy --all-targets type-checks every target already —
+            // a separate `cargo check` pass would redo that work.
             run("cargo", &["fmt", "--all", "--check"])?;
             run(
                 "cargo",
@@ -21,10 +38,17 @@ fn main() -> anyhow::Result<()> {
                     "warnings",
                 ],
             )?;
-            run("cargo", &["check", "--workspace", "--all-targets"])?;
         }
-        Some("test") => run("cargo", &["nextest", "run", "--workspace"])
-            .or_else(|_| run("cargo", &["test", "--workspace"]))?,
+        // Prefer nextest when installed, but only fall back to
+        // `cargo test` when the subcommand is *missing* — a failing
+        // nextest run must not re-run the whole suite a second way.
+        Some("test") => {
+            if nextest_available() {
+                run("cargo", &["nextest", "run", "--workspace"])?;
+            } else {
+                run("cargo", &["test", "--workspace"])?;
+            }
+        }
         Some("install") => {
             // Build every user-facing binary in release and copy it to
             // ~/.local/bin (idempotent, PATH-friendly names).
@@ -37,9 +61,14 @@ fn main() -> anyhow::Result<()> {
                 "sepia-driver-cursor",
                 "sepia-hub",
             ];
+            // One invocation for all binaries: a single resolve and
+            // fingerprint pass instead of seven.
+            let mut build = vec!["build", "--release"];
             for bin in &bins {
-                run("cargo", &["build", "--release", "--bin", bin])?;
+                build.push("--bin");
+                build.push(*bin);
             }
+            run("cargo", &build)?;
             let home = std::env::var_os("HOME")
                 .map_or_else(|| std::path::PathBuf::from("/"), std::path::PathBuf::from);
             let out = home.join(".local/bin");

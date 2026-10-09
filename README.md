@@ -118,7 +118,7 @@ stores node credentials).
 ## Develop
 
 ```bash
-cargo xtask check              # fmt + clippy + check (workspace lints are strict)
+cargo xtask check              # fmt + clippy -D warnings (workspace lints are strict)
 cargo xtask test               # the whole suite
 cargo test -p sepia-node       # daemon e2e (real driver + mock agent + HTTP)
 cargo leptos watch             # hub dev loop (wasm bundle → target/site)

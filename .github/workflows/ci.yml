@@ -4,18 +4,44 @@ on:
   push:
   pull_request:
 
+# One live run per branch: a push to a PR branch and that PR's own
+# synchronize run land in the same group, so only the newest survives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
-  rust:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: rustup target add wasm32-unknown-unknown
+        with:
+          shared-key: ci
+          cache-on-failure: true
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - run: cargo check -p sepia-web --target wasm32-unknown-unknown
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo check -p sepia-web --target wasm32-unknown-unknown --locked
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+          cache-on-failure: true
+      - run: cargo nextest run --workspace --locked
+      # nextest does not run doctests.
+      - run: cargo test --doc --workspace --locked
 
   # Real-browser e2e (thirtyfour + chromedriver against the real
   # node → hub SSR stack). ubuntu-latest ships Chrome preinstalled;
@@ -24,11 +50,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+          cache-on-failure: true
       - uses: nanasess/setup-chromedriver@v2
       # Headless-Chrome timing in CI is unproven — don't gate PRs on it yet.
-      - run: cargo test -p sepia-hub --test browser_e2e -- --ignored
+      - run: cargo test -p sepia-hub --test browser_e2e --locked -- --ignored
         continue-on-error: true
         env:
           SEPIA_BROWSER_E2E: "1"

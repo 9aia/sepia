@@ -155,7 +155,15 @@ fn SessionRow(session: SessionSummaryDto, queued: usize, failed: usize) -> impl 
 /// id (or the empty "default") goes to the primary.
 #[component]
 fn NewSessionForm(on_created: impl Fn() + 'static + Send + Sync + Copy) -> impl IntoView {
-    let agents = Resource::new(|| (), |()| list_agents());
+    // Filled post-hydration — a Resource here resolves during SSR
+    // differently than hydrate (tachys option-vs-comment mismatch).
+    let agents = RwSignal::new(Vec::new());
+    #[cfg(feature = "hydrate")]
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Ok(list) = list_agents().await {
+            agents.set(list);
+        }
+    });
     let navigate = use_navigate();
     let cwd = RwSignal::new(String::new());
     let title = RwSignal::new(String::new());
@@ -227,33 +235,29 @@ fn NewSessionForm(on_created: impl Fn() + 'static + Send + Sync + Copy) -> impl 
                 on:change=move |ev| agent_sel.set(event_target_value(&ev))
             >
                 <option value="">"default agent"</option>
+                // SSR + hydrate both render empty initially — options
+                // land post-hydration when `agents` fills.
                 {move || {
                     agents
                         .get()
-                        .and_then(Result::ok)
-                        .map(|list| {
-                            list
-                                .into_iter()
-                                .map(|a| {
-                                    let value = match &a.node {
-                                        Some(n) if !n.is_empty() => {
-                                            format!("{n}|{}", a.id)
-                                        }
-                                        _ => a.id.clone(),
-                                    };
-                                    let base = if a.label.trim().is_empty() {
-                                        a.id.clone()
-                                    } else {
-                                        a.label.clone()
-                                    };
-                                    let label = match &a.node {
-                                        Some(n) if !n.is_empty() => format!("{base} · {n}"),
-                                        _ => base,
-                                    };
-                                    view! { <option value=value>{label}</option> }
-                                })
-                                .collect::<Vec<_>>()
+                        .into_iter()
+                        .map(|a| {
+                            let value = match &a.node {
+                                Some(n) if !n.is_empty() => format!("{n}|{}", a.id),
+                                _ => a.id.clone(),
+                            };
+                            let base = if a.label.trim().is_empty() {
+                                a.id.clone()
+                            } else {
+                                a.label.clone()
+                            };
+                            let label = match &a.node {
+                                Some(n) if !n.is_empty() => format!("{base} · {n}"),
+                                _ => base,
+                            };
+                            view! { <option value=value>{label}</option> }
                         })
+                        .collect::<Vec<_>>()
                 }}
             </select>
             <input

@@ -103,8 +103,29 @@ cast_sign_loss = "allow"
 cast_lossless = "allow"
 struct_excessive_bools = "allow"
 
+[profile.dev]
+# Line tables only: backtraces still symbolize, but test-binary links
+# and disk usage drop sharply (full-debuginfo target/ was 25 GB).
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false # dependencies don't need debuginfo
+
+[profile.test]
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false
+
 [profile.release]
-lto = "fat"
-codegen-units = 1
+# Thin LTO for local `cargo xtask install` + the wasm site build —
+# shipped binaries go through `cargo build --profile dist` (release.yml).
+lto = "thin"
 strip = true
 panic = "unwind" # keep unwind: tests + tokio supervise panics
+
+[profile.dist]
+# What we ship: maximum optimization, one codegen unit.
+inherits = "release"
+lto = "fat"
+codegen-units = 1

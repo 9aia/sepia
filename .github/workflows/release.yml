@@ -22,20 +22,24 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
       - name: Build
+        # `dist` profile: fat LTO + single codegen unit for shipped
+        # binaries (release itself is thin LTO for fast local installs).
         run: |
-          cargo build --release --target ${{ matrix.target }} \
+          cargo build --locked --profile dist --target ${{ matrix.target }} \
             --bin sepia --bin sepia-node --bin sepia-hub \
             --bin sepia-driver-devin --bin sepia-driver-cline \
             --bin sepia-driver-claude --bin sepia-driver-cursor
       - name: Stage
         run: |
           mkdir -p "dist/sepia-${{ matrix.target }}"
-          cd "target/${{ matrix.target }}/release"
+          cd "target/${{ matrix.target }}/dist"
           for b in sepia sepia-node sepia-hub sepia-driver-devin sepia-driver-cline sepia-driver-claude sepia-driver-cursor; do
             install -m 755 "$b" "$OLDPWD/dist/sepia-${{ matrix.target }}/"
           done

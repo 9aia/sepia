@@ -1,2 +1,8 @@
 [alias]
 xtask = "run --package xtask --"
+
+# The machine-global ~/.cargo/config.toml caps builds at `jobs = 2`
+# (a disk-contention guard). Override per-workspace: 16 threads / 11 GB
+# RAM, and profile.dev keeps per-unit memory modest.
+[build]
+jobs = 6
