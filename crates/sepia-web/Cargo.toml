@@ -18,6 +18,7 @@ default = []
 # Browser build: wasm-bindgen hydration entry + DOM/SSE access.
 hydrate = [
   "leptos/hydrate",
+  "leptos_toaster/hydrate",
   "dep:wasm-bindgen",
   "dep:wasm-bindgen-futures",
   "dep:js-sys",
@@ -27,6 +28,9 @@ hydrate = [
 # Server build: SSR rendering + server functions + the node HTTP client.
 ssr = [
   "leptos/ssr",
+  "leptos-use/ssr",
+  "leptos_toaster/ssr",
+  "leptos-fetch/ssr",
   "leptos_router/ssr",
   "leptos_meta/ssr",
   "dep:async-trait",
@@ -71,3 +75,11 @@ tokio = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }
 leptos_ui = "0.3.22"
 tw_merge = "0.1"
+leptos-use = { version = "0.19", default-features = false, features = [
+  "use_event_source", "use_interval_fn", "use_event_listener",
+  "on_click_outside", "use_media_query", "use_timeout_fn", "storage",
+] }
+leptos-fetch = "0.4"
+leptos_darkmode = "0.4"
+leptos_toaster = { version = "0.3", default-features = false, features = ["builtin_toast"] }
+floating-ui-leptos = "0.6"

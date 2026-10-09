@@ -41,6 +41,52 @@
 - [ ] **Body-cap audit** — large JSON handlers are capped; sweep for any
       remaining unbounded body read in `sepia-http`.
 
+### UI/UX parity with the TS app
+
+Ecosystem libs adopted (leptos-use `use_event_source`/`use_interval_fn`,
+leptos_toaster; floating-ui-leptos + leptos_darkmode + leptos-fetch
+available for the items below):
+
+Landing (agents in flight):
+
+- [x] Sidebar master-detail layout — list column + chat pane,
+      `?session=` deep links, `/sessions/:id` standalone panel, mobile
+      drawer nav (`Sheet`), list↔chat responsive swap
+- [x] Right-side details drawer (rename, checkpoints, restore, delete)
+      — `Sheet` opened from the panel's "Details" button
+- [ ] Filter bar — search, agent multi-select, date (day/week/month),
+      status (free/locked), sort (newest/oldest/title)
+- [ ] Project grouping — collapsible sections in the sidebar list,
+      persisted open state
+- [ ] Hotkeys — N new, ↑/↓ session nav, ←/→ group fold, ⌘K filter,
+      Esc clear, ⌘B sidebar, ⌘, settings, ? help
+
+Missing (queued next):
+
+- [ ] Row context menus — right-click → rename/pin/delete/details/
+      add-to-project
+- [ ] Icon set — TS used hugeicons; currently text glyphs only
+- [ ] Chat polish — tool-call blocks w/ collapsible args, reasoning
+      blocks, message scroller (auto-scroll pin + jump-to-bottom),
+      syntax-highlighted code fences
+- [ ] Prompt input — cwd autocomplete (CwdPicker), model picker,
+      multiline textarea submit UX
+- [ ] Theme toggle — light/dark/system (currently dark-only)
+- [ ] Customizable keybinds + help dialog (settings override map)
+- [ ] Settings depth — credentials, agent catalog, model config
+      sections (was SettingsDialog)
+- [ ] Session context tabs
+- [ ] EmptyScreen/ErrorBanner parity
+
+Intentionally dropped (v0):
+
+- [ ] Managed servers, SSH tunnels, gateway proxy (`/api/servers`,
+      `/api/gateway`) — nodes must be directly reachable
+- [ ] Project transfer (push/pull) between nodes
+- [ ] OTEL/telemetry hooks
+- [ ] Per-browser node credentials (tokens live server-side now —
+      this is a security improvement, not a regression)
+
 ## Done (Rust)
 
 Whole-tree rewrite of the TS system: core IR + ports, four store drivers

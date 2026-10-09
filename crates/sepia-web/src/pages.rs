@@ -10,6 +10,6 @@ mod settings;
 pub use agents::AgentsPage;
 pub use nodes::NodesPage;
 pub use projects::ProjectsPage;
-pub use session_detail::SessionDetailPage;
+pub use session_detail::{SessionDetailPage, SessionPanel};
 pub use session_list::{RelativeTime, SessionListPage};
 pub use settings::SettingsPage;

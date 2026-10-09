@@ -32,7 +32,7 @@ variants! {
 pub fn Button(
     #[prop(optional)] variant: ButtonVariant,
     #[prop(optional)] size: ButtonSize,
-    #[prop(optional)] class: String,
+    #[prop(into, optional)] class: String,
     #[prop(optional, into)] button_type: String,
     #[prop(optional, into)] disabled: Signal<bool>,
     #[prop(optional)] on_click: Option<Box<dyn Fn() + Send + Sync + 'static>>,
@@ -93,7 +93,7 @@ variants! {
 #[component]
 pub fn Badge(
     #[prop(optional)] variant: BadgeVariant,
-    #[prop(optional)] class: String,
+    #[prop(into, optional)] class: String,
     children: Children,
 ) -> impl IntoView {
     let class = tw_merge::tw_merge!(
@@ -254,114 +254,130 @@ pub fn ConfirmDialog(
 }
 
 pub mod toast {
+    //! Thin wrapper over `leptos_toaster` (sonner-style) — call
+    //! `provide_toaster()` in `App`, `use_toast()` for
+    //! `.success()/.error()/.info()`, render `<Toaster/>` once.
+    //! Dark theme is fixed to match the app's dark-first palette.
+
     use leptos::prelude::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use leptos_toaster::{Theme, Toast, ToastId, ToastVariant, Toasts};
 
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub enum Level {
-        Info,
-        Success,
-        Error,
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct Toast {
-        pub id: u64,
-        pub level: Level,
-        pub message: String,
-    }
-
-    /// Toast store lives in a context so SSR render order stays
-    /// deterministic (empty list on both sides; toasts only ever
-    /// appear post-hydration).
+    /// Toast store — a `Toasts` context wrapper with our API.
     #[derive(Clone, Copy)]
-    pub struct ToastStore {
-        pub toasts: RwSignal<Vec<Toast>>,
-    }
+    pub struct ToastStore(Toasts);
 
     impl ToastStore {
-        pub fn push(&self, level: Level, message: impl Into<String>) {
-            let id = NEXT.fetch_add(1, Ordering::Relaxed);
-            self.toasts.update(|t| {
-                t.push(Toast {
-                    id,
-                    level,
-                    message: message.into(),
-                });
-            });
-            #[cfg(feature = "hydrate")]
-            {
-                let store = *self;
-                leptos::task::spawn_local(async move {
-                    crate::sleep_ms(4_500).await;
-                    store.toasts.update(|t| t.retain(|x| x.id != id));
-                });
-            }
+        fn push(&self, variant: ToastVariant, msg: String) {
+            let toast_id = ToastId::new();
+            self.0.toast(
+                leptos::prelude::ViewFn::from(move || {
+                    let title_msg = msg.clone();
+                    view! {
+                        <Toast
+                            toast_id
+                            variant=variant
+                            theme=Theme::Dark
+                            title=move || title_msg.clone()
+                        />
+                    }
+                }),
+                Some(toast_id),
+                None,
+            );
         }
-
         pub fn success(&self, msg: impl Into<String>) {
-            self.push(Level::Success, msg);
+            self.push(ToastVariant::Success, msg.into());
         }
         pub fn error(&self, msg: impl Into<String>) {
-            self.push(Level::Error, msg);
+            self.push(ToastVariant::Error, msg.into());
         }
         pub fn info(&self, msg: impl Into<String>) {
-            self.push(Level::Info, msg);
+            self.push(ToastVariant::Info, msg.into());
         }
     }
 
-    /// `provide_toaster()` in `App`, then `use_toast()` anywhere.
     pub fn provide_toaster() {
-        provide_context(ToastStore {
-            toasts: RwSignal::new(Vec::new()),
-        });
+        provide_context(ToastStore(leptos_toaster::provide_toasts()));
     }
 
     pub fn use_toast() -> ToastStore {
         expect_context::<ToastStore>()
     }
 
+    /// Bottom-right sonner stack. Renders deterministically (empty on
+    /// both SSR and initial hydrate — toasts only appear post-mount).
     #[component]
     pub fn Toaster() -> impl IntoView {
-        let store = expect_context::<ToastStore>();
-        view! {
-            <div class="pointer-events-none fixed bottom-4 right-4 z-[70] flex w-80 flex-col gap-2">
-                <For
-                    each=move || store.toasts.get()
-                    key=|t| t.id
-                    children=move |t| {
-                        let (border, icon) = match t.level {
-                            Level::Success => ("border-success/40", "text-success"),
-                            Level::Error => ("border-destructive/40", "text-destructive"),
-                            Level::Info => ("border-info/40", "text-info"),
-                        };
-                        let dismiss = move || {
-                            store.toasts.update(|v| v.retain(|x| x.id != t.id));
-                        };
-                        view! {
-                            <div class=format!("pointer-events-auto flex items-start gap-2 rounded-md border {} bg-popover px-3 py-2.5 shadow-lg", border)>
-                                <span class=format!("mt-0.5 {}", icon)>
-                                    {match t.level {
-                                        Level::Success => "✓",
-                                        Level::Error => "✕",
-                                        Level::Info => "i",
-                                    }}
-                                </span>
-                                <p class="flex-1 text-sm leading-snug">{t.message}</p>
-                                <button
-                                    type="button"
-                                    class="text-muted-foreground hover:text-foreground text-xs"
-                                    on:click=move |_| dismiss()
-                                >
-                                    "✕"
-                                </button>
-                            </div>
-                        }
-                    }
-                />
-            </div>
-        }
+        view! { <leptos_toaster::Toaster/> }
+    }
+}
+
+/// Slide-over panel (shadcn `Sheet`). Signal-driven; markup always
+/// rendered so SSR/hydrate agree — visibility is a class transition.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+pub fn Sheet(
+    open: RwSignal<bool>,
+    /// "left" | "right"
+    #[prop(into, optional)]
+    side: String,
+    #[prop(into, optional)] class: String,
+    children: Children,
+) -> impl IntoView {
+    let side_cls = if side == "left" {
+        "left-0 border-r -translate-x-full data-[open]:translate-x-0"
+    } else {
+        "right-0 border-l translate-x-full data-[open]:translate-x-0"
+    };
+    view! {
+        <div
+            class=move || {
+                if open.get() {
+                    "fixed inset-0 z-50 bg-black/60 transition-opacity opacity-100"
+                } else {
+                    "fixed inset-0 z-50 bg-black/60 transition-opacity opacity-0 pointer-events-none"
+                }
+            }
+            on:click=move |_| open.set(false)
+        ></div>
+        <div
+            data-open=move || open.get().then_some("")
+            class=format!(
+                "fixed top-0 z-50 flex h-dvh w-80 max-w-[85vw] flex-col bg-card shadow-xl transition-transform duration-200 {} {}",
+                side_cls, class
+            )
+        >
+            {children()}
+        </div>
+    }
+}
+
+clx! { SheetHeader, div, "flex items-center justify-between border-b px-4 py-3" }
+clx! { SheetTitle, h3, "text-sm font-semibold" }
+clx! { SheetBody, div, "flex-1 overflow-y-auto p-4" }
+
+/// Centered empty state — icon glyph, title, description, actions.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+pub fn EmptyState(
+    #[prop(into)] title: String,
+    #[prop(into, optional)] description: String,
+    #[prop(into, optional)] icon: String,
+    #[prop(into, optional)] class: String,
+    #[prop(optional)] children: Option<Children>,
+) -> impl IntoView {
+    view! {
+        <div class=tw_merge::tw_merge!("flex h-full min-h-64 flex-col items-center justify-center gap-3 p-8 text-center", class)>
+            <span class="grid size-14 place-items-center rounded-xl border bg-secondary text-2xl text-muted-foreground">
+                {if icon.is_empty() { "◇".to_string() } else { icon }}
+            </span>
+            <h3 class="text-base font-semibold">{title}</h3>
+            {if description.is_empty() {
+                None
+            } else {
+                Some(view! { <p class="max-w-sm text-sm text-muted-foreground">{description}</p> })
+            }}
+            {children.map(|c| c())}
+        </div>
     }
 }

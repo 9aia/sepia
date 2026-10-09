@@ -42,7 +42,7 @@ pub fn ProjectsPage() -> impl IntoView {
 
     view! {
         <Title text="projects — sepia"/>
-        <section class="space-y-6">
+        <section class="mx-auto w-full max-w-5xl space-y-6 p-4 md:p-6">
             <PageHead class="mb-0">
                 <div>
                     <PageTitle>"Projects"</PageTitle>

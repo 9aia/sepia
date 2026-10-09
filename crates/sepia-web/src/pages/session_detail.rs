@@ -14,7 +14,8 @@ use crate::api::{
 };
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
-    CardHeader, CardTitle, ConfirmDialog, Dropdown, Input, MenuItem, Skeleton, TEXTAREA_CLASS,
+    CardHeader, CardTitle, ConfirmDialog, Dropdown, Input, MenuItem, Sheet, SheetBody, SheetHeader,
+    SheetTitle, Skeleton, TEXTAREA_CLASS,
 };
 use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
 use crate::live::{LiveKind, LiveTranscript, PendingPermission};
@@ -29,12 +30,39 @@ const ERROR_BOX: &str =
 const TOOL_PRE: &str = "max-h-80 overflow-auto whitespace-pre-wrap break-words border-t \
                         border-border/60 px-3 py-2 font-mono text-xs text-muted-foreground";
 
+/// `/sessions/:id` — standalone deep link: renders the panel inside
+/// the app shell (the same component `/` embeds next to the list).
 #[component]
 pub fn SessionDetailPage() -> impl IntoView {
     let params = use_params_map();
     let query = use_query_map();
     let session_id = move || params.read().get("id").unwrap_or_default();
-    let agent = move || non_empty(&query.read().get("agent").unwrap_or_default());
+    let agent = move || non_empty_str(&query.read().get("agent").unwrap_or_default());
+    view! {
+        {move || {
+            view! {
+                <SessionPanel session_id=session_id() agent=agent()/>
+            }
+            .into_any()
+        }}
+    }
+}
+
+fn non_empty_str(s: &str) -> Option<String> {
+    (!s.trim().is_empty()).then(|| s.trim().to_string())
+}
+
+/// The session chat panel — transcript + prompt + ops. Embedded in the
+/// `/` master-detail page (and reachable standalone via the redirect).
+#[component]
+pub fn SessionPanel(
+    #[prop(into)] session_id: Signal<String>,
+    #[prop(into)] agent: Signal<Option<String>>,
+) -> impl IntoView {
+    // Shadow the signals with the closure shape the body was written
+    // against — `session_id()`/`agent()` return owned values.
+    let session_id = move || session_id.get();
+    let agent = move || agent.get();
     // `StoredValue` keeps the navigate fn Copy-able into handlers.
     let navigate = StoredValue::new_local(use_navigate());
 
@@ -57,10 +85,11 @@ pub fn SessionDetailPage() -> impl IntoView {
     // The summary wire has no `live` flag on plain GETs (it arrives via
     // feed patches), so the attach/detach responses keep a local truth.
     let live_override: RwSignal<Option<bool>> = RwSignal::new(None);
-    let renaming = RwSignal::new(false);
     let rename_draft = RwSignal::new(String::new());
     let confirm_delete = RwSignal::new(false);
-    let checkpoints_open = RwSignal::new(false);
+    // The right-hand "Details" sheet: rename, checkpoints, danger zone.
+    let details_open = RwSignal::new(false);
+    let checkpoints_open = Signal::derive(move || details_open.get());
     let checkpoints = Resource::new(
         move || (checkpoints_open.get(), session_id(), agent()),
         |(open, id, agent)| async move {
@@ -136,7 +165,6 @@ pub fn SessionDetailPage() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match rename_session(id, agent, title).await {
                 Ok(()) => {
-                    renaming.set(false);
                     summary.refetch();
                 }
                 Err(e) => action_error.set(Some(e.to_string())),
@@ -249,7 +277,7 @@ pub fn SessionDetailPage() -> impl IntoView {
 
     view! {
         <Title text="session — sepia"/>
-        <section class="mx-auto w-full max-w-4xl space-y-4 px-4 py-6">
+        <section class="mx-auto flex h-full w-full max-w-4xl flex-col gap-4 px-4 py-4">
             <Suspense fallback=move || {
                 view! {
                     <div class="space-y-3">
@@ -413,24 +441,16 @@ pub fn SessionDetailPage() -> impl IntoView {
                                                 <Button
                                                     variant=ButtonVariant::Outline
                                                     size=ButtonSize::Sm
-                                                    on_click=Box::new(move || {
-                                                        checkpoints_open.update(|o| *o = !*o);
-                                                    })
+                                                    on_click=Box::new(move || details_open.set(true))
                                                 >
-                                                    {move || {
-                                                        if checkpoints_open.get() {
-                                                            "Hide checkpoints"
-                                                        } else {
-                                                            "Checkpoints"
-                                                        }
-                                                    }}
+                                                    "Details"
                                                 </Button>
                                                 <Dropdown label="Actions">
                                                     <MenuItem
                                                         label="Rename…"
                                                         on_click=Box::new(move || {
                                                             rename_draft.set(title_for_rename.clone());
-                                                            renaming.set(true);
+                                                            details_open.set(true);
                                                         })
                                                     />
                                                     <MenuItem
@@ -440,43 +460,6 @@ pub fn SessionDetailPage() -> impl IntoView {
                                                     />
                                                 </Dropdown>
                                             </div>
-                                            {move || renaming.get().then(|| {
-                                                view! {
-                                                    <div class="flex flex-wrap items-center gap-2">
-                                                        <Input
-                                                            class="h-8 max-w-xs"
-                                                            attr:r#type="text"
-                                                            attr:maxlength="200"
-                                                            attr:placeholder="Session title"
-                                                            prop:value=move || rename_draft.get()
-                                                            on:input=move |ev| rename_draft
-                                                                .set(event_target_value(&ev))
-                                                            on:keydown=move |ev: leptos::ev::KeyboardEvent| {
-                                                                if ev.key() == "Enter" {
-                                                                    ev.prevent_default();
-                                                                    do_rename();
-                                                                } else if ev.key() == "Escape" {
-                                                                    renaming.set(false);
-                                                                }
-                                                            }
-                                                        />
-                                                        <Button
-                                                            size=ButtonSize::Sm
-                                                            disabled=acting
-                                                            on_click=Box::new(do_rename)
-                                                        >
-                                                            "Save"
-                                                        </Button>
-                                                        <Button
-                                                            variant=ButtonVariant::Ghost
-                                                            size=ButtonSize::Sm
-                                                            on_click=Box::new(move || renaming.set(false))
-                                                        >
-                                                            "Cancel"
-                                                        </Button>
-                                                    </div>
-                                                }
-                                            })}
                                             {move || action_error.get().map(|e| {
                                                 view! { <p class=ERROR_BOX>{e}</p> }
                                             })}
@@ -490,19 +473,78 @@ pub fn SessionDetailPage() -> impl IntoView {
                                         destructive=true
                                         on_confirm=move || delete_confirmed.set(true)
                                     />
-                                    <Show when=move || checkpoints_open.get() fallback=|| ()>
-                                        <CheckpointList
-                                            checkpoints=checkpoints
-                                            session_id=session_id()
-                                            agent=agent()
-                                            on_changed=move || {
-                                                history.refetch();
-                                                summary.refetch();
-                                            }
-                                        />
-                                    </Show>
+                                    <Sheet open=details_open side="right" class="w-96">
+                                        <SheetHeader>
+                                            <SheetTitle>"Session details"</SheetTitle>
+                                            <Button
+                                                variant=ButtonVariant::Ghost
+                                                size=ButtonSize::Icon
+                                                class="size-7"
+                                                on_click=Box::new(move || details_open.set(false))
+                                            >
+                                                "✕"
+                                            </Button>
+                                        </SheetHeader>
+                                        <SheetBody class="space-y-5">
+                                            <div class="space-y-2">
+                                                <label class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                                    "Title"
+                                                </label>
+                                                <div class="flex gap-2">
+                                                    <Input
+                                                        class="h-8"
+                                                        attr:r#type="text"
+                                                        attr:maxlength="200"
+                                                        attr:placeholder="Session title"
+                                                        prop:value=move || rename_draft.get()
+                                                        on:input=move |ev| rename_draft
+                                                            .set(event_target_value(&ev))
+                                                        on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                                                            if ev.key() == "Enter" {
+                                                                ev.prevent_default();
+                                                                do_rename();
+                                                            }
+                                                        }
+                                                    />
+                                                    <Button
+                                                        size=ButtonSize::Sm
+                                                        disabled=acting
+                                                        on_click=Box::new(do_rename)
+                                                    >
+                                                        "Save"
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                            <CheckpointList
+                                                checkpoints=checkpoints
+                                                session_id=session_id()
+                                                agent=agent()
+                                                on_changed=move || {
+                                                    history.refetch();
+                                                    summary.refetch();
+                                                }
+                                            />
+                                            <div class="rounded-md border border-destructive/40 p-3">
+                                                <p class="text-sm font-medium text-destructive">
+                                                    "Danger zone"
+                                                </p>
+                                                <p class="mt-1 text-xs text-muted-foreground">
+                                                    "Deleting removes the session and its history."
+                                                </p>
+                                                <Button
+                                                    variant=ButtonVariant::Destructive
+                                                    size=ButtonSize::Sm
+                                                    class="mt-2"
+                                                    disabled=acting
+                                                    on_click=Box::new(move || confirm_delete.set(true))
+                                                >
+                                                    "Delete session"
+                                                </Button>
+                                            </div>
+                                        </SheetBody>
+                                    </Sheet>
                                     <div
-                                        class="flex max-h-[70vh] min-h-40 flex-col gap-2 overflow-y-auto rounded-lg border bg-card p-3"
+                                        class="flex min-h-40 flex-1 flex-col gap-2 overflow-y-auto rounded-lg border bg-card p-3"
                                         node_ref=log_ref
                                     >
                                         <OlderButton
@@ -563,10 +605,6 @@ pub fn SessionDetailPage() -> impl IntoView {
             </Suspense>
         </section>
     }
-}
-
-fn non_empty(s: &str) -> Option<String> {
-    (!s.trim().is_empty()).then(|| s.trim().to_string())
 }
 
 /// "Load earlier messages" — fetches the page ending at the current
