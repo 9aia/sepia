@@ -220,6 +220,10 @@ impl NodeApi for StubNodeApi {
         Ok(())
     }
 
+    async fn fs_dirs(&self, _path: &str, _node: Option<String>) -> Result<Vec<String>, String> {
+        Ok(vec!["/tmp/seed".into(), "/tmp/seed/sub".into()])
+    }
+
     async fn node_info(&self) -> Result<NodeInfoDto, String> {
         Ok(NodeInfoDto {
             id: "n1".into(),

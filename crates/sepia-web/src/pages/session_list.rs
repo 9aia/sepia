@@ -18,7 +18,8 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 #[cfg(feature = "hydrate")]
 use crate::api::list_agents;
 use crate::api::{
-    create_session, delete_session, list_sessions, pending_writes, pin_session, rename_session,
+    create_session, delete_session, fs_dirs, list_sessions, pending_writes, pin_session,
+    rename_session,
 };
 use crate::app::Now;
 use crate::components::icons::Icon;
@@ -988,6 +989,51 @@ fn NewSessionForm(
     let creating = RwSignal::new(false);
     let form_error: RwSignal<Option<String>> = RwSignal::new(None);
 
+    // Cwd autocomplete. `dir_results` is `(fetched parent, subdirs)` —
+    // keyed by parent so a stale response can't feed a newer typed
+    // value. Empty on SSR and first hydration alike; the dropdown is
+    // always-rendered markup toggled only by class.
+    let dir_results = RwSignal::new((String::new(), Vec::<String>::new()));
+    let suggest_open = RwSignal::new(false);
+    let highlight = RwSignal::new(0usize);
+    let suggestions = Memo::new(move |_| {
+        let (parent, dirs) = dir_results.get();
+        let typed = cwd.get();
+        match path_parts(&typed) {
+            Some((p, _)) if p == parent => complete_path(&typed, &dirs),
+            _ => Vec::new(),
+        }
+    });
+
+    // Fetch the children of the typed path's parent (no-op for
+    // non-absolute input). Routed to the node the `node|agent` select
+    // encodes, like `create` below.
+    let fetch_dirs = move |typed: &str| {
+        let Some((parent, _)) = path_parts(typed) else {
+            dir_results.set((String::new(), Vec::new()));
+            return;
+        };
+        let node = agent_sel
+            .get_untracked()
+            .split_once('|')
+            .map(|(n, _)| n.to_string());
+        leptos::task::spawn_local(async move {
+            if let Ok(dirs) = fs_dirs(parent.clone(), node).await {
+                dir_results.set((parent, dirs));
+            }
+        });
+    };
+
+    // Complete the typed path to `dir` + a trailing `/`, then fetch its
+    // children so the dropdown drills straight into the next level.
+    let pick_dir = move |dir: String| {
+        let next = format!("{}/", dir.trim_end_matches('/'));
+        cwd.set(next.clone());
+        highlight.set(0);
+        suggest_open.set(true);
+        fetch_dirs(&next);
+    };
+
     let create = move || {
         let cwd_value = cwd.get().trim().to_string();
         if cwd_value.is_empty() || creating.get() {
@@ -1030,16 +1076,109 @@ fn NewSessionForm(
                 create();
             }
         >
-            // `{..}` so `node_ref` lands as a spread attr on the
-            // rendered `<input>` (component props can't take it).
-            <Input
-                {..}
-                node_ref=cwd_ref
-                attr:r#type="text"
-                attr:placeholder="Working directory (required)…"
-                prop:value=move || cwd.get()
-                on:input=move |ev| cwd.set(event_target_value(&ev))
-            />
+            <div class="relative">
+                // `{..}` so `node_ref` lands as a spread attr on the
+                // rendered `<input>` (component props can't take it).
+                <Input
+                    {..}
+                    node_ref=cwd_ref
+                    attr:r#type="text"
+                    attr:placeholder="Working directory (required)…"
+                    attr:autocomplete="off"
+                    attr:spellcheck="false"
+                    prop:value=move || cwd.get()
+                    on:input=move |ev| {
+                        let v = event_target_value(&ev);
+                        cwd.set(v.clone());
+                        highlight.set(0);
+                        suggest_open.set(true);
+                        fetch_dirs(&v);
+                    }
+                    on:focus=move |_| {
+                        suggest_open.set(true);
+                        fetch_dirs(&cwd.get_untracked());
+                    }
+                    on:blur=move |_| suggest_open.set(false)
+                    on:keydown=move |ev| {
+                        let count = suggestions.get_untracked().len();
+                        let open = suggest_open.get_untracked() && count > 0;
+                        match ev.key().as_str() {
+                            // The document-level ArrowUp/Down + Escape
+                            // hotkeys skip editable targets, so these
+                            // never fight the session-cycling keys.
+                            "ArrowDown" if open => {
+                                ev.prevent_default();
+                                highlight.update(|h| *h = (*h + 1) % count);
+                            }
+                            "ArrowUp" if open => {
+                                ev.prevent_default();
+                                highlight.update(|h| *h = (*h + count - 1) % count);
+                            }
+                            "Enter" if open => {
+                                // Complete the highlighted dir instead
+                                // of submitting the form.
+                                ev.prevent_default();
+                                let i = highlight.get_untracked().min(count - 1);
+                                if let Some(dir) = suggestions.get_untracked().get(i).cloned() {
+                                    pick_dir(dir);
+                                }
+                            }
+                            "Escape" if open => {
+                                // The global Escape handler would drop
+                                // `?session=` — the dropdown owns it.
+                                ev.stop_propagation();
+                                suggest_open.set(false);
+                            }
+                            _ => {}
+                        }
+                    }
+                />
+                // Suggestion popover — always rendered so SSR and first
+                // hydration agree; `hidden` until a `dir_results` entry
+                // lands post-hydration.
+                <ul class=move || {
+                    let base = "absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-auto \
+                                rounded-md border bg-popover p-1 text-sm text-popover-foreground \
+                                shadow-md";
+                    if suggest_open.get() && !suggestions.read().is_empty() {
+                        base.to_string()
+                    } else {
+                        format!("{base} hidden")
+                    }
+                }>
+                    {move || {
+                        suggestions
+                            .get()
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, dir)| {
+                                let pick = dir.clone();
+                                view! {
+                                    <li
+                                        class=move || {
+                                            let base = "cursor-pointer truncate rounded-sm px-2 \
+                                                        py-1 font-mono text-xs";
+                                            if highlight.get() == i {
+                                                format!("{base} bg-accent text-accent-foreground")
+                                            } else {
+                                                base.to_string()
+                                            }
+                                        }
+                                        // `mousedown`'s default would
+                                        // blur the input before `click`
+                                        // lands — prevent it so the
+                                        // pick keeps focus.
+                                        on:mousedown=move |ev| ev.prevent_default()
+                                        on:click=move |_| pick_dir(pick.clone())
+                                    >
+                                        {dir}
+                                    </li>
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    }}
+                </ul>
+            </div>
             <div class="flex gap-2">
                 <Input
                     attr:r#type="text"
@@ -1111,6 +1250,40 @@ fn NewSessionForm(
 
 fn non_empty(s: &str) -> Option<String> {
     (!s.trim().is_empty()).then(|| s.trim().to_string())
+}
+
+/// `(parent dir, basename prefix)` for a typed absolute path —
+/// `/home/us` → `("/home", "us")`, `/home/` → `("/home", "")`,
+/// `/` → `("/", "")`. `None` for relative/empty input (the node's
+/// `/api/fs` requires absolute paths anyway).
+fn path_parts(typed: &str) -> Option<(String, String)> {
+    if !typed.starts_with('/') {
+        return None;
+    }
+    let (dir, base) = typed.rsplit_once('/')?;
+    let parent = if dir.is_empty() { "/" } else { dir };
+    Some((parent.to_string(), base.to_string()))
+}
+
+/// Filter `dirs` — the children of `typed`'s parent, as `/api/fs`
+/// returns them (full paths) — to those whose basename starts with the
+/// typed final segment, case-insensitively. Empty when `typed` isn't
+/// absolute.
+fn complete_path(typed: &str, dirs: &[String]) -> Vec<String> {
+    let Some((_, prefix)) = path_parts(typed) else {
+        return Vec::new();
+    };
+    let prefix = prefix.to_lowercase();
+    dirs.iter()
+        .filter(|d| {
+            d.rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .to_lowercase()
+                .starts_with(prefix.as_str())
+        })
+        .cloned()
+        .collect()
 }
 
 /// Sort order for the session list (filter-bar select values).
@@ -1404,6 +1577,46 @@ mod tests {
         assert_eq!(cwd_label(""), "No project");
         assert_eq!(cwd_label("/"), "No project");
         assert_eq!(cwd_label("C:\\src\\proj"), "proj");
+    }
+
+    #[test]
+    fn path_parts_split_parent_and_prefix() {
+        assert_eq!(path_parts("/"), Some(("/".into(), String::new())));
+        assert_eq!(path_parts("/ho"), Some(("/".into(), "ho".into())));
+        assert_eq!(
+            path_parts("/home/u/a"),
+            Some(("/home/u".into(), "a".into()))
+        );
+        assert_eq!(
+            path_parts("/home/u/"),
+            Some(("/home/u".into(), String::new()))
+        );
+        // Relative and empty input never reach `/api/fs`.
+        assert_eq!(path_parts("rel/path"), None);
+        assert_eq!(path_parts(""), None);
+    }
+
+    #[test]
+    fn complete_path_matches_basename_prefix_case_insensitively() {
+        let dirs = vec![
+            "/home/u/app".to_string(),
+            "/home/u/Archive".to_string(),
+            "/home/u/zeta".to_string(),
+        ];
+        assert_eq!(
+            complete_path("/home/u/a", &dirs),
+            vec!["/home/u/app".to_string(), "/home/u/Archive".to_string()]
+        );
+        // Trailing slash → every child of the parent.
+        assert_eq!(complete_path("/home/u/", &dirs), dirs);
+        // Root-level prefix.
+        assert_eq!(
+            complete_path("/zet", vec!["/zeta".to_string()].as_slice()),
+            vec!["/zeta".to_string()]
+        );
+        // Relative/empty typed values yield nothing.
+        assert!(complete_path("rel/a", &dirs).is_empty());
+        assert!(complete_path("", &dirs).is_empty());
     }
 
     #[test]

@@ -101,6 +101,10 @@ pub trait NodeApi: Send + Sync + 'static {
     async fn get_config(&self) -> Result<BTreeMap<String, Value>, String>;
     /// `PATCH /api/config/{key}` — `{value}` stored verbatim.
     async fn set_config(&self, key: &str, value: &Value) -> Result<(), String>;
+    /// `GET /api/fs?path=` — direct subdirectories of an absolute
+    /// path, for the cwd picker's autocomplete. `node` routes on a
+    /// multi-node hub; `None` = the primary/first.
+    async fn fs_dirs(&self, path: &str, node: Option<String>) -> Result<Vec<String>, String>;
     /// `GET /api/node` — the node descriptor (the primary node's on a
     /// multi-node hub).
     async fn node_info(&self) -> Result<NodeInfoDto, String>;
@@ -447,6 +451,19 @@ pub async fn set_config(key: String, value: Value) -> Result<(), ServerFnError> 
     }
     node_api()?
         .set_config(&key, &value)
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `GET /api/fs?path=` — subdirectory listing for the cwd picker.
+/// `node` picks the node on a multi-node hub (`None` = primary).
+#[server(prefix = "/hub")]
+pub async fn fs_dirs(path: String, node: Option<String>) -> Result<Vec<String>, ServerFnError> {
+    if path.is_empty() {
+        return Err(ServerFnError::new("path is required"));
+    }
+    node_api()?
+        .fs_dirs(&path, node)
         .await
         .map_err(ServerFnError::new)
 }
@@ -1012,6 +1029,23 @@ impl NodeApi for HttpNodeApi {
             } else {
                 Err(error_of(res, "set config"))
             }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn fs_dirs(&self, path: &str, _node: Option<String>) -> Result<Vec<String>, String> {
+        // Direct connections have one node — `node` only matters to the
+        // hub's `SyncNodeApi` router.
+        let api_path = format!("/api/fs?path={}", url_encode(path));
+        let api = self.clone();
+        tokio::task::spawn_blocking(move || {
+            #[derive(serde::Deserialize)]
+            struct FsBody {
+                #[serde(default)]
+                dirs: Vec<String>,
+            }
+            read_json::<FsBody>(api.get(&api_path)?, "list directories").map(|b| b.dirs)
         })
         .await
         .map_err(|e| e.to_string())?

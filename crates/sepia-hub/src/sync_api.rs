@@ -585,6 +585,27 @@ impl NodeApi for SyncNodeApi {
             .map_err(|e| e.to_string())
     }
 
+    async fn fs_dirs(&self, path: &str, node: Option<String>) -> Result<Vec<String>, String> {
+        // Read-only and node-local — goes straight to the named node
+        // (or the primary) rather than the projection or outbox.
+        let (_, client) = self.scoped_client(node.as_deref())?;
+        let api_path = format!("/api/fs?path={}", sepia_sync::client::encode_segment(path));
+        tokio::task::spawn_blocking(move || client.get_json(&api_path))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
+            .map(|v| {
+                v.get("dirs")
+                    .and_then(Value::as_array)
+                    .map(|rows| {
+                        rows.iter()
+                            .filter_map(|r| r.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+    }
+
     async fn node_info(&self) -> Result<NodeInfoDto, String> {
         let (_, client) = self.scoped_client(None)?;
         tokio::task::spawn_blocking(move || client.get_json("/api/node"))
