@@ -1,7 +1,8 @@
-// sepia service worker — deliberately small. Static assets are
-// cache-first; navigations are network-first with a cached index as
-// the offline shell; /api and /hub traffic always hits the network.
-const CACHE = "sepia-v4";
+// sepia service worker — deliberately small. Only the content-hashed
+// /pkg/ bundle is cache-first; every other same-origin asset is
+// network-first with a cache fallback for offline, so a deploy can
+// never pair fresh HTML with a stale fixed-name asset (style.css).
+const CACHE = "sepia-v5";
 const ASSETS = ["/", "/style.css", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -62,19 +63,19 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: cache first, then network (and cache the result).
+  // Other static assets (style.css, icon, manifest): network-first,
+  // cached copy as the offline fallback. Fixed filenames mean a
+  // cache-first hit could serve a stylesheet that predates the markup.
   event.respondWith(
-    caches.match(event.request).then(
-      (hit) =>
-        hit ||
-        fetch(event.request).then((res) => {
-          if (res.ok) {
-            const copy = res.clone();
-            void caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-          }
-          return res;
-        }),
-    ),
+    fetch(event.request)
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          void caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(event.request)),
   );
 });
 

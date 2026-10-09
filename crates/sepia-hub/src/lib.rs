@@ -260,6 +260,9 @@ pub fn router(state: HubState) -> Router {
     };
     Router::new()
         .route("/style.css", get(serve_css))
+        // The browser's SW update check honors HTTP cache — without
+        // no-cache a stale sw.js could keep serving old cache rules.
+        .route("/sw.js", get(serve_sw))
         // Credential bootstrap — validates `?token=`, plants the
         // `sepia_hub` cookie, redirects to `/`. Pre-auth by definition.
         .route("/login", get(auth::login))
@@ -426,4 +429,25 @@ async fn serve_css() -> impl axum::response::IntoResponse {
         ],
         sepia_web::STYLE_CSS,
     )
+}
+
+/// `sw.js` lives in `site_root` (staged by `cargo xtask site`) — serve
+/// it directly so the `no-cache` header applies to SW update checks.
+async fn serve_sw(
+    axum::extract::State(state): axum::extract::State<HubState>,
+) -> axum::response::Response {
+    let path = std::path::Path::new(state.options.site_root.as_ref()).join("sw.js");
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => axum::response::IntoResponse::into_response((
+            [
+                (axum::http::header::CONTENT_TYPE, "text/javascript"),
+                (axum::http::header::CACHE_CONTROL, "no-cache"),
+            ],
+            bytes,
+        )),
+        Err(e) => axum::response::IntoResponse::into_response((
+            axum::http::StatusCode::NOT_FOUND,
+            format!("sw.js not found: {e}"),
+        )),
+    }
 }
