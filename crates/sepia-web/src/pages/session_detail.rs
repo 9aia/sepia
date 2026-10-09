@@ -280,18 +280,42 @@ pub fn SessionPanel(
     // Live stream — wasm only; SSR renders history without it.
     #[cfg(feature = "hydrate")]
     {
-        // `EventStream` isn't `Send` (wasm closures); `new_local` keeps
-        // it in the component's arena and its `Drop` closes the stream.
-        let _stream = StoredValue::new_local(crate::sse::session_stream(
-            &session_id(),
-            agent().as_deref(),
-            move |event| live.update(|t| t.apply(&event)),
-            move || {
-                // Lagged — the broadcast ring dropped frames; refetch.
-                history.refetch();
-                live.set(LiveTranscript::default());
-            },
-        ));
+        // `agent` comes from the `?agent=` param, but bare `/?session=`
+        // and `/sessions/:id` links lack it — and the stream endpoint
+        // 400s without one. Wait for the summary to resolve it. The
+        // slot lives in the component owner — creating the stream
+        // inside the Effect ties it to the effect run's scope, and the
+        // next re-run's cleanup would drop it while leptos_use's
+        // reconnect timer still touches it.
+        let slot = StoredValue::new_local(None::<crate::sse::EventStream>);
+        Effect::new(move |_| {
+            if slot.with_value(|s| s.is_some()) {
+                return;
+            }
+            let resolved = agent().or_else(|| {
+                summary
+                    .get()
+                    .and_then(Result::ok)
+                    .map(|s| s.agent)
+                    .filter(|a| !a.is_empty())
+            });
+            let Some(agent_name) = resolved else {
+                return;
+            };
+            // `EventStream` isn't `Send` (wasm closures); `new_local`
+            // keeps the slot in the component's arena and the guard's
+            // `Drop` closes the stream.
+            slot.set_value(Some(crate::sse::session_stream(
+                &session_id(),
+                Some(&agent_name),
+                move |event| live.update(|t| t.apply(&event)),
+                move || {
+                    // Lagged — the broadcast ring dropped frames; refetch.
+                    history.refetch();
+                    live.set(LiveTranscript::default());
+                },
+            )));
+        });
         // Outbox drain/enqueue emits no feed event — poll slowly.
         crate::app::every_ms(30_000, move || pending.refetch());
     }
