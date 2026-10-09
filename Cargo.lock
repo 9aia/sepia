@@ -2418,16 +2418,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "leptos_darkmode"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c160912622adc82d9e9e0f28fde74f24652aab52ad9d057656899a3030c78b11"
-dependencies = [
- "leptos",
- "web-sys",
-]
-
-[[package]]
 name = "leptos_dom"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4293,7 +4283,6 @@ dependencies = [
  "leptos",
  "leptos-fetch",
  "leptos-use",
- "leptos_darkmode",
  "leptos_meta",
  "leptos_router",
  "leptos_toaster",

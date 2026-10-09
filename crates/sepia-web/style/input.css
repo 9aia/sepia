@@ -38,6 +38,33 @@
   --overlay: oklch(0.554 0.028 281);         /* #6c7086 */
 }
 
+/* Light theme — Catppuccin Latte equivalents of the Mocha tokens. */
+.light {
+  --background: oklch(0.960 0.020 280);      /* #eff1f5 base */
+  --foreground: oklch(0.435 0.043 279);      /* #4c4f69 text */
+  --card: oklch(0.919 0.025 280);            /* #e6e9ef mantle */
+  --card-foreground: oklch(0.435 0.043 279);
+  --popover: oklch(0.919 0.025 280);
+  --popover-foreground: oklch(0.435 0.043 279);
+  --primary: oklch(0.590 0.186 310);         /* #8839ef mauve */
+  --primary-foreground: oklch(0.960 0.020 280);
+  --secondary: oklch(0.884 0.028 282);       /* #ccd0da surface0 */
+  --secondary-foreground: oklch(0.435 0.043 279);
+  --muted: oklch(0.884 0.028 282);
+  --muted-foreground: oklch(0.546 0.035 280); /* #6c6f85 subtext */
+  --accent: oklch(0.850 0.031 282);          /* #bcc0cc surface1 */
+  --accent-foreground: oklch(0.435 0.043 279);
+  --destructive: oklch(0.550 0.212 20);      /* #d20f39 red */
+  --destructive-foreground: oklch(0.960 0.020 280);
+  --border: oklch(0.884 0.028 282);
+  --input: oklch(0.850 0.031 282);
+  --ring: oklch(0.590 0.186 310 / 60%);
+  --success: oklch(0.645 0.169 150);         /* #40a02b green */
+  --warning: oklch(0.681 0.162 75);          /* #df8e1d yellow */
+  --info: oklch(0.582 0.186 260);            /* #1e66f5 blue */
+  --overlay: oklch(0.611 0.030 280);         /* #7c7f93 */
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

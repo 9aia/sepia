@@ -80,6 +80,5 @@ leptos-use = { version = "0.19", default-features = false, features = [
   "on_click_outside", "use_media_query", "use_timeout_fn", "storage",
 ] }
 leptos-fetch = "0.4"
-leptos_darkmode = "0.4"
 leptos_toaster = { version = "0.3", default-features = false, features = ["builtin_toast"] }
 floating-ui-leptos = "0.6"

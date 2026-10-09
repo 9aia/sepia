@@ -19,6 +19,7 @@ use crate::components::{
 use crate::pages::{
     AgentsPage, NodesPage, ProjectsPage, SessionDetailPage, SessionListPage, SettingsPage,
 };
+use crate::theme::ThemeToggle;
 
 /// Wall-clock ticker for relative-time labels — refreshed every 30s on
 /// the client; a fixed snapshot during SSR.
@@ -90,6 +91,7 @@ fn nav_items(extra: &str, on_nav: Option<std::sync::Arc<dyn Fn() + Send + Sync>>
 pub fn App() -> impl IntoView {
     provide_meta_context();
     provide_toaster();
+    crate::theme::provide_theme();
     let now = RwSignal::new(crate::time::now_ms());
     provide_context(Now(now));
     #[cfg(feature = "hydrate")]
@@ -110,8 +112,11 @@ pub fn App() -> impl IntoView {
                         </A>
                     </div>
                     {nav_items("", None)}
-                    <div class="mt-auto px-4 py-3 text-xs text-muted-foreground">
-                        "multi-node agent sessions"
+                    <div class="mt-auto flex items-center justify-between px-4 py-3">
+                        <span class="text-xs text-muted-foreground">
+                            "multi-node agent sessions"
+                        </span>
+                        <ThemeToggle/>
                     </div>
                 </aside>
                 <div class="flex min-w-0 flex-1 flex-col">
@@ -130,6 +135,9 @@ pub fn App() -> impl IntoView {
                         <A href="/" attr:class="font-bold tracking-tight text-primary">
                             "sepia"
                         </A>
+                        <span class="ml-auto">
+                            <ThemeToggle/>
+                        </span>
                     </header>
                     <main class="flex min-w-0 flex-1 flex-col">
                         <Routes fallback=|| {

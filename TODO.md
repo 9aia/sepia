@@ -66,12 +66,14 @@ Missing (queued next):
 - [ ] Row context menus — right-click → rename/pin/delete/details/
       add-to-project
 - [ ] Icon set — TS used hugeicons; currently text glyphs only
-- [ ] Chat polish — tool-call blocks w/ collapsible args, reasoning
-      blocks, message scroller (auto-scroll pin + jump-to-bottom),
-      syntax-highlighted code fences
+- [~] Chat polish — tool-call blocks w/ collapsible args, reasoning
+      blocks, syntax-highlighted code fences. ✓ scroller: pinned-bottom
+      auto-scroll + "Jump to bottom" pill landed
 - [ ] Prompt input — cwd autocomplete (CwdPicker), model picker,
       multiline textarea submit UX
-- [ ] Theme toggle — light/dark/system (currently dark-only)
+- [x] Theme toggle — light/dark/system (`sepia-theme` localStorage +
+      `use_media_query`, `.light` Catppuccin Latte token block, toggle
+      in sidebar + mobile topbar; prose is `dark:prose-invert`)
 - [ ] Customizable keybinds + help dialog (settings override map)
 - [ ] Settings depth — credentials, agent catalog, model config
       sections (was SettingsDialog)

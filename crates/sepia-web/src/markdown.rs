@@ -247,7 +247,7 @@ fn render_block(block: MdBlock) -> impl IntoView {
 pub fn Markdown(#[prop(into)] text: String) -> impl IntoView {
     let blocks = parse(&text);
     view! {
-        <div class="prose prose-invert prose-sm max-w-none text-foreground prose-headings:text-foreground prose-p:my-2 prose-a:text-info prose-strong:text-foreground">
+        <div class="prose dark:prose-invert prose-sm max-w-none text-foreground prose-headings:text-foreground prose-p:my-2 prose-a:text-info prose-strong:text-foreground">
             {blocks.into_iter().map(render_block).collect::<Vec<_>>()}
         </div>
     }

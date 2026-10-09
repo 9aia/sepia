@@ -226,15 +226,35 @@ pub fn SessionPanel(
         crate::app::every_ms(30_000, move || pending.refetch());
     }
 
-    // Auto-scroll the log while new live entries stream in.
+    // Auto-scroll the log while new live entries stream in — but only
+    // while the user is pinned to the bottom. Scrolling up unpins; the
+    // "jump to bottom" pill re-pins.
     let log_ref = NodeRef::<leptos::html::Div>::new();
+    let pinned = RwSignal::new(true);
     #[cfg(feature = "hydrate")]
-    Effect::new(move |_| {
-        let _ = live.read().entries.len();
-        if let Some(el) = log_ref.get() {
-            el.set_scroll_top(el.scroll_height());
-        }
-    });
+    {
+        let _cleanup = leptos_use::use_event_listener(log_ref, leptos::ev::scroll, move |ev| {
+            use wasm_bindgen::JsCast;
+            if let Some(el) = ev
+                .target()
+                .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                // 48px slop — "at bottom" is approximate for streaming rows.
+                let gap = f64::from(el.scroll_height())
+                    - f64::from(el.scroll_top())
+                    - f64::from(el.client_height());
+                pinned.set(gap < 48.0);
+            }
+        });
+        Effect::new(move |_| {
+            let _ = live.read().entries.len();
+            if pinned.get_untracked() {
+                if let Some(el) = log_ref.get() {
+                    el.set_scroll_top(el.scroll_height());
+                }
+            }
+        });
+    }
 
     let sending = RwSignal::new(false);
     let send_error: RwSignal<Option<String>> = RwSignal::new(None);
@@ -543,8 +563,9 @@ pub fn SessionPanel(
                                             </div>
                                         </SheetBody>
                                     </Sheet>
+                                    <div class="relative flex min-h-40 flex-1 flex-col">
                                     <div
-                                        class="flex min-h-40 flex-1 flex-col gap-2 overflow-y-auto rounded-lg border bg-card p-3"
+                                        class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-lg border bg-card p-3"
                                         node_ref=log_ref
                                     >
                                         <OlderButton
@@ -568,6 +589,28 @@ pub fn SessionPanel(
                                             .map(|m| view! { <HistoryRow message=m/> })
                                             .collect::<Vec<_>>()}
                                         <LiveLog live=live/>
+                                    </div>
+                                    // Always rendered (SSR/hydrate
+                                    // agree); visibility is class-only.
+                                    <button
+                                        type="button"
+                                        class=move || {
+                                            let base = "absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border bg-popover px-3 py-1 text-xs shadow-md transition-opacity hover:bg-accent";
+                                            if pinned.get() {
+                                                format!("{base} opacity-0 pointer-events-none")
+                                            } else {
+                                                format!("{base} opacity-100")
+                                            }
+                                        }
+                                        on:click=move |_| {
+                                            pinned.set(true);
+                                            if let Some(el) = log_ref.get() {
+                                                el.set_scroll_top(el.scroll_height());
+                                            }
+                                        }
+                                    >
+                                        "↓ Jump to bottom"
+                                    </button>
                                     </div>
                                     {move || {
                                         running()
