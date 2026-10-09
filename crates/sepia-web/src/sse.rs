@@ -36,7 +36,7 @@ fn connect(
     url: &str,
     named: &[&str],
     on_event: impl Fn(&web_sys::Event) -> UseEventSourceOnEventReturn + Send + Sync + 'static,
-) -> Option<EventStream> {
+) -> EventStream {
     let ret = use_event_source_with_options::<String, FromToStringCodec>(
         url.to_string(),
         UseEventSourceOptions::default()
@@ -51,9 +51,9 @@ fn connect(
     ) {
         leptos::logging::warn!("EventSource {url} failed to open");
     }
-    Some(EventStream {
+    EventStream {
         close: Box::new(move || (ret.close)()),
-    })
+    }
 }
 
 /// `/api/sessions/{id}/stream` — `SessionEvent` JSON frames, plus the
@@ -63,7 +63,7 @@ pub fn session_stream(
     agent: Option<&str>,
     on_event: impl FnMut(sepia_proto::SessionEvent) + Send + Sync + 'static,
     on_lagged: impl FnMut() + Send + Sync + 'static,
-) -> Option<EventStream> {
+) -> EventStream {
     use std::sync::Mutex;
     let on_event = Mutex::new(on_event);
     let on_lagged = Mutex::new(on_lagged);
@@ -101,7 +101,7 @@ pub fn session_stream(
 
 /// `/api/events` — the node feed. Any `session`/`meta`/`project` event
 /// calls `on_change` (the list refetches); `heartbeat` is ignored.
-pub fn node_feed(on_change: impl FnMut() + Send + Sync + 'static) -> Option<EventStream> {
+pub fn node_feed(on_change: impl FnMut() + Send + Sync + 'static) -> EventStream {
     use std::sync::Mutex;
     let on_change = Mutex::new(on_change);
     connect(

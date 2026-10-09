@@ -485,6 +485,7 @@ pub fn SessionPanel(
                                             })}
                                         </CardContent>
                                     </Card>
+                                    {view! {
                                     <ConfirmDialog
                                         open=confirm_delete
                                         title="Delete this session?"
@@ -493,6 +494,8 @@ pub fn SessionPanel(
                                         destructive=true
                                         on_confirm=move || delete_confirmed.set(true)
                                     />
+                                    }.into_any()}
+                                    {view! {
                                     <Sheet open=details_open side="right" class="w-96">
                                         <SheetHeader>
                                             <SheetTitle>"Session details"</SheetTitle>
@@ -563,6 +566,8 @@ pub fn SessionPanel(
                                             </div>
                                         </SheetBody>
                                     </Sheet>
+                                    }.into_any()}
+                                    {view! {
                                     <div class="relative flex min-h-40 flex-1 flex-col">
                                     <div
                                         class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-lg border bg-card p-3"
@@ -612,6 +617,7 @@ pub fn SessionPanel(
                                         "↓ Jump to bottom"
                                     </button>
                                     </div>
+                                    }.into_any()}
                                     {move || {
                                         running()
                                             .then(|| view! {
@@ -640,7 +646,7 @@ pub fn SessionPanel(
                                         submit=submit
                                     />
                                 }
-                                    .into_any()
+                                .into_any()
                             }
                         }
                     })
