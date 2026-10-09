@@ -102,7 +102,7 @@ pub fn App() -> impl IntoView {
     view! {
         <Title text="sepia"/>
         <Router>
-            <div class="flex min-h-dvh">
+            <div class="flex h-dvh overflow-hidden">
                 // Desktop sidebar — nav only; the sessions list itself
                 // lives inside the `/` page (master-detail).
                 <aside class="hidden w-56 shrink-0 flex-col border-r bg-card lg:flex">
@@ -139,7 +139,7 @@ pub fn App() -> impl IntoView {
                             <ThemeToggle/>
                         </span>
                     </header>
-                    <main class="flex min-w-0 flex-1 flex-col">
+                    <main class="flex min-w-0 flex-1 flex-col overflow-y-auto">
                         <Routes fallback=|| {
                             view! {
                                 <p class="p-6 text-sm text-muted-foreground">
