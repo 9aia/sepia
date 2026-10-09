@@ -94,7 +94,14 @@ pub fn SessionListPage() -> impl IntoView {
     let confirm_delete = RwSignal::new(false);
     let delete_confirmed = RwSignal::new(false);
     let pending_delete: RwSignal<Option<(String, Option<String>)>> = RwSignal::new(None);
+    // `new_local` stores a SendWrapper in the owner arena — on SSR the
+    // owner cleans up on an arbitrary tokio worker and the guard
+    // panics, aborting the stream. SSR never navigates.
+    #[cfg(feature = "hydrate")]
     let navigate = StoredValue::new_local(use_navigate());
+    #[cfg(not(feature = "hydrate"))]
+    let navigate = StoredValue::new(|_: &str, _: NavigateOptions| {});
+
     let toast = use_toast();
 
     // Runs inside the component owner, so `!Send` captures are fine.

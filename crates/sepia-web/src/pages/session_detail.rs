@@ -5,7 +5,9 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::NavigateOptions;
 use leptos_router::components::A;
-use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
+#[cfg(feature = "hydrate")]
+use leptos_router::hooks::use_navigate;
+use leptos_router::hooks::{use_params_map, use_query_map};
 
 use crate::api::{
     answer_permission, attach_session, cancel_run, delete_session, detach_session, rename_session,
@@ -131,7 +133,13 @@ pub fn SessionPanel(
     let session_id = move || session_id.get();
     let agent = move || agent.get();
     // `StoredValue` keeps the navigate fn Copy-able into handlers.
+    // `new_local` stores a SendWrapper in the owner arena — on SSR the
+    // owner cleans up on an arbitrary tokio worker and the guard
+    // panics, aborting the response stream. SSR never navigates.
+    #[cfg(feature = "hydrate")]
     let navigate = StoredValue::new_local(use_navigate());
+    #[cfg(not(feature = "hydrate"))]
+    let navigate = StoredValue::new(|_: &str, _: NavigateOptions| {});
 
     let client = crate::api::query_client();
     let summary = client.resource(crate::api::session_scope, move || (session_id(), agent()));

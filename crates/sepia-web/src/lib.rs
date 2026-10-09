@@ -170,8 +170,18 @@ pub mod theme {
     #[cfg(not(feature = "hydrate"))]
     #[leptos::prelude::component]
     pub fn ThemeToggle() -> impl leptos::prelude::IntoView {
-        // Always render the button (SSR+hydrate must agree); it just
-        // does nothing server-side.
-        "☾"
+        // SSR must emit the same node shape hydrate expects — the
+        // button markup, minus reactivity. The shell always emits
+        // `class="dark"`, so the static glyph is the dark icon.
+        use leptos::prelude::*;
+        leptos::prelude::view! {
+            <button
+                type="button"
+                title="Theme: dark (click to cycle)"
+                class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+                "☾"
+            </button>
+        }
     }
 }
