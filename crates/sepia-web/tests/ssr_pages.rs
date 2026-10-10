@@ -149,6 +149,61 @@ async fn session_list_empty_renders_hint() {
     assert_contains(&html, "No sessions yet.");
 }
 
+#[tokio::test]
+async fn session_list_empty_with_no_nodes_shows_gate() {
+    use sepia_web::dto::NodeStatusDto;
+    // Zero registered nodes → the empty state names the real problem.
+    let html = page(
+        "/",
+        FakeNodeApi::seeded()
+            .with_sessions(vec![])
+            .with_statuses(vec![])
+            .shared(),
+    )
+    .await;
+    assert_contains(&html, "No nodes connected");
+    assert!(!html.contains("No sessions yet."));
+    // Every node down is the same gate.
+    let html = page(
+        "/",
+        FakeNodeApi::seeded()
+            .with_sessions(vec![])
+            .with_statuses(vec![NodeStatusDto {
+                id: "n1".into(),
+                status: "down".into(),
+                ..NodeStatusDto::default()
+            }])
+            .shared(),
+    )
+    .await;
+    assert_contains(&html, "No nodes connected");
+    assert_contains(&html, "href=\"/nodes\"");
+    // But an empty session list with a healthy node keeps the hint.
+    let html = page("/", FakeNodeApi::seeded().with_sessions(vec![]).shared()).await;
+    assert_contains(&html, "No sessions yet.");
+    assert!(!html.contains("No nodes connected"));
+}
+
+// ── `/login` — the pre-auth gate page ────────────────────────────────
+
+#[tokio::test]
+async fn login_renders_card_form_and_states() {
+    let html = page("/login", FakeNodeApi::seeded().shared()).await;
+    assert_contains(&html, "data-name=\"LoginPage\"");
+    assert_contains(&html, "name=\"token\"");
+    assert_contains(&html, "method=\"post\"");
+    assert!(!html.contains("data-name=\"LoginError\""));
+    // `?error=1` (bad POST) and a rejected `?token=` both show it.
+    for uri in ["/login?error=1", "/login?token=wrong"] {
+        let html = page(uri, FakeNodeApi::seeded().shared()).await;
+        assert_contains(&html, "data-name=\"LoginError\"");
+        assert_contains(&html, "Invalid token");
+    }
+    // `?next=` rides through the form as a hidden field.
+    let html = page("/login?next=%2Fnodes", FakeNodeApi::seeded().shared()).await;
+    assert_contains(&html, "name=\"next\" value=\"/nodes\"");
+}
+
 // ── `/sessions/:id` — detail page (panel + transcript) ───────────────
 
 #[tokio::test]

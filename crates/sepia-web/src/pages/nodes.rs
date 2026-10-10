@@ -5,9 +5,10 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
+use crate::api::redeem_pair_code;
 use crate::components::{
-    Badge, BadgeVariant, Card, CardContent, CardHeader, CardTitle, ErrorBanner, PageDescription,
-    PageHead, PageTitle, Skeleton,
+    Badge, BadgeVariant, Button, ButtonSize, Card, CardContent, CardDescription, CardHeader,
+    CardTitle, ErrorBanner, Input, PageDescription, PageHead, PageTitle, SELECT_CLASS, Skeleton,
 };
 use crate::dto::{NodeStatusDto, PendingWriteDto};
 use crate::pages::RelativeTime;
@@ -217,7 +218,157 @@ pub fn NodesPage() -> impl IntoView {
                     })
                 }}
             </Suspense>
+            <PairCard/>
         </section>
+    }
+}
+
+/// "Pair a device" — redeem a one-time code (`sepia pair` writes it
+/// to `$SEPIA_HOME/pair-code` on the node) for a long-lived node
+/// credential. `POST /api/pair` is deliberately unauthenticated
+/// node-side — the code itself is the credential.
+#[component]
+fn PairCard() -> impl IntoView {
+    let client = crate::api::query_client();
+    let status = client.resource(crate::api::node_status_scope, || ());
+    let code = RwSignal::new(String::new());
+    let node = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    // `Some(Ok(token))` once redeemed, `Some(Err(msg))` on failure.
+    let result: RwSignal<Option<Result<String, String>>> = RwSignal::new(None);
+
+    let submit = move || {
+        let c = code.get_untracked();
+        if c.trim().is_empty() || busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        result.set(None);
+        let node_arg = {
+            let n = node.get_untracked();
+            (!n.is_empty()).then_some(n)
+        };
+        leptos::task::spawn_local(async move {
+            let res = redeem_pair_code(c, node_arg)
+                .await
+                .map_err(|e| e.to_string());
+            busy.set(false);
+            if res.is_ok() {
+                code.set(String::new());
+            }
+            result.set(Some(res));
+        });
+    };
+
+    view! {
+        <Card>
+            <CardHeader>
+                <CardTitle>"Pair a device"</CardTitle>
+                <CardDescription>
+                    "Redeem the one-time code from `sepia pair` for a node credential. The token is shown once — store it somewhere safe."
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                <form
+                    data-name="PairCard"
+                    class="flex flex-col gap-3"
+                    on:submit=move |ev| {
+                        ev.prevent_default();
+                        submit();
+                    }
+                >
+                    <div class="flex flex-wrap items-end gap-2">
+                        <label class="flex min-w-48 flex-1 flex-col gap-1.5 text-sm">
+                            <span class="text-muted-foreground">"Pairing code"</span>
+                            <Input
+                                {..}
+                                attr:r#type="text"
+                                attr:name="code"
+                                attr:placeholder="XXXX-XXXX"
+                                attr:autocomplete="off"
+                                prop:value=move || code.get()
+                                on:input=move |ev| code.set(event_target_value(&ev))
+                            />
+                        </label>
+                        // Target node — only meaningful on multi-node
+                        // hubs; hidden as a lone "auto" option else.
+                        <Suspense fallback=move || {
+                            view! { <span class="hidden"></span> }
+                        }>
+                            {move || {
+                                Suspend::new(async move {
+                                    let rows = status.await.unwrap_or_default();
+                                    if rows.len() > 1 {
+                                view! {
+                                    <label class="flex flex-col gap-1.5 text-sm">
+                                        <span class="text-muted-foreground">"Node"</span>
+                                        <select
+                                            class=SELECT_CLASS
+                                            prop:value=move || node.get()
+                                            on:change=move |ev| {
+                                                node.set(event_target_value(&ev));
+                                            }
+                                        >
+                                            <option value="">"primary"</option>
+                                            {rows
+                                                .into_iter()
+                                                .map(|r| {
+                                                    let v = r.id.clone();
+                                                    view! { <option value=v.clone()>{v.clone()}</option> }
+                                                })
+                                                .collect::<Vec<_>>()}
+                                        </select>
+                                    </label>
+                                        }
+                                            .into_any()
+                                    } else {
+                                        view! { <span class="hidden"></span> }.into_any()
+                                    }
+                                })
+                            }}
+                        </Suspense>
+                        <Button
+                            button_type="submit"
+                            size=ButtonSize::Default
+                            disabled=move || busy.get()
+                        >
+                            {move || if busy.get() { "Pairing…" } else { "Pair" }}
+                        </Button>
+                    </div>
+                </form>
+                {move || {
+                    result.get().map(|res| {
+                        match res {
+                            Ok(token) => {
+                                view! {
+                                    <div data-name="PairSuccess" class="mt-3">
+                                        <p class="text-sm text-success">
+                                            "Paired — node credential (shown once):"
+                                        </p>
+                                        <code class="mt-1 block break-all rounded-md border bg-muted px-3 py-2 font-mono text-xs">
+                                            {token}
+                                        </code>
+                                    </div>
+                                }
+                                    .into_any()
+                            }
+                            Err(e) => {
+                                view! {
+                                    <p
+                                        data-name="PairError"
+                                        role="alert"
+                                        class="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                                    >
+                                        {e}
+                                    </p>
+                                }
+                                    .into_any()
+                            }
+                        }
+                    })
+                }}
+            </CardContent>
+        </Card>
     }
 }
 

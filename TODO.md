@@ -63,7 +63,7 @@ Landing (agents in flight):
 - [x] Project grouping — collapsible sections in the sidebar list,
       persisted open state, right-click group menu (collapse + "New
       session here"), ←/→ fold hotkeys
-- [x] Hotkeys — ✓ N new, ↑/↓ session nav, ⌘K filter, Esc clear, ⌘B
+- [x] Hotkeys — ✓ N new, ↑/↓ session nav, ⌘K palette, Esc clear, ⌘B
       sidebar, ? help, ✓ ←/→ group fold, ✓ ⌘, settings
 
 Missing (queued next):
@@ -94,9 +94,14 @@ User-visible breakage:
 
 - [ ] Reconnecting indicator — SSE auto-reconnects silently; user can't
       tell a dead stream from an idle session
-- [ ] No-nodes-connected gating — "No sessions yet" shows regardless
-- [ ] Login form — 401s return raw JSON `{"error":"unauthorized"}`;
-      `?token=` works but there's no paste-token screen (old TokenGate)
+- [x] No-nodes-connected gating — the list renders "No nodes
+      connected" (+ link to /nodes) when `node_status` shows nothing
+      reachable; "No sessions yet" only when a node is up
+- [x] Login form — `/login` page (card + token field) POSTs to the
+      hub, which plants the httpOnly cookie and 303s to `next`; bad
+      tokens bounce to `?error=1`. HTML navigations get a `/login`
+      redirect (`?next=` preserved); `/api/*` + `/hub/*` keep JSON 401s;
+      `GET /login?token=` stays the one-time-link bootstrap
 - [ ] Held-session send flow — composer isn't disabled, send on a held
       session just errors raw; old had draft-while-held + takeover
       confirm
@@ -127,8 +132,14 @@ Missing features (wire-supported but no UI):
       in proto, `live.rs` ignores them)
 - [ ] Project membership mgmt (`projectIds` unwired), details dialog,
       node nickname editing (`PATCH /api/node` exists)
-- [ ] Command palette (⌘K only focuses filter today)
-- [ ] Notification prefs (push is on/off only), pair-flow UI
+- [x] Command palette — ⌘K or `/` opens a `role=dialog` overlay:
+      session search, page nav, actions (new session, theme, pin/
+      archive selected, help); ↑/↓/Enter/Esc, aria-activedescendant,
+      pure ranking in `sepia-web-core::palette`
+- [ ] Notification prefs (push is on/off only)
+- [x] Pair-flow UI — "Pair a device" card on /nodes redeems a code via
+      `POST /api/pair` (`NodeApi::pair` → `redeem_pair_code` server fn)
+      and shows the minted node credential once
 - [x] URL-persisted filter/sort state, group-header context menus
 - [ ] Message auto-load on scroll-top (manual button today), collapse
       consecutive dupes, virtualized list at scale

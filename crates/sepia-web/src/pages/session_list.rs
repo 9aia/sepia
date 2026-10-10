@@ -37,12 +37,13 @@ use crate::app::in_editable;
 use crate::components::icons::Icon;
 use crate::components::toast::use_toast;
 use crate::components::{
-    Badge, BadgeVariant, Button, ConfirmDialog, EmptyState, ErrorBanner, Input, SELECT_CLASS,
-    Skeleton,
+    Badge, BadgeVariant, Button, ButtonClass, ButtonSize, ButtonVariant, ConfirmDialog, EmptyState,
+    ErrorBanner, Input, SELECT_CLASS, Skeleton,
 };
 use crate::dto::AgentDto;
 use crate::pages::SessionPanel;
 use crate::time::relative;
+use tw_merge::IntoTailwindClass;
 
 /// Context-menu item styling — same look as `MenuItem`, minus the
 /// `<details>` close hook (the row menu isn't a `<details>`).
@@ -63,6 +64,9 @@ pub fn SessionListPage() -> impl IntoView {
     let client = crate::api::query_client();
     let sessions = client.resource(crate::api::sessions_scope, || ());
     let pending = client.resource(crate::api::pending_scope, || ());
+    // Node health — the empty list reads "No nodes connected" instead
+    // of "No sessions yet" when nothing is reachable.
+    let nodes = client.resource(crate::api::node_status_scope, || ());
     let query = use_query_map();
     // Selected session — `?session=<id>` (+ optional `?agent=`).
     let selected = move || {
@@ -197,8 +201,12 @@ pub fn SessionListPage() -> impl IntoView {
         let _feed = StoredValue::new_local(crate::sse::node_feed(move || {
             sessions.refetch();
             pending.refetch();
+            nodes.refetch();
         }));
-        crate::app::every_ms(30_000, move || pending.refetch());
+        crate::app::every_ms(30_000, move || {
+            pending.refetch();
+            nodes.refetch();
+        });
         // Clicking anywhere outside the menus closes them (the
         // right-click that opens one precedes `contextmenu`, not a
         // `click`, so it can't immediately re-close).
@@ -299,12 +307,6 @@ pub fn SessionListPage() -> impl IntoView {
                     ev.prevent_default();
                 }
                 match action {
-                    // ⌘K / Ctrl-K — focus the filter input.
-                    keymap::Action::FocusFilter => {
-                        if let Some(el) = filter_input_ref.get() {
-                            let _ = el.focus();
-                        }
-                    }
                     // ⌘B / Ctrl-B — toggle the list column.
                     keymap::Action::ToggleList => list_collapsed.update(|v| *v = !*v),
                     // `n` — jump to the new-session cwd input.
@@ -374,9 +376,11 @@ pub fn SessionListPage() -> impl IntoView {
                             }
                         });
                     }
-                    // Owned by the shell listener (`app.rs`).
+                    // Owned by the shell listener (`app.rs`) — ⌘K/`/`
+                    // open the command palette now, not the filter.
                     keymap::Action::ToggleHelp
                     | keymap::Action::CloseHelp
+                    | keymap::Action::TogglePalette
                     | keymap::Action::OpenSettings => {}
                 }
             },
@@ -428,7 +432,7 @@ pub fn SessionListPage() -> impl IntoView {
                             {..}
                             node_ref=filter_input_ref
                             attr:r#type="text"
-                            attr:placeholder="Filter sessions… ⌘K"
+                            attr:placeholder="Filter sessions…"
                             prop:value=move || filter_text.get()
                             on:input=move |ev| filter_text.set(event_target_value(&ev))
                         />
@@ -513,8 +517,10 @@ pub fn SessionListPage() -> impl IntoView {
                     }>
                         {move || {
                             Suspend::new(async move {
-                                // A broken outbox read never sinks the list.
+                                // A broken outbox/status read never
+                                // sinks the list.
                                 let pending_result = pending.await.unwrap_or_default();
+                                let status_rows = nodes.await.unwrap_or_default();
                                 match sessions.await {
                                     Err(e) => {
                                         all_sessions.set(Vec::new());
@@ -528,12 +534,37 @@ pub fn SessionListPage() -> impl IntoView {
                                     }
                                     Ok(list) if list.is_empty() => {
                                         all_sessions.set(Vec::new());
-                                        view! {
-                                            <p class="p-2 text-sm text-muted-foreground">
-                                                "No sessions yet."
-                                            </p>
+                                        // No reachable node makes
+                                        // "no sessions" misleading —
+                                        // the node itself is the
+                                        // missing piece.
+                                        if status_rows.iter().any(|r| r.status == "up") {
+                                            view! {
+                                                <p class="p-2 text-sm text-muted-foreground">
+                                                    "No sessions yet."
+                                                </p>
+                                            }
+                                                .into_any()
+                                        } else {
+                                            view! {
+                                                <EmptyState
+                                                    title="No nodes connected"
+                                                    description="Sessions appear here once a node is reachable. Check node health or pair a device."
+                                                >
+                                                    <A
+                                                        href="/nodes"
+                                                        attr:class=ButtonClass {
+                                                            variant: ButtonVariant::Secondary,
+                                                            size: ButtonSize::Sm,
+                                                        }
+                                                        .to_class()
+                                                    >
+                                                        "Open nodes"
+                                                    </A>
+                                                </EmptyState>
+                                            }
+                                                .into_any()
                                         }
-                                            .into_any()
                                     }
                                     Ok(list) => {
                                         // The whole view pipeline runs on

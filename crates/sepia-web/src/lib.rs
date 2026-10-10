@@ -11,6 +11,7 @@ pub mod components;
 pub mod dto;
 pub mod markdown;
 pub mod pages;
+pub mod palette;
 #[cfg(feature = "ssr")]
 pub mod shell;
 #[cfg(feature = "hydrate")]

@@ -24,8 +24,10 @@ use crate::components::{
     ButtonClass, ButtonSize, ButtonVariant, EmptyState, Sheet, SheetBody, SheetHeader, SheetTitle,
 };
 use crate::pages::{
-    AgentsPage, NodesPage, ProjectsPage, SessionDetailPage, SessionListPage, SettingsPage,
+    AgentsPage, LoginPage, NodesPage, ProjectsPage, SessionDetailPage, SessionListPage,
+    SettingsPage,
 };
+use crate::palette::CommandPalette;
 use crate::theme::ThemeToggle;
 
 /// Wall-clock ticker for relative-time labels — refreshed every 30s on
@@ -134,6 +136,7 @@ pub fn App() -> impl IntoView {
 
     let sidebar_open = RwSignal::new(false);
     let help_open = RwSignal::new(false);
+    let palette_open = RwSignal::new(false);
 
     view! {
         <Title text="sepia"/>
@@ -202,6 +205,9 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("/projects") view=ProjectsPage/>
                             <Route path=path!("/nodes") view=NodesPage/>
                             <Route path=path!("/settings") view=SettingsPage/>
+                            // Pre-auth — the hub never gates /login;
+                            // the page covers the shell chrome itself.
+                            <Route path=path!("/login") view=LoginPage/>
                         </Routes>
                     </main>
                 </div>
@@ -215,9 +221,10 @@ pub fn App() -> impl IntoView {
                 </Sheet>
                 // Inside `<Router>` so `use_navigate` resolves — the
                 // ⌘, action needs it.
-                <ShellHotkeys open=help_open/>
+                <ShellHotkeys open=help_open palette=palette_open/>
                 <Toaster/>
                 <ShortcutsHelp open=help_open/>
+                <CommandPalette open=palette_open help=help_open/>
             </div>
         </Router>
     }
@@ -226,10 +233,10 @@ pub fn App() -> impl IntoView {
 /// The document-level hotkey listener + the `Now` ticker — rendered
 /// inside `<Router>` so `use_navigate` resolves (its only markup is a
 /// marker span). Owns the shell actions: `?` toggles the cheat-sheet,
-/// Escape closes it, `⌘,` opens `/settings`. Page-scoped actions
-/// stay in the session-list listener.
+/// `⌘K`/`/` the command palette, Escape closes both, `⌘,` opens
+/// `/settings`. Page-scoped actions stay in the session-list listener.
 #[component]
-fn ShellHotkeys(open: RwSignal<bool>) -> impl IntoView {
+fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView {
     #[cfg(feature = "hydrate")]
     {
         // The 30s wall-clock tick behind every relative-time label —
@@ -258,12 +265,22 @@ fn ShellHotkeys(open: RwSignal<bool>) -> impl IntoView {
                         open.update(|o| *o = !*o);
                     }
                     Some(keymap::Action::CloseHelp) => open.set(false),
+                    Some(keymap::Action::TogglePalette) => {
+                        ev.prevent_default();
+                        palette.update(|o| *o = !*o);
+                    }
                     Some(keymap::Action::OpenSettings) => {
                         ev.prevent_default();
                         navigate("/settings", NavigateOptions::default());
                     }
-                    // Everything else is owned by the page listener.
-                    _ => {}
+                    // A stray Escape with the palette open and focus
+                    // outside the card still closes it (the card's own
+                    // keydown handles the focused case first).
+                    _ => {
+                        if ev.key() == "Escape" && palette.get_untracked() {
+                            palette.set(false);
+                        }
+                    }
                 }
             },
         );
@@ -276,6 +293,7 @@ fn ShellHotkeys(open: RwSignal<bool>) -> impl IntoView {
             class="hidden"
             data-name="ShellHotkeys"
             attr:data-help-open=move || open.get().then_some("")
+            attr:data-palette-open=move || palette.get().then_some("")
         ></span>
     }
 }
@@ -284,7 +302,7 @@ fn ShellHotkeys(open: RwSignal<bool>) -> impl IntoView {
 /// read-only, by `/settings`.
 pub const SHORTCUTS: &[(&str, &str)] = &[
     ("n", "focus the new-session field"),
-    ("⌘K", "focus the session filter"),
+    ("⌘K or /", "command palette"),
     ("Esc", "clear filter / close session"),
     ("⌘B", "toggle the session list"),
     ("⌘,", "open settings"),
