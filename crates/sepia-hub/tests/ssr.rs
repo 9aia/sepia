@@ -577,9 +577,132 @@ async fn login_validates_then_redirects_with_cookie() {
             .contains("sepia_hub=")
     );
 
+    // A bad `?token=` on /login renders the page's error state — the
+    // gate only intercepts *valid* bootstrap links.
     let app = router(authed_state());
-    let (status, _) = get(app, "/login?token=wrong").await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, html) = get(app, "/login?token=wrong").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("Invalid token"),
+        "wrong token should surface the login error; got:\n{html}"
+    );
+}
+
+#[tokio::test]
+async fn login_page_renders_the_form() {
+    // /login is pre-auth: the Leptos page itself, gate or no gate.
+    let app = router(authed_state());
+    let (status, html) = get(app, "/login").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("data-name=\"LoginPage\""),
+        "login page should render its card; got:\n{html}"
+    );
+    assert!(
+        html.contains("name=\"token\""),
+        "missing token field:\n{html}"
+    );
+    // No gate at all — the page still serves.
+    let app = router(test_state());
+    let (status, _) = get(app, "/login").await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn html_gets_redirect_to_login_apis_stay_401() {
+    // A browser navigation (Accept: text/html) bounces to /login with
+    // the destination in `next`.
+    let app = router(authed_state());
+    let ((status, headers), _) = request(app, "/agents", &[("accept", "text/html")]).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers["location"], "/login?next=%2Fagents");
+    // Query strings ride along, encoded.
+    let app = router(authed_state());
+    let ((status, headers), _) = request(
+        app,
+        "/?session=s1",
+        &[("accept", "text/html,application/xhtml+xml")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers["location"], "/login?next=%2F%3Fsession%3Ds1",
+        "next should keep the original path+query"
+    );
+    // API + server-fn callers keep the JSON 401.
+    for uri in ["/api/sessions", "/hub/list_sessions"] {
+        let app = router(authed_state());
+        let ((status, _), _) = request(app, uri, &[("accept", "text/html")]).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+}
+
+async fn post(
+    app: axum::Router,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> ((StatusCode, HeaderMap), String) {
+    let mut builder = Request::builder().method("POST").uri(uri);
+    for (k, v) in headers {
+        builder = builder.header(*k, *v);
+    }
+    let res = app
+        .oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap();
+    let status = res.status();
+    let headers = res.headers().clone();
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (
+        (status, headers),
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+#[tokio::test]
+async fn login_post_sets_cookie_or_bounces_back() {
+    // Good token (form-encoded, like the page's <form>) → cookie + 303.
+    let app = router(authed_state());
+    let ((status, headers), _) = post(
+        app,
+        "/login",
+        &[("content-type", "application/x-www-form-urlencoded")],
+        "token=test-hub-token&next=%2Fnodes",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers["location"], "/nodes");
+    let cookie = headers["set-cookie"].to_str().unwrap();
+    assert!(cookie.starts_with("sepia_hub=test-hub-token"), "{cookie}");
+    assert!(cookie.contains("HttpOnly"));
+
+    // Bad token → back to the form with the error flag + next kept.
+    let app = router(authed_state());
+    let ((status, headers), _) = post(
+        app,
+        "/login",
+        &[("content-type", "application/x-www-form-urlencoded")],
+        "token=nope&next=%2Fnodes",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers["location"], "/login?error=1&next=%2Fnodes");
+    assert!(headers.get("set-cookie").is_none());
+
+    // JSON works too; an unsafe `next` falls back to `/`.
+    let app = router(authed_state());
+    let ((status, headers), _) = post(
+        app,
+        "/login",
+        &[("content-type", "application/json")],
+        r#"{"token":"test-hub-token","next":"https://evil.example"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers["location"], "/");
 }
 
 #[tokio::test]

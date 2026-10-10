@@ -23,7 +23,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::FromRef;
 use axum::middleware;
-use axum::routing::{any, get};
+use axum::routing::{any, get, post};
 use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
 use leptos_axum::{LeptosRoutes, file_and_error_handler_with_context, generate_route_list};
@@ -263,9 +263,12 @@ pub fn router(state: HubState) -> Router {
         // The browser's SW update check honors HTTP cache — without
         // no-cache a stale sw.js could keep serving old cache rules.
         .route("/sw.js", get(serve_sw))
-        // Credential bootstrap — validates `?token=`, plants the
-        // `sepia_hub` cookie, redirects to `/`. Pre-auth by definition.
-        .route("/login", get(auth::login))
+        // Credential exchange — the login form posts `{token, next?}`
+        // (urlencoded or JSON); valid → `sepia_hub` cookie + 303 to
+        // `next`, invalid → 303 to `/login?error=1`. `GET /login` is
+        // the Leptos page itself; `GET /login?token=` is handled in
+        // the gate middleware. Pre-auth by definition.
+        .route("/login", post(auth::login))
         // SSE bridges — must be registered before the `/api/*` wildcard.
         .route("/api/events", get(proxy::sse_events))
         .route("/api/sessions/{id}/stream", get(proxy::sse_session_stream))
