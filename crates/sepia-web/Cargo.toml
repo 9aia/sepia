@@ -84,3 +84,23 @@ leptos-use = { version = "0.19", default-features = false, features = [
 leptos-fetch = "0.4"
 leptos_toaster = { version = "0.3", default-features = false, features = ["builtin_toast"] }
 floating-ui-leptos = "0.6"
+# The task executor behind `leptos::task::spawn*`. `tokio` on the
+# *normal* dep set keeps its unified features identical whether cargo
+# resolves dev-deps (`cargo test`) or not (`cargo build`) — as a
+# dev-dep it flip-flopped fingerprints and recompiled the leptos
+# stack on every build↔test switch.
+any_spawner = { version = "0.3", features = ["tokio"] }
+
+[dev-dependencies]
+tokio.workspace = true
+futures.workspace = true
+hydration_context = "0.3.2"
+
+# Page-level SSR tests — need the `ssr` feature on for `NodeApi`, the
+# inline server-fn bodies, and `testing::FakeNodeApi`. Run via
+# `cargo test -p sepia-web --features ssr` (workspace-wide test runs
+# enable it transitively through sepia-hub's `sepia-web/ssr` edge).
+[[test]]
+name = "ssr_pages"
+path = "tests/ssr_pages.rs"
+required-features = ["ssr"]

@@ -4276,9 +4276,12 @@ dependencies = [
 name = "sepia-web"
 version = "0.0.0"
 dependencies = [
+ "any_spawner",
  "async-trait",
  "console_error_panic_hook",
  "floating-ui-leptos",
+ "futures",
+ "hydration_context",
  "js-sys",
  "leptos",
  "leptos-fetch",

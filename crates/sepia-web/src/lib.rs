@@ -15,6 +15,8 @@ pub mod pages;
 pub mod shell;
 #[cfg(feature = "hydrate")]
 pub mod sse;
+#[cfg(feature = "ssr")]
+pub mod testing;
 pub mod time;
 
 pub use app::App;
