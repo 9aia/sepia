@@ -794,6 +794,8 @@ fn SessionRowView(
     let row_id = session.id.clone();
     let menu_id = session.id.clone();
     let menu_agent = non_empty(&session.agent);
+    let dots_id = session.id.clone();
+    let dots_agent = menu_agent.clone();
     let orig_title = session.title.clone();
     let commit_id = session.id.clone();
     let commit_agent = menu_agent.clone();
@@ -815,15 +817,18 @@ fn SessionRowView(
     }
 
     view! {
-        <li on:contextmenu=move |ev| {
-            ev.prevent_default();
-            menu.set(Some((
-                menu_id.clone(),
-                menu_agent.clone(),
-                f64::from(ev.client_x()),
-                f64::from(ev.client_y()),
-            )));
-        }>
+        <li
+            class="group relative"
+            on:contextmenu=move |ev| {
+                ev.prevent_default();
+                menu.set(Some((
+                    menu_id.clone(),
+                    menu_agent.clone(),
+                    f64::from(ev.client_x()),
+                    f64::from(ev.client_y()),
+                )));
+            }
+        >
             <A
                 href=href
                 attr:class=row_cls
@@ -946,6 +951,29 @@ fn SessionRowView(
                     </span>
                 </span>
             </A>
+            // `⋯` — hover-reveal shortcut to the SAME menu
+            // `contextmenu` opens (contextmenu never fires on touch;
+            // `[@media(hover:none)]` keeps it visible there). The
+            // pointer's client coords feed the shared `menu_for`
+            // signal, so positioning matches the right-click path.
+            <button
+                type="button"
+                aria-label="Session actions"
+                data-name="RowMenuButton"
+                class="absolute right-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md border bg-popover text-sm leading-none text-muted-foreground opacity-0 shadow-sm transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                on:click=move |ev| {
+                    ev.prevent_default();
+                    ev.stop_propagation();
+                    menu.set(Some((
+                        dots_id.clone(),
+                        dots_agent.clone(),
+                        f64::from(ev.client_x()),
+                        f64::from(ev.client_y()),
+                    )));
+                }
+            >
+                "⋯"
+            </button>
         </li>
     }
 }
