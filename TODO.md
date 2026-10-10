@@ -70,10 +70,12 @@ Missing (queued next):
 
 - [x] Row context menus — right-click → open/rename/pin/delete/details
 - [x] Icon set — inline lucide-style SVG Icon component (nav, pinned, actions)
-- [~] Chat polish — ✓ collapsible tool-call blocks (args/result),
+- [x] Chat polish — ✓ collapsible tool-call blocks (args/result),
       ✓ reasoning blocks, ✓ scroller pin + "Jump to bottom", ✓ code-fence
-      lang badge + copy button. Left: real syntax highlighting (needs a
-      highlight crate)
+      lang badge + copy button, ✓ keyword-level syntax highlighting
+      (hand-rolled `sepia-web-core::highlight` tokenizer — comments/
+      strings/numbers/keywords for the common fence langs; syntect
+      deliberately skipped, mermaid still deferred)
 - [~] Prompt input — ✓ auto-grow textarea, Shift+Enter hint, cwd chip,
       editable model input (`patch_meta {model}`, empty = agent
       default), attach button + image/file paste → ACP blocks,
@@ -97,8 +99,11 @@ Missing (queued next):
 
 User-visible breakage:
 
-- [ ] Reconnecting indicator — SSE auto-reconnects silently; user can't
-      tell a dead stream from an idle session
+- [x] Reconnecting indicator — the stream's `ready_state` feeds
+      `sepia-web-core::stream::ReconnectTracker`: a "Reconnecting…"
+      pill floats over the transcript only after a *post-open* drop
+      (initial connect + detached stay quiet); always-mounted,
+      class-toggled (SSR test asserts the container)
 - [x] No-nodes-connected gating — the list renders "No nodes
       connected" (+ link to /nodes) when `node_status` shows nothing
       reachable; "No sessions yet" only when a node is up
@@ -107,11 +112,14 @@ User-visible breakage:
       tokens bounce to `?error=1`. HTML navigations get a `/login`
       redirect (`?next=` preserved); `/api/*` + `/hub/*` keep JSON 401s;
       `GET /login?token=` stays the one-time-link bootstrap
-- [ ] Held-session send flow — composer isn't disabled, send on a held
-      session just errors raw; old had draft-while-held + takeover
-      confirm
-- [ ] Row `⋯` hover button — actions are right-click only;
-      undiscoverable on desktop, unusable on iOS/touch
+- [x] Held-session send flow — the composer stays editable while
+      held; send detours into a `ConfirmDialog` ("Take over and
+      send") that `attach(takeover=true)`s then sends the draft —
+      a refused/failed attach toasts and keeps the draft
+- [x] Row `⋯` hover button — hover/focus reveals a `⋯` on every row
+      (`[@media(hover:none)]` keeps it up on touch); opens the same
+      menu as right-click, anchored at the pointer or the button's
+      corner for keyboard opens; `aria-label` + `aria-haspopup=menu`
 
 Missing features (wire-supported but no UI):
 
@@ -127,7 +135,13 @@ Missing features (wire-supported but no UI):
       blocks, ≤8MiB base64, node's caps); `image/*` → ACP `image`
       parts, other files → `resource` blob parts; chips above the
       textarea with ×-remove; attachments send with or without text
-- [ ] Reply/quote + per-message copy/rewind actions
+- [~] Reply/quote + per-message copy/rewind actions — ✓ hover strip
+      on user/assistant rows: `copy` (navigator.clipboard) + `reply`
+      (inserts the `> ` quote block into the draft via
+      `composer::draft_with_quote` and focuses the textarea).
+      Deferred: per-message *rewind* — the node's rewind endpoint is
+      checkpoint-scoped (`POST /rewind {checkpoint}`), there's no
+      message-index target to aim it at
 - [x] Usage footer — `HistoryMessageDto` decodes `usage`; assistant
       rows render ↑in/↓out/cost with cache+thinking on hover
 - [x] Run/provenance marker rows — `spans` fold into the transcript
@@ -166,22 +180,29 @@ Missing features (wire-supported but no UI):
 - [x] URL-persisted filter/sort state, group-header context menus
 - [~] Message auto-load on scroll-top + collapse consecutive dupes —
       ✓ scroll-top auto-load with scroll anchoring, ✓ `×N` fold on
-      identical back-to-back rows; virtualized list still open
+      identical back-to-back rows. Deferred: virtualized list —
+      page-windowed history + the dup fold keep the DOM small; a
+      windowing lib isn't justified at current transcript sizes
 - [~] Markdown parity — ✓ GFM tables (`MdBlock::Table`, alignment,
-      inline cells); syntax highlighting + mermaid still open
+      inline cells), ✓ keyword-level syntax highlighting
+      (`sepia-web-core::highlight` — rust/python/js-ts/shell/json/
+      toml/yaml/c-family/go/jvm/sql/css fences → Catppuccin token
+      colors; unknown langs render plain). Deferred: mermaid — needs
+      a JS lib, no Rust renderer exists
 - [x] Toasts on mutation success — `ToastStore::outcome` adopted
       across the session surfaces: attach/detach/cancel/rename/delete/
       convert (detail), pin/archive/rename/delete (list rows), restore/
       rewind (checkpoint rows), model patch, import, attachment-stage
       failures; prompt-send failures toast too
-- [~] a11y — ✓ Sheet/ConfirmDialog: `role=dialog` + `aria-modal` +
-      `aria-labelledby`/`aria-label`, initial focus + return-focus +
-      Esc (`track_overlay_focus`; no full Tab trap — leptos-use 0.19
-      lacks `use_focus_trap`), ✓ toast live region (`role=status`,
-      `aria-live=polite` inside the mounted `Toaster`), ✓
-      `prefers-reduced-motion` in input.css. Left: `role=listbox` on
-      the cwd combobox (session_detail.rs — other workstream), `?`
-      sheet dialog role (app.rs — other workstream)
+- [~] a11y — ✓ Sheet/ConfirmDialog/`?` ShortcutsHelp: `role=dialog` +
+      `aria-modal` + `aria-labelledby`/`aria-label`, initial focus +
+      return-focus + Esc (`track_overlay_focus`; no full Tab trap —
+      leptos-use 0.19 lacks `use_focus_trap`), ✓ toast live region
+      (`role=status`, `aria-live=polite` inside the mounted
+      `Toaster`), ✓ `prefers-reduced-motion` in input.css, ✓
+      `role=combobox`/`listbox`/`option` + `aria-activedescendant` on
+      the new-session cwd autocomplete, ✓ `aria-haspopup=menu` on the
+      row `⋯` trigger. Left: keybind remapping, a real focus trap
 
 Intentionally dropped (v0):
 
