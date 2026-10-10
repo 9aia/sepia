@@ -50,6 +50,8 @@ pub fn rewind_result_summary(removed: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     #[test]
