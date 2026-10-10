@@ -56,14 +56,15 @@ Landing (agents in flight):
       drawer nav (`Sheet`), list↔chat responsive swap
 - [x] Right-side details drawer (rename, checkpoints, restore, delete)
       — `Sheet` opened from the panel's "Details" button
-- [~] Filter bar — ✓ search, ✓ status, ✓ sort. Open: agent filter is
-      single-select (old was multi), no day/week/month recency filter,
-      filter state not URL/localStorage-persisted
+- [x] Filter bar — ✓ search, ✓ status, ✓ sort, ✓ agent multi-select
+      (checkbox dropdown), ✓ 24h/7d/30d recency chips, ✓ filter state
+      URL-persisted (`?q=/agents=/status=/sort=/recency=/archived=`,
+      deep-linkable on SSR)
 - [x] Project grouping — collapsible sections in the sidebar list,
-      persisted open state
-- [~] Hotkeys — ✓ N new, ↑/↓ session nav, ⌘K filter, Esc clear, ⌘B
-      sidebar, ? help. Open: ←/→ group fold, ⌘, settings — neither
-      wired (audit 2026-10)
+      persisted open state, right-click group menu (collapse + "New
+      session here"), ←/→ fold hotkeys
+- [x] Hotkeys — ✓ N new, ↑/↓ session nav, ⌘K filter, Esc clear, ⌘B
+      sidebar, ? help, ✓ ←/→ group fold, ✓ ⌘, settings
 
 Missing (queued next):
 
@@ -107,14 +108,19 @@ Missing features (wire-supported but no UI):
 - [ ] Session convert/export/import/resume (`/convert`, `/export`,
       `/import` exist on the node API; `sepia-convert` crate exists —
       unwired)
-- [ ] Archive/unarchive (`archived` in DTO + `patch_meta`, no UI)
+- [x] Archive/unarchive — row-menu item via `patch_meta`; archived
+      rows hide behind a "Show archived (N)" list-bottom toggle
 - [ ] Prompt attachments — node accepts `{text?, attachments?}`;
       composer sends text only
 - [ ] Reply/quote + per-message copy/rewind actions
 - [ ] Usage footer (tokens/cost) — DTO doesn't decode usage
 - [ ] Run/provenance marker rows (`spans` on the wire, not rendered)
-- [ ] Sub-agent children/badges (`parent_session_id` decoded, unused)
-- [ ] Pinned/Recents sidebar sections (pin works, no sections)
+- [x] Sub-agent badges — `↳` mark on child rows, `↳ N` child count
+      on parents
+- [~] Pinned/Recents sidebar sections — ✓ Pinned section (rows lifted
+      out of groups); Recents deferred — duplicating rows across
+      sections breaks the one-row-one-section invariant the arrow-key
+      order + e2e row anchors rely on
 - [ ] Per-session model picker (`patch_meta model` unwired; read-only
       chip today)
 - [ ] Per-tool renderers + live diffs (`diffs`/`locations`/`contents`
@@ -123,7 +129,7 @@ Missing features (wire-supported but no UI):
       node nickname editing (`PATCH /api/node` exists)
 - [ ] Command palette (⌘K only focuses filter today)
 - [ ] Notification prefs (push is on/off only), pair-flow UI
-- [ ] URL-persisted filter/sort state, group-header context menus
+- [x] URL-persisted filter/sort state, group-header context menus
 - [ ] Message auto-load on scroll-top (manual button today), collapse
       consecutive dupes, virtualized list at scale
 - [ ] Markdown parity: tables/GFM, syntax highlighting, mermaid
