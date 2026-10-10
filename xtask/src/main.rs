@@ -83,8 +83,74 @@ fn main() -> anyhow::Result<()> {
             build_site()?;
         }
         Some("site") => build_site()?,
+        // Headless-Chrome console probe against the live stack
+        // (default http://localhost:3000). The UI regression gate —
+        // run after any sepia-web change.
+        Some("smoke") => {
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            let status = Command::new("python3")
+                .arg("tools/browser-smoke.py")
+                .args(&args)
+                .status()?;
+            anyhow::ensure!(status.success(), "browser smoke failed");
+        }
+        // Browser e2e — prebuild the binaries once so the tests
+        // resolve paths instead of each shelling `cargo build`, then
+        // run the ignored suite under nextest (or cargo test).
+        Some("e2e") => {
+            run(
+                "cargo",
+                &[
+                    "build",
+                    "--bin",
+                    "sepia-driver-devin",
+                    "--bin",
+                    "sepia-node",
+                    "--bin",
+                    "sepia-hub",
+                ],
+            )?;
+            anyhow::ensure!(
+                std::path::Path::new("target/site/pkg").is_dir(),
+                "target/site/pkg missing — run `cargo xtask site` first"
+            );
+            // PREBUILT tells the harness the binaries are fresh —
+            // warm_binaries then skips its cargo invocation entirely.
+            let env = [("SEPIA_BROWSER_E2E", "1"), ("SEPIA_E2E_PREBUILT", "1")];
+            let status = if nextest_available() {
+                Command::new("cargo")
+                    .args([
+                        "nextest",
+                        "run",
+                        "-p",
+                        "sepia-hub",
+                        "--test",
+                        "e2e",
+                        "--run-ignored",
+                        "all",
+                    ])
+                    .envs(env)
+                    .status()?
+            } else {
+                Command::new("cargo")
+                    .args([
+                        "test",
+                        "-p",
+                        "sepia-hub",
+                        "--test",
+                        "e2e",
+                        "--",
+                        "--ignored",
+                    ])
+                    .envs(env)
+                    .status()?
+            };
+            anyhow::ensure!(status.success(), "browser e2e failed");
+        }
         Some(other) => anyhow::bail!("unknown task {other}"),
-        None => anyhow::bail!("usage: cargo xtask <check|test|install|site>"),
+        None => {
+            anyhow::bail!("usage: cargo xtask <check|test|install|site|smoke|e2e>")
+        }
     }
     Ok(())
 }

@@ -19,7 +19,7 @@ async fn every_route_hydrates_without_console_errors() {
 
     for path in harness::ROUTES {
         let url = format!("{}{}", env.hub_url.trim_end_matches('/'), path);
-        browser.driver.goto(&url).await.unwrap();
+        browser.goto_ready(&url).await;
         // Hydration runs right after the bundle loads; give it a beat,
         // then drain the console.
         let _ = harness::wait_elem(&browser.driver, "body", deadline).await;

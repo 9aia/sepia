@@ -12,7 +12,7 @@ async fn setup() -> Option<(E2eEnv, Browser)> {
     }
     let env = E2eEnv::spawn().await;
     let browser = Browser::connect((1280, 900)).await;
-    browser.driver.goto(&env.hub_url).await.unwrap();
+    browser.goto_ready(&env.hub_url).await;
     // Interactive tests race hydration — the bundle fetches +
     // instantiates after load. Give it a beat before input.
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -35,27 +35,52 @@ async fn theme_toggle_cycles_light_dark_system() {
         .eval("return document.documentElement.className")
         .await;
 
-    // Click once — class must change (dark → light/system).
-    toggle.click().await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-    let after = browser
-        .eval("return document.documentElement.className")
+    // Click once — class must change. Poll rather than one-shot:
+    // hydration may still be attaching the handler.
+    let after = loop {
+        toggle.click().await.unwrap_or(());
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let cur = browser
+            .eval("return document.documentElement.className")
+            .await;
+        if cur != initial {
+            break cur;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "theme toggle never changed <html> class (stayed {initial:?})"
+        );
+    };
+
+    // The write landed in localStorage.
+    let stored = browser
+        .eval("return localStorage.getItem('sepia-theme') || 'system'")
         .await;
     assert_ne!(
-        initial, after,
-        "theme toggle did not change <html> class ({initial:?} → {after:?})"
+        stored,
+        serde_json::Value::String("system".into()),
+        "theme choice never reached localStorage (still system)"
     );
 
-    // Toggle survives a reload via localStorage.
-    browser.driver.goto(&env.hub_url).await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let persisted = browser
-        .eval("return document.documentElement.className")
-        .await;
-    assert_eq!(
-        after, persisted,
-        "theme not persisted across reload ({after:?} → {persisted:?})"
-    );
+    // Toggle survives a reload — the inline head script applies the
+    // stored class pre-paint, before hydration runs. Poll anyway:
+    // `goto` + eager strategy can return before first paint.
+    browser.goto_ready(&env.hub_url).await;
+    let deadline = Instant::now() + WAIT;
+    let persisted = loop {
+        let cur = browser
+            .eval("return document.documentElement.className")
+            .await;
+        if cur == after {
+            break cur;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "theme not persisted across reload ({after:?} → {cur:?})"
+        );
+        tokio::time::sleep(harness::POLL).await;
+    };
+    assert_eq!(after, persisted);
 
     browser.shutdown().await;
     env.shutdown();
@@ -71,17 +96,20 @@ async fn question_mark_opens_and_esc_closes_the_shortcut_sheet() {
     wait_elem(&browser.driver, "body", deadline).await.unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-    browser.press("?").await;
-    let sheet = wait_elem(
-        &browser.driver,
-        r#"h3"#,
-        Instant::now() + std::time::Duration::from_secs(5),
-    )
-    .await;
-    let found = match sheet {
-        Some(el) => el.text().await.unwrap_or_default() == "Keyboard shortcuts",
-        None => false,
-    };
+    // Hydration attaches the document listener async — press until
+    // the sheet opens or the deadline dies.
+    let mut found = false;
+    while Instant::now() < deadline {
+        browser.press("?").await;
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        let got = browser.eval(
+            "return [...document.querySelectorAll('h3')].some(h => h.textContent === 'Keyboard shortcuts' && h.offsetParent !== null)"
+        ).await;
+        if got == serde_json::Value::Bool(true) {
+            found = true;
+            break;
+        }
+    }
     assert!(found, "? did not open the keyboard-shortcut sheet");
 
     browser.press(thirtyfour::Key::Escape).await;
@@ -151,11 +179,19 @@ async fn service_worker_registers_and_bundle_is_hashed() {
     // SW registration is async — give it a moment then probe.
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     // `getRegistrations()` is a promise — need the async executor.
-    let regs = browser
-        .eval_async(
-            "const done = arguments[arguments.length - 1];              navigator.serviceWorker.getRegistrations()                 .then(r => done(r.length)).catch(() => done(0))",
-        )
-        .await;
+    // Registration is async; poll until it lands or the deadline.
+    let mut regs = serde_json::Value::from(0);
+    while Instant::now() < deadline {
+        regs = browser
+            .eval_async(
+                "const done = arguments[arguments.length - 1];                  navigator.serviceWorker.getRegistrations()                     .then(r => done(r.length)).catch(() => done(0))",
+            )
+            .await;
+        if regs.as_i64().unwrap_or(0) >= 1 {
+            break;
+        }
+        tokio::time::sleep(harness::POLL).await;
+    }
     assert!(
         regs.as_i64().unwrap_or(0) >= 1,
         "service worker never registered"

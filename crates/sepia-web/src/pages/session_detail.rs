@@ -281,40 +281,44 @@ pub fn SessionPanel(
     #[cfg(feature = "hydrate")]
     {
         // `agent` comes from the `?agent=` param, but bare `/?session=`
-        // and `/sessions/:id` links lack it — and the stream endpoint
-        // 400s without one. Wait for the summary to resolve it. The
-        // slot lives in the component owner — creating the stream
-        // inside the Effect ties it to the effect run's scope, and the
-        // next re-run's cleanup would drop it while leptos_use's
-        // reconnect timer still touches it.
+        // and `/sessions/:id` links lack it — resolve from the summary
+        // as a fallback. And the stream endpoint 400s unless the
+        // session is *attached* — open only for live sessions, close on
+        // detach. The slot lives in the component owner: values created
+        // inside the Effect would be disposed with the effect run while
+        // leptos_use's reconnect timer still touches them.
         let slot = StoredValue::new_local(None::<crate::sse::EventStream>);
         Effect::new(move |_| {
-            if slot.with_value(|s| s.is_some()) {
-                return;
-            }
+            let session = summary.get().and_then(Result::ok);
             let resolved = agent().or_else(|| {
-                summary
-                    .get()
-                    .and_then(Result::ok)
-                    .map(|s| s.agent)
+                session
+                    .as_ref()
+                    .map(|s| s.agent.clone())
                     .filter(|a| !a.is_empty())
             });
-            let Some(agent_name) = resolved else {
-                return;
-            };
-            // `EventStream` isn't `Send` (wasm closures); `new_local`
-            // keeps the slot in the component's arena and the guard's
-            // `Drop` closes the stream.
-            slot.set_value(Some(crate::sse::session_stream(
-                &session_id(),
-                Some(&agent_name),
-                move |event| live.update(|t| t.apply(&event)),
-                move || {
-                    // Lagged — the broadcast ring dropped frames; refetch.
-                    history.refetch();
-                    live.set(LiveTranscript::default());
-                },
-            )));
+            let live_now = live_override.get().or(session.map(|s| s.live));
+            match (resolved, live_now) {
+                // Attached + agent known → open once.
+                (Some(agent_name), Some(true)) if slot.with_value(|s| s.is_none()) => {
+                    // `EventStream` isn't `Send` (wasm closures);
+                    // `new_local` keeps the slot in the component's
+                    // arena and the guard's `Drop` closes the stream.
+                    slot.set_value(Some(crate::sse::session_stream(
+                        &session_id(),
+                        Some(&agent_name),
+                        move |event| live.update(|t| t.apply(&event)),
+                        move || {
+                            // Lagged — the broadcast ring dropped frames.
+                            history.refetch();
+                            live.set(LiveTranscript::default());
+                        },
+                    )));
+                }
+                // Detached → close an open stream, killing the retry
+                // loop against the 400ing endpoint.
+                (_, Some(false)) => slot.set_value(None),
+                _ => {}
+            }
         });
         // Outbox drain/enqueue emits no feed event — poll slowly.
         crate::app::every_ms(30_000, move || pending.refetch());

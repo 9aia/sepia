@@ -40,6 +40,15 @@ pub const ROUTES: &[&str] = &[
 fn warm_binaries() {
     const BINS: &[&str] = &["sepia-driver-devin", "sepia-node", "sepia-hub"];
     let target = workspace_root().join("target/debug");
+    // `cargo xtask e2e` builds all three up front — trust it and skip
+    // cargo entirely (the call can stall behind a package lock even
+    // for a no-op).
+    if std::env::var_os("SEPIA_E2E_PREBUILT").is_some() {
+        for n in BINS {
+            assert!(target.join(n).is_file(), "{n} missing — prebuild lied");
+        }
+        return;
+    }
     let sentinel = target.join(".e2e-build.lock");
     loop {
         match std::fs::OpenOptions::new()
@@ -72,6 +81,17 @@ fn warm_binaries() {
             }
         }
     }
+}
+
+/// After `warm_binaries` the binaries are guaranteed built — resolve
+/// the path directly instead of shelling cargo again. With nextest
+/// every test is its own process, so each `ensure_driver_bin` call
+/// is a fresh `cargo build` serialized behind the package lock (and
+/// any `cargo-watch` elsewhere) — the dominant suite cost.
+fn bin_path(name: &str) -> PathBuf {
+    let path = workspace_root().join("target/debug").join(name);
+    assert!(path.is_file(), "{name} missing — warm_binaries ran?");
+    path
 }
 
 pub fn workspace_root() -> PathBuf {
@@ -214,7 +234,7 @@ impl E2eEnv {
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::create_dir_all(&node_home).unwrap();
 
-        let driver_bin = sepia_testkit::ensure_driver_bin("sepia-driver-devin");
+        let driver_bin = bin_path("sepia-driver-devin");
 
         std::fs::hard_link(&driver_bin, driver_dir.join("sepia-driver-devin")).unwrap();
         let db = db_dir.join("sessions.db");
@@ -248,7 +268,7 @@ impl E2eEnv {
         // each other's output.
         let node_out = std::fs::File::create(&node_log).unwrap();
         let hub_out = std::fs::File::create(&hub_log).unwrap();
-        let node = Command::new(sepia_testkit::ensure_driver_bin("sepia-node"))
+        let node = Command::new(bin_path("sepia-node"))
             .env("SEPIA_DRIVER_DIR", &driver_dir)
             .env("SEPIA_DEVIN_DB", &db)
             .env("SEPIA_HOME", &node_home)
@@ -262,7 +282,7 @@ impl E2eEnv {
             .spawn()
             .unwrap();
 
-        let hub = match Command::new(sepia_testkit::ensure_driver_bin("sepia-hub"))
+        let hub = match Command::new(bin_path("sepia-hub"))
             .env("SEPIA_NODE_URL", &node_url)
             .env("SEPIA_NODES", format!("laptop={node_url}"))
             .env("SEPIA_HOME", tmp.path().join("hub-home"))
@@ -357,8 +377,13 @@ impl Drop for E2eEnv {
 /// drained via `browser_log()`.
 pub struct Browser {
     proc: Child,
-    // Held so the chrome profile dir outlives the session.
-    _profile: tempfile::TempDir,
+    // Held so the chrome profile dir outlives the session; its path is
+    // also how we kill orphaned chrome processes (see Drop).
+    profile: tempfile::TempDir,
+    // Cross-process serialization — nextest runs each test in its own
+    // process, so an in-process lock can't stop N concurrent Chromes
+    // from renderer-timeouting each other under load.
+    _serialize: std::fs::File,
     pub driver: WebDriver,
 }
 
@@ -401,6 +426,29 @@ impl Browser {
         .unwrap();
         // Isolate the profile — a reused one would carry a stale
         // service worker between runs.
+        let serialize = loop {
+            let lock = workspace_root().join("target/.e2e-browser.lock");
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock)
+            {
+                Ok(f) => break f,
+                Err(_) => {
+                    // Another test holds the browser — or died holding
+                    // it; retire after 20min.
+                    let stale = std::fs::metadata(&lock)
+                        .and_then(|m| m.modified())
+                        .map(|t| t.elapsed().unwrap_or_default() > Duration::from_secs(1200))
+                        .unwrap_or(false);
+                    if stale {
+                        let _ = std::fs::remove_file(&lock);
+                    }
+                    std::thread::sleep(POLL);
+                }
+            }
+        };
+
         let profile = tempfile::tempdir().unwrap();
         caps.add_arg(&format!("--user-data-dir={}", profile.path().display()))
             .unwrap();
@@ -421,7 +469,8 @@ impl Browser {
             .unwrap_or_else(|e| panic!("new webdriver session: {e}"));
         Self {
             proc,
-            _profile: profile,
+            profile,
+            _serialize: serialize,
             driver,
         }
     }
@@ -460,6 +509,43 @@ impl Browser {
     pub async fn press(&self, key: impl Into<TypingData>) {
         let body = self.driver.find(By::Tag("body")).await.unwrap();
         body.send_keys(key).await.unwrap();
+    }
+
+    /// `goto` with retry — under load the chrome renderer occasionally
+    /// stalls past the 60s webdriver nav timeout; a fresh attempt is
+    /// cheaper than a failed suite.
+    pub async fn goto(&self, url: &str) {
+        for attempt in 0..3u8 {
+            match self.driver.goto(url).await {
+                Ok(()) => return,
+                Err(e) if attempt < 2 => {
+                    eprintln!("goto {url} attempt {attempt}: {e}; retrying");
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                Err(e) => panic!("goto {url}: {e}"),
+            }
+        }
+    }
+
+    /// `goto` then wait for `<body>` — eager strategy returns at
+    /// DOMContentLoaded, but under load the occasional navigation
+    /// lands on nothing (renderer stall). One re-goto recovers it.
+    pub async fn goto_ready(&self, url: &str) {
+        self.goto(url).await;
+        for _ in 0..2 {
+            if wait_elem(
+                &self.driver,
+                "body",
+                Instant::now() + Duration::from_secs(10),
+            )
+            .await
+            .is_some()
+            {
+                return;
+            }
+            self.goto(url).await;
+        }
+        panic!("{url} never produced a <body>");
     }
 
     /// Evaluate JS and return the JSON value.
@@ -503,14 +589,28 @@ impl Browser {
     /// Quit the session + kill chromedriver.
     pub async fn shutdown(mut self) {
         let _ = self.driver.clone().quit().await;
+        self.cleanup();
+    }
+
+    /// Kill chromedriver + any orphaned chrome children. A panicking
+    /// test's Drop never ran `driver.quit`, leaving chrome reparented
+    /// to init — and its inherited fd kept `/home/luis/.cargo.lock`
+    /// held hostage. Match on the unique profile dir.
+    fn cleanup(&mut self) {
         let _ = self.proc.kill();
         let _ = self.proc.wait();
+        let pattern = format!("user-data-dir={}", self.profile.path().display());
+        let _ = Command::new("pkill")
+            .args(["-f", &pattern])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = std::fs::remove_file(workspace_root().join("target/.e2e-browser.lock"));
     }
 }
 
 impl Drop for Browser {
     fn drop(&mut self) {
-        let _ = self.proc.kill();
-        let _ = self.proc.wait();
+        self.cleanup();
     }
 }

@@ -19,7 +19,7 @@ async fn setup() -> Option<(E2eEnv, Browser)> {
     }
     let env = E2eEnv::spawn().await;
     let browser = Browser::connect((1280, 900)).await;
-    browser.driver.goto(&env.hub_url).await.unwrap();
+    browser.goto_ready(&env.hub_url).await;
     Some((env, browser))
 }
 
@@ -45,7 +45,13 @@ async fn session_rows_render_and_open_the_panel() {
             .unwrap_or_default()
         {
             if row.text().await.unwrap_or_default().contains(TITLE_A) {
-                row.click().await.unwrap();
+                // JS click — the webdriver click path scrolls + hit-tests
+                // and stalls the renderer under load; `el.click()` fires
+                // the same anchor navigation with none of that.
+                let _ = browser
+                    .driver
+                    .execute("arguments[0].click()", vec![row.to_json().unwrap()])
+                    .await;
                 clicked = true;
             }
         }
@@ -87,10 +93,8 @@ async fn deep_link_ssrs_the_detail_panel() {
 
     // And it hydrates into a working prompt.
     browser
-        .driver
-        .goto(&format!("{}sessions/{SESSION_A}", env.hub_url))
-        .await
-        .unwrap();
+        .goto_ready(&format!("{}sessions/{SESSION_A}", env.hub_url))
+        .await;
     let deadline = Instant::now() + WAIT;
     assert!(
         wait_elem(&browser.driver, PROMPT, deadline).await.is_some(),
@@ -121,8 +125,10 @@ async fn filter_input_narrows_the_session_list() {
     .expect("filter input missing");
     filter.send_keys("alpha").await.unwrap();
 
-    // "beta" row should disappear once the client-side filter applies.
+    // "beta" row should disappear once the client-side filter
+    // applies. Fresh deadline — wait_elem may have eaten the first.
     let beta_gone = {
+        let deadline = Instant::now() + WAIT;
         let driver = &browser.driver;
         loop {
             let rows = driver.find_all(By::Css(ROW)).await.unwrap_or_default();

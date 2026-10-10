@@ -3,6 +3,9 @@
 # integer — a duration string fails config parsing.
 slow-timeout = { period = "30s", terminate-after = 4 }
 failure-output = "final"
+# A serialized browser suite costs ~10min — a first failure must not
+# cancel the rest and throw away the whole run's signal.
+fail-fast = false
 
 # The e2e binary cold-builds sepia-node/sepia-hub/sepia-driver-devin on
 # first spawn — give it real headroom (15 min) instead of the 120s

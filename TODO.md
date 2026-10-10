@@ -15,17 +15,13 @@
 
 - [ ] **Push E2E on a real device** — subscribe/fan-out paths are unit-
       covered; a real browser push is unverified.
-- [ ] ~~**Browser e2e**~~ — done: `crates/sepia-hub/tests/browser_e2e.rs`
-      drives headless Chrome via thirtyfour + chromedriver over the real
-      `sepia-node` → `sepia-hub` SSR stack (list → detail → actions).
-      Ignored by default; run with
-      `SEPIA_BROWSER_E2E=1 cargo test -p sepia-hub --test browser_e2e -- --ignored`.
-      Needs chromedriver (`SEPIA_CHROMEDRIVER`, `target/webdriver/chromedriver`,
-      or PATH — fetch the matching build from the chrome-for-testing
-      `known-good-versions-with-downloads.json` endpoint) and Chrome
-      (`CHROME_BIN` or PATH). A `browser-e2e` job in `ci.yml` runs it
-      (continue-on-error — headless Chrome timing in CI is still being
-      watched).
+- [ ] ~~**Browser e2e**~~ — done: `crates/sepia-hub/tests/e2e/` drives
+      headless Chrome via thirtyfour + chromedriver over a seeded
+      `sepia-node` → `sepia-hub` SSR stack (SSR integrity, hydration
+      console sweep, sessions, shell/hotkeys/theme). Run `cargo xtask
+      e2e` (prebuilds binaries, sets the env gate). Needs chromedriver
+      (`SEPIA_CHROMEDRIVER`, `target/webdriver/chromedriver`, or PATH)
+      and Chrome (`CHROME_BIN` or PATH).
 - [ ] **Unported surfaces** — managed-server registry, SSH tunnels,
       gateway proxy (`/api/servers`, `/api/gateway`), project transfer,
       OTEL. Intentionally out of scope for v0 — nodes must be directly
@@ -60,11 +56,11 @@ Landing (agents in flight):
       drawer nav (`Sheet`), list↔chat responsive swap
 - [x] Right-side details drawer (rename, checkpoints, restore, delete)
       — `Sheet` opened from the panel's "Details" button
-- [ ] Filter bar — search, agent multi-select, date (day/week/month),
+- [x] Filter bar — search, agent multi-select, date (day/week/month),
       status (free/locked), sort (newest/oldest/title)
-- [ ] Project grouping — collapsible sections in the sidebar list,
+- [x] Project grouping — collapsible sections in the sidebar list,
       persisted open state
-- [ ] Hotkeys — N new, ↑/↓ session nav, ←/→ group fold, ⌘K filter,
+- [x] Hotkeys — N new, ↑/↓ session nav, ←/→ group fold, ⌘K filter,
       Esc clear, ⌘B sidebar, ⌘, settings, ? help
 
 Missing (queued next):

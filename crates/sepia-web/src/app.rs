@@ -293,6 +293,13 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <link rel="manifest" href="/manifest.json"/>
                 <link rel="icon" href="/icon.svg" type="image/svg+xml"/>
                 <link rel="stylesheet" href="/style.css"/>
+                // Pre-paint theme reconcile — SSR always emits
+                // `class="dark"` and the hydrate Effect runs after
+                // wasm boots, so without this a stored light/system
+                // theme flashes dark on every reload (FOUC).
+                <script>
+                    "try{var t=localStorage.getItem('sepia-theme'),d=t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches,e=document.documentElement;e.classList.toggle('dark',d);e.classList.toggle('light',!d);e.style.colorScheme=d?'dark':'light'}catch(_){}"
+                </script>
                 <AutoReload options=options.clone()/>
                 <HydrationScripts options=options/>
                 <MetaTags/>

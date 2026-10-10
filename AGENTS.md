@@ -50,15 +50,21 @@ pre-commit runs `cargo fmt --check`, pre-push `cargo xtask check`.
 run it after any `sepia-web`/hub UI change and before reporting done:
 
 ```bash
-python3 tools/browser-smoke.py                    # all routes, :3000
-python3 tools/browser-smoke.py URL                # one URL
-SMOKE_SETTLE=8 python3 tools/browser-smoke.py URL # longer hydration wait
+cargo xtask smoke                                 # all routes, :3000
+cargo xtask smoke http://localhost:3000/settings  # one URL
+SMOKE_SETTLE=8 cargo xtask smoke URL              # longer hydration wait
 ```
 
 Exit 0 = clean console; SEVERE entries (wasm panics, hydration
 mismatches, 4xx/5xx asset failures) fail it. Needs chromedriver at
 `target/webdriver/chromedriver` (or `SEPIA_CHROMEDRIVER`) and Chrome
 (`CHROME_BIN` or PATH).
+
+The full browser suite (self-contained node+hub+Chrome stack):
+
+```bash
+cargo xtask e2e    # needs `cargo xtask site` output in target/site
+```
 
 ## Rules
 
