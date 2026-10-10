@@ -182,11 +182,19 @@ Missing features (wire-supported but no UI):
       `POST /api/pair` (`NodeApi::pair` → `redeem_pair_code` server fn)
       and shows the minted node credential once
 - [x] URL-persisted filter/sort state, group-header context menus
-- [~] Message auto-load on scroll-top + collapse consecutive dupes —
+- [x] Message auto-load on scroll-top + collapse consecutive dupes —
       ✓ scroll-top auto-load with scroll anchoring, ✓ `×N` fold on
-      identical back-to-back rows. Deferred: virtualized list —
-      page-windowed history + the dup fold keep the DOM small; a
-      windowing lib isn't justified at current transcript sizes
+      identical back-to-back rows, ✓ virtualized transcript — the
+      `cv-auto` utility (`content-visibility: auto` +
+      `contain-intrinsic-block-size: auto 10rem` + `flex-shrink: 0`,
+      input.css) marks every transcript row; off-screen rows keep DOM
+      but skip style/layout/paint. Chosen over JS windowing: identical
+      SSR/hydrate markup, find-in-page/a11y/`<details>` state intact,
+      pinned tail + prepend scroll-restore verified in headless Chrome
+      (2k-row replica: FCP ~3.5×, load ~4.4× faster; `scrollTop =
+      scrollHeight` still lands exactly). DOM windowing stays
+      unwarranted — cv covers the layout/paint cost; DOM size is the
+      remaining bound and page-windowed history already caps it
 - [~] Markdown parity — ✓ GFM tables (`MdBlock::Table`, alignment,
       inline cells), ✓ keyword-level syntax highlighting
       (`sepia-web-core::highlight` — rust/python/js-ts/shell/json/
