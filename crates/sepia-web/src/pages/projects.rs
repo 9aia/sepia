@@ -8,7 +8,7 @@ use leptos_meta::Title;
 use crate::api::{create_project, delete_project};
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardHeader,
-    CardTitle, Input, PageDescription, PageHead, PageTitle, Skeleton,
+    CardTitle, ErrorBanner, Input, PageDescription, PageHead, PageTitle, Skeleton,
 };
 use crate::dto::{ProjectDto, SessionSummaryDto};
 
@@ -73,13 +73,9 @@ pub fn ProjectsPage() -> impl IntoView {
                 </Button>
             </form>
             {move || {
-                form_error.get().map(|e| {
-                    view! {
-                        <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                            {e}
-                        </p>
-                    }
-                })
+                form_error
+                    .get()
+                    .map(|e| view! { <ErrorBanner message=e/> })
             }}
             <Suspense fallback=move || {
                 view! {
@@ -95,9 +91,10 @@ pub fn ProjectsPage() -> impl IntoView {
                         match projects.await {
                             Err(e) => {
                                 view! {
-                                    <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                                        {e.to_string()}
-                                    </p>
+                                    <ErrorBanner
+                                        message=e.to_string()
+                                        on_retry=Box::new(move || projects.refetch())
+                                    />
                                 }
                                     .into_any()
                             }
@@ -210,7 +207,7 @@ fn ProjectRow(
                     {move || {
                         error
                             .get()
-                            .map(|e| view! { <p class="text-sm text-destructive">{e}</p> })
+                            .map(|e| view! { <ErrorBanner message=e/> })
                     }}
                 </CardContent>
             </Card>

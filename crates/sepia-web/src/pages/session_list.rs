@@ -33,7 +33,8 @@ use crate::app::in_editable;
 use crate::components::icons::Icon;
 use crate::components::toast::use_toast;
 use crate::components::{
-    Badge, BadgeVariant, Button, ConfirmDialog, EmptyState, Input, SELECT_CLASS, Skeleton,
+    Badge, BadgeVariant, Button, ConfirmDialog, EmptyState, ErrorBanner, Input, SELECT_CLASS,
+    Skeleton,
 };
 use crate::dto::AgentDto;
 use crate::pages::SessionPanel;
@@ -386,9 +387,10 @@ pub fn SessionListPage() -> impl IntoView {
                                     Err(e) => {
                                         all_sessions.set(Vec::new());
                                         view! {
-                                            <p class="whitespace-pre-wrap p-2 font-mono text-sm text-destructive">
-                                                {e.to_string()}
-                                            </p>
+                                            <ErrorBanner
+                                                message=e.to_string()
+                                                on_retry=Box::new(move || sessions.refetch())
+                                            />
                                         }
                                             .into_any()
                                     }
@@ -1228,7 +1230,7 @@ fn NewSessionForm(
             {move || {
                 form_error
                     .get()
-                    .map(|e| view! { <p class="text-sm text-destructive">{e}</p> })
+                    .map(|e| view! { <ErrorBanner message=e/> })
             }}
         </form>
     }

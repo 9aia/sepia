@@ -6,8 +6,8 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::components::{
-    Badge, BadgeVariant, Card, CardContent, CardHeader, CardTitle, PageDescription, PageHead,
-    PageTitle, Skeleton,
+    Badge, BadgeVariant, Card, CardContent, CardHeader, CardTitle, ErrorBanner, PageDescription,
+    PageHead, PageTitle, Skeleton,
 };
 use crate::dto::{NodeStatusDto, PendingWriteDto};
 use crate::pages::RelativeTime;
@@ -50,15 +50,19 @@ pub fn NodesPage() -> impl IntoView {
             }>
                 {move || {
                     Suspend::new(async move {
+                        // Handle copies for the retry buttons — the
+                        // awaits below shadow the resource names.
+                        let (info_r, status_r, pending_r) = (info, status, pending);
                         let (info, status, pending) =
                             (info.await, status.await, pending.await);
                         let info_view = match info {
                             Err(e) => {
                                 Some(
                                     view! {
-                                        <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                                            {e.to_string()}
-                                        </p>
+                                        <ErrorBanner
+                                            message=e.to_string()
+                                            on_retry=Box::new(move || info_r.refetch())
+                                        />
                                     }
                                         .into_any(),
                                 )
@@ -130,9 +134,10 @@ pub fn NodesPage() -> impl IntoView {
                         let status_view = match status {
                             Err(e) => {
                                 view! {
-                                    <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                                        {e.to_string()}
-                                    </p>
+                                    <ErrorBanner
+                                        message=e.to_string()
+                                        on_retry=Box::new(move || status_r.refetch())
+                                    />
                                 }
                                     .into_any()
                             }
@@ -166,9 +171,10 @@ pub fn NodesPage() -> impl IntoView {
                         let pending_view = match pending {
                             Err(e) => {
                                 view! {
-                                    <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                                        {e.to_string()}
-                                    </p>
+                                    <ErrorBanner
+                                        message=e.to_string()
+                                        on_retry=Box::new(move || pending_r.refetch())
+                                    />
                                 }
                                     .into_any()
                             }

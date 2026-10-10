@@ -5,8 +5,8 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::components::{
-    Badge, BadgeVariant, Card, CardContent, CardHeader, CardTitle, PageDescription, PageHead,
-    PageTitle, Skeleton,
+    Badge, BadgeVariant, Card, CardContent, CardHeader, CardTitle, ErrorBanner, PageDescription,
+    PageHead, PageTitle, Skeleton,
 };
 use crate::dto::{AgentCapabilitiesDto, AgentDto};
 
@@ -39,9 +39,10 @@ pub fn AgentsPage() -> impl IntoView {
                         match agents.await {
                             Err(e) => {
                                 view! {
-                                    <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                                        {e.to_string()}
-                                    </p>
+                                    <ErrorBanner
+                                        message=e.to_string()
+                                        on_retry=Box::new(move || agents.refetch())
+                                    />
                                 }
                                     .into_any()
                             }

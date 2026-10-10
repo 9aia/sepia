@@ -17,17 +17,14 @@ use crate::api::{
 use crate::components::icons::Icon;
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
-    CardHeader, CardTitle, ConfirmDialog, Dropdown, Input, MenuItem, Sheet, SheetBody, SheetHeader,
-    SheetTitle, Skeleton, TEXTAREA_CLASS,
+    CardHeader, CardTitle, ConfirmDialog, Dropdown, ErrorBanner, Input, MenuItem, Sheet, SheetBody,
+    SheetHeader, SheetTitle, Skeleton, TEXTAREA_CLASS,
 };
 use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
 use crate::markdown::Markdown;
 
 const PAGE_SIZE: i64 = 100;
 
-/// Inline error box — persistent until the next action clears it.
-const ERROR_BOX: &str =
-    "rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive";
 /// Shared `<pre>` body for tool output and thinking dumps.
 const TOOL_PRE: &str = "max-h-80 overflow-auto whitespace-pre-wrap break-words border-t \
                         border-border/60 px-3 py-2 font-mono text-xs text-muted-foreground";
@@ -415,7 +412,16 @@ pub fn SessionPanel(
                             (summary.await, history.await, pending.await);
                         match (summary_result, page) {
                             (Err(e), _) | (_, Err(e)) => {
-                                view! { <p class=ERROR_BOX>{e.to_string()}</p> }.into_any()
+                                view! {
+                                    <ErrorBanner
+                                        message=e.to_string()
+                                        on_retry=Box::new(move || {
+                                            summary.refetch();
+                                            history.refetch();
+                                        })
+                                    />
+                                }
+                                .into_any()
                             }
                             (Ok(session), Ok(page)) => {
                                 let locked = session.locked;
@@ -587,7 +593,7 @@ pub fn SessionPanel(
                                                 </Dropdown>
                                             </div>
                                             {move || action_error.get().map(|e| {
-                                                view! { <p class=ERROR_BOX>{e}</p> }
+                                                view! { <ErrorBanner message=e/> }
                                             })}
                                         </CardContent>
                                     </Card>
@@ -1065,7 +1071,7 @@ fn PromptBox(
     }
     view! {
         <div class="space-y-2">
-            {move || send_error.get().map(|e| view! { <p class=ERROR_BOX>{e}</p> })}
+            {move || send_error.get().map(|e| view! { <ErrorBanner message=e/> })}
             {(queued > 0).then(|| {
                 view! {
                     <p class="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1178,7 +1184,7 @@ fn PermissionCard(
                         }}
                     </CardTitle>
                 </div>
-                {move || error.get().map(|e| view! { <p class=ERROR_BOX>{e}</p> })}
+                {move || error.get().map(|e| view! { <ErrorBanner message=e/> })}
             </CardHeader>
             <CardContent>
                 <div class="flex flex-wrap items-center gap-2">
@@ -1253,7 +1259,15 @@ fn CheckpointList(
                         }
                             .into_any()
                     }
-                    Some(Err(e)) => view! { <p class=ERROR_BOX>{e.to_string()}</p> }.into_any(),
+                    Some(Err(e)) => {
+                        view! {
+                            <ErrorBanner
+                                message=e.to_string()
+                                on_retry=Box::new(move || checkpoints.refetch())
+                            />
+                        }
+                        .into_any()
+                    }
                     Some(Ok(list)) if list.is_empty() => {
                         view! {
                             <p class="text-sm text-muted-foreground">
@@ -1361,7 +1375,7 @@ fn CheckpointRow(
                     }}
                 </span>
             </div>
-            {move || error.get().map(|e| view! { <p class=ERROR_BOX>{e}</p> })}
+            {move || error.get().map(|e| view! { <ErrorBanner message=e/> })}
             {move || done.get().map(|d| view! { <p class="text-sm text-success">{d}</p> })}
             <div class="flex items-center gap-2">
                 <Button

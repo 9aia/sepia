@@ -14,22 +14,18 @@ use crate::app::SHORTCUTS;
 use crate::components::toast::use_toast;
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
-    CardHeader, CardTitle, Input, PageDescription, PageHead, PageTitle, SELECT_CLASS, Skeleton,
+    CardHeader, CardTitle, ErrorBanner, Input, PageDescription, PageHead, PageTitle, SELECT_CLASS,
+    Skeleton,
 };
 use crate::dto::AgentDto;
 use crate::pages::agents::capability_chips;
 use crate::pages::nodes::{NodeRow, WriteRow};
 use crate::theme::Theme;
 
-/// Error body shared by the async sections — one destructive-tinted
-/// paragraph instead of a broken card.
-fn err_view(e: &ServerFnError) -> AnyView {
-    view! {
-        <p class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {e.to_string()}
-        </p>
-    }
-    .into_any()
+/// Error body shared by the async sections — a banner whose retry
+/// refetches the resource that failed.
+fn err_view(e: &ServerFnError, retry: impl Fn() + Send + Sync + 'static) -> AnyView {
+    view! { <ErrorBanner message=e.to_string() on_retry=Box::new(retry)/> }.into_any()
 }
 
 #[component]
@@ -124,9 +120,12 @@ fn NodeSection() -> impl IntoView {
                 }>
                     {move || {
                         Suspend::new(async move {
+                            // Handle copies for retry buttons — the
+                            // awaits below shadow the resource names.
+                            let (info_r, status_r) = (info, status);
                             let (info, status) = (info.await, status.await);
                             let info_view = match info {
-                                Err(e) => err_view(&e),
+                                Err(e) => err_view(&e, move || info_r.refetch()),
                                 Ok(n) => {
                                     let title = if n.name.is_empty() {
                                         "—".to_string()
@@ -175,7 +174,7 @@ fn NodeSection() -> impl IntoView {
                                 }
                             };
                             let status_view = match status {
-                                Err(e) => err_view(&e),
+                                Err(e) => err_view(&e, move || status_r.refetch()),
                                 Ok(rows) if rows.is_empty() => {
                                     view! {
                                         <p class="text-sm text-muted-foreground">
@@ -235,7 +234,7 @@ fn AgentsSection() -> impl IntoView {
                     {move || {
                         Suspend::new(async move {
                             match agents.await {
-                                Err(e) => err_view(&e),
+                                Err(e) => err_view(&e, move || agents.refetch()),
                                 Ok(list) if list.is_empty() => {
                                     view! {
                                         <p class="text-sm text-muted-foreground">
@@ -324,7 +323,7 @@ fn OutboxSection() -> impl IntoView {
                     {move || {
                         Suspend::new(async move {
                             match pending.await {
-                                Err(e) => err_view(&e),
+                                Err(e) => err_view(&e, move || pending.refetch()),
                                 Ok(rows) if rows.is_empty() => {
                                     view! {
                                         <p class="text-sm text-muted-foreground">
@@ -365,7 +364,7 @@ fn ConfigSection() -> impl IntoView {
             {move || {
                 Suspend::new(async move {
                     match config.await {
-                        Err(e) => err_view(&e),
+                        Err(e) => err_view(&e, move || config.refetch()),
                         Ok(map) if map.is_empty() => {
                             view! {
                                 <Card>

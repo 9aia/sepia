@@ -253,6 +253,44 @@ pub fn ConfirmDialog(
     }
 }
 
+/// Inline error banner — warning glyph + message + an optional retry
+/// action (`on_retry` refetches the owning resource where one exists).
+/// One component for every failed load or rejected mutation; the old
+/// per-page raw `<p class=ERROR_BOX>` copies are gone.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+pub fn ErrorBanner(
+    #[prop(into)] message: String,
+    #[prop(optional)] on_retry: Option<Box<dyn Fn() + Send + Sync + 'static>>,
+    #[prop(into, optional)] class: String,
+) -> impl IntoView {
+    view! {
+        <div
+            data-name="ErrorBanner"
+            role="alert"
+            class=tw_merge::tw_merge!(
+                "flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive",
+                class
+            )
+        >
+            <icons::Icon name="alert"/>
+            <span class="min-w-0 flex-1 break-words">{message}</span>
+            {on_retry.map(|cb| {
+                view! {
+                    <Button
+                        variant=ButtonVariant::Outline
+                        size=ButtonSize::Sm
+                        class="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10"
+                        on_click=cb
+                    >
+                        "Retry"
+                    </Button>
+                }
+            })}
+        </div>
+    }
+}
+
 /// Inline SVG icons — lucide-style 24×24 stroke glyphs, hand-embedded
 /// so no icon crate is needed. Everything inherits `currentColor`.
 pub mod icons {
@@ -260,7 +298,7 @@ pub mod icons {
 
     /// A 24×24 stroke icon. Known `name`s: `sessions` (default),
     /// `agents`, `projects`, `nodes`, `settings`, `pin`, `plus`,
-    /// `details`.
+    /// `details`, `alert`.
     #[component]
     #[allow(clippy::needless_pass_by_value)] // component props are owned
     pub fn Icon(
@@ -318,6 +356,12 @@ pub mod icons {
                     "details" => view! {
                         <rect width="18" height="18" x="3" y="3" rx="2"/>
                         <path d="M15 3v18"/>
+                    }
+                        .into_any(),
+                    "alert" => view! {
+                        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+                        <path d="M12 9v4"/>
+                        <path d="M12 17h.01"/>
                     }
                         .into_any(),
                     _ => view! {

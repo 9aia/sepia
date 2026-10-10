@@ -17,7 +17,7 @@ use tw_merge::IntoTailwindClass;
 use crate::components::icons::Icon;
 use crate::components::toast::{Toaster, provide_toaster};
 use crate::components::{
-    ButtonClass, ButtonSize, ButtonVariant, Sheet, SheetBody, SheetHeader, SheetTitle,
+    ButtonClass, ButtonSize, ButtonVariant, EmptyState, Sheet, SheetBody, SheetHeader, SheetTitle,
 };
 use crate::pages::{
     AgentsPage, NodesPage, ProjectsPage, SessionDetailPage, SessionListPage, SettingsPage,
@@ -206,9 +206,22 @@ pub fn App() -> impl IntoView {
                     <main class="flex min-w-0 flex-1 flex-col overflow-y-auto">
                         <Routes fallback=|| {
                             view! {
-                                <p class="p-6 text-sm text-muted-foreground">
-                                    "That page doesn't exist."
-                                </p>
+                                <EmptyState
+                                    icon="404"
+                                    title="Page not found"
+                                    description="That page doesn't exist — the link may be stale or the session was deleted."
+                                >
+                                    <A
+                                        href="/"
+                                        attr:class=ButtonClass {
+                                            variant: ButtonVariant::Secondary,
+                                            size: ButtonSize::Sm,
+                                        }
+                                        .to_class()
+                                    >
+                                        "Back to sessions"
+                                    </A>
+                                </EmptyState>
                             }
                         }>
                             <Route path=path!("/") view=SessionListPage/>
