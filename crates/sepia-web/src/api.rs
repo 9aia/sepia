@@ -14,8 +14,9 @@ use leptos::prelude::*;
 use serde_json::Value;
 
 use crate::dto::{
-    AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryPageDto, NodeInfoDto,
-    NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto, SessionSummaryDto,
+    AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryPageDto, ImportResultDto,
+    NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto,
+    SessionSummaryDto,
 };
 
 /// Port to the node's `/api/*` surface — implemented by [`HttpNodeApi`]
@@ -58,8 +59,16 @@ pub trait NodeApi: Send + Sync + 'static {
     /// `POST /api/sessions/{id}/detach` — release the live attach
     /// (no-op when not attached).
     async fn detach(&self, id: &str, agent: Option<&str>) -> Result<(), String>;
-    /// `POST /api/sessions/{id}/prompt` — `{text}`.
-    async fn prompt(&self, id: &str, agent: Option<&str>, text: &str) -> Result<(), String>;
+    /// `POST /api/sessions/{id}/prompt` — `{text, attachments?}`;
+    /// `attachments` are ACP content blocks (see
+    /// `sepia_web_core::composer`).
+    async fn prompt(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        text: &str,
+        attachments: &[Value],
+    ) -> Result<(), String>;
     /// `POST /api/sessions/{id}/cancel`.
     async fn cancel(&self, id: &str, agent: Option<&str>) -> Result<(), String>;
     /// `POST /api/sessions/{id}/permission` — `{requestId, optionId}`;
@@ -86,6 +95,13 @@ pub trait NodeApi: Send + Sync + 'static {
     async fn restore(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String>;
     /// `POST /api/sessions/{id}/rewind` — `{confirm: true, checkpoint}`.
     async fn rewind(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String>;
+    /// `POST /api/sessions/{id}/convert` — `{agent: "cline"|"devin"}` →
+    /// `{sessionId}` of the converted copy.
+    async fn convert(&self, id: &str, agent: Option<&str>, target: &str) -> Result<String, String>;
+    /// `POST /api/sessions/import` — the body
+    /// [`sepia_web_core::composer::import_body`] shaped → the created
+    /// row.
+    async fn import(&self, body: &Value) -> Result<ImportResultDto, String>;
     /// `GET /api/agents`.
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String>;
     /// `GET /api/projects`.
@@ -233,20 +249,24 @@ pub async fn get_session(
         .map_err(ServerFnError::new)
 }
 
-/// `POST /api/sessions/{id}/prompt`.
+/// `POST /api/sessions/{id}/prompt` — `{text?, attachments?}`; at
+/// least one of the two must carry content (the node 400s an empty
+/// prompt). `attachments` are validated ACP content blocks built by
+/// `sepia_web_core::composer::attachments_payload`.
 #[server(prefix = "/hub")]
 pub async fn send_prompt(
     session_id: String,
     agent: Option<String>,
     text: String,
+    attachments: Vec<Value>,
 ) -> Result<(), ServerFnError> {
-    if session_id.is_empty() || text.trim().is_empty() {
+    if session_id.is_empty() || (text.trim().is_empty() && attachments.is_empty()) {
         return Err(ServerFnError::new(
-            "a session id and non-empty text are required",
+            "a session id and either text or attachments are required",
         ));
     }
     node_api()?
-        .prompt(&session_id, agent.as_deref(), &text)
+        .prompt(&session_id, agent.as_deref(), &text, &attachments)
         .await
         .map_err(ServerFnError::new)
 }
@@ -406,6 +426,27 @@ pub async fn pin_session(
         .map_err(ServerFnError::new)
 }
 
+/// `PATCH /api/sessions/{id}` — `{model}` on the meta overlay;
+/// `None` clears the override back to the agent default. The node
+/// caps model names at 100 chars — checked here to fail cheap.
+#[server(prefix = "/hub")]
+pub async fn set_session_model(
+    session_id: String,
+    agent: Option<String>,
+    model: Option<String>,
+) -> Result<(), ServerFnError> {
+    if session_id.is_empty() || model.as_deref().is_some_and(|m| m.len() > 100) {
+        return Err(ServerFnError::new(
+            "a session id and a model string (max 100) or null are required",
+        ));
+    }
+    let patch = sepia_web_core::composer::model_patch(model.as_deref());
+    node_api()?
+        .patch_meta(&session_id, agent.as_deref(), &patch)
+        .await
+        .map_err(ServerFnError::new)
+}
+
 /// `PATCH /api/sessions/{id}` — `{archived}` on the meta overlay.
 #[server(prefix = "/hub")]
 pub async fn archive_session(
@@ -486,6 +527,44 @@ pub async fn rewind_session(
         .rewind(&session_id, agent.as_deref(), &checkpoint)
         .await
         .map_err(ServerFnError::new)
+}
+
+/// `POST /api/sessions/{id}/convert` — copy the session into another
+/// agent's store (`{agent: "cline"|"devin"}`); returns the new
+/// session's id so the UI can jump to it.
+#[server(prefix = "/hub")]
+pub async fn convert_session(
+    session_id: String,
+    agent: Option<String>,
+    target: String,
+) -> Result<String, ServerFnError> {
+    if session_id.is_empty() || !sepia_web_core::composer::is_convert_target(&target) {
+        return Err(ServerFnError::new(
+            "a session id and a convert target ('cline' or 'devin') are required",
+        ));
+    }
+    node_api()?
+        .convert(&session_id, agent.as_deref(), &target)
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `POST /api/sessions/import` — `body` is the
+/// `composer::import_body` payload (`{agent, session, cwd?}`). Checked
+/// again here: the server fn is a public endpoint, the UI's shaping
+/// isn't.
+#[server(prefix = "/hub")]
+pub async fn import_session(body: Value) -> Result<ImportResultDto, ServerFnError> {
+    let agent_ok = body
+        .get("agent")
+        .and_then(Value::as_str)
+        .is_some_and(sepia_web_core::composer::is_convert_target);
+    if !body.get("session").is_some_and(Value::is_object) || !agent_ok {
+        return Err(ServerFnError::new(
+            "import requires {agent: 'cline'|'devin', session: {…IR…}}",
+        ));
+    }
+    node_api()?.import(&body).await.map_err(ServerFnError::new)
 }
 
 /// `GET /api/agents`.
@@ -872,10 +951,16 @@ impl NodeApi for HttpNodeApi {
         .map_err(|e| e.to_string())?
     }
 
-    async fn prompt(&self, id: &str, agent: Option<&str>, text: &str) -> Result<(), String> {
+    async fn prompt(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        text: &str,
+        attachments: &[Value],
+    ) -> Result<(), String> {
         let path = format!("/api/sessions/{id}/prompt{}", id_query(agent));
         let api = self.clone();
-        let body = serde_json::json!({ "text": text });
+        let body = serde_json::json!({ "text": text, "attachments": attachments });
         tokio::task::spawn_blocking(move || {
             let res = api.send_json("POST", &path, &body)?;
             if res.status().is_success() {
@@ -1065,6 +1150,43 @@ impl NodeApi for HttpNodeApi {
             } else {
                 Err(error_of(res, "rewind"))
             }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn convert(&self, id: &str, agent: Option<&str>, target: &str) -> Result<String, String> {
+        let path = format!("/api/sessions/{id}/convert{}", id_query(agent));
+        let api = self.clone();
+        let body = serde_json::json!({ "agent": target });
+        tokio::task::spawn_blocking(move || {
+            let res = api.send_json("POST", &path, &body)?;
+            if res.status().is_success() {
+                res.into_body()
+                    .read_json::<Value>()
+                    .ok()
+                    .and_then(|v| {
+                        v.get("sessionId")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .ok_or_else(|| "convert: missing sessionId".to_string())
+            } else {
+                Err(error_of(res, "convert"))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn import(&self, body: &Value) -> Result<ImportResultDto, String> {
+        let api = self.clone();
+        let body = body.clone();
+        tokio::task::spawn_blocking(move || {
+            read_json::<ImportResultDto>(
+                api.send_json("POST", "/api/sessions/import", &body)?,
+                "import session",
+            )
         })
         .await
         .map_err(|e| e.to_string())?

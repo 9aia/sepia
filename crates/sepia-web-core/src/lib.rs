@@ -4,6 +4,7 @@
 //! Leptos components keep only event/view wiring and call into these
 //! modules for every decision.
 
+pub mod composer;
 pub mod filter;
 pub mod history;
 pub mod keymap;

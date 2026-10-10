@@ -115,7 +115,7 @@ async fn prompt_queues_when_the_node_is_down() {
     let (engine, projection, outbox) = engine_with(nodes.clone());
     seed(&projection);
     let api = SyncNodeApi::new(engine, nodes);
-    api.prompt("s1", None, "hello offline").await.unwrap();
+    api.prompt("s1", None, "hello offline", &[]).await.unwrap();
     // The queue holds the write for the session.
     let pending = outbox.pending_for_node("laptop").unwrap();
     assert_eq!(pending.len(), 1);
@@ -133,7 +133,7 @@ async fn pending_writes_reports_queued_and_dead() {
 
     // One queued write via the API, one forced dead-letter straight
     // into the outbox (a `turn` op dies on its first failure).
-    api.prompt("s1", None, "hello offline").await.unwrap();
+    api.prompt("s1", None, "hello offline", &[]).await.unwrap();
     let dead = outbox
         .enqueue(
             "laptop",

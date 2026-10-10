@@ -130,6 +130,18 @@ async fn session_list_renders_create_form() {
 }
 
 #[tokio::test]
+async fn session_list_renders_import_card() {
+    let html = page("/", FakeNodeApi::seeded().shared()).await;
+    // The trigger plus the always-mounted import Sheet: file input,
+    // target-store select, and the (closed) dialog semantics.
+    assert_contains(&html, "data-name=\"ImportCard\"");
+    assert_contains(&html, "Import session…");
+    assert_contains(&html, "aria-label=\"Import session\"");
+    assert_contains(&html, "data-name=\"ImportFileInput\"");
+    assert_contains(&html, "Target store");
+}
+
+#[tokio::test]
 async fn session_list_error_state_renders_error_banner() {
     let html = page(
         "/",
@@ -253,10 +265,30 @@ async fn session_detail_renders_summary_history_and_prompt() {
     // GFM table in the assistant row.
     assert_contains(&html, "data-name=\"MdTable\"");
     assert_contains(&html, "<table");
-    // The prompt composer.
+    // The prompt composer — textarea, editable model input
+    // (`prop:value` doesn't serialize on SSR — the placeholder is the
+    // markup-stable hook), attach affordance + hidden file input.
     assert_contains(&html, "<textarea");
     assert_contains(&html, "Message the agent");
     assert_contains(&html, ">Send<");
+    assert_contains(&html, "data-name=\"ModelInput\"");
+    assert_contains(&html, "placeholder=\"agent default\"");
+    assert_contains(&html, "data-name=\"AttachButton\"");
+    assert_contains(&html, "data-name=\"AttachmentInput\"");
+}
+
+#[tokio::test]
+async fn session_detail_details_sheet_has_convert_and_export() {
+    let html = page("/sessions/s1", FakeNodeApi::seeded().shared()).await;
+    // The Sheet renders closed but mounted — convert targets exclude
+    // the session's own store (devin → only Cline offered), and the
+    // export link points at the hub-passthrough URL.
+    assert_contains(&html, "data-name=\"ConvertExport\"");
+    assert_contains(&html, "Convert / Export");
+    assert_contains(&html, "Convert to Cline");
+    assert!(!html.contains("Convert to Devin"));
+    assert_contains(&html, "data-name=\"ExportLink\"");
+    assert_contains(&html, "/api/sessions/s1/export?agent=devin");
 }
 
 #[tokio::test]

@@ -13,8 +13,8 @@ use sepia_hub::{HubConfig, HubState, router};
 use sepia_web::api::NodeApi;
 use sepia_web::dto::{
     AgentCapabilitiesDto, AgentDto, AttachResultDto, CheckpointDto, CreateResultDto,
-    HistoryPageDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PromptCapabilitiesDto,
-    PushSubscriptionDto, SessionCapabilitiesDto, SessionSummaryDto,
+    HistoryPageDto, ImportResultDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto,
+    PromptCapabilitiesDto, PushSubscriptionDto, SessionCapabilitiesDto, SessionSummaryDto,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -67,7 +67,13 @@ impl NodeApi for StubNodeApi {
         })
     }
 
-    async fn prompt(&self, _id: &str, _agent: Option<&str>, _text: &str) -> Result<(), String> {
+    async fn prompt(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        _text: &str,
+        _attachments: &[Value],
+    ) -> Result<(), String> {
         Ok(())
     }
 
@@ -158,6 +164,27 @@ impl NodeApi for StubNodeApi {
         _checkpoint: &str,
     ) -> Result<(), String> {
         Ok(())
+    }
+
+    async fn convert(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        _target: &str,
+    ) -> Result<String, String> {
+        Ok("s-converted".into())
+    }
+
+    async fn import(&self, body: &Value) -> Result<ImportResultDto, String> {
+        Ok(ImportResultDto {
+            id: "s-imported".into(),
+            title: "Imported copy".into(),
+            agent: body
+                .get("agent")
+                .and_then(Value::as_str)
+                .unwrap_or("devin")
+                .to_string(),
+        })
     }
 
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String> {

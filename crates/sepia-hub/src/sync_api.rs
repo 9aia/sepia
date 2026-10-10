@@ -13,7 +13,7 @@ use sepia_sync::{IndexedSession, NodeWrite, OpKind, OutboxEntry, OutboxStatus, S
 use sepia_web::api::NodeApi;
 use sepia_web::dto::{
     AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryMessageDto, HistoryPageDto,
-    NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto,
+    ImportResultDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto,
     SessionSummaryDto,
 };
 use serde_json::Value;
@@ -352,13 +352,21 @@ impl NodeApi for SyncNodeApi {
         })
     }
 
-    async fn prompt(&self, id: &str, agent: Option<&str>, text: &str) -> Result<(), String> {
+    async fn prompt(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        text: &str,
+        attachments: &[Value],
+    ) -> Result<(), String> {
+        // The payload replays verbatim against `/prompt` — carry the
+        // ACP attachment blocks through the outbox unchanged.
         self.submit(
             id,
             agent,
             "prompt",
             OpKind::Turn,
-            serde_json::json!({ "text": text }),
+            serde_json::json!({ "text": text, "attachments": attachments }),
         )
         .await
     }
@@ -495,6 +503,33 @@ impl NodeApi for SyncNodeApi {
         )
         .await
         .map(|_| ())
+    }
+
+    async fn convert(&self, id: &str, agent: Option<&str>, target: &str) -> Result<String, String> {
+        // Direct post like restore/attach — converting against a down
+        // node can't queue: the store state it copies is now.
+        let body = self
+            .post_direct(id, agent, "convert", serde_json::json!({ "agent": target }))
+            .await?;
+        body.get("sessionId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "convert: missing sessionId".to_string())
+    }
+
+    async fn import(&self, body: &Value) -> Result<ImportResultDto, String> {
+        // Not session-scoped — the primary node takes it, like
+        // `create_session`. Direct, for the same reason: queueing an
+        // import would hand the UI an id nothing references yet.
+        let (_, client) = self.scoped_client(None)?;
+        let body = body.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            client.send_json("POST", "/api/sessions/import", &body)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        serde_json::from_value(res).map_err(|e| format!("decode: {e}"))
     }
 
     async fn pair(&self, code: &str, node: Option<&str>) -> Result<String, String> {

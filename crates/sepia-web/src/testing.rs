@@ -19,9 +19,9 @@ use sepia_core::{TokenUsage, ToolCallDiff, ToolCallLocation};
 
 use crate::dto::{
     AgentCapabilitiesDto, AgentDto, AttachResultDto, CheckpointDto, CreateResultDto,
-    HistoryMessageDto, HistoryPageDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto,
-    PromptCapabilitiesDto, PushSubscriptionDto, RunSpanDto, SessionCapabilitiesDto,
-    SessionSummaryDto,
+    HistoryMessageDto, HistoryPageDto, ImportResultDto, NodeInfoDto, NodeStatusDto,
+    PendingWriteDto, ProjectDto, PromptCapabilitiesDto, PushSubscriptionDto, RunSpanDto,
+    SessionCapabilitiesDto, SessionSummaryDto,
 };
 
 /// A `NodeApi` that answers every read from in-memory fixtures.
@@ -61,6 +61,9 @@ impl FakeNodeApi {
                     busy: true,
                     live: true,
                     project_ids: vec!["p1".into()],
+                    // A pinned model — the composer's model input
+                    // renders it as the override value.
+                    model: Some("swe-1.6".into()),
                     // Two provenance spans: the first heads the
                     // transcript, the second marks a mid-transcript
                     // transfer → both render marker rows.
@@ -427,7 +430,13 @@ impl NodeApi for FakeNodeApi {
         Ok(())
     }
 
-    async fn prompt(&self, _id: &str, _agent: Option<&str>, _text: &str) -> Result<(), String> {
+    async fn prompt(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        _text: &str,
+        _attachments: &[Value],
+    ) -> Result<(), String> {
         Ok(())
     }
 
@@ -483,6 +492,27 @@ impl NodeApi for FakeNodeApi {
         _checkpoint: &str,
     ) -> Result<(), String> {
         Ok(())
+    }
+
+    async fn convert(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        _target: &str,
+    ) -> Result<String, String> {
+        Ok("s-converted".into())
+    }
+
+    async fn import(&self, body: &Value) -> Result<ImportResultDto, String> {
+        Ok(ImportResultDto {
+            id: "s-imported".into(),
+            title: "Imported copy".into(),
+            agent: body
+                .get("agent")
+                .and_then(Value::as_str)
+                .unwrap_or("devin")
+                .to_string(),
+        })
     }
 
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String> {

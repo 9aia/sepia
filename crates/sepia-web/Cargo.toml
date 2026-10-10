@@ -53,14 +53,22 @@ wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 js-sys = { workspace = true, optional = true }
 web-sys = { workspace = true, optional = true, features = [
+  "Blob",
   "Clipboard",
+  "ClipboardEvent",
+  "DataTransfer",
   "Element",
   "ErrorEvent",
   "EventSource",
+  "File",
+  "FileList",
+  "FileReader",
   "HtmlElement",
+  "HtmlInputElement",
   "HtmlTextAreaElement",
   "MessageEvent",
   "Navigator",
+  "ProgressEvent",
   "PushEncryptionKeyName",
   "PushManager",
   "PushSubscription",

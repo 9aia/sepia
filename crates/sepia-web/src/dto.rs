@@ -224,6 +224,18 @@ impl HistoryMessageDto {
     }
 }
 
+/// `POST /api/sessions/import` response — the created summary row.
+/// The UI only needs `id` + `agent` to navigate to the imported copy.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResultDto {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub agent: String,
+}
+
 /// `GET /api/agents` row — `sepia_http::routes::AgentWire`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

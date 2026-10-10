@@ -14,6 +14,7 @@ use leptos_meta::Title;
 use leptos_router::NavigateOptions;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_query_map};
+use sepia_web_core::composer::{CONVERT_TARGETS, import_body};
 #[cfg(feature = "hydrate")]
 use sepia_web_core::filter::query_href;
 use sepia_web_core::filter::{
@@ -29,20 +30,22 @@ use sepia_web_core::path::{complete_path, non_empty, path_parts};
 #[cfg(feature = "hydrate")]
 use crate::api::list_agents;
 use crate::api::{
-    archive_session, create_session, delete_session, fs_dirs, pin_session, rename_session,
+    archive_session, create_session, delete_session, fs_dirs, import_session, pin_session,
+    rename_session,
 };
 use crate::app::Now;
 #[cfg(feature = "hydrate")]
 use crate::app::in_editable;
 use crate::components::icons::Icon;
-use crate::components::toast::use_toast;
+use crate::components::toast::{ToastStore, use_toast};
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonClass, ButtonSize, ButtonVariant, ConfirmDialog, EmptyState,
-    ErrorBanner, Input, SELECT_CLASS, Skeleton,
+    ErrorBanner, Input, SELECT_CLASS, Sheet, SheetBody, SheetHeader, SheetTitle, Skeleton,
 };
 use crate::dto::AgentDto;
 use crate::pages::SessionPanel;
 use crate::time::relative;
+use serde_json::Value;
 use tw_merge::IntoTailwindClass;
 
 /// Context-menu item styling — same look as `MenuItem`, minus the
@@ -157,12 +160,12 @@ pub fn SessionListPage() -> impl IntoView {
         };
         pending_delete.set(None);
         leptos::task::spawn_local(async move {
-            match delete_session(id, agent).await {
-                Ok(()) => {
-                    sessions.refetch();
-                    navigate.with_value(|n| n("/", NavigateOptions::default()));
-                }
-                Err(e) => toast.error(e.to_string()),
+            if toast
+                .outcome(delete_session(id, agent).await, "Deleted")
+                .is_some()
+            {
+                sessions.refetch();
+                navigate.with_value(|n| n("/", NavigateOptions::default()));
             }
         });
     };
@@ -414,6 +417,7 @@ pub fn SessionListPage() -> impl IntoView {
                         cwd=new_cwd
                         on_created=move || sessions.refetch()
                     />
+                    <ImportCard on_imported=move || sessions.refetch()/>
                 </div>
                 // Filter bar — client-side only. The agent options read
                 // `all_sessions`, which is empty until the Suspend below
@@ -929,9 +933,19 @@ pub fn SessionListPage() -> impl IntoView {
                                         let id = id.clone();
                                         let agent = agent.clone();
                                         leptos::task::spawn_local(async move {
-                                            match pin_session(id, agent, !pinned_now).await {
-                                                Ok(()) => sessions.refetch(),
-                                                Err(e) => toast.error(e.to_string()),
+                                            let ok = if pinned_now {
+                                                "Unpinned"
+                                            } else {
+                                                "Pinned"
+                                            };
+                                            if toast
+                                                .outcome(
+                                                    pin_session(id, agent, !pinned_now).await,
+                                                    ok,
+                                                )
+                                                .is_some()
+                                            {
+                                                sessions.refetch();
                                             }
                                         });
                                     }
@@ -951,9 +965,19 @@ pub fn SessionListPage() -> impl IntoView {
                                         let id = id.clone();
                                         let agent = agent.clone();
                                         leptos::task::spawn_local(async move {
-                                            match archive_session(id, agent, !archived_now).await {
-                                                Ok(()) => sessions.refetch(),
-                                                Err(e) => toast.error(e.to_string()),
+                                            let ok = if archived_now {
+                                                "Unarchived"
+                                            } else {
+                                                "Archived"
+                                            };
+                                            if toast
+                                                .outcome(
+                                                    archive_session(id, agent, !archived_now).await,
+                                                    ok,
+                                                )
+                                                .is_some()
+                                            {
+                                                sessions.refetch();
                                             }
                                         });
                                     }
@@ -1217,11 +1241,15 @@ fn SessionRowView(
                                                 let id = cid.clone();
                                                 let agent = cagent.clone();
                                                 leptos::task::spawn_local(async move {
-                                                    match rename_session(id, agent, new_title)
-                                                        .await
+                                                    if toast
+                                                        .outcome(
+                                                            rename_session(id, agent, new_title)
+                                                                .await,
+                                                            "Renamed",
+                                                        )
+                                                        .is_some()
                                                     {
-                                                        Ok(()) => on_changed(),
-                                                        Err(e) => toast.error(e.to_string()),
+                                                        on_changed();
                                                     }
                                                 });
                                             }
@@ -1726,6 +1754,218 @@ fn NewSessionForm(
                     .map(|e| view! { <ErrorBanner message=e/> })
             }}
         </form>
+    }
+}
+
+/// The import card's file `change` → read the pick as text and parse
+/// it. Hydrate-only like the composer's attachment reads —
+/// `FileReader` doesn't exist under SSR.
+#[cfg(feature = "hydrate")]
+fn read_import_file(
+    ev: &web_sys::Event,
+    picked: RwSignal<Option<(String, Value)>>,
+    toast: ToastStore,
+) {
+    use wasm_bindgen::JsCast;
+    let Some(input) = ev
+        .target()
+        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+    else {
+        return;
+    };
+    let Some(file) = input.files().and_then(|f| f.get(0)) else {
+        return;
+    };
+    let name = file.name();
+    let Ok(reader) = web_sys::FileReader::new() else {
+        toast.error(format!("couldn't read {name}"));
+        return;
+    };
+    // The `once` closure owns a clone of the reader — it frees itself
+    // (and the reader) after firing.
+    let done_reader = reader.clone();
+    let on_done = wasm_bindgen::closure::Closure::once(move |_: web_sys::ProgressEvent| {
+        match done_reader.result() {
+            Ok(v) => match v
+                .as_string()
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            {
+                Some(json) => picked.set(Some((name, json))),
+                None => toast.error(format!("{name} isn't valid JSON")),
+            },
+            Err(_) => toast.error(format!("couldn't read {name}")),
+        }
+    });
+    reader.set_onloadend(Some(on_done.as_ref().unchecked_ref()));
+    let _ = reader.read_as_text(&file);
+    // Reset so picking the same file twice still fires `change`.
+    input.set_value("");
+}
+
+/// SSR counterpart — file APIs don't exist; the markup is the
+/// behavior-free shell either way.
+#[cfg(not(feature = "hydrate"))]
+fn read_import_file(
+    _ev: &leptos::ev::Event,
+    _picked: RwSignal<Option<(String, Value)>>,
+    _toast: ToastStore,
+) {
+}
+
+/// "Import session…" — a ghost button under the new-session form that
+/// opens a `Sheet`: file picker for a session export (the `{session}`
+/// IR `GET /api/sessions/:id/export` produces), a target-store select
+/// (`cline`/`devin` — the node's `ImportTarget`), an optional cwd
+/// override, and the POST. On success the merged list refreshes and
+/// the imported copy is selected.
+#[component]
+fn ImportCard(
+    /// Runs after an import lands — `sessions.refetch()`.
+    on_imported: impl Fn() + 'static + Send + Sync + Copy,
+) -> impl IntoView {
+    let open = RwSignal::new(false);
+    // `(file name, parsed JSON)` — staged by the picker until Import.
+    let picked: RwSignal<Option<(String, Value)>> = RwSignal::new(None);
+    let target = RwSignal::new("devin".to_string());
+    let cwd = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let file_ref = NodeRef::<leptos::html::Input>::new();
+    let toast = use_toast();
+    // `use_navigate`'s context is `!Send` on wasm — the same
+    // `new_local` + SSR-stub dance the page-level navigate does.
+    #[cfg(feature = "hydrate")]
+    let navigate = StoredValue::new_local(use_navigate());
+    #[cfg(not(feature = "hydrate"))]
+    let navigate = StoredValue::new(|_: &str, _: NavigateOptions| {});
+
+    let do_import = move || {
+        let Some((_name, json)) = picked.get_untracked() else {
+            return;
+        };
+        if busy.get() {
+            return;
+        }
+        let cwd_opt = non_empty(&cwd.get_untracked());
+        let body = match import_body(&json, &target.get_untracked(), cwd_opt.as_deref()) {
+            Ok(b) => b,
+            Err(e) => {
+                toast.error(e);
+                return;
+            }
+        };
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            if let Some(res) = toast.outcome(import_session(body).await, "Session imported") {
+                open.set(false);
+                on_imported();
+                navigate.with_value(|n| {
+                    n(
+                        &sepia_web_core::filter::session_href(&res.id, &res.agent),
+                        NavigateOptions::default(),
+                    );
+                });
+            }
+            busy.set(false);
+        });
+    };
+
+    view! {
+        <div data-name="ImportCard" class="pt-2">
+            <Button
+                variant=ButtonVariant::Ghost
+                size=ButtonSize::Sm
+                class="w-full justify-start text-muted-foreground"
+                on_click=Box::new(move || open.set(true))
+            >
+                "Import session…"
+            </Button>
+            <Sheet open=open side="right" class="w-96" label="Import session">
+                <SheetHeader>
+                    <SheetTitle>"Import session"</SheetTitle>
+                    <Button
+                        variant=ButtonVariant::Ghost
+                        size=ButtonSize::Icon
+                        class="size-7"
+                        on_click=Box::new(move || open.set(false))
+                    >
+                        "✕"
+                    </Button>
+                </SheetHeader>
+                <SheetBody class="space-y-4">
+                    <p class="text-xs text-muted-foreground">
+                        "Import a session export (the JSON the details sheet's Export downloads) into a store on this node."
+                    </p>
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            "Export file"
+                        </label>
+                        <div class="flex items-center gap-2">
+                            <Button
+                                variant=ButtonVariant::Outline
+                                size=ButtonSize::Sm
+                                on_click=Box::new(move || {
+                                    if let Some(el) = file_ref.get() {
+                                        el.click();
+                                    }
+                                })
+                            >
+                                "Choose file…"
+                            </Button>
+                            <span class="min-w-0 truncate text-xs text-muted-foreground">
+                                {move || {
+                                    picked.read().as_ref().map_or_else(
+                                        || "no file chosen".to_string(),
+                                        |(n, _)| n.clone(),
+                                    )
+                                }}
+                            </span>
+                        </div>
+                        <input
+                            node_ref=file_ref
+                            type="file"
+                            accept=".json,application/json"
+                            class="hidden"
+                            data-name="ImportFileInput"
+                            on:change=move |ev| read_import_file(&ev, picked, toast)
+                        />
+                    </div>
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            "Target store"
+                        </label>
+                        <select
+                            class=SELECT_CLASS
+                            prop:value=move || target.get()
+                            on:change=move |ev| target.set(event_target_value(&ev))
+                        >
+                            {CONVERT_TARGETS
+                                .iter()
+                                .map(|(id, label)| {
+                                    view! { <option value=*id>{*label}</option> }
+                                })
+                                .collect::<Vec<_>>()}
+                        </select>
+                    </div>
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            "Working directory (optional)"
+                        </label>
+                        <Input
+                            attr:r#type="text"
+                            attr:placeholder="Keep the session's cwd"
+                            prop:value=move || cwd.get()
+                            on:input=move |ev| cwd.set(event_target_value(&ev))
+                        />
+                    </div>
+                    <Button
+                        disabled=Signal::derive(move || busy.get() || picked.read().is_none())
+                        on_click=Box::new(do_import)
+                    >
+                        {move || if busy.get() { "Importing…" } else { "Import" }}
+                    </Button>
+                </SheetBody>
+            </Sheet>
+        </div>
     }
 }
 

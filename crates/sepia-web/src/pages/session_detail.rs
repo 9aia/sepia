@@ -9,6 +9,12 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_navigate;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_use::core::ConnectionReadyState;
+use sepia_web_core::composer::{
+    Attachment, attachment_label, attachments_payload, convert_targets, export_href,
+};
+#[cfg(feature = "hydrate")]
+use sepia_web_core::composer::{MAX_ATTACHMENT_CHARS, MAX_ATTACHMENTS, attachment_chars};
+use sepia_web_core::filter::session_href;
 use sepia_web_core::history::{
     ChatRow, FileDiffView, RowInput, RunSpan, SystemContext, ToolSegment, build_rows,
     file_diff_view, format_duration, format_usage, tool_content_segments, tool_summary,
@@ -18,17 +24,20 @@ use sepia_web_core::transcript::{LiveKind, LiveTranscript, PendingPermission};
 use serde_json::Value;
 
 use crate::api::{
-    answer_permission, attach_session, cancel_run, delete_session, detach_session, rename_session,
-    restore_checkpoint, rewind_session, send_prompt, session_history,
+    answer_permission, attach_session, cancel_run, convert_session, delete_session, detach_session,
+    rename_session, restore_checkpoint, rewind_session, send_prompt, session_history,
+    set_session_model,
 };
 use crate::components::icons::Icon;
+use crate::components::toast::use_toast;
 use crate::components::{
-    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
-    CardHeader, CardTitle, ConfirmDialog, Dropdown, ErrorBanner, Input, MenuItem, Sheet, SheetBody,
-    SheetHeader, SheetTitle, Skeleton, TEXTAREA_CLASS,
+    Badge, BadgeVariant, Button, ButtonClass, ButtonSize, ButtonVariant, Card, CardContent,
+    CardDescription, CardHeader, CardTitle, ConfirmDialog, Dropdown, ErrorBanner, Input, MenuItem,
+    Sheet, SheetBody, SheetHeader, SheetTitle, Skeleton, TEXTAREA_CLASS,
 };
 use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
 use crate::markdown::Markdown;
+use tw_merge::IntoTailwindClass;
 
 const PAGE_SIZE: i64 = 100;
 
@@ -56,6 +65,19 @@ pub fn SessionDetailPage() -> impl IntoView {
 
 fn non_empty_str(s: &str) -> Option<String> {
     (!s.trim().is_empty()).then(|| s.trim().to_string())
+}
+
+/// Optimistic echo for a sent prompt — an attachments-only send still
+/// needs a transcript line (the prompt API doesn't stream user
+/// messages back).
+fn prompt_echo(text: &str, attachment_count: usize) -> String {
+    if !text.is_empty() {
+        return text.to_string();
+    }
+    format!(
+        "[{attachment_count} attachment{}]",
+        if attachment_count == 1 { "" } else { "s" }
+    )
 }
 
 /// `- `/`+ `/`⋮ ` prefixed diff lines → colored rows. `added`/`removed`
@@ -362,10 +384,10 @@ pub fn SessionPanel(
     // badges. Not session-scoped server-side; the list is small.
     let pending = client.resource(crate::api::pending_scope, || ());
 
+    let toast = use_toast();
     // Action state lives at page level: a summary refetch re-runs the
     // Suspend subtree, and signals owned inside it would reset.
     let acting = RwSignal::new(false);
-    let action_error: RwSignal<Option<String>> = RwSignal::new(None);
     // The summary wire has no `live` flag on plain GETs (it arrives via
     // feed patches), so the attach/detach responses keep a local truth.
     let live_override: RwSignal<Option<bool>> = RwSignal::new(None);
@@ -383,17 +405,14 @@ pub fn SessionPanel(
             return;
         }
         acting.set(true);
-        action_error.set(None);
         let id = session_id();
         let agent = agent();
         leptos::task::spawn_local(async move {
-            match attach_session(id, agent, takeover).await {
-                Ok(res) => {
-                    live_override.set(Some(res.attached));
-                    client.invalidate_query(crate::api::sessions_scope, ());
-                    summary.refetch();
-                }
-                Err(e) => action_error.set(Some(e.to_string())),
+            if let Some(res) = toast.outcome(attach_session(id, agent, takeover).await, "Attached")
+            {
+                live_override.set(Some(res.attached));
+                client.invalidate_query(crate::api::sessions_scope, ());
+                summary.refetch();
             }
             acting.set(false);
         });
@@ -403,17 +422,16 @@ pub fn SessionPanel(
             return;
         }
         acting.set(true);
-        action_error.set(None);
         let id = session_id();
         let agent = agent();
         leptos::task::spawn_local(async move {
-            match detach_session(id, agent).await {
-                Ok(()) => {
-                    live_override.set(Some(false));
-                    client.invalidate_query(crate::api::sessions_scope, ());
-                    summary.refetch();
-                }
-                Err(e) => action_error.set(Some(e.to_string())),
+            if toast
+                .outcome(detach_session(id, agent).await, "Detached")
+                .is_some()
+            {
+                live_override.set(Some(false));
+                client.invalidate_query(crate::api::sessions_scope, ());
+                summary.refetch();
             }
             acting.set(false);
         });
@@ -423,13 +441,10 @@ pub fn SessionPanel(
             return;
         }
         acting.set(true);
-        action_error.set(None);
         let id = session_id();
         let agent = agent();
         leptos::task::spawn_local(async move {
-            if let Err(e) = cancel_run(id, agent).await {
-                action_error.set(Some(e.to_string()));
-            }
+            let _ = toast.outcome(cancel_run(id, agent).await, "Cancel requested");
             acting.set(false);
         });
     };
@@ -439,16 +454,15 @@ pub fn SessionPanel(
             return;
         }
         acting.set(true);
-        action_error.set(None);
         let id = session_id();
         let agent = agent();
         leptos::task::spawn_local(async move {
-            match rename_session(id, agent, title).await {
-                Ok(()) => {
-                    client.invalidate_query(crate::api::sessions_scope, ());
-                    summary.refetch();
-                }
-                Err(e) => action_error.set(Some(e.to_string())),
+            if toast
+                .outcome(rename_session(id, agent, title).await, "Renamed")
+                .is_some()
+            {
+                client.invalidate_query(crate::api::sessions_scope, ());
+                summary.refetch();
             }
             acting.set(false);
         });
@@ -458,20 +472,42 @@ pub fn SessionPanel(
             return;
         }
         acting.set(true);
-        action_error.set(None);
         let id = session_id();
         let agent = agent();
         leptos::task::spawn_local(async move {
-            match delete_session(id, agent).await {
-                Ok(()) => {
-                    client.invalidate_query(crate::api::sessions_scope, ());
-                    navigate.with_value(|n| n("/", NavigateOptions::default()));
-                }
-                Err(e) => {
-                    action_error.set(Some(e.to_string()));
-                    acting.set(false);
-                }
+            if toast
+                .outcome(delete_session(id, agent).await, "Deleted")
+                .is_some()
+            {
+                client.invalidate_query(crate::api::sessions_scope, ());
+                navigate.with_value(|n| n("/", NavigateOptions::default()));
+            } else {
+                acting.set(false);
             }
+        });
+    };
+    // `POST /convert` — copy the session into another agent's store.
+    // The response carries the *new* session's id; jump straight to it
+    // on the merged list.
+    let do_convert = move |target: &'static str| {
+        if acting.get() {
+            return;
+        }
+        acting.set(true);
+        let id = session_id();
+        let agent = agent();
+        leptos::task::spawn_local(async move {
+            match convert_session(id, agent, target.to_string()).await {
+                Ok(new_id) => {
+                    toast.success(format!("Converted to {target}"));
+                    client.invalidate_query(crate::api::sessions_scope, ());
+                    navigate.with_value(|n| {
+                        n(&session_href(&new_id, target), NavigateOptions::default());
+                    });
+                }
+                Err(e) => toast.error(e.to_string()),
+            }
+            acting.set(false);
         });
     };
     // `ConfirmDialog::on_confirm` requires `Send`, but `do_delete`
@@ -651,8 +687,10 @@ pub fn SessionPanel(
     }
 
     let sending = RwSignal::new(false);
-    let send_error: RwSignal<Option<String>> = RwSignal::new(None);
     let draft = RwSignal::new(String::new());
+    // Staged prompt attachments — chips above the textarea; staged by
+    // the paste/file-picker handlers and cleared on send.
+    let attachments: RwSignal<Vec<Attachment>> = RwSignal::new(Vec::new());
     // Held by another client → send asks to take over first.
     let confirm_takeover = RwSignal::new(false);
 
@@ -670,18 +708,20 @@ pub fn SessionPanel(
     // takeover-confirm path.
     let do_send = move |text: String| {
         sending.set(true);
-        send_error.set(None);
+        let parts = attachments_payload(&attachments.get_untracked());
+        let echo = prompt_echo(&text, parts.len());
         let id = session_id();
         let agent = agent();
         leptos::task::spawn_local(async move {
-            match send_prompt(id, agent, text.clone()).await {
+            match send_prompt(id, agent, text, parts).await {
                 Ok(()) => {
                     draft.set(String::new());
-                    live.update(|t| t.push_user(&text));
+                    attachments.set(Vec::new());
+                    live.update(|t| t.push_user(&echo));
                     client.invalidate_query(crate::api::pending_scope, ());
                     client.invalidate_query(crate::api::sessions_scope, ());
                 }
-                Err(e) => send_error.set(Some(e.to_string())),
+                Err(e) => toast.error(e.to_string()),
             }
             sending.set(false);
         });
@@ -692,7 +732,8 @@ pub fn SessionPanel(
     // takeover `ConfirmDialog` instead of dying on a raw error.
     let submit = move || {
         let text = draft.get().trim().to_string();
-        if text.is_empty() || sending.get() {
+        let empty = text.is_empty() && attachments.read().is_empty();
+        if empty || sending.get() {
             return;
         }
         if is_held() {
@@ -706,11 +747,13 @@ pub fn SessionPanel(
     // unchanged draft once the lock is ours.
     let takeover_send = move || {
         let text = draft.get().trim().to_string();
-        if text.is_empty() || sending.get() {
+        let empty = text.is_empty() && attachments.read().is_empty();
+        if empty || sending.get() {
             return;
         }
         sending.set(true);
-        send_error.set(None);
+        let parts = attachments_payload(&attachments.get_untracked());
+        let echo = prompt_echo(&text, parts.len());
         let id = session_id();
         let agent = agent();
         leptos::task::spawn_local(async move {
@@ -720,21 +763,20 @@ pub fn SessionPanel(
                     client.invalidate_query(crate::api::sessions_scope, ());
                     summary.refetch();
                     if res.attached && !res.read_only {
-                        match send_prompt(id, agent, text.clone()).await {
+                        match send_prompt(id, agent, text, parts).await {
                             Ok(()) => {
                                 draft.set(String::new());
-                                live.update(|t| t.push_user(&text));
+                                attachments.set(Vec::new());
+                                live.update(|t| t.push_user(&echo));
                                 client.invalidate_query(crate::api::pending_scope, ());
                             }
-                            Err(e) => send_error.set(Some(e.to_string())),
+                            Err(e) => toast.error(e.to_string()),
                         }
                     } else {
-                        send_error.set(Some(
-                            "takeover refused — the session is still held".to_string(),
-                        ));
+                        toast.error("takeover refused — the session is still held".to_string());
                     }
                 }
-                Err(e) => send_error.set(Some(e.to_string())),
+                Err(e) => toast.error(e.to_string()),
             }
             sending.set(false);
         });
@@ -783,6 +825,11 @@ pub fn SessionPanel(
                                 // once the tree above has captured them.
                                 let prompt_cwd = session.cwd.clone();
                                 let prompt_model = session.model.clone();
+                                // Convert/export surfaces — the store
+                                // the session lives in is excluded
+                                // from the convert targets.
+                                let detail_id = session.id.clone();
+                                let detail_agent = session.agent.clone();
                                 // Run-provenance spans → marker rows
                                 // between transcript segments.
                                 let spans: Vec<RunSpan> =
@@ -946,9 +993,6 @@ pub fn SessionPanel(
                                                     />
                                                 </Dropdown>
                                             </div>
-                                            {move || action_error.get().map(|e| {
-                                                view! { <ErrorBanner message=e/> }
-                                            })}
                                         </CardContent>
                                     </Card>
                                     {view! {
@@ -1013,6 +1057,53 @@ pub fn SessionPanel(
                                                     summary.refetch();
                                                 }
                                             />
+                                            // `POST /convert` copies
+                                            // the session into another
+                                            // agent's store; the
+                                            // export link is the node's
+                                            // full-IR `GET` through the
+                                            // hub's `/api/*` passthrough,
+                                            // so a plain anchor downloads
+                                            // it same-origin.
+                                            <div data-name="ConvertExport" class="space-y-2">
+                                                <label class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                                    "Convert / Export"
+                                                </label>
+                                                <p class="text-xs text-muted-foreground">
+                                                    "Copy this session into another agent's store, or download the full IR as JSON."
+                                                </p>
+                                                <div class="flex flex-wrap items-center gap-2">
+                                                    {convert_targets(&detail_agent)
+                                                        .into_iter()
+                                                        .map(|(target, label)| {
+                                                            view! {
+                                                                <Button
+                                                                    variant=ButtonVariant::Outline
+                                                                    size=ButtonSize::Sm
+                                                                    disabled=acting
+                                                                    on_click=Box::new(move || {
+                                                                        do_convert(target);
+                                                                    })
+                                                                >
+                                                                    {format!("Convert to {label}")}
+                                                                </Button>
+                                                            }
+                                                        })
+                                                        .collect::<Vec<_>>()}
+                                                    <a
+                                                        data-name="ExportLink"
+                                                        class=ButtonClass {
+                                                            variant: ButtonVariant::Outline,
+                                                            size: ButtonSize::Sm,
+                                                        }
+                                                        .to_class()
+                                                        href=export_href(&detail_id, Some(&detail_agent))
+                                                        download=format!("sepia-session-{detail_id}.json")
+                                                    >
+                                                        "Export JSON"
+                                                    </a>
+                                                </div>
+                                            </div>
                                             <div class="rounded-md border border-destructive/40 p-3">
                                                 <p class="text-sm font-medium text-destructive">
                                                     "Danger zone"
@@ -1164,9 +1255,12 @@ pub fn SessionPanel(
                                     <PromptBox
                                         draft=draft
                                         sending=sending
-                                        send_error=send_error
+                                        attachments=attachments
                                         cwd=prompt_cwd.clone()
                                         model=prompt_model.clone()
+                                        session_id=session_id()
+                                        agent=agent()
+                                        on_model_changed=move || summary.refetch()
                                         queued=queued
                                         failed=failed
                                         submit=submit
@@ -1665,25 +1759,195 @@ fn LiveLog(live: RwSignal<LiveTranscript>) -> impl IntoView {
     }
 }
 
+/// Read one picked/pasted file through `FileReader` into a staged
+/// [`Attachment`]. `read_as_data_url` yields `data:<mime>;base64,…`,
+/// which [`sepia_web_core::composer::split_data_url`] splits for the
+/// ACP block the send builds. Hydrate-only — clipboard/file APIs are
+/// browser surfaces.
+#[cfg(feature = "hydrate")]
+fn read_attachment_file(
+    file: &web_sys::File,
+    attachments: RwSignal<Vec<Attachment>>,
+    toast: crate::components::toast::ToastStore,
+) {
+    use wasm_bindgen::JsCast;
+    let name = file.name();
+    let mime = file.type_();
+    let size = file.size();
+    let Ok(reader) = web_sys::FileReader::new() else {
+        toast.error(format!("couldn't read {name}"));
+        return;
+    };
+    // The `once` closure owns a clone of the reader — it frees itself
+    // (and the reader) after firing.
+    let done_reader = reader.clone();
+    let on_done = wasm_bindgen::closure::Closure::once(move |_: web_sys::ProgressEvent| {
+        match done_reader.result() {
+            Ok(v) => match v
+                .as_string()
+                .and_then(|s| sepia_web_core::composer::split_data_url(&s))
+            {
+                Some((m, data_b64)) => {
+                    // The node 400s over `MAX_ATTACHMENT_CHARS` — refuse
+                    // here so the chip never advertises a doomed send.
+                    let over = attachments
+                        .with(|v| attachment_chars(v) + data_b64.len() > MAX_ATTACHMENT_CHARS);
+                    if over {
+                        toast.error(format!("{name} exceeds the attachment size limit"));
+                    } else {
+                        attachments.update(|v| {
+                            v.push(Attachment {
+                                name,
+                                mime_type: if mime.is_empty() { m } else { mime },
+                                data_b64,
+                                size,
+                            });
+                        });
+                    }
+                }
+                None => toast.error(format!("couldn't decode {name}")),
+            },
+            Err(_) => toast.error(format!("couldn't read {name}")),
+        }
+    });
+    reader.set_onloadend(Some(on_done.as_ref().unchecked_ref()));
+    let _ = reader.read_as_data_url(file);
+}
+
+/// Stage every file in a `FileList` (picker `change`, paste, drop),
+/// honoring the node's part-count cap.
+#[cfg(feature = "hydrate")]
+fn stage_files(
+    files: web_sys::FileList,
+    attachments: RwSignal<Vec<Attachment>>,
+    toast: crate::components::toast::ToastStore,
+) {
+    for i in 0..files.length() {
+        let Some(file) = files.get(i) else { continue };
+        if attachments.with(|v| v.len()) >= MAX_ATTACHMENTS {
+            toast.error(format!("attachment limit is {MAX_ATTACHMENTS}"));
+            return;
+        }
+        read_attachment_file(&file, attachments, toast);
+    }
+}
+
+/// `<input type=file>` `change` → stage the selection, then reset the
+/// input so picking the same file twice still fires.
+#[cfg(feature = "hydrate")]
+fn stage_picked(
+    ev: &web_sys::Event,
+    attachments: RwSignal<Vec<Attachment>>,
+    toast: crate::components::toast::ToastStore,
+) {
+    use wasm_bindgen::JsCast;
+    let input = ev
+        .target()
+        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok());
+    if let Some(input) = input {
+        if let Some(files) = input.files() {
+            stage_files(files, attachments, toast);
+        }
+        input.set_value("");
+    }
+}
+#[cfg(not(feature = "hydrate"))]
+fn stage_picked(
+    _ev: &leptos::ev::Event,
+    _attachments: RwSignal<Vec<Attachment>>,
+    _toast: crate::components::toast::ToastStore,
+) {
+}
+
+/// Textarea `paste` → stage clipboard files (screenshots land as
+/// `image/*`). A file-bearing paste eats the default so the image
+/// doesn't also dump a name into the draft.
+#[cfg(feature = "hydrate")]
+fn stage_pasted(
+    ev: &leptos::ev::ClipboardEvent,
+    attachments: RwSignal<Vec<Attachment>>,
+    toast: crate::components::toast::ToastStore,
+) {
+    let Some(data) = ev.clipboard_data() else {
+        return;
+    };
+    let Some(files) = data.files() else { return };
+    if files.length() == 0 {
+        return;
+    }
+    ev.prevent_default();
+    stage_files(files, attachments, toast);
+}
+#[cfg(not(feature = "hydrate"))]
+fn stage_pasted(
+    _ev: &leptos::ev::ClipboardEvent,
+    _attachments: RwSignal<Vec<Attachment>>,
+    _toast: crate::components::toast::ToastStore,
+) {
+}
+
 /// The prompt composer — multiline textarea (Enter sends, Shift+Enter
-/// adds a newline) that auto-grows to ~10 lines in the browser, plus a
-/// footer strip with the session's `cwd`/model as context chips and the
-/// send button. `cwd` is display-only: the node's `/api/fs` listing
-/// exists but no `NodeApi` port method reaches it, so there's no picker
-/// to drive. `model` is likewise display-only — `send_prompt` takes no
-/// model argument. `queued`/`failed` are this session's outbox counts,
-/// surfaced as a one-line note while writes wait on a down node.
+/// adds a newline) that auto-grows to ~10 lines in the browser;
+/// staged attachment chips above it (paste an image or pick files —
+/// both land as ACP content blocks on `{text, attachments}`); a footer
+/// strip with the session's `cwd` chip, an editable model override
+/// (`patch_meta {model}` — the wire carries no per-agent model list,
+/// so it's a free-text field rather than a select; empty restores the
+/// agent default), an attach button, and send. `queued`/`failed` are
+/// this session's outbox counts, surfaced while writes wait on a down
+/// node.
 #[component]
+#[allow(clippy::too_many_arguments)]
 fn PromptBox(
     draft: RwSignal<String>,
     sending: RwSignal<bool>,
-    send_error: RwSignal<Option<String>>,
+    attachments: RwSignal<Vec<Attachment>>,
     cwd: String,
+    /// The session's meta `model` — the input's baseline; a local edit
+    /// overrides it until the next refetch.
     model: Option<String>,
+    session_id: String,
+    agent: Option<String>,
+    /// Re-fetch the summary after a model patch lands.
+    on_model_changed: impl Fn() + 'static + Send + Sync + Copy,
     queued: usize,
     failed: usize,
     submit: impl Fn() + 'static + Send + Sync + Copy,
 ) -> impl IntoView {
+    let toast = use_toast();
+    let file_ref = NodeRef::<leptos::html::Input>::new();
+    // `None` = no local edit — the input mirrors the wire's `model`.
+    let model_draft: RwSignal<Option<String>> = RwSignal::new(None);
+    let wire_model = model.clone().unwrap_or_default();
+    // Cloned for each binding — the closure captures owned Strings
+    // (session id / agent / wire model), so it's `Clone`, not `Copy`.
+    let commit_model = move || {
+        let Some(raw) = model_draft.get_untracked() else {
+            return;
+        };
+        model_draft.set(None);
+        let v = raw.trim().to_string();
+        // A no-op commit (unchanged text) skips the PATCH.
+        if v == wire_model {
+            return;
+        }
+        let next = (!v.is_empty()).then_some(v);
+        let ok = match &next {
+            Some(m) => format!("Model set to {m}"),
+            None => "Model reset to agent default".to_string(),
+        };
+        let id = session_id.clone();
+        let agent = agent.clone();
+        leptos::task::spawn_local(async move {
+            if toast
+                .outcome(set_session_model(id, agent, next).await, ok)
+                .is_some()
+            {
+                on_model_changed();
+            }
+        });
+    };
+    let commit_model_enter = commit_model.clone();
     // Enter sends; Shift+Enter inserts a newline.
     let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
         if ev.key() == "Enter" && !ev.shift_key() {
@@ -1722,7 +1986,6 @@ fn PromptBox(
     }
     view! {
         <div class="space-y-2">
-            {move || send_error.get().map(|e| view! { <ErrorBanner message=e/> })}
             {(queued > 0).then(|| {
                 view! {
                     <p class="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1744,12 +2007,49 @@ fn PromptBox(
                     </p>
                 }
             })}
+            {move || {
+                let items = attachments.get();
+                (!items.is_empty()).then(|| {
+                    view! {
+                        <div data-name="AttachmentStrip" class="flex flex-wrap items-center gap-1.5">
+                            {items
+                                .iter()
+                                .enumerate()
+                                .map(|(i, a)| {
+                                    let label = attachment_label(a);
+                                    let tip = label.clone();
+                                    view! {
+                                        <span class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                                            <span class="max-w-40 truncate" title=tip>
+                                                {label}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                aria-label="Remove attachment"
+                                                class="hover:text-foreground"
+                                                on:click=move |_| {
+                                                    attachments.update(|v| {
+                                                        v.remove(i);
+                                                    });
+                                                }
+                                            >
+                                                "✕"
+                                            </button>
+                                        </span>
+                                    }
+                                })
+                                .collect::<Vec<_>>()}
+                        </div>
+                    }
+                })
+            }}
             <textarea
                 class=TEXTAREA_CLASS
                 placeholder="Message the agent…  (Enter to send, Shift+Enter for newline)"
                 prop:value=move || draft.get()
                 on:input=move |ev| draft.set(event_target_value(&ev))
                 on:keydown=on_keydown
+                on:paste=move |ev| stage_pasted(&ev, attachments, toast)
                 rows=3
                 node_ref=area_ref
             ></textarea>
@@ -1765,22 +2065,59 @@ fn PromptBox(
                         </code>
                     }
                 })}
-                {model.map(|m| {
-                    view! {
-                        <span
-                            class="shrink-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
-                            title="model"
-                        >
-                            {m}
-                        </span>
+                <input
+                    type="text"
+                    data-name="ModelInput"
+                    class="w-28 min-w-0 shrink rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground placeholder:text-muted-foreground/50 focus-visible:outline-2 focus-visible:outline-ring"
+                    placeholder="agent default"
+                    title="Model override — clear to restore the agent default"
+                    maxlength="100"
+                    prop:value=move || {
+                        model_draft.get().unwrap_or_else(|| model.clone().unwrap_or_default())
                     }
-                })}
+                    on:input=move |ev| model_draft.set(Some(event_target_value(&ev)))
+                    on:change=move |_| commit_model()
+                    on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                        if ev.key() == "Enter" {
+                            ev.prevent_default();
+                            commit_model_enter();
+                        }
+                    }
+                />
+                <span data-name="AttachButton">
+                    <Button
+                        variant=ButtonVariant::Ghost
+                        size=ButtonSize::Sm
+                        class="shrink-0 px-2"
+                        on_click=Box::new(move || {
+                            if let Some(el) = file_ref.get() {
+                                el.click();
+                            }
+                        })
+                    >
+                        "Attach"
+                    </Button>
+                </span>
+                // Hidden picker — the visible trigger is the Attach
+                // button; markup identical SSR/hydrate, the handlers
+                // are hydrate-only behavior.
+                <input
+                    node_ref=file_ref
+                    type="file"
+                    multiple=true
+                    class="hidden"
+                    data-name="AttachmentInput"
+                    on:change=move |ev| stage_picked(&ev, attachments, toast)
+                />
                 <span class="ml-auto hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
                     "Shift+Enter for newline"
                 </span>
                 <Button
                     size=ButtonSize::Sm
-                    disabled=move || sending.get() || draft.read().trim().is_empty()
+                    disabled=move || {
+                        sending.get()
+                            || (draft.read().trim().is_empty() && attachments.read().is_empty())
+                    }
                     on_click=Box::new(submit)
                 >
                     {move || if sending.get() { "Sending…" } else { "Send" }}
@@ -1963,18 +2300,15 @@ fn CheckpointRow(
     on_changed: impl Fn() + 'static + Send + Sync + Copy,
 ) -> impl IntoView {
     let busy = RwSignal::new(false);
-    let error: RwSignal<Option<String>> = RwSignal::new(None);
-    let done: RwSignal<Option<&'static str>> = RwSignal::new(None);
     let confirm_restore = RwSignal::new(false);
     let confirm_rewind = RwSignal::new(false);
     let checkpoint_ref = checkpoint.r#ref.clone();
+    let toast = use_toast();
     let run = move |op: &'static str| {
         if busy.get() {
             return;
         }
         busy.set(true);
-        error.set(None);
-        done.set(None);
         let id = session_id.clone();
         let agent = agent.clone();
         let checkpoint = checkpoint_ref.clone();
@@ -1984,16 +2318,18 @@ fn CheckpointRow(
             } else {
                 rewind_session(id, agent, checkpoint).await
             };
-            match result {
-                Ok(()) => {
-                    done.set(Some(if op == "restore" {
+            if toast
+                .outcome(
+                    result,
+                    if op == "restore" {
                         "Restored."
                     } else {
                         "Rewound."
-                    }));
-                    on_changed();
-                }
-                Err(e) => error.set(Some(e.to_string())),
+                    },
+                )
+                .is_some()
+            {
+                on_changed();
             }
             busy.set(false);
         });
@@ -2026,8 +2362,6 @@ fn CheckpointRow(
                     }}
                 </span>
             </div>
-            {move || error.get().map(|e| view! { <ErrorBanner message=e/> })}
-            {move || done.get().map(|d| view! { <p class="text-sm text-success">{d}</p> })}
             <div class="flex items-center gap-2">
                 <Button
                     variant=ButtonVariant::Outline

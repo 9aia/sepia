@@ -74,9 +74,12 @@ Missing (queued next):
       ✓ reasoning blocks, ✓ scroller pin + "Jump to bottom", ✓ code-fence
       lang badge + copy button. Left: real syntax highlighting (needs a
       highlight crate)
-- [~] Prompt input — ✓ auto-grow textarea, Shift+Enter hint, cwd/model
-      chips, queued-write note. Deferred: real cwd autocomplete needs a
-      node fs-list port; model picker needs models on the agent DTO.
+- [~] Prompt input — ✓ auto-grow textarea, Shift+Enter hint, cwd chip,
+      editable model input (`patch_meta {model}`, empty = agent
+      default), attach button + image/file paste → ACP blocks,
+      queued-write note. Deferred: real cwd autocomplete needs a node
+      fs-list port; a model *select* needs models on the agent DTO
+      (the wire advertises none — free-text field today).
 - [x] Theme toggle — light/dark/system (`sepia-theme` localStorage +
       `use_media_query`, `.light` Catppuccin Latte token block, toggle
       in sidebar + mobile topbar; prose is `dark:prose-invert`)
@@ -112,13 +115,18 @@ User-visible breakage:
 
 Missing features (wire-supported but no UI):
 
-- [ ] Session convert/export/import/resume (`/convert`, `/export`,
-      `/import` exist on the node API; `sepia-convert` crate exists —
-      unwired)
+- [x] Session convert/export/import — details-sheet "Convert /
+      Export" section (`POST /convert` → `{agent: cline|devin}`, then
+      navigates to the copy; export is a plain `<a download>` through
+      the hub `/api/*` passthrough); "Import session…" card under the
+      new-session form (file → `POST /api/sessions/import`). Resume:
+      no node endpoint exists — skipped.
 - [x] Archive/unarchive — row-menu item via `patch_meta`; archived
       rows hide behind a "Show archived (N)" list-bottom toggle
-- [ ] Prompt attachments — node accepts `{text?, attachments?}`;
-      composer sends text only
+- [x] Prompt attachments — paste/drop images or pick files (≤16
+      blocks, ≤8MiB base64, node's caps); `image/*` → ACP `image`
+      parts, other files → `resource` blob parts; chips above the
+      textarea with ×-remove; attachments send with or without text
 - [ ] Reply/quote + per-message copy/rewind actions
 - [x] Usage footer — `HistoryMessageDto` decodes `usage`; assistant
       rows render ↑in/↓out/cost with cache+thinking on hover
@@ -130,8 +138,10 @@ Missing features (wire-supported but no UI):
       out of groups); Recents deferred — duplicating rows across
       sections breaks the one-row-one-section invariant the arrow-key
       order + e2e row anchors rely on
-- [ ] Per-session model picker (`patch_meta model` unwired; read-only
-      chip today)
+- [x] Per-session model override — the composer footer chip is now an
+      editable input: commit → `PATCH {model: "…"}`, clear →
+      `{model: null}` (agent default). No model *list* — the wire
+      advertises none on `AgentDto`
 - [x] Per-tool renderers + live diffs — exec/read/edit/search/fetch/
       todo summaries, DiffBlock for recorded diffs, location chips,
       `contents` segments (`sepia-web-core::history::tool_summary`)
@@ -159,11 +169,11 @@ Missing features (wire-supported but no UI):
       identical back-to-back rows; virtualized list still open
 - [~] Markdown parity — ✓ GFM tables (`MdBlock::Table`, alignment,
       inline cells); syntax highlighting + mermaid still open
-- [~] Toasts on mutation success — done on settings/projects/nodes
-      (create/delete project, config-set, pair, node rename, notify
-      prefs); `ToastStore::outcome` helper is in `components.rs` for
-      the session ops (rename/pin/delete/restore/rewind) which live in
-      session_list/session_detail and await that workstream
+- [x] Toasts on mutation success — `ToastStore::outcome` adopted
+      across the session surfaces: attach/detach/cancel/rename/delete/
+      convert (detail), pin/archive/rename/delete (list rows), restore/
+      rewind (checkpoint rows), model patch, import, attachment-stage
+      failures; prompt-send failures toast too
 - [~] a11y — ✓ Sheet/ConfirmDialog: `role=dialog` + `aria-modal` +
       `aria-labelledby`/`aria-label`, initial focus + return-focus +
       Esc (`track_overlay_focus`; no full Tab trap — leptos-use 0.19
