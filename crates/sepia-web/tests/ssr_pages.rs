@@ -58,18 +58,67 @@ fn assert_contains(html: &str, needle: &str) {
 #[tokio::test]
 async fn session_list_renders_titles_badges_and_groups() {
     let html = page("/", FakeNodeApi::seeded().shared()).await;
-    for title in ["Fix flaky login spec", "Locked refactor plan", "Docs sweep"] {
+    for title in [
+        "Fix flaky login spec",
+        "Locked refactor plan",
+        "Docs sweep",
+        "Keep me on top",
+        "Scan test matrix",
+    ] {
         assert_contains(&html, title);
     }
     // Count line + cwd group headings (last path segment per group).
-    assert_contains(&html, "3 sessions");
+    // The archived `s5` is hidden — 5 of 6 seeded rows show.
+    assert_contains(&html, "5 sessions");
     assert_contains(&html, "acme-api");
     assert_contains(&html, "docs-site");
+    // The pinned row sits in its own section above the groups.
+    assert_contains(&html, "Pinned");
+    // The seeded sub-agent row carries the `↳` marker, and its
+    // parent shows the child count.
+    assert_contains(&html, "data-name=\"SubAgentMark\"");
+    assert_contains(&html, "data-name=\"ChildCount\"");
+    // Archived rows hide until the toggle; the toggle advertises N.
+    assert!(!html.contains("Stale spike"));
+    assert_contains(&html, "Show archived (1)");
     // Status chips from the seeded flags.
     assert_contains(&html, ">busy<");
     assert_contains(&html, ">locked<");
     // The empty chat pane shows its placeholder on lg+.
     assert_contains(&html, "Select a session");
+}
+
+#[tokio::test]
+async fn session_list_deep_link_applies_filter_params() {
+    // `?q=` seeds the filter — SSR renders only the matching rows.
+    let html = page("/?q=docs", FakeNodeApi::seeded().shared()).await;
+    assert_contains(&html, "Docs sweep");
+    assert!(!html.contains("Fix flaky login spec"));
+    // `agents=` + `archived=1` — multi-select and the archive
+    // toggle both decode.
+    let html = page("/?agents=claude&archived=1", FakeNodeApi::seeded().shared()).await;
+    assert_contains(&html, "Locked refactor plan");
+    assert_contains(&html, "Keep me on top");
+    assert!(!html.contains("Docs sweep"));
+    // Archived rows appear when `archived=1` — and carry the badge.
+    let html = page("/?agents=devin&archived=1", FakeNodeApi::seeded().shared()).await;
+    assert_contains(&html, "Stale spike");
+    assert_contains(&html, ">archived<");
+    // A recency param narrows to `updated_at` inside the window;
+    // seeded rows are old, so `?recency=day` empties the list.
+    let html = page("/?recency=day", FakeNodeApi::seeded().shared()).await;
+    assert_contains(&html, "No sessions match.");
+}
+
+#[tokio::test]
+async fn session_list_filter_bar_renders_new_controls() {
+    let html = page("/", FakeNodeApi::seeded().shared()).await;
+    // Agent multi-select dropdown + recency chips + group headers.
+    assert_contains(&html, "data-name=\"AgentFilter\"");
+    assert_contains(&html, "all agents");
+    assert_contains(&html, "data-name=\"RecencyFilter\"");
+    assert_contains(&html, "data-name=\"GroupHeader\"");
+    assert_contains(&html, "data-name=\"GroupMenu\"");
 }
 
 #[tokio::test]

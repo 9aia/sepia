@@ -7,7 +7,7 @@
 //! `/api/events` says a session row changed, and on a 30s ticker
 //! (relative timestamps).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -15,18 +15,22 @@ use leptos_router::NavigateOptions;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_query_map};
 #[cfg(feature = "hydrate")]
-use sepia_web_core::filter::visible_keys;
+use sepia_web_core::filter::query_href;
 use sepia_web_core::filter::{
-    ALL_AGENTS, CollapsedGroups, SessionFilter, SessionRow, SortMode, StatusFilter, agent_options,
-    group_open, session_href,
+    CollapsedGroups, PINNED_KEY, Recency, SectionKind, SessionFilter, SessionRow, SortMode,
+    StatusFilter, agent_options, child_counts, group_open, session_href_filtered,
 };
+#[cfg(feature = "hydrate")]
+use sepia_web_core::filter::{fold_keys, session_href, visible_keys};
 #[cfg(feature = "hydrate")]
 use sepia_web_core::keymap::{self, KeyCtx, Mods, NavDir};
 use sepia_web_core::path::{complete_path, non_empty, path_parts};
 
 #[cfg(feature = "hydrate")]
 use crate::api::list_agents;
-use crate::api::{create_session, delete_session, fs_dirs, pin_session, rename_session};
+use crate::api::{
+    archive_session, create_session, delete_session, fs_dirs, pin_session, rename_session,
+};
 use crate::app::Now;
 #[cfg(feature = "hydrate")]
 use crate::app::in_editable;
@@ -51,6 +55,9 @@ const MENU_ITEM_DESTRUCTIVE_CLS: &str = "flex w-full items-center rounded-sm px-
 /// `None` while the menu is closed.
 type MenuTarget = Option<(String, Option<String>, f64, f64)>;
 
+/// Group-header context-menu state — `(section key, clientX, clientY)`.
+type GroupMenuTarget = Option<(String, f64, f64)>;
+
 #[component]
 pub fn SessionListPage() -> impl IntoView {
     let client = crate::api::query_client();
@@ -72,13 +79,34 @@ pub fn SessionListPage() -> impl IntoView {
     };
     let selected_id: Signal<Option<String>> = Signal::derive(move || selected().map(|(id, _)| id));
 
-    // Filter/sort/grouping state — all client-side. Defaults render the
-    // identical DOM on SSR and first hydration; every divergence is
-    // applied reactively afterwards.
-    let filter_text = RwSignal::new(String::new());
-    let sort_mode = RwSignal::new(SortMode::default());
-    let status_filter = RwSignal::new(StatusFilter::default());
-    let agent_filter = RwSignal::new(ALL_AGENTS.to_string());
+    // Filter/sort state — seeded from the `?…` params so deep links
+    // and reloads land on the same list. Both targets read the same
+    // URL at setup, so SSR and first hydration emit identical DOM;
+    // post-mount, an Effect writes changes back with `replace`.
+    let initial_filter = SessionFilter::from_params(|k| query.read_untracked().get(k));
+    let filter_text = RwSignal::new(initial_filter.query.clone());
+    let sort_mode = RwSignal::new(initial_filter.sort);
+    let status_filter = RwSignal::new(initial_filter.status);
+    let agent_filter = RwSignal::new(initial_filter.agents.clone());
+    let recency_filter = RwSignal::new(initial_filter.recency);
+    let show_archived = RwSignal::new(initial_filter.show_archived);
+    // The whole filter bar as one value — shared by the rendered
+    // list, the arrow-key order, the row hrefs, and the URL sync.
+    let current_filter = move || SessionFilter {
+        query: filter_text.get(),
+        status: status_filter.get(),
+        agents: agent_filter.get(),
+        sort: sort_mode.get(),
+        recency: recency_filter.get(),
+        show_archived: show_archived.get(),
+    };
+    // The `Now` clock feeds the recency window (30s ticker on the
+    // client, request-time snapshot during SSR).
+    let now = use_context::<Now>();
+    let now_ms = move || now.map_or_else(crate::time::now_ms, |n| n.0.get());
+    // Prefill for the new-session form's cwd field — "New session
+    // here" in the group menu writes it.
+    let new_cwd = RwSignal::new(String::new());
     // `⌘B` hides the list column (desktop only — `lg:hidden`).
     let list_collapsed = RwSignal::new(false);
     // Cwds of collapsed project groups. Starts empty (all sections
@@ -96,6 +124,9 @@ pub fn SessionListPage() -> impl IntoView {
     // `(session id, agent, clientX, clientY)`, `None` when closed.
     let menu_for: RwSignal<MenuTarget> = RwSignal::new(None);
     let menu_ref = NodeRef::<leptos::html::Div>::new();
+    // Group-header context menu — same pattern, keyed by section.
+    let group_menu: RwSignal<GroupMenuTarget> = RwSignal::new(None);
+    let group_menu_ref = NodeRef::<leptos::html::Div>::new();
     // Inline rename — the id whose row title is swapped for an input.
     let renaming: RwSignal<Option<String>> = RwSignal::new(None);
     let rename_draft = RwSignal::new(String::new());
@@ -139,18 +170,25 @@ pub fn SessionListPage() -> impl IntoView {
     });
 
     // Ordered `(id, agent)` of the rows currently on screen —
-    // filtered, sorted, grouped, and with collapsed sections skipped —
-    // so ArrowUp/ArrowDown can move the `?session=` selection.
+    // filtered, sorted, sectioned, and with collapsed sections
+    // skipped — so ArrowUp/ArrowDown can move the `?session=`
+    // selection.
     #[cfg(feature = "hydrate")]
     let visible_order = move || -> Vec<(String, String)> {
         let filter = SessionFilter {
             query: filter_text.get_untracked(),
             status: status_filter.get_untracked(),
-            agent: agent_filter.get_untracked(),
+            agents: agent_filter.get_untracked(),
             sort: sort_mode.get_untracked(),
+            recency: recency_filter.get_untracked(),
+            show_archived: show_archived.get_untracked(),
         };
-        let groups = filter.groups(all_sessions.get_untracked());
-        visible_keys(&groups, &closed_groups.get_untracked(), filter.force_open())
+        let sections = filter.sections(all_sessions.get_untracked(), now_ms());
+        visible_keys(
+            &sections,
+            &closed_groups.get_untracked(),
+            filter.force_open(),
+        )
     };
 
     // Refresh when the node feed reports a session/meta/project change.
@@ -161,10 +199,46 @@ pub fn SessionListPage() -> impl IntoView {
             pending.refetch();
         }));
         crate::app::every_ms(30_000, move || pending.refetch());
-        // Clicking anywhere outside the menu closes it (the right-click
-        // that opens it precedes `contextmenu`, not a `click`, so it
-        // can't immediately re-close).
+        // Clicking anywhere outside the menus closes them (the
+        // right-click that opens one precedes `contextmenu`, not a
+        // `click`, so it can't immediately re-close).
         let _outside = leptos_use::on_click_outside(menu_ref, move |_| menu_for.set(None));
+        let _outside2 = leptos_use::on_click_outside(group_menu_ref, move |_| group_menu.set(None));
+    }
+
+    // Filter bar → URL. First run is adoption (the params already
+    // seeded the signals); later runs `replace` so typing a query
+    // doesn't flood history. `session`/`agent` are preserved — the
+    // selection isn't the filter's to drop.
+    #[cfg(feature = "hydrate")]
+    {
+        let mut init = true;
+        Effect::new(move |_| {
+            let f = current_filter();
+            if std::mem::replace(&mut init, false) {
+                return;
+            }
+            let q = query.read_untracked();
+            let mut pairs = Vec::new();
+            if let Some(s) = q.get("session") {
+                pairs.push(("session".to_string(), s));
+            }
+            if let Some(a) = q.get("agent") {
+                pairs.push(("agent".to_string(), a));
+            }
+            pairs.extend(f.query_params());
+            let href = query_href("/", &pairs);
+            navigate.with_value(|n| {
+                n(
+                    &href,
+                    NavigateOptions {
+                        replace: true,
+                        scroll: false,
+                        ..NavigateOptions::default()
+                    },
+                );
+            });
+        });
     }
 
     // Persist collapsed groups in localStorage. The Effect's first run
@@ -214,7 +288,8 @@ pub fn SessionListPage() -> impl IntoView {
                 let ctx = KeyCtx {
                     typing: in_editable(&ev),
                     filter_focused,
-                    menu_open: menu_for.get_untracked().is_some(),
+                    menu_open: menu_for.get_untracked().is_some()
+                        || group_menu.get_untracked().is_some(),
                     ..KeyCtx::default()
                 };
                 let Some(action) = keymap::resolve_key(&ev.key(), mods, ctx) else {
@@ -242,7 +317,10 @@ pub fn SessionListPage() -> impl IntoView {
                     // blur the focused filter, otherwise drop the
                     // `?session=` selection. (The inline rename input
                     // stops propagation on its own Escape.)
-                    keymap::Action::CloseMenu => menu_for.set(None),
+                    keymap::Action::CloseMenu => {
+                        menu_for.set(None);
+                        group_menu.set(None);
+                    }
                     keymap::Action::ClearFilter => {
                         filter_text.set(String::new());
                         if let Some(el) = filter_input_ref.get() {
@@ -270,8 +348,36 @@ pub fn SessionListPage() -> impl IntoView {
                             navigate(&session_href(id, agent), NavigateOptions::default());
                         }
                     }
+                    // `←`/`→` — fold/unfold the selected row's
+                    // section, or every section with no selection.
+                    keymap::Action::FoldGroup | keymap::Action::UnfoldGroup => {
+                        let filter = SessionFilter {
+                            query: filter_text.get_untracked(),
+                            status: status_filter.get_untracked(),
+                            agents: agent_filter.get_untracked(),
+                            sort: sort_mode.get_untracked(),
+                            recency: recency_filter.get_untracked(),
+                            show_archived: show_archived.get_untracked(),
+                        };
+                        let sections = filter.sections(all_sessions.get_untracked(), now_ms());
+                        let selected = selected_id.get_untracked();
+                        let keys = fold_keys(&sections, selected.as_deref());
+                        let fold = action == keymap::Action::FoldGroup;
+                        closed_groups.update(|cg| {
+                            // Unfold-all clears outright — it also
+                            // prunes keys whose cwd left the list.
+                            if !fold && selected.is_none() {
+                                cg.clear();
+                            }
+                            for key in keys {
+                                cg.set_closed(&key, fold);
+                            }
+                        });
+                    }
                     // Owned by the shell listener (`app.rs`).
-                    keymap::Action::ToggleHelp | keymap::Action::CloseHelp => {}
+                    keymap::Action::ToggleHelp
+                    | keymap::Action::CloseHelp
+                    | keymap::Action::OpenSettings => {}
                 }
             },
         );
@@ -301,14 +407,18 @@ pub fn SessionListPage() -> impl IntoView {
                 <div class="border-b p-3">
                     <NewSessionForm
                         cwd_ref=cwd_input_ref
+                        cwd=new_cwd
                         on_created=move || sessions.refetch()
                     />
                 </div>
                 // Filter bar — client-side only. The agent options read
                 // `all_sessions`, which is empty until the Suspend below
                 // resolves, so SSR and first hydration emit the same
-                // single "all agents" option (like the agent select in
-                // NewSessionForm).
+                // empty checkbox list (like the agent select in
+                // NewSessionForm). `.into_any()` caps this joint's
+                // view-type depth like the layout joints above.
+                {
+                    view! {
                 <div class="border-b p-2">
                     <div class="flex flex-col gap-1.5">
                         // `{..}` marks everything after it as spread
@@ -345,25 +455,47 @@ pub fn SessionListPage() -> impl IntoView {
                                 <option value="free">"free"</option>
                                 <option value="locked">"locked"</option>
                             </select>
-                            <select
-                                class=format!("{SELECT_CLASS} flex-1")
-                                prop:value=move || agent_filter.get()
-                                on:change=move |ev| agent_filter.set(event_target_value(&ev))
-                            >
-                                <option value="all">"all agents"</option>
-                                {move || {
-                                    agent_options(&all_sessions.read())
-                                        .into_iter()
-                                        .map(|a| {
-                                            let label = a.clone();
-                                            view! { <option value=a>{label}</option> }
-                                        })
-                                        .collect::<Vec<_>>()
-                                }}
-                            </select>
+                            <AgentFilter rows=all_sessions selected=agent_filter/>
+                        </div>
+                        // Recency chips — fixed 24h/7d/30d windows on
+                        // `updated_at`.
+                        <div class="flex gap-1" data-name="RecencyFilter">
+                            {[
+                                (Recency::Any, "any"),
+                                (Recency::Day, "24h"),
+                                (Recency::Week, "7d"),
+                                (Recency::Month, "30d"),
+                            ]
+                                .into_iter()
+                                .map(|(r, label)| {
+                                    view! {
+                                        <button
+                                            type="button"
+                                            data-name="RecencyChip"
+                                            attr:data-active=move || {
+                                                (recency_filter.get() == r).then_some("")
+                                            }
+                                            class=move || {
+                                                let base = "rounded-md border px-2 py-0.5 text-[11px]";
+                                                if recency_filter.get() == r {
+                                                    format!("{base} border-border bg-accent text-foreground")
+                                                } else {
+                                                    format!("{base} border-transparent text-muted-foreground hover:text-foreground")
+                                                }
+                                            }
+                                            on:click=move |_| recency_filter.set(r)
+                                        >
+                                            {label}
+                                        </button>
+                                    }
+                                })
+                                .collect::<Vec<_>>()}
                         </div>
                     </div>
                 </div>
+                    }
+                    .into_any()
+                }
                 <div class="flex-1 overflow-y-auto p-2">
                     {
                         // View-type erasure — the nested Suspense tree
@@ -424,33 +556,43 @@ pub fn SessionListPage() -> impl IntoView {
                                         // arrow-key order (same value on
                                         // SSR and hydrate).
                                         all_sessions.set(list.clone());
-                                        let total = list.len();
                                         view! {
                                             {move || {
-                                                let filter = SessionFilter {
-                                                    query: filter_text.get(),
-                                                    status: status_filter.get(),
-                                                    agent: agent_filter.get(),
-                                                    sort: sort_mode.get(),
-                                                };
-                                                let groups = filter.groups(list.clone());
+                                                let filter = current_filter();
+                                                let sections =
+                                                    filter.sections(list.clone(), now_ms());
                                                 let shown: usize =
-                                                    groups.iter().map(|g| g.rows.len()).sum();
+                                                    sections.iter().map(|s| s.rows.len()).sum();
+                                                // Hidden archived rows count
+                                                // against the heading's "of M"
+                                                // only while shown.
+                                                let total = list
+                                                    .iter()
+                                                    .filter(|s| {
+                                                        filter.show_archived || !s.archived
+                                                    })
+                                                    .count();
+                                                let archived_total =
+                                                    list.iter().filter(|s| s.archived).count();
                                                 // A text filter force-expands
                                                 // every section.
                                                 let force_open = filter.force_open();
                                                 let heading = filter.heading(shown, total);
-                                                let sections = groups
+                                                let kids = child_counts(&list);
+                                                let row_filter = filter.clone();
+                                                let sections = sections
                                                     .into_iter()
-                                                    .map(|group| {
-                                                        let count = group.rows.len();
-                                                        let label = group.label.clone();
+                                                    .map(|section| {
+                                                        let count = section.rows.len();
+                                                        let label = section.label.clone();
+                                                        let pinned_hdr =
+                                                            section.kind == SectionKind::Pinned;
                                                         // Class-driven collapse —
                                                         // the signal flips the
                                                         // `<ul>` class without
                                                         // re-rendering the rows.
                                                         let closed = Signal::derive({
-                                                            let key = group.key.clone();
+                                                            let key = section.key.clone();
                                                             move || {
                                                                 !group_open(
                                                                     &key,
@@ -459,12 +601,17 @@ pub fn SessionListPage() -> impl IntoView {
                                                                 )
                                                             }
                                                         });
-                                                        let toggle_key = group.key.clone();
-                                                        let rows = group
+                                                        let toggle_key = section.key.clone();
+                                                        let menu_key = section.key.clone();
+                                                        let rows = section
                                                             .rows
                                                             .into_iter()
                                                             .map(|s| {
                                                                 let (queued, failed) = writes
+                                                                    .get(&s.id)
+                                                                    .copied()
+                                                                    .unwrap_or_default();
+                                                                let children = kids
                                                                     .get(&s.id)
                                                                     .copied()
                                                                     .unwrap_or_default();
@@ -476,9 +623,17 @@ pub fn SessionListPage() -> impl IntoView {
                                                                             .as_deref()
                                                                             == Some(row_id.as_str())
                                                                     });
+                                                                let href =
+                                                                    session_href_filtered(
+                                                                        &row_filter,
+                                                                        &s.id,
+                                                                        &s.agent,
+                                                                    );
                                                                 view! {
                                                                     <SessionRowView
                                                                         session=s
+                                                                        href=href
+                                                                        children=children
                                                                         queued=queued
                                                                         failed=failed
                                                                         selected=is_selected
@@ -496,11 +651,20 @@ pub fn SessionListPage() -> impl IntoView {
                                                             <section>
                                                                 <button
                                                                     type="button"
+                                                                    data-name="GroupHeader"
                                                                     class="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                                                                     on:click=move |_| {
                                                                         closed_groups.update(|v| {
                                                                             v.toggle(&toggle_key);
                                                                         });
+                                                                    }
+                                                                    on:contextmenu=move |ev| {
+                                                                        ev.prevent_default();
+                                                                        group_menu.set(Some((
+                                                                            menu_key.clone(),
+                                                                            f64::from(ev.client_x()),
+                                                                            f64::from(ev.client_y()),
+                                                                        )));
                                                                     }
                                                                 >
                                                                     <span class="inline-block w-3 shrink-0">
@@ -508,6 +672,14 @@ pub fn SessionListPage() -> impl IntoView {
                                                                             if closed.get() { "▸" } else { "▾" }
                                                                         }}
                                                                     </span>
+                                                                    {pinned_hdr.then(|| {
+                                                                        view! {
+                                                                            <Icon
+                                                                                name="pin"
+                                                                                class="size-3 shrink-0"
+                                                                            />
+                                                                        }
+                                                                    })}
                                                                     <span class="min-w-0 truncate">
                                                                         {label}
                                                                     </span>
@@ -553,6 +725,32 @@ pub fn SessionListPage() -> impl IntoView {
                                                         {heading}
                                                     </p>
                                                     {body}
+                                                    // Archived rows are hidden
+                                                    // by default; the toggle
+                                                    // widens the list, it
+                                                    // doesn't filter it.
+                                                    {(archived_total > 0).then(|| {
+                                                        view! {
+                                                            <button
+                                                                type="button"
+                                                                data-name="ArchivedToggle"
+                                                                class="mt-1 w-full rounded-sm px-1.5 py-1 text-left text-[11px] text-muted-foreground hover:text-foreground"
+                                                                on:click=move |_| {
+                                                                    show_archived.update(|v| *v = !*v);
+                                                                }
+                                                            >
+                                                                {move || {
+                                                                    if show_archived.get() {
+                                                                        "Hide archived".to_string()
+                                                                    } else {
+                                                                        format!(
+                                                                            "Show archived ({archived_total})"
+                                                                        )
+                                                                    }
+                                                                }}
+                                                            </button>
+                                                        }
+                                                    })}
                                                 }
                                                     .into_any()
                                             }}
@@ -636,16 +834,21 @@ pub fn SessionListPage() -> impl IntoView {
             >
                 {move || {
                     menu_for.get().map(|(id, agent, _x, _y)| {
-                        let open_href = session_href(&id, agent.as_deref().unwrap_or_default());
+                        let open_href = session_href_filtered(
+                            &current_filter(),
+                            &id,
+                            agent.as_deref().unwrap_or_default(),
+                        );
                         let detail_href = match &agent {
                             Some(a) => format!("/sessions/{id}?agent={a}"),
                             None => format!("/sessions/{id}"),
                         };
-                        let pinned_now = all_sessions
+                        let (pinned_now, archived_now) = all_sessions
                             .read()
                             .iter()
                             .find(|s| s.id == id)
-                            .is_some_and(|s| s.pinned);
+                            .map(|s| (s.pinned, s.archived))
+                            .unwrap_or_default();
                         view! {
                             <button
                                 type="button"
@@ -708,6 +911,28 @@ pub fn SessionListPage() -> impl IntoView {
                             <button
                                 type="button"
                                 role="menuitem"
+                                class=MENU_ITEM_CLS
+                                on:click={
+                                    let id = id.clone();
+                                    let agent = agent.clone();
+                                    move |_| {
+                                        menu_for.set(None);
+                                        let id = id.clone();
+                                        let agent = agent.clone();
+                                        leptos::task::spawn_local(async move {
+                                            match archive_session(id, agent, !archived_now).await {
+                                                Ok(()) => sessions.refetch(),
+                                                Err(e) => toast.error(e.to_string()),
+                                            }
+                                        });
+                                    }
+                                }
+                            >
+                                {if archived_now { "Unarchive" } else { "Archive" }}
+                            </button>
+                            <button
+                                type="button"
+                                role="menuitem"
                                 class=MENU_ITEM_DESTRUCTIVE_CLS
                                 on:click={
                                     let id = id.clone();
@@ -744,6 +969,87 @@ pub fn SessionListPage() -> impl IntoView {
                 }
                 .into_any()
             }
+            // Group-header context menu — collapse/expand the section,
+            // or start a session in its cwd. Same fixed-position
+            // always-rendered pattern as the row menu.
+            {
+                view! {
+            <div
+                node_ref=group_menu_ref
+                role="menu"
+                data-name="GroupMenu"
+                data-open=move || group_menu.read().is_some().then_some("")
+                class=move || {
+                    if group_menu.read().is_some() {
+                        "fixed z-50 w-44 rounded-md border bg-popover p-1 shadow-lg"
+                    } else {
+                        "hidden"
+                    }
+                }
+                style=move || {
+                    group_menu.get().map_or_else(String::new, |(_, x, y)| {
+                        format!(
+                            "left:min({x}px, calc(100vw - 12rem)); top:min({y}px, calc(100vh - 10rem))"
+                        )
+                    })
+                }
+            >
+                {move || {
+                    group_menu.get().map(|(key, _x, _y)| {
+                        let toggle_key = key.clone();
+                        let closed_label = move || {
+                            let open = group_open(
+                                &toggle_key,
+                                &closed_groups.read(),
+                                current_filter().force_open(),
+                            );
+                            if open { "Collapse" } else { "Expand" }
+                        };
+                        // "New session here" needs a real cwd — the
+                        // pinned pseudo-section and the empty-cwd
+                        // group don't offer it.
+                        let can_spawn = key != PINNED_KEY && !key.is_empty();
+                        view! {
+                            <button
+                                type="button"
+                                role="menuitem"
+                                class=MENU_ITEM_CLS
+                                on:click={
+                                    let key = key.clone();
+                                    move |_| {
+                                        group_menu.set(None);
+                                        closed_groups.update(|v| v.toggle(&key));
+                                    }
+                                }
+                            >
+                                {closed_label}
+                            </button>
+                            {can_spawn.then(|| {
+                                let key = key.clone();
+                                view! {
+                                    <button
+                                        type="button"
+                                        role="menuitem"
+                                        class=MENU_ITEM_CLS
+                                        on:click=move |_| {
+                                            group_menu.set(None);
+                                            new_cwd.set(key.clone());
+                                            if let Some(el) = cwd_input_ref.get() {
+                                                let _ = el.focus();
+                                            }
+                                        }
+                                    >
+                                        "New session here"
+                                    </button>
+                                }
+                            })}
+                        }
+                    })
+                }}
+            </div>
+                }
+                .into_any()
+            }
             {
                 view! {
             <ConfirmDialog
@@ -765,6 +1071,12 @@ pub fn SessionListPage() -> impl IntoView {
 #[allow(clippy::needless_pass_by_value)] // component props are owned
 fn SessionRowView(
     session: SessionRow,
+    /// Pre-built `?session=` link — the page appends the live filter
+    /// params so row clicks keep the filter bar in the URL.
+    href: String,
+    /// How many sub-agent sessions name this row as parent — renders
+    /// as a `↳ N` meta marker.
+    children: usize,
     queued: usize,
     failed: usize,
     selected: Signal<bool>,
@@ -782,7 +1094,7 @@ fn SessionRowView(
     } else {
         session.title.clone()
     };
-    let href = session_href(&session.id, &session.agent);
+    let is_sub = session.parent_session_id.is_some();
     let iso = session.updated_at.clone();
     let row_cls = move || {
         if selected.get() {
@@ -895,8 +1207,22 @@ fn SessionRowView(
                                 .into_any()
                         } else {
                             view! {
-                                <span class="min-w-0 truncate text-sm font-medium">
-                                    {title.clone()}
+                                <span class="flex min-w-0 items-center gap-1 text-sm font-medium">
+                                    // `↳` marks sub-agent sessions —
+                                    // the parent id points at the
+                                    // session that spawned them.
+                                    {is_sub.then(|| {
+                                        view! {
+                                            <span
+                                                class="shrink-0 text-muted-foreground"
+                                                title="Sub-agent session"
+                                                data-name="SubAgentMark"
+                                            >
+                                                "↳"
+                                            </span>
+                                        }
+                                    })}
+                                    <span class="min-w-0 truncate">{title.clone()}</span>
                                 </span>
                             }
                                 .into_any()
@@ -937,6 +1263,9 @@ fn SessionRowView(
                                 </Badge>
                             }
                         })}
+                        {session.archived.then(|| {
+                            view! { <Badge variant=BadgeVariant::Muted>"archived"</Badge> }
+                        })}
                     </span>
                 </span>
                 <span class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
@@ -946,6 +1275,17 @@ fn SessionRowView(
                     <span class="min-w-0 truncate [direction:rtl] text-left">
                         {session.cwd.clone()}
                     </span>
+                    {(children > 0).then(|| {
+                        view! {
+                            <span
+                                class="shrink-0"
+                                title="Sub-agent sessions"
+                                data-name="ChildCount"
+                            >
+                                {format!("↳ {children}")}
+                            </span>
+                        }
+                    })}
                     <span class="ml-auto shrink-0">
                         <RelativeTime iso=iso/>
                     </span>
@@ -978,15 +1318,110 @@ fn SessionRowView(
     }
 }
 
+/// Agent multi-select — a `<details>` dropdown of checkboxes over the
+/// resolved list's distinct agents. Empty selection means "all
+/// agents"; the trigger shows the pick count. Same native-details
+/// pattern as `components::Dropdown`, bespoke because the label is
+/// reactive and the items stay open while toggled.
+#[component]
+fn AgentFilter(
+    /// The last resolved session list — options derive from it.
+    rows: RwSignal<Vec<SessionRow>>,
+    /// Selected agent ids (empty = all).
+    selected: RwSignal<BTreeSet<String>>,
+) -> impl IntoView {
+    view! {
+        <details class="group relative flex-1" data-name="AgentFilter">
+            <summary class="list-none cursor-pointer select-none [&::-webkit-details-marker]:hidden">
+                <span class=format!("{SELECT_CLASS} items-center justify-between")>
+                    {move || {
+                        let n = selected.read().len();
+                        if n == 0 {
+                            "all agents".to_string()
+                        } else {
+                            format!("{n} agent{}", if n == 1 { "" } else { "s" })
+                        }
+                    }}
+                    <svg
+                        class="size-3 opacity-60 transition-transform group-open:rotate-180"
+                        viewBox="0 0 12 12"
+                        fill="none"
+                    >
+                        <path
+                            d="M3 4.5L6 7.5L9 4.5"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        />
+                    </svg>
+                </span>
+            </summary>
+            // open: sibling backdrop swallows the outside click
+            <span
+                class="fixed inset-0 z-40 hidden cursor-default group-open:block"
+                onclick="this.parentElement.removeAttribute('open')"
+            ></span>
+            <div class="absolute inset-x-0 z-50 mt-1 max-h-56 overflow-auto rounded-md border bg-popover p-1 text-sm text-popover-foreground shadow-lg">
+                <button
+                    type="button"
+                    class=MENU_ITEM_CLS
+                    on:click=move |_| selected.set(BTreeSet::new())
+                >
+                    "All agents"
+                </button>
+                {move || {
+                    agent_options(&rows.read())
+                        .into_iter()
+                        .map(|a| {
+                            let for_check = a.clone();
+                            let for_toggle = a.clone();
+                            view! {
+                                <label class="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent">
+                                    <input
+                                        type="checkbox"
+                                        class="size-3.5 shrink-0 accent-primary"
+                                        prop:checked={
+                                            let a = for_check.clone();
+                                            move || selected.read().contains(&a)
+                                        }
+                                        on:change={
+                                            let a = for_toggle.clone();
+                                            move |ev| {
+                                                let on = event_target_checked(&ev);
+                                                let a = a.clone();
+                                                selected.update(|s| {
+                                                    if on {
+                                                        s.insert(a.clone());
+                                                    } else {
+                                                        s.remove(&a);
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    />
+                                    <span class="min-w-0 truncate">{a}</span>
+                                </label>
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                }}
+            </div>
+        </details>
+    }
+}
+
 /// `POST /api/sessions` `{cwd, agent?, title?, model?}`. The agent
 /// select encodes `node|agent` in the option value so a multi-node hub
 /// routes the create to the node advertising that agent; a bare agent
 /// id (or the empty "default") goes to the primary. `cwd_ref` exposes
-/// the working-directory input so the `n` hotkey can focus it.
+/// the working-directory input so the `n` hotkey can focus it; `cwd`
+/// is page-owned so the group menu's "New session here" can prefill.
 #[component]
 fn NewSessionForm(
     on_created: impl Fn() + 'static + Send + Sync + Copy,
     cwd_ref: NodeRef<leptos::html::Input>,
+    cwd: RwSignal<String>,
 ) -> impl IntoView {
     // Filled post-hydration — a Resource here resolves during SSR
     // differently than hydrate (tachys option-vs-comment mismatch).
@@ -998,7 +1433,6 @@ fn NewSessionForm(
         }
     });
     let navigate = use_navigate();
-    let cwd = RwSignal::new(String::new());
     let title = RwSignal::new(String::new());
     let model = RwSignal::new(String::new());
     let agent_sel = RwSignal::new(String::new());

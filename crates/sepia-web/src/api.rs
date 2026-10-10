@@ -374,6 +374,26 @@ pub async fn pin_session(
         .map_err(ServerFnError::new)
 }
 
+/// `PATCH /api/sessions/{id}` — `{archived}` on the meta overlay.
+#[server(prefix = "/hub")]
+pub async fn archive_session(
+    session_id: String,
+    agent: Option<String>,
+    archived: bool,
+) -> Result<(), ServerFnError> {
+    if session_id.is_empty() {
+        return Err(ServerFnError::new("session id is required"));
+    }
+    node_api()?
+        .patch_meta(
+            &session_id,
+            agent.as_deref(),
+            &serde_json::json!({ "archived": archived }),
+        )
+        .await
+        .map_err(ServerFnError::new)
+}
+
 /// `DELETE /api/sessions/{id}`.
 #[server(prefix = "/hub")]
 pub async fn delete_session(

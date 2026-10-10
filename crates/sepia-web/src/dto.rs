@@ -65,6 +65,8 @@ impl From<&SessionSummaryDto> for SessionRow {
             live: s.live,
             busy: s.busy,
             pinned: s.pinned,
+            archived: s.archived,
+            parent_session_id: s.parent_session_id.clone(),
             node: s.node.clone(),
         }
     }

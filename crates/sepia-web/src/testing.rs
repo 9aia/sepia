@@ -42,8 +42,10 @@ impl FakeNodeApi {
     /// The canonical fixture world — what `GET /api/*` on a healthy
     /// dev node looks like.
     ///
-    /// Sessions: `s1` is live+busy on `devin`, `s2` is store-locked,
-    /// `s3` is plain; two distinct cwds produce two group headings.
+    /// Sessions: `s1` is live+busy on `devin` with a sub-agent child
+    /// (`s6`), `s2` is store-locked, `s3` is plain, `s4` is pinned,
+    /// `s5` is archived (hidden until the list's toggle). Two
+    /// distinct cwds produce two group headings.
     pub fn seeded() -> Self {
         Self {
             sessions: vec![
@@ -74,6 +76,33 @@ impl FakeNodeApi {
                     cwd: "/work/docs-site".into(),
                     agent: "devin".into(),
                     updated_at: "2026-10-07T18:02:11.000Z".into(),
+                    ..SessionSummaryDto::default()
+                },
+                SessionSummaryDto {
+                    id: "s4".into(),
+                    title: "Keep me on top".into(),
+                    cwd: "/work/docs-site".into(),
+                    agent: "claude".into(),
+                    updated_at: "2026-10-08T07:00:00.000Z".into(),
+                    pinned: true,
+                    ..SessionSummaryDto::default()
+                },
+                SessionSummaryDto {
+                    id: "s5".into(),
+                    title: "Stale spike".into(),
+                    cwd: "/work/acme-api".into(),
+                    agent: "devin".into(),
+                    updated_at: "2026-10-06T12:00:00.000Z".into(),
+                    archived: true,
+                    ..SessionSummaryDto::default()
+                },
+                SessionSummaryDto {
+                    id: "s6".into(),
+                    title: "Scan test matrix".into(),
+                    cwd: "/work/acme-api".into(),
+                    agent: "devin".into(),
+                    updated_at: "2026-10-08T06:45:00.000Z".into(),
+                    parent_session_id: Some("s1".into()),
                     ..SessionSummaryDto::default()
                 },
             ],

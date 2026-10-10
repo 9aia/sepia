@@ -8,7 +8,11 @@
 pub use crate::shell::shell;
 use leptos::prelude::*;
 use leptos_meta::{Title, provide_meta_context};
+#[cfg(feature = "hydrate")]
+use leptos_router::NavigateOptions;
 use leptos_router::components::{A, Route, Router, Routes};
+#[cfg(feature = "hydrate")]
+use leptos_router::hooks::use_navigate;
 use leptos_router::path;
 #[cfg(feature = "hydrate")]
 use sepia_web_core::keymap::{self, KeyCtx, Mods};
@@ -124,44 +128,12 @@ pub fn App() -> impl IntoView {
     leptos_fetch::QueryClient::new().provide();
     let now = RwSignal::new(crate::time::now_ms());
     provide_context(Now(now));
-    #[cfg(feature = "hydrate")]
-    every_ms(30_000, move || now.set(crate::time::now_ms()));
+    // The 30s `now` ticker lives in `ShellHotkeys` — all hydrate-only
+    // wiring stays in one component (and the cfg-markup lint wants
+    // cfg attrs nowhere near a `view!`).
 
     let sidebar_open = RwSignal::new(false);
     let help_open = RwSignal::new(false);
-
-    // `?` opens the shortcut cheat-sheet (skipped while typing);
-    // Escape closes it. Key resolution is pure — see
-    // `sepia_web_core::keymap`; this listener owns the help actions.
-    #[cfg(feature = "hydrate")]
-    {
-        let _k = leptos_use::use_event_listener(
-            document(),
-            leptos::ev::keydown,
-            move |ev: leptos::ev::KeyboardEvent| {
-                let mods = Mods {
-                    ctrl: ev.ctrl_key(),
-                    meta: ev.meta_key(),
-                    alt: ev.alt_key(),
-                    shift: ev.shift_key(),
-                };
-                let ctx = KeyCtx {
-                    typing: in_editable(&ev),
-                    help_open: help_open.get_untracked(),
-                    ..KeyCtx::default()
-                };
-                match keymap::resolve_key(&ev.key(), mods, ctx) {
-                    Some(keymap::Action::ToggleHelp) => {
-                        ev.prevent_default();
-                        help_open.update(|o| *o = !*o);
-                    }
-                    Some(keymap::Action::CloseHelp) => help_open.set(false),
-                    // Everything else is owned by the page listener.
-                    _ => {}
-                }
-            },
-        );
-    }
 
     view! {
         <Title text="sepia"/>
@@ -241,10 +213,70 @@ pub fn App() -> impl IntoView {
                         {nav_items("", Some(std::sync::Arc::new(move || sidebar_open.set(false))))}
                     </SheetBody>
                 </Sheet>
+                // Inside `<Router>` so `use_navigate` resolves — the
+                // ⌘, action needs it.
+                <ShellHotkeys open=help_open/>
                 <Toaster/>
                 <ShortcutsHelp open=help_open/>
             </div>
         </Router>
+    }
+}
+
+/// The document-level hotkey listener + the `Now` ticker — rendered
+/// inside `<Router>` so `use_navigate` resolves (its only markup is a
+/// marker span). Owns the shell actions: `?` toggles the cheat-sheet,
+/// Escape closes it, `⌘,` opens `/settings`. Page-scoped actions
+/// stay in the session-list listener.
+#[component]
+fn ShellHotkeys(open: RwSignal<bool>) -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    {
+        // The 30s wall-clock tick behind every relative-time label —
+        // `Now` is provided by `App`, an ancestor owner.
+        let now = expect_context::<Now>().0;
+        every_ms(30_000, move || now.set(crate::time::now_ms()));
+        let navigate = use_navigate();
+        let _k = leptos_use::use_event_listener(
+            document(),
+            leptos::ev::keydown,
+            move |ev: leptos::ev::KeyboardEvent| {
+                let mods = Mods {
+                    ctrl: ev.ctrl_key(),
+                    meta: ev.meta_key(),
+                    alt: ev.alt_key(),
+                    shift: ev.shift_key(),
+                };
+                let ctx = KeyCtx {
+                    typing: in_editable(&ev),
+                    help_open: open.get_untracked(),
+                    ..KeyCtx::default()
+                };
+                match keymap::resolve_key(&ev.key(), mods, ctx) {
+                    Some(keymap::Action::ToggleHelp) => {
+                        ev.prevent_default();
+                        open.update(|o| *o = !*o);
+                    }
+                    Some(keymap::Action::CloseHelp) => open.set(false),
+                    Some(keymap::Action::OpenSettings) => {
+                        ev.prevent_default();
+                        navigate("/settings", NavigateOptions::default());
+                    }
+                    // Everything else is owned by the page listener.
+                    _ => {}
+                }
+            },
+        );
+    }
+    // Zero-size marker — the component owns no chrome, but the sheet's
+    // open flag lands here too (keeps `open` live on both targets and
+    // gives the e2e suite a DOM hook for the listener's existence).
+    view! {
+        <span
+            class="hidden"
+            data-name="ShellHotkeys"
+            attr:data-help-open=move || open.get().then_some("")
+        ></span>
     }
 }
 
@@ -255,7 +287,9 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("⌘K", "focus the session filter"),
     ("Esc", "clear filter / close session"),
     ("⌘B", "toggle the session list"),
+    ("⌘,", "open settings"),
     ("↑ / ↓", "cycle sessions"),
+    ("← / →", "fold / unfold groups"),
     ("?", "this sheet"),
 ];
 
