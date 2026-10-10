@@ -312,14 +312,22 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
 ];
 
 /// `?` — the shortcut cheat-sheet. Always rendered, visibility via
-/// class (SSR and hydrate agree on a closed dialog).
+/// class (SSR and hydrate agree on a closed dialog). It's a custom
+/// overlay, not a `Sheet`, but it carries the same dialog semantics:
+/// `role=dialog` + `aria-modal` + `aria-labelledby`, initial focus on
+/// the panel and return-focus on close (`track_overlay_focus`), and
+/// `aria-hidden` while closed so the faded-out copy stays out of the
+/// a11y tree. Escape closes via the shell's `CloseHelp` hotkey.
 #[component]
 fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
     let rows = SHORTCUTS;
+    let panel = NodeRef::<leptos::html::Div>::new();
+    crate::components::track_overlay_focus(open, panel);
     view! {
         <div
             data-name="ShortcutsHelp"
             data-open=move || open.get().then_some("")
+            attr:aria-hidden=move || (!open.get()).then_some("true")
             class=move || {
                 if open.get() {
                     "fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 opacity-100 transition-opacity"
@@ -330,13 +338,19 @@ fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
             on:click=move |_| open.set(false)
         >
             <div
-                class="w-full max-w-sm rounded-xl border bg-popover p-5 shadow-xl"
+                node_ref=panel
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="shortcuts-help-title"
+                tabindex="-1"
+                class="w-full max-w-sm rounded-xl border bg-popover p-5 shadow-xl focus:outline-none"
                 on:click=move |ev| ev.stop_propagation()
             >
                 <div class="flex items-center justify-between">
-                    <h3 class="text-sm font-semibold">"Keyboard shortcuts"</h3>
+                    <h3 id="shortcuts-help-title" class="text-sm font-semibold">"Keyboard shortcuts"</h3>
                     <button
                         type="button"
+                        aria-label="Close"
                         class="text-xs text-muted-foreground hover:text-foreground"
                         on:click=move |_| open.set(false)
                     >

@@ -1352,22 +1352,25 @@ fn SessionRowView(
             </A>
             // `⋯` — hover-reveal shortcut to the SAME menu
             // `contextmenu` opens (contextmenu never fires on touch;
-            // `[@media(hover:none)]` keeps it visible there). The
-            // pointer's client coords feed the shared `menu_for`
-            // signal, so positioning matches the right-click path.
+            // `[@media(hover:none)]` keeps it visible there). Pointer
+            // coords feed the shared `menu_for` signal; `menu_anchor`
+            // falls back to the button's corner on keyboard-opened
+            // clicks (whose clientX/Y are 0,0).
             <button
                 type="button"
                 aria-label="Session actions"
+                aria-haspopup="menu"
                 data-name="RowMenuButton"
                 class="absolute right-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md border bg-popover text-sm leading-none text-muted-foreground opacity-0 shadow-sm transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                 on:click=move |ev| {
                     ev.prevent_default();
                     ev.stop_propagation();
+                    let (x, y) = menu_anchor(&ev);
                     menu.set(Some((
                         dots_id.clone(),
                         dots_agent.clone(),
-                        f64::from(ev.client_x()),
-                        f64::from(ev.client_y()),
+                        x,
+                        y,
                     )));
                 }
             >
@@ -1375,6 +1378,33 @@ fn SessionRowView(
             </button>
         </li>
     }
+}
+
+/// Anchor point for the row `⋯` button's menu — pointer coords when
+/// the click carried them; a keyboard-opened click reports (0,0), so
+/// the button's bottom-right corner anchors the menu instead of the
+/// viewport's top-left.
+#[cfg(feature = "hydrate")]
+fn menu_anchor(ev: &leptos::ev::MouseEvent) -> (f64, f64) {
+    use wasm_bindgen::JsCast;
+    let (x, y) = (f64::from(ev.client_x()), f64::from(ev.client_y()));
+    if x > 0.0 || y > 0.0 {
+        return (x, y);
+    }
+    ev.current_target()
+        .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
+        .map(|el| {
+            let r = el.get_bounding_client_rect();
+            (r.right(), r.bottom())
+        })
+        .unwrap_or((x, y))
+}
+
+/// SSR counterpart — menus never open server-side; the signature just
+/// keeps the `on:click` handler compiling.
+#[cfg(not(feature = "hydrate"))]
+fn menu_anchor(ev: &leptos::ev::MouseEvent) -> (f64, f64) {
+    (f64::from(ev.client_x()), f64::from(ev.client_y()))
 }
 
 /// Agent multi-select — a `<details>` dropdown of checkboxes over the
@@ -1595,6 +1625,15 @@ fn NewSessionForm(
                     attr:placeholder="Working directory (required)…"
                     attr:autocomplete="off"
                     attr:spellcheck="false"
+                    attr:role="combobox"
+                    attr:aria-controls="cwd-suggest"
+                    attr:aria-expanded=move || {
+                        (suggest_open.get() && !suggestions.read().is_empty()).to_string()
+                    }
+                    attr:aria-activedescendant=move || {
+                        (suggest_open.get() && !suggestions.read().is_empty())
+                            .then(|| format!("cwd-suggest-{}", highlight.get()))
+                    }
                     prop:value=move || cwd.get()
                     on:input=move |ev| {
                         let v = event_target_value(&ev);
@@ -1645,16 +1684,21 @@ fn NewSessionForm(
                 // Suggestion popover — always rendered so SSR and first
                 // hydration agree; `hidden` until a `dir_results` entry
                 // lands post-hydration.
-                <ul class=move || {
-                    let base = "absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-auto \
-                                rounded-md border bg-popover p-1 text-sm text-popover-foreground \
-                                shadow-md";
-                    if suggest_open.get() && !suggestions.read().is_empty() {
-                        base.to_string()
-                    } else {
-                        format!("{base} hidden")
+                <ul
+                    id="cwd-suggest"
+                    role="listbox"
+                    aria-label="Directory suggestions"
+                    class=move || {
+                        let base = "absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-auto \
+                                    rounded-md border bg-popover p-1 text-sm text-popover-foreground \
+                                    shadow-md";
+                        if suggest_open.get() && !suggestions.read().is_empty() {
+                            base.to_string()
+                        } else {
+                            format!("{base} hidden")
+                        }
                     }
-                }>
+                >
                     {move || {
                         suggestions
                             .get()
@@ -1664,6 +1708,11 @@ fn NewSessionForm(
                                 let pick = dir.clone();
                                 view! {
                                     <li
+                                        id=format!("cwd-suggest-{i}")
+                                        role="option"
+                                        aria-selected=move || {
+                                            (highlight.get() == i).to_string()
+                                        }
                                         class=move || {
                                             let base = "cursor-pointer truncate rounded-sm px-2 \
                                                         py-1 font-mono text-xs";

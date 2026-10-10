@@ -90,6 +90,10 @@ async fn session_list_renders_titles_badges_and_groups() {
     // Status chips from the seeded flags.
     assert_contains(&html, ">busy<");
     assert_contains(&html, ">locked<");
+    // Every row carries the hover-revealed `⋯` actions trigger that
+    // opens the same menu as right-click.
+    assert_contains(&html, "data-name=\"RowMenuButton\"");
+    assert_contains(&html, "aria-haspopup=\"menu\"");
     // The empty chat pane shows its placeholder on lg+.
     assert_contains(&html, "Select a session");
 }
@@ -133,6 +137,11 @@ async fn session_list_renders_create_form() {
     assert_contains(&html, "<form");
     assert_contains(&html, "Working directory");
     assert_contains(&html, "default agent");
+    // The cwd autocomplete carries combobox/listbox semantics; the
+    // popover mounts empty (suggestions land post-hydration).
+    assert_contains(&html, "role=\"combobox\"");
+    assert_contains(&html, "role=\"listbox\"");
+    assert_contains(&html, "id=\"cwd-suggest\"");
 }
 
 #[tokio::test]
@@ -259,6 +268,12 @@ async fn session_detail_renders_summary_history_and_prompt() {
     // Consecutive-identical fold.
     assert_contains(&html, "data-name=\"DupFold\"");
     assert_contains(&html, "×2");
+    // Per-message actions on user/assistant rows (copy + quote).
+    assert_contains(&html, "data-name=\"MsgActions\"");
+    assert_contains(&html, "aria-label=\"Copy message\"");
+    assert_contains(&html, "aria-label=\"Quote in reply\"");
+    // The live-stream pill mounts hidden — SSR has no EventSource.
+    assert_contains(&html, "data-name=\"ReconnectingPill\"");
     // System rows fold into the context card (with tabs).
     assert_contains(&html, "data-name=\"ContextCard\"");
     assert_contains(&html, "Session context");
@@ -303,6 +318,10 @@ async fn session_detail_locked_offers_takeover() {
     assert_contains(&html, "Locked refactor plan");
     assert_contains(&html, ">locked<");
     assert_contains(&html, "Attach (takeover)");
+    // The held-send flow: submit on a held session detours into this
+    // always-mounted confirm — attach(takeover) then send the draft.
+    assert_contains(&html, "Take over and send");
+    assert_contains(&html, "Session is held by another client");
 }
 
 #[tokio::test]
@@ -453,6 +472,12 @@ async fn shell_renders_toast_live_region_and_dialog_a11y() {
     // The always-mounted mobile-nav Sheet carries dialog semantics.
     assert_contains(&html, "role=\"dialog\"");
     assert_contains(&html, "aria-modal=\"true\"");
+    // The `?` shortcuts overlay is a labelled dialog too — mounted
+    // closed and aria-hidden.
+    assert_contains(&html, "data-name=\"ShortcutsHelp\"");
+    assert_contains(&html, "aria-labelledby=\"shortcuts-help-title\"");
+    assert_contains(&html, "id=\"shortcuts-help-title\"");
+    assert_contains(&html, "aria-hidden=\"true\"");
 }
 
 // ── router ────────────────────────────────────────────────────────────
