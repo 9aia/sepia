@@ -9,6 +9,10 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 use serde_json::Value;
 
+use sepia_web_core::notify::NotifyPrefs;
+#[cfg(feature = "hydrate")]
+use sepia_web_core::notify::STORAGE_KEY;
+
 use crate::api::{get_config, push_vapid_key, set_config};
 use crate::app::SHORTCUTS;
 use crate::components::toast::use_toast;
@@ -41,13 +45,37 @@ pub fn SettingsPage() -> impl IntoView {
                     </PageDescription>
                 </div>
             </PageHead>
-            <AppearanceSection/>
-            <NodeSection/>
-            <AgentsSection/>
-            <OutboxSection/>
-            <ConfigSection/>
-            <PushSection/>
-            <ShortcutsSection/>
+            // One long scroll — anchor chips jump between sections.
+            <nav aria-label="Settings sections" class="flex flex-wrap gap-1.5">
+                {[
+                    ("appearance", "Appearance"),
+                    ("node", "Node"),
+                    ("agents", "Agents"),
+                    ("outbox", "Queued writes"),
+                    ("config", "Configuration"),
+                    ("notifications", "Notifications"),
+                    ("shortcuts", "Shortcuts"),
+                ]
+                    .iter()
+                    .map(|(id, label)| {
+                        view! {
+                            <a
+                                href=format!("#{id}")
+                                class="rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                            >
+                                {*label}
+                            </a>
+                        }
+                    })
+                    .collect::<Vec<_>>()}
+            </nav>
+            <section id="appearance" class="scroll-mt-6"><AppearanceSection/></section>
+            <section id="node" class="scroll-mt-6"><NodeSection/></section>
+            <section id="agents" class="scroll-mt-6"><AgentsSection/></section>
+            <section id="outbox" class="scroll-mt-6"><OutboxSection/></section>
+            <section id="config" class="scroll-mt-6"><ConfigSection/></section>
+            <section id="notifications" class="scroll-mt-6"><PushSection/></section>
+            <section id="shortcuts" class="scroll-mt-6"><ShortcutsSection/></section>
         </section>
     }
 }
@@ -127,11 +155,6 @@ fn NodeSection() -> impl IntoView {
                             let info_view = match info {
                                 Err(e) => err_view(&e, move || info_r.refetch()),
                                 Ok(n) => {
-                                    let title = if n.name.is_empty() {
-                                        "—".to_string()
-                                    } else {
-                                        n.name.clone()
-                                    };
                                     let version =
                                         format!("{} (protocol {})", n.version, n.protocol);
                                     let agents = n.agents.len();
@@ -140,7 +163,11 @@ fn NodeSection() -> impl IntoView {
                                             <dt class="text-muted-foreground">"id"</dt>
                                             <dd class="font-mono text-xs">{n.id.clone()}</dd>
                                             <dt class="text-muted-foreground">"name"</dt>
-                                            <dd>{title}</dd>
+                                            <dd>
+                                                <crate::pages::nodes::NicknameEdit
+                                                    name=n.name.clone()
+                                                />
+                                            </dd>
                                             <dt class="text-muted-foreground">"version"</dt>
                                             <dd>{version}</dd>
                                             <dt class="text-muted-foreground">"agents"</dt>
@@ -456,7 +483,7 @@ fn ConfigRow(key: String, value: Value) -> impl IntoView {
     let draft = RwSignal::new(initial.clone());
     let dirty = move || draft.get() != initial;
     let saving = RwSignal::new(false);
-    let status: RwSignal<Option<Result<(), String>>> = RwSignal::new(None);
+    let toast = use_toast();
 
     let on_save = {
         let key = key.clone();
@@ -465,7 +492,6 @@ fn ConfigRow(key: String, value: Value) -> impl IntoView {
                 return;
             }
             saving.set(true);
-            status.set(None);
             let raw = draft.get();
             let value = if is_string {
                 Value::String(raw)
@@ -473,10 +499,12 @@ fn ConfigRow(key: String, value: Value) -> impl IntoView {
                 serde_json::from_str(&raw).unwrap_or(Value::String(raw))
             };
             let key = key.clone();
+            let label = key.clone();
             leptos::task::spawn_local(async move {
-                status.set(Some(
+                toast.outcome(
                     set_config(key, value).await.map_err(|e| e.to_string()),
-                ));
+                    format!("Saved {label}"),
+                );
                 saving.set(false);
             });
         }
@@ -494,10 +522,7 @@ fn ConfigRow(key: String, value: Value) -> impl IntoView {
                 class="min-w-48 flex-1"
                 attr:r#type="text"
                 prop:value=move || draft.get()
-                on:input=move |ev| {
-                    draft.set(event_target_value(&ev));
-                    status.set(None);
-                }
+                on:input=move |ev| draft.set(event_target_value(&ev))
             />
             <Button
                 size=ButtonSize::Sm
@@ -506,29 +531,64 @@ fn ConfigRow(key: String, value: Value) -> impl IntoView {
             >
                 {move || if saving.get() { "Saving…" } else { "Save" }}
             </Button>
-            {move || {
-                status.get().map(|s| match s {
-                    Ok(()) => {
-                        view! { <span class="text-xs text-success">"saved"</span> }.into_any()
-                    }
-                    Err(e) => {
-                        view! { <span class="text-xs text-destructive">{e}</span> }.into_any()
-                    }
-                })
-            }}
         </li>
     }
 }
 
+/// One notification-kind toggle: update the prefs signal (persisted
+/// to localStorage by `use_local_storage` on hydrate), then re-post
+/// the subscription — subscribe is an endpoint-keyed upsert and the
+/// wire has no prefs PATCH.
+fn set_notify_pref(
+    prefs: Signal<NotifyPrefs>,
+    set_prefs: WriteSignal<NotifyPrefs>,
+    toast: crate::components::toast::ToastStore,
+    done: bool,
+    on: bool,
+) {
+    // The wire write is hydrate-only; on ssr the signal update is all
+    // that exists and `toast` just isn't needed.
+    #[cfg(not(feature = "hydrate"))]
+    let _ = toast;
+    let mut next = prefs.get_untracked();
+    if done {
+        next.done = on;
+    } else {
+        next.permission = on;
+    }
+    set_prefs.set(next);
+    #[cfg(feature = "hydrate")]
+    leptos::task::spawn_local(async move {
+        toast.outcome(
+            push::update_prefs(next).await,
+            "Notification preferences saved.",
+        );
+    });
+}
+
 /// "Push notifications" — subscribes the browser's `PushManager`
-/// against the node's VAPID key. SSR/hydration-safe: the DOM calls
-/// only exist in the `hydrate` build.
+/// against the node's VAPID key, plus per-kind prefs (`done` /
+/// `permission`). The node honors `{prefs}` on subscribe but has no
+/// read-back endpoint, so the UI keeps its copy in localStorage
+/// (`sepia-notify-prefs`) and re-posts the subscription — an upsert
+/// keyed on endpoint — when a toggle flips. SSR/hydration-safe: the
+/// DOM calls only exist in the `hydrate` build.
 #[component]
 fn PushSection() -> impl IntoView {
     let vapid = Resource::new(|| (), |()| push_vapid_key());
     let subscribed: RwSignal<Option<bool>> = RwSignal::new(None);
     let busy = RwSignal::new(false);
     let toast = use_toast();
+    #[cfg(feature = "hydrate")]
+    let (prefs, set_prefs, _clear) = leptos_use::storage::use_local_storage::<
+        NotifyPrefs,
+        codee::string::JsonSerdeCodec,
+    >(STORAGE_KEY);
+    #[cfg(not(feature = "hydrate"))]
+    let (prefs, set_prefs) = {
+        let s = RwSignal::new(NotifyPrefs::default());
+        (Signal::derive(move || s.get()), s.write_only())
+    };
     #[cfg(not(feature = "hydrate"))]
     let _ = toast;
 
@@ -541,6 +601,12 @@ fn PushSection() -> impl IntoView {
             }
         });
     }
+
+    // One toggle row per notification kind — `set_notify_pref` owns
+    // the logic so this stays a plain call site.
+    let set_pref = move |done: bool, on: bool| {
+        set_notify_pref(prefs, set_prefs, toast, done, on);
+    };
 
     view! {
         <Card>
@@ -581,7 +647,7 @@ fn PushSection() -> impl IntoView {
                                                 let result = if subscribed.get() == Some(true) {
                                                     push::unsubscribe().await
                                                 } else {
-                                                    push::subscribe(&_key).await
+                                                    push::subscribe(&_key, prefs.get_untracked()).await
                                                 };
                                                 match result {
                                                     Ok(()) => {
@@ -632,6 +698,43 @@ fn PushSection() -> impl IntoView {
                                                     })
                                             }}
                                         </div>
+                                        // Per-kind prefs — only meaningful while
+                                        // subscribed. `subscribed` is `None` on SSR
+                                        // and pre-probe hydrate, so the block never
+                                        // renders server-side.
+                                        {move || {
+                                            (subscribed.get() == Some(true)).then(|| {
+                                                view! {
+                                                    <fieldset data-name="NotifyPrefs" class="mt-4 space-y-2">
+                                                        <legend class="text-xs font-medium text-muted-foreground">
+                                                            "Notify me when"
+                                                        </legend>
+                                                        <label class="flex items-center gap-2 text-sm">
+                                                            <input
+                                                                type="checkbox"
+                                                                class="size-4 accent-primary"
+                                                                prop:checked=move || prefs.get().done
+                                                                on:change=move |ev| {
+                                                                    set_pref(true, event_target_checked(&ev));
+                                                                }
+                                                            />
+                                                            "A run finishes or errors"
+                                                        </label>
+                                                        <label class="flex items-center gap-2 text-sm">
+                                                            <input
+                                                                type="checkbox"
+                                                                class="size-4 accent-primary"
+                                                                prop:checked=move || prefs.get().permission
+                                                                on:change=move |ev| {
+                                                                    set_pref(false, event_target_checked(&ev));
+                                                                }
+                                                            />
+                                                            "An agent asks for permission"
+                                                        </label>
+                                                    </fieldset>
+                                                }
+                                            })
+                                        }}
                                     }
                                         .into_any()
                                 }
@@ -655,7 +758,8 @@ mod push {
 
     use super::b64url;
     use crate::api::{push_subscribe, push_unsubscribe};
-    use crate::dto::{PushKeysDto, PushSubscriptionDto};
+    use crate::dto::{PushKeysDto, PushPrefsDto, PushSubscriptionDto};
+    use sepia_web_core::notify::NotifyPrefs;
 
     fn js_err(e: &JsValue) -> String {
         e.as_string()
@@ -693,8 +797,24 @@ mod push {
         })
     }
 
+    /// `{endpoint, keys}` (+ `prefs`) for an existing browser
+    /// subscription — the wire shape `POST /api/push/subscribe` takes.
+    fn sub_dto(
+        sub: &web_sys::PushSubscription,
+        prefs: Option<NotifyPrefs>,
+    ) -> Result<PushSubscriptionDto, String> {
+        Ok(PushSubscriptionDto {
+            endpoint: sub.endpoint(),
+            keys: PushKeysDto {
+                auth: key_b64(sub, web_sys::PushEncryptionKeyName::Auth)?,
+                p256dh: key_b64(sub, web_sys::PushEncryptionKeyName::P256dh)?,
+            },
+            prefs: prefs.map(PushPrefsDto::from),
+        })
+    }
+
     /// `pushManager.subscribe` + `POST /api/push/subscribe` via the hub.
-    pub async fn subscribe(vapid: &str) -> Result<(), String> {
+    pub async fn subscribe(vapid: &str, prefs: NotifyPrefs) -> Result<(), String> {
         let reg = registration().await?;
         let manager = reg.push_manager().map_err(|e| js_err(&e))?;
         let key = b64url::decode(vapid)?;
@@ -710,14 +830,21 @@ mod push {
             .await
             .map_err(|e| js_err(&e))?
             .unchecked_into();
-        let dto = PushSubscriptionDto {
-            endpoint: sub.endpoint(),
-            keys: PushKeysDto {
-                auth: key_b64(&sub, web_sys::PushEncryptionKeyName::Auth)?,
-                p256dh: key_b64(&sub, web_sys::PushEncryptionKeyName::P256dh)?,
-            },
+        push_subscribe(sub_dto(&sub, Some(prefs))?)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Re-post the current subscription with new `prefs` — subscribe
+    /// is an upsert keyed on endpoint, so this is also the update path
+    /// (there's no `PATCH` for prefs).
+    pub async fn update_prefs(prefs: NotifyPrefs) -> Result<(), String> {
+        let Some(sub) = current().await? else {
+            return Ok(());
         };
-        push_subscribe(dto).await.map_err(|e| e.to_string())
+        push_subscribe(sub_dto(&sub, Some(prefs))?)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// `subscription.unsubscribe()` + `DELETE /api/push/subscribe`.

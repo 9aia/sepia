@@ -531,6 +531,12 @@ impl NodeApi for FakeNodeApi {
         Ok(self.info.clone())
     }
 
+    async fn rename_node(&self, name: &str, _node: Option<&str>) -> Result<NodeInfoDto, String> {
+        let mut info = self.info.clone();
+        info.name = name.to_string();
+        Ok(info)
+    }
+
     async fn node_status(&self) -> Result<Vec<NodeStatusDto>, String> {
         self.fail()?;
         Ok(self.statuses.clone())

@@ -315,6 +315,20 @@ async fn projects_renders_names_and_session_counts() {
     assert_contains(&html, "New project name");
 }
 
+#[tokio::test]
+async fn projects_renders_details_sheet_and_delete_confirm() {
+    let html = page("/projects", FakeNodeApi::seeded().shared()).await;
+    // Per-row affordances.
+    assert_contains(&html, ">Details<");
+    // The details Sheet + delete ConfirmDialog are mounted closed —
+    // the a11y attributes ride the always-rendered markup.
+    assert_contains(&html, "role=\"dialog\"");
+    assert_contains(&html, "aria-modal=\"true\"");
+    assert_contains(&html, "aria-label=\"Project details\"");
+    assert_contains(&html, "aria-labelledby=\"project-delete-title\"");
+    assert_contains(&html, "id=\"project-delete-title\"");
+}
+
 // ── `/nodes` ──────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -328,6 +342,9 @@ async fn nodes_renders_identity_health_and_empty_outbox() {
     // Seeded outbox is empty.
     assert_contains(&html, "Queued writes");
     assert_contains(&html, "No queued writes.");
+    // Nickname editors — the identity card's + one per health row.
+    assert_contains(&html, "data-name=\"NicknameEdit\"");
+    assert_contains(&html, "aria-label=\"Rename node\"");
 }
 
 #[tokio::test]
@@ -374,6 +391,30 @@ async fn settings_renders_all_sections() {
     assert_contains(&html, "theme");
     assert_contains(&html, "historyLimit");
     assert_contains(&html, "Enable notifications");
+}
+
+#[tokio::test]
+async fn settings_renders_section_nav_and_nickname_edit() {
+    let html = page("/settings", FakeNodeApi::seeded().shared()).await;
+    // Anchor nav over the section ids.
+    assert_contains(&html, "aria-label=\"Settings sections\"");
+    assert_contains(&html, "href=\"#notifications\"");
+    assert_contains(&html, "id=\"config\"");
+    // The node identity card carries the inline nickname editor.
+    assert_contains(&html, "data-name=\"NicknameEdit\"");
+}
+
+// ── shell chrome (every page) ────────────────────────────────────────
+
+#[tokio::test]
+async fn shell_renders_toast_live_region_and_dialog_a11y() {
+    let html = page("/", FakeNodeApi::seeded().shared()).await;
+    // The Toaster's screen-reader live region.
+    assert_contains(&html, "role=\"status\"");
+    assert_contains(&html, "aria-live=\"polite\"");
+    // The always-mounted mobile-nav Sheet carries dialog semantics.
+    assert_contains(&html, "role=\"dialog\"");
+    assert_contains(&html, "aria-modal=\"true\"");
 }
 
 // ── router ────────────────────────────────────────────────────────────

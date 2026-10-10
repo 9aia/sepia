@@ -640,6 +640,18 @@ impl NodeApi for SyncNodeApi {
             .and_then(|v| serde_json::from_value(v).map_err(|e| format!("decode: {e}")))
     }
 
+    async fn rename_node(&self, name: &str, node: Option<&str>) -> Result<NodeInfoDto, String> {
+        // Direct post — a rename on a down node can't queue meaningfully
+        // (the identity it edits is now, not later), same as pair.
+        let (_, client) = self.scoped_client(node)?;
+        let body = serde_json::json!({ "name": name });
+        tokio::task::spawn_blocking(move || client.send_json("PATCH", "/api/node", &body))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
+            .and_then(|v| serde_json::from_value(v).map_err(|e| format!("decode: {e}")))
+    }
+
     async fn node_status(&self) -> Result<Vec<NodeStatusDto>, String> {
         let projection = self.projection();
         let registry = self.nodes.clone();

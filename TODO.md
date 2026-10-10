@@ -135,13 +135,21 @@ Missing features (wire-supported but no UI):
 - [x] Per-tool renderers + live diffs — exec/read/edit/search/fetch/
       todo summaries, DiffBlock for recorded diffs, location chips,
       `contents` segments (`sepia-web-core::history::tool_summary`)
-- [ ] Project membership mgmt (`projectIds` unwired), details dialog,
-      node nickname editing (`PATCH /api/node` exists)
+- [x] Project membership mgmt + details dialog + node nickname editing
+      — project `Details` sheet lists sessions with membership
+      checkboxes (`patch_meta {projectIds}` via `set_session_projects`),
+      delete rides a page-level `ConfirmDialog`; `PATCH /api/node` is
+      wired as `rename_node` and the inline `NicknameEdit` lives on
+      /nodes identity card + health rows and /settings' node section
 - [x] Command palette — ⌘K or `/` opens a `role=dialog` overlay:
       session search, page nav, actions (new session, theme, pin/
       archive selected, help); ↑/↓/Enter/Esc, aria-activedescendant,
       pure ranking in `sepia-web-core::palette`
-- [ ] Notification prefs (push is on/off only)
+- [x] Notification prefs — per-kind toggles (`done`, `permission`)
+      under the push toggle; the wire honors `{prefs}` on
+      `POST /api/push/subscribe` (endpoint-keyed upsert doubles as the
+      update path). Gap: no prefs read-back endpoint, so the UI keeps
+      its copy in localStorage (`sepia-notify-prefs`)
 - [x] Pair-flow UI — "Pair a device" card on /nodes redeems a code via
       `POST /api/pair` (`NodeApi::pair` → `redeem_pair_code` server fn)
       and shows the minted node credential once
@@ -151,10 +159,19 @@ Missing features (wire-supported but no UI):
       identical back-to-back rows; virtualized list still open
 - [~] Markdown parity — ✓ GFM tables (`MdBlock::Table`, alignment,
       inline cells); syntax highlighting + mermaid still open
-- [ ] Toasts on mutation success (rename/pin/delete are silent)
-- [ ] a11y: focus trap + initial focus on Sheet/ConfirmDialog,
-      `role=listbox` on cwd combobox, live-region announcements,
-      `role=dialog` on `?` sheet, prefers-reduced-motion
+- [~] Toasts on mutation success — done on settings/projects/nodes
+      (create/delete project, config-set, pair, node rename, notify
+      prefs); `ToastStore::outcome` helper is in `components.rs` for
+      the session ops (rename/pin/delete/restore/rewind) which live in
+      session_list/session_detail and await that workstream
+- [~] a11y — ✓ Sheet/ConfirmDialog: `role=dialog` + `aria-modal` +
+      `aria-labelledby`/`aria-label`, initial focus + return-focus +
+      Esc (`track_overlay_focus`; no full Tab trap — leptos-use 0.19
+      lacks `use_focus_trap`), ✓ toast live region (`role=status`,
+      `aria-live=polite` inside the mounted `Toaster`), ✓
+      `prefers-reduced-motion` in input.css. Left: `role=listbox` on
+      the cwd combobox (session_detail.rs — other workstream), `?`
+      sheet dialog role (app.rs — other workstream)
 
 Intentionally dropped (v0):
 

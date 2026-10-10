@@ -115,6 +115,10 @@ pub trait NodeApi: Send + Sync + 'static {
     /// `GET /api/node` — the node descriptor (the primary node's on a
     /// multi-node hub).
     async fn node_info(&self) -> Result<NodeInfoDto, String>;
+    /// `PATCH /api/node` — `{name}` renames a node (persists its
+    /// identity file); returns the updated descriptor. `node` picks
+    /// the target on a multi-node hub; `None` = the primary.
+    async fn rename_node(&self, name: &str, node: Option<&str>) -> Result<NodeInfoDto, String>;
     /// Per-node health rows — the sync projection's `nodes` table on a
     /// hub, a one-row `GET /api/node` probe on a direct connection.
     async fn node_status(&self) -> Result<Vec<NodeStatusDto>, String>;
@@ -361,6 +365,27 @@ pub async fn rename_session(
         .map_err(ServerFnError::new)
 }
 
+/// `PATCH /api/sessions/{id}` — `{projectIds}` on the meta overlay;
+/// the project-membership editor's write path.
+#[server(prefix = "/hub")]
+pub async fn set_session_projects(
+    session_id: String,
+    agent: Option<String>,
+    project_ids: Vec<String>,
+) -> Result<(), ServerFnError> {
+    if session_id.is_empty() {
+        return Err(ServerFnError::new("session id is required"));
+    }
+    node_api()?
+        .patch_meta(
+            &session_id,
+            agent.as_deref(),
+            &serde_json::json!({ "projectIds": project_ids }),
+        )
+        .await
+        .map_err(ServerFnError::new)
+}
+
 /// `PATCH /api/sessions/{id}` — `{pinned}` on the meta overlay.
 #[server(prefix = "/hub")]
 pub async fn pin_session(
@@ -559,6 +584,22 @@ pub async fn redeem_pair_code(code: String, node: Option<String>) -> Result<Stri
 #[server(prefix = "/hub")]
 pub async fn node_info() -> Result<NodeInfoDto, ServerFnError> {
     node_api()?.node_info().await.map_err(ServerFnError::new)
+}
+
+/// `PATCH /api/node` — `{name}`; `node` picks the target on a
+/// multi-node hub (`None` = primary). Returns the updated descriptor.
+#[server(prefix = "/hub")]
+pub async fn rename_node(name: String, node: Option<String>) -> Result<NodeInfoDto, ServerFnError> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 100 {
+        return Err(ServerFnError::new(
+            "name must be a non-empty string (max 100)",
+        ));
+    }
+    node_api()?
+        .rename_node(name, node.as_deref())
+        .await
+        .map_err(ServerFnError::new)
 }
 
 /// Per-node health rows — the hub registry + sync engine status.
@@ -1116,6 +1157,18 @@ impl NodeApi for HttpNodeApi {
             } else {
                 Err(error_of(res, "set config"))
             }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn rename_node(&self, name: &str, _node: Option<&str>) -> Result<NodeInfoDto, String> {
+        // Direct connections have one node — `node` only matters to
+        // the hub's `SyncNodeApi` router.
+        let api = self.clone();
+        let body = serde_json::json!({ "name": name });
+        tokio::task::spawn_blocking(move || {
+            read_json::<NodeInfoDto>(api.send_json("PATCH", "/api/node", &body)?, "rename node")
         })
         .await
         .map_err(|e| e.to_string())?

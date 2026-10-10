@@ -104,3 +104,18 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 }
+
+/* Reduced motion — neutralize transitions/animations globally. The
+   app animates only layout (sheets slide, toasts fade, skeletons
+   pulse), so cutting durations loses nothing functionally. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -364,13 +364,38 @@ pub struct PendingWriteDto {
     pub last_error: Option<String>,
 }
 
-/// `POST /api/push/subscribe` body — `{endpoint, keys:{auth,p256dh}}`
-/// (`prefs` left at the node's default).
+/// `POST /api/push/subscribe` body — `{endpoint, keys:{auth,p256dh},
+/// prefs?}`. Re-posting the same endpoint upserts, so the settings
+/// toggles re-subscribe with the updated `prefs`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushSubscriptionDto {
     pub endpoint: String,
     pub keys: PushKeysDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefs: Option<PushPrefsDto>,
+}
+
+/// `PushSubscriptionDto.prefs` — `sepia_push::PushPrefs` on the wire
+/// (both kinds default to on node-side). Mirrors
+/// `sepia_web_core::notify::NotifyPrefs`, which adds the localStorage
+/// plumbing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushPrefsDto {
+    /// Agent run finished / errored.
+    pub done: bool,
+    /// Agent waiting on a permission decision.
+    pub permission: bool,
+}
+
+impl From<sepia_web_core::notify::NotifyPrefs> for PushPrefsDto {
+    fn from(p: sepia_web_core::notify::NotifyPrefs) -> Self {
+        Self {
+            done: p.done,
+            permission: p.permission,
+        }
+    }
 }
 
 /// The `keys` sub-object of a push subscription.

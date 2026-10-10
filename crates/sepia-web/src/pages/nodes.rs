@@ -5,10 +5,12 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::api::redeem_pair_code;
+use crate::api::{redeem_pair_code, rename_node};
+use crate::components::toast::use_toast;
 use crate::components::{
-    Badge, BadgeVariant, Button, ButtonSize, Card, CardContent, CardDescription, CardHeader,
-    CardTitle, ErrorBanner, Input, PageDescription, PageHead, PageTitle, SELECT_CLASS, Skeleton,
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
+    CardHeader, CardTitle, ErrorBanner, Input, PageDescription, PageHead, PageTitle, SELECT_CLASS,
+    Skeleton,
 };
 use crate::dto::{NodeStatusDto, PendingWriteDto};
 use crate::pages::RelativeTime;
@@ -86,6 +88,12 @@ pub fn NodesPage() -> impl IntoView {
                                                 <dl class="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2.5 text-sm">
                                                     <dt class="text-muted-foreground">"id"</dt>
                                                     <dd class="font-mono text-xs">{n.id.clone()}</dd>
+                                                    <dt class="text-muted-foreground">"name"</dt>
+                                                    <dd>
+                                                        <NicknameEdit
+                                                            name=n.name.clone()
+                                                        />
+                                                    </dd>
                                                     <dt class="text-muted-foreground">"version"</dt>
                                                     <dd>{version}</dd>
                                                     <dt class="text-muted-foreground">"agents"</dt>
@@ -234,6 +242,7 @@ fn PairCard() -> impl IntoView {
     let code = RwSignal::new(String::new());
     let node = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
+    let toast = use_toast();
     // `Some(Ok(token))` once redeemed, `Some(Err(msg))` on failure.
     let result: RwSignal<Option<Result<String, String>>> = RwSignal::new(None);
 
@@ -253,8 +262,12 @@ fn PairCard() -> impl IntoView {
                 .await
                 .map_err(|e| e.to_string());
             busy.set(false);
-            if res.is_ok() {
-                code.set(String::new());
+            match &res {
+                Ok(_) => {
+                    toast.success("Device paired — store the credential somewhere safe.");
+                    code.set(String::new());
+                }
+                Err(e) => toast.error(e.clone()),
             }
             result.set(Some(res));
         });
@@ -383,18 +396,152 @@ pub(crate) fn status_variant(status: &str) -> BadgeVariant {
     }
 }
 
+/// Inline nickname editor — the pencil swaps the name for an input;
+/// save hits `PATCH /api/node` (`rename_node`) and toasts the result.
+/// `node` picks the target on multi-node hubs (`None` = primary).
+/// When the node answers, the descriptor refresh invalidates the
+/// shared `node_info`/`node_status` queries.
+#[component]
+pub(crate) fn NicknameEdit(
+    #[prop(into)] name: String,
+    #[prop(into, optional)] node: Option<String>,
+    #[prop(into, optional)] class: String,
+) -> impl IntoView {
+    let client = crate::api::query_client();
+    let editing = RwSignal::new(false);
+    let draft = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let toast = use_toast();
+    let display = if name.is_empty() {
+        "—".to_string()
+    } else {
+        name
+    };
+
+    view! {
+        <span
+            data-name="NicknameEdit"
+            class=tw_merge::tw_merge!("inline-flex items-center gap-1.5", class)
+        >
+            {move || {
+                if editing.get() {
+                    // Fresh clones per render — the submit handler
+                    // moves them, and this closure is `FnMut`.
+                    let node = node.clone();
+                    view! {
+                        <form
+                            class="inline-flex items-center gap-1.5"
+                            on:submit=move |ev| {
+                                ev.prevent_default();
+                                let name_arg = draft.get();
+                                if name_arg.trim().is_empty() || busy.get() {
+                                    return;
+                                }
+                                busy.set(true);
+                                let node_arg = node.clone();
+                                leptos::task::spawn_local(async move {
+                                    if toast
+                                        .outcome(
+                                            rename_node(name_arg, node_arg).await,
+                                            "Node renamed.",
+                                        )
+                                        .is_some()
+                                    {
+                                        editing.set(false);
+                                        client.invalidate_query(
+                                            crate::api::node_info_scope,
+                                            (),
+                                        );
+                                        client.invalidate_query(
+                                            crate::api::node_status_scope,
+                                            (),
+                                        );
+                                    }
+                                    busy.set(false);
+                                });
+                            }
+                        >
+                            <Input
+                                class="h-7 w-44 px-2 text-xs"
+                                attr:r#type="text"
+                                attr:maxlength=100
+                                attr:aria-label="Node nickname"
+                                prop:value=move || draft.get()
+                                on:input=move |ev| draft.set(event_target_value(&ev))
+                                on:keydown=move |ev| {
+                                    if ev.key() == "Escape" {
+                                        editing.set(false);
+                                    }
+                                }
+                            />
+                            <Button
+                                button_type="submit"
+                                size=ButtonSize::Sm
+                                disabled=move || busy.get() || draft.read().trim().is_empty()
+                            >
+                                {move || if busy.get() { "Saving…" } else { "Save" }}
+                            </Button>
+                            <Button
+                                variant=ButtonVariant::Ghost
+                                size=ButtonSize::Sm
+                                on_click=Box::new(move || editing.set(false))
+                            >
+                                "Cancel"
+                            </Button>
+                        </form>
+                    }
+                        .into_any()
+                } else {
+                    let shown = display.clone();
+                    let seed = display.clone();
+                    view! {
+                        <span>{shown}</span>
+                        <button
+                            type="button"
+                            aria-label="Rename node"
+                            title="Rename node"
+                            class="text-muted-foreground hover:text-foreground"
+                            on:click=move |_| {
+                                draft.set(seed.clone());
+                                editing.set(true);
+                            }
+                        >
+                            "✎"
+                        </button>
+                    }
+                        .into_any()
+                }
+            }}
+        </span>
+    }
+}
+
 #[component]
 pub(crate) fn NodeRow(row: NodeStatusDto) -> impl IntoView {
     let variant = status_variant(&row.status);
-    let label = if row.label.is_empty() || row.label == row.id {
+    let nickname = if row.label.is_empty() {
         row.id.clone()
     } else {
-        format!("{} ({})", row.label, row.id)
+        row.label.clone()
     };
     view! {
         <li class="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-3 first:pt-0 last:pb-0">
             <Badge variant=variant>{row.status.clone()}</Badge>
-            <span class="text-sm font-medium">{label}</span>
+            <span class="text-sm font-medium">
+                <NicknameEdit name=nickname node=row.id.clone()/>
+                {if row.label.is_empty() || row.label == row.id {
+                    None
+                } else {
+                    let id = row.id.clone();
+                    Some(
+                        view! {
+                            <code class="ml-1.5 font-mono text-xs text-muted-foreground">
+                                {format!("({id})")}
+                            </code>
+                        },
+                    )
+                }}
+            </span>
             <code class="font-mono text-xs text-muted-foreground">{row.url.clone()}</code>
             <span class="ml-auto text-xs text-muted-foreground">
                 {row

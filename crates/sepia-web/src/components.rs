@@ -195,12 +195,23 @@ pub fn MenuItem(
 /// Confirm dialog — signal-driven modal. The markup is always
 /// rendered (SSR/hydrate agree on the DOM); visibility is a class
 /// toggle, so no `Show` `Fn` gymnastics.
+///
+/// a11y: `role="dialog"` + `aria-modal`; `id` anchors
+/// `aria-labelledby` (pass a unique stem per dialog — several
+/// instances share titles like "Delete this session?"); without `id`
+/// the title doubles as `aria-label`. Escape closes, the panel takes
+/// focus on open, and the previously focused element regains it on
+/// close (`track_overlay_focus`).
 #[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
 pub fn ConfirmDialog(
     open: RwSignal<bool>,
     #[prop(into)] title: String,
     #[prop(into)] body: String,
     #[prop(into, optional)] confirm_label: String,
+    /// Stem for the heading's id — enables `aria-labelledby`.
+    #[prop(into, optional)]
+    id: String,
     #[prop(optional)] destructive: bool,
     on_confirm: impl Fn() + Send + Sync + 'static,
 ) -> impl IntoView {
@@ -210,6 +221,16 @@ pub fn ConfirmDialog(
     } else {
         confirm_label
     };
+    let panel = NodeRef::<leptos::html::Div>::new();
+    track_overlay_focus(open, panel);
+    let title_id = if id.is_empty() {
+        None
+    } else {
+        Some(format!("{id}-title"))
+    };
+    let labelledby = title_id.clone();
+    // Fallback label when no `id` stem was passed.
+    let aria_label = labelledby.is_none().then(|| title.clone());
     view! {
         <div
             class=move || {
@@ -222,12 +243,21 @@ pub fn ConfirmDialog(
             on:click=move |_| open.set(false)
         >
             <div
-                class="w-full max-w-md rounded-lg border bg-card p-5 shadow-xl"
+                node_ref=panel
+                class="w-full max-w-md rounded-lg border bg-card p-5 shadow-xl focus:outline-none"
                 role="dialog"
                 aria-modal="true"
+                aria-labelledby=move || labelledby.clone()
+                aria-label=move || aria_label.clone()
+                tabindex="-1"
                 on:click=|ev| ev.stop_propagation()
+                on:keydown=move |ev| {
+                    if ev.key() == "Escape" {
+                        open.set(false);
+                    }
+                }
             >
-                <h3 class="text-base font-semibold">{title}</h3>
+                <h3 id=move || title_id.clone() class="text-base font-semibold">{title}</h3>
                 <p class="mt-2 text-sm text-muted-foreground">{body}</p>
                 <div class="mt-5 flex justify-end gap-2">
                     <Button
@@ -290,6 +320,46 @@ pub fn ErrorBanner(
         </div>
     }
 }
+
+/// Screen-reader-only wrapper — hidden visually, still announced.
+/// Backs the toast live region.
+#[component]
+pub fn VisuallyHidden(children: Children) -> impl IntoView {
+    view! { <span class="sr-only">{children()}</span> }
+}
+
+/// Initial focus + return-focus for signal-driven overlay panels —
+/// the pragmatic half of a focus trap (`leptos-use` 0.19 has no
+/// `use_focus_trap`). `panel` needs `tabindex="-1"`; it takes focus
+/// when `open` flips true, and whatever was focused before regains it
+/// on close. Hydrate-only: SSR never runs effects and has no DOM.
+#[cfg(feature = "hydrate")]
+fn track_overlay_focus(open: RwSignal<bool>, panel: NodeRef<leptos::html::Div>) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use wasm_bindgen::JsCast;
+    let prev = Rc::new(RefCell::new(None::<web_sys::HtmlElement>));
+    Effect::new(move |_| {
+        if open.get() {
+            if let Some(el) = document()
+                .active_element()
+                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                *prev.borrow_mut() = Some(el);
+            }
+            if let Some(el) = panel.get() {
+                let _ = el.focus();
+            }
+        } else if let Some(el) = prev.borrow_mut().take() {
+            let _ = el.focus();
+        }
+    });
+}
+
+/// SSR/no-DOM counterpart — effects never run, there's nothing to
+/// focus. Keeps the call site unconditional (cfg never gates markup).
+#[cfg(not(feature = "hydrate"))]
+fn track_overlay_focus(_open: RwSignal<bool>, _panel: NodeRef<leptos::html::Div>) {}
 
 /// Inline SVG icons — lucide-style 24×24 stroke glyphs, hand-embedded
 /// so no icon crate is needed. Everything inherits `currentColor`.
@@ -383,14 +453,20 @@ pub mod toast {
     use leptos::prelude::*;
     use leptos_toaster::{Theme, Toast, ToastId, ToastVariant, Toasts};
 
-    /// Toast store — a `Toasts` context wrapper with our API.
+    /// Toast store — a `Toasts` context wrapper with our API. The
+    /// `announce` signal mirrors the last toast text into the
+    /// `Toaster`'s `aria-live` region (the sonner stack is visual-only).
     #[derive(Clone, Copy)]
-    pub struct ToastStore(Toasts);
+    pub struct ToastStore {
+        toasts: Toasts,
+        announce: RwSignal<String>,
+    }
 
     impl ToastStore {
         fn push(&self, variant: ToastVariant, msg: String) {
+            self.announce.set(msg.clone());
             let toast_id = ToastId::new();
-            self.0.toast(
+            self.toasts.toast(
                 leptos::prelude::ViewFn::from(move || {
                     let title_msg = msg.clone();
                     view! {
@@ -415,26 +491,63 @@ pub mod toast {
         pub fn info(&self, msg: impl Into<String>) {
             self.push(ToastVariant::Info, msg.into());
         }
+        /// Mutation feedback shorthand — `Ok` → success toast with
+        /// `ok` (and the payload handed back), `Err` → error toast
+        /// with the message. Pages wrap `spawn_local` mutation calls
+        /// with this instead of hand-branching.
+        pub fn outcome<T>(
+            &self,
+            res: Result<T, impl std::fmt::Display>,
+            ok: impl Into<String>,
+        ) -> Option<T> {
+            match res {
+                Ok(v) => {
+                    self.success(ok);
+                    Some(v)
+                }
+                Err(e) => {
+                    self.error(e.to_string());
+                    None
+                }
+            }
+        }
     }
 
     pub fn provide_toaster() {
-        provide_context(ToastStore(leptos_toaster::provide_toasts()));
+        provide_context(ToastStore {
+            toasts: leptos_toaster::provide_toasts(),
+            announce: RwSignal::new(String::new()),
+        });
     }
 
     pub fn use_toast() -> ToastStore {
         expect_context::<ToastStore>()
     }
 
-    /// Bottom-right sonner stack. Renders deterministically (empty on
-    /// both SSR and initial hydrate — toasts only appear post-mount).
+    /// Bottom-right sonner stack + a `role="status"` live region that
+    /// announces every toast's text to screen readers (the visual
+    /// toasts are `leptos_toaster`'s and carry no live semantics).
+    /// Renders deterministically — empty on SSR and initial hydrate.
     #[component]
     pub fn Toaster() -> impl IntoView {
-        view! { <leptos_toaster::Toaster/> }
+        let announce = use_toast().announce;
+        view! {
+            <leptos_toaster::Toaster/>
+            <super::VisuallyHidden>
+                <span role="status" aria-live="polite">
+                    {move || announce.get()}
+                </span>
+            </super::VisuallyHidden>
+        }
     }
 }
 
 /// Slide-over panel (shadcn `Sheet`). Signal-driven; markup always
 /// rendered so SSR/hydrate agree — visibility is a class transition.
+///
+/// a11y: `role="dialog"` + `aria-modal`, `aria-label` when `label` is
+/// given, Escape closes, focus moves to the panel on open and returns
+/// to the previously focused element on close.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // component props are owned
 pub fn Sheet(
@@ -443,6 +556,9 @@ pub fn Sheet(
     #[prop(into, optional)]
     side: String,
     #[prop(into, optional)] class: String,
+    /// Accessible name — `aria-label` on the dialog panel.
+    #[prop(into, optional)]
+    label: String,
     children: Children,
 ) -> impl IntoView {
     let side_cls = if side == "left" {
@@ -450,6 +566,8 @@ pub fn Sheet(
     } else {
         "right-0 border-l translate-x-full data-[open]:translate-x-0"
     };
+    let panel = NodeRef::<leptos::html::Div>::new();
+    track_overlay_focus(open, panel);
     view! {
         <div
             class=move || {
@@ -462,15 +580,25 @@ pub fn Sheet(
             on:click=move |_| open.set(false)
         ></div>
         <div
+            node_ref=panel
+            role="dialog"
+            aria-modal="true"
+            aria-label=move || (!label.is_empty()).then(|| label.clone())
+            tabindex="-1"
             data-open=move || open.get().then_some("")
             // Off-screen, not gone — without these the closed panel
             // still takes tab focus and reads to screen readers.
             aria-hidden=move || (!open.get()).then_some("true")
             inert=move || (!open.get()).then_some("")
             class=format!(
-                "fixed top-0 z-50 flex h-dvh w-80 max-w-[85vw] flex-col bg-card shadow-xl transition-transform duration-200 {} {}",
+                "fixed top-0 z-50 flex h-dvh w-80 max-w-[85vw] flex-col bg-card shadow-xl transition-transform duration-200 focus:outline-none {} {}",
                 side_cls, class
             )
+            on:keydown=move |ev| {
+                if ev.key() == "Escape" {
+                    open.set(false);
+                }
+            }
         >
             {children()}
         </div>

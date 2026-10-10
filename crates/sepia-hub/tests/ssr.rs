@@ -239,6 +239,12 @@ impl NodeApi for StubNodeApi {
         })
     }
 
+    async fn rename_node(&self, name: &str, _node: Option<&str>) -> Result<NodeInfoDto, String> {
+        let mut info = self.node_info().await?;
+        info.name = name.to_string();
+        Ok(info)
+    }
+
     async fn node_status(&self) -> Result<Vec<NodeStatusDto>, String> {
         Ok(vec![
             NodeStatusDto {
