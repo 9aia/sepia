@@ -224,6 +224,10 @@ impl NodeApi for StubNodeApi {
         Ok(vec!["/tmp/seed".into(), "/tmp/seed/sub".into()])
     }
 
+    async fn pair(&self, _code: &str, _node: Option<&str>) -> Result<String, String> {
+        Ok("stub-pair-token".into())
+    }
+
     async fn node_info(&self) -> Result<NodeInfoDto, String> {
         Ok(NodeInfoDto {
             id: "n1".into(),

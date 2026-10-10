@@ -105,6 +105,13 @@ pub trait NodeApi: Send + Sync + 'static {
     /// path, for the cwd picker's autocomplete. `node` routes on a
     /// multi-node hub; `None` = the primary/first.
     async fn fs_dirs(&self, path: &str, node: Option<String>) -> Result<Vec<String>, String>;
+    /// `POST /api/pair` — redeem a one-time pairing code for a
+    /// long-lived node credential (`{code}` → `{token}`). `node`
+    /// picks the target on a multi-node hub; `None` = the
+    /// primary/first. 404 surfaces as `Err` (unknown/expired/used
+    /// code — the node deliberately doesn't say which); 501 when the
+    /// node has no pairing store configured.
+    async fn pair(&self, code: &str, node: Option<&str>) -> Result<String, String>;
     /// `GET /api/node` — the node descriptor (the primary node's on a
     /// multi-node hub).
     async fn node_info(&self) -> Result<NodeInfoDto, String>;
@@ -529,6 +536,21 @@ pub async fn fs_dirs(path: String, node: Option<String>) -> Result<Vec<String>, 
     }
     node_api()?
         .fs_dirs(&path, node)
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `POST /api/pair` — redeem a pairing code (from `sepia pair`) for a
+/// node credential. The minted token is returned once — the UI shows
+/// it and tells the user to store it.
+#[server(prefix = "/hub")]
+pub async fn redeem_pair_code(code: String, node: Option<String>) -> Result<String, ServerFnError> {
+    let code = code.trim();
+    if code.is_empty() {
+        return Err(ServerFnError::new("a pairing code is required"));
+    }
+    node_api()?
+        .pair(code, node.as_deref())
         .await
         .map_err(ServerFnError::new)
 }
@@ -1111,6 +1133,31 @@ impl NodeApi for HttpNodeApi {
                 dirs: Vec<String>,
             }
             read_json::<FsBody>(api.get(&api_path)?, "list directories").map(|b| b.dirs)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn pair(&self, code: &str, _node: Option<&str>) -> Result<String, String> {
+        // Direct connections have one node — `node` only matters to
+        // the hub's `SyncNodeApi` router.
+        let api = self.clone();
+        let body = serde_json::json!({ "code": code });
+        tokio::task::spawn_blocking(move || {
+            #[derive(serde::Deserialize)]
+            struct PairBody {
+                #[serde(default)]
+                token: String,
+            }
+            let parsed: PairBody = read_json(
+                api.send_json("POST", "/api/pair", &body)?,
+                "redeem pairing code",
+            )?;
+            if parsed.token.is_empty() {
+                Err("node returned no token".to_string())
+            } else {
+                Ok(parsed.token)
+            }
         })
         .await
         .map_err(|e| e.to_string())?

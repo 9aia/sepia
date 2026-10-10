@@ -497,6 +497,31 @@ impl NodeApi for SyncNodeApi {
         .map(|_| ())
     }
 
+    async fn pair(&self, code: &str, node: Option<&str>) -> Result<String, String> {
+        // Pairing redeems a code on one specific node — `node` picks
+        // it, else the primary. Goes direct: the code is single-use
+        // and queueing it in the outbox makes no sense.
+        let (_, client) = self.scoped_client(node)?;
+        let body = serde_json::json!({ "code": code });
+        let res = tokio::task::spawn_blocking(move || client.send_json("POST", "/api/pair", &body))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| match e {
+                // Surface the node's `{error}` payload, not the raw body.
+                sepia_sync::client::NodeError::Http { body, .. } => {
+                    serde_json::from_str::<Value>(&body)
+                        .ok()
+                        .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string))
+                        .unwrap_or_else(|| format!("pairing failed: {body}"))
+                }
+                e => e.to_string(),
+            })?;
+        res.get("token")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "node returned no token".to_string())
+    }
+
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String> {
         Ok(self
             .merged_list("/api/agents", "agents")

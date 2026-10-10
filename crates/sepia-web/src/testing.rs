@@ -256,6 +256,14 @@ impl FakeNodeApi {
         self
     }
 
+    /// Replace the node health rows (e.g. `Vec::new()` or all-`down`
+    /// for the "No nodes connected" gate on the session list).
+    #[must_use]
+    pub fn with_statuses(mut self, statuses: Vec<NodeStatusDto>) -> Self {
+        self.statuses = statuses;
+        self
+    }
+
     /// Convenience — `Arc<dyn NodeApi>` is what server fns pull from
     /// leptos context.
     pub fn shared(self) -> std::sync::Arc<dyn NodeApi> {
@@ -425,6 +433,11 @@ impl NodeApi for FakeNodeApi {
     async fn fs_dirs(&self, _path: &str, _node: Option<String>) -> Result<Vec<String>, String> {
         self.fail()?;
         Ok(vec!["/work/acme-api".into(), "/work/docs-site".into()])
+    }
+
+    async fn pair(&self, _code: &str, _node: Option<&str>) -> Result<String, String> {
+        self.fail()?;
+        Ok("sepia-pair-fake-token-0123456789".into())
     }
 
     async fn node_info(&self) -> Result<NodeInfoDto, String> {
