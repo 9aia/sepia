@@ -56,12 +56,14 @@ Landing (agents in flight):
       drawer nav (`Sheet`), list↔chat responsive swap
 - [x] Right-side details drawer (rename, checkpoints, restore, delete)
       — `Sheet` opened from the panel's "Details" button
-- [x] Filter bar — search, agent multi-select, date (day/week/month),
-      status (free/locked), sort (newest/oldest/title)
+- [~] Filter bar — ✓ search, ✓ status, ✓ sort. Open: agent filter is
+      single-select (old was multi), no day/week/month recency filter,
+      filter state not URL/localStorage-persisted
 - [x] Project grouping — collapsible sections in the sidebar list,
       persisted open state
-- [x] Hotkeys — N new, ↑/↓ session nav, ←/→ group fold, ⌘K filter,
-      Esc clear, ⌘B sidebar, ⌘, settings, ? help
+- [~] Hotkeys — ✓ N new, ↑/↓ session nav, ⌘K filter, Esc clear, ⌘B
+      sidebar, ? help. Open: ←/→ group fold, ⌘, settings — neither
+      wired (audit 2026-10)
 
 Missing (queued next):
 
@@ -82,7 +84,53 @@ Missing (queued next):
 - [x] Settings depth — appearance (theme select), node identity +
       connection, agent catalog, outbox writes, push, shortcuts table
 - [ ] Session context tabs
-- [ ] EmptyScreen/ErrorBanner parity
+- [ ] EmptyScreen/ErrorBanner parity — router fallback is a bare `<p>`;
+      load failures render raw error text, no retry, no friendly 404/500
+
+### Parity audit 2026-10 (from old TS bundle + reflog)
+
+User-visible breakage:
+
+- [ ] Reconnecting indicator — SSE auto-reconnects silently; user can't
+      tell a dead stream from an idle session
+- [ ] No-nodes-connected gating — "No sessions yet" shows regardless
+- [ ] Login form — 401s return raw JSON `{"error":"unauthorized"}`;
+      `?token=` works but there's no paste-token screen (old TokenGate)
+- [ ] Held-session send flow — composer isn't disabled, send on a held
+      session just errors raw; old had draft-while-held + takeover
+      confirm
+- [ ] Row `⋯` hover button — actions are right-click only;
+      undiscoverable on desktop, unusable on iOS/touch
+
+Missing features (wire-supported but no UI):
+
+- [ ] Session convert/export/import/resume (`/convert`, `/export`,
+      `/import` exist on the node API; `sepia-convert` crate exists —
+      unwired)
+- [ ] Archive/unarchive (`archived` in DTO + `patch_meta`, no UI)
+- [ ] Prompt attachments — node accepts `{text?, attachments?}`;
+      composer sends text only
+- [ ] Reply/quote + per-message copy/rewind actions
+- [ ] Usage footer (tokens/cost) — DTO doesn't decode usage
+- [ ] Run/provenance marker rows (`spans` on the wire, not rendered)
+- [ ] Sub-agent children/badges (`parent_session_id` decoded, unused)
+- [ ] Pinned/Recents sidebar sections (pin works, no sections)
+- [ ] Per-session model picker (`patch_meta model` unwired; read-only
+      chip today)
+- [ ] Per-tool renderers + live diffs (`diffs`/`locations`/`contents`
+      in proto, `live.rs` ignores them)
+- [ ] Project membership mgmt (`projectIds` unwired), details dialog,
+      node nickname editing (`PATCH /api/node` exists)
+- [ ] Command palette (⌘K only focuses filter today)
+- [ ] Notification prefs (push is on/off only), pair-flow UI
+- [ ] URL-persisted filter/sort state, group-header context menus
+- [ ] Message auto-load on scroll-top (manual button today), collapse
+      consecutive dupes, virtualized list at scale
+- [ ] Markdown parity: tables/GFM, syntax highlighting, mermaid
+- [ ] Toasts on mutation success (rename/pin/delete are silent)
+- [ ] a11y: focus trap + initial focus on Sheet/ConfirmDialog,
+      `role=listbox` on cwd combobox, live-region announcements,
+      `role=dialog` on `?` sheet, prefers-reduced-motion
 
 Intentionally dropped (v0):
 
