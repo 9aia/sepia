@@ -8,6 +8,7 @@ use leptos_router::components::A;
 #[cfg(feature = "hydrate")]
 use leptos_router::hooks::use_navigate;
 use leptos_router::hooks::{use_params_map, use_query_map};
+use leptos_use::core::ConnectionReadyState;
 use sepia_web_core::transcript::{LiveKind, LiveTranscript, PendingPermission};
 
 use crate::api::{
@@ -273,6 +274,10 @@ pub fn SessionPanel(
     // page's `start` index.
     let older: RwSignal<Vec<HistoryPageDto>> = RwSignal::new(Vec::new());
     let live: RwSignal<LiveTranscript> = RwSignal::new(LiveTranscript::default());
+    // The live stream's connection state — `Some(signal)` while an
+    // EventStream is open, `None` otherwise (SSR, detached, or before
+    // the summary resolves). The `Reconnecting…` pill reads it.
+    let conn_state: RwSignal<Option<Signal<ConnectionReadyState>>> = RwSignal::new(None);
 
     // Live stream — wasm only; SSR renders history without it.
     #[cfg(feature = "hydrate")]
@@ -300,7 +305,7 @@ pub fn SessionPanel(
                     // `EventStream` isn't `Send` (wasm closures);
                     // `new_local` keeps the slot in the component's
                     // arena and the guard's `Drop` closes the stream.
-                    slot.set_value(Some(crate::sse::session_stream(
+                    let stream = crate::sse::session_stream(
                         &session_id(),
                         Some(&agent_name),
                         move |event| live.update(|t| t.apply(&event)),
@@ -309,11 +314,16 @@ pub fn SessionPanel(
                             history.refetch();
                             live.set(LiveTranscript::default());
                         },
-                    )));
+                    );
+                    conn_state.set(Some(stream.ready_state()));
+                    slot.set_value(Some(stream));
                 }
                 // Detached → close an open stream, killing the retry
                 // loop against the 400ing endpoint.
-                (_, Some(false)) => slot.set_value(None),
+                (_, Some(false)) => {
+                    slot.set_value(None);
+                    conn_state.set(None);
+                }
                 _ => {}
             }
         });
@@ -706,6 +716,33 @@ pub fn SessionPanel(
                                             .map(|m| view! { <HistoryRow message=m/> })
                                             .collect::<Vec<_>>()}
                                         <LiveLog live=live/>
+                                    </div>
+                                    // Live-stream connection pill —
+                                    // the same floating-overlay pattern
+                                    // as "Jump to bottom" below. Always
+                                    // rendered; visibility is
+                                    // class-only. Shows whenever the
+                                    // stream exists but isn't `Open`
+                                    // (connecting, or closed with the
+                                    // infinite backoff retrying).
+                                    <div
+                                        data-name="ReconnectingPill"
+                                        class=move || {
+                                            let reconnecting = conn_state
+                                                .get()
+                                                .is_some_and(|s| {
+                                                    s.get() != ConnectionReadyState::Open
+                                                });
+                                            let base = "absolute right-3 top-2 flex items-center gap-1.5 rounded-full border bg-popover px-3 py-1 text-xs text-muted-foreground shadow-md transition-opacity";
+                                            if reconnecting {
+                                                format!("{base} opacity-100")
+                                            } else {
+                                                format!("{base} opacity-0 pointer-events-none")
+                                            }
+                                        }
+                                    >
+                                        <span class="size-1.5 animate-pulse rounded-full bg-warning"></span>
+                                        "Reconnecting…"
                                     </div>
                                     // Always rendered (SSR/hydrate
                                     // agree); visibility is class-only.

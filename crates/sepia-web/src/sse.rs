@@ -14,13 +14,23 @@ use leptos_use::{
 use wasm_bindgen::JsCast;
 
 /// An open `EventSource` handle — `Drop` closes it. Pair with
-/// `StoredValue::new_local` (sendwrapped `close` is !Send).
+/// `StoredValue::new_local` (sendwrapped `close` is !Send). The
+/// `ready_state` signal tracks connect/open/closed-reconnecting for
+/// the UI's "Reconnecting…" affordance.
 pub struct EventStream {
     close: Box<dyn FnOnce()>,
+    ready_state: Signal<ConnectionReadyState>,
 }
 
 impl EventStream {
     pub fn close(self) {}
+
+    /// `leptos_use`'s live connection state — `Connecting`/`Open`/
+    /// `Closing`/`Closed`; `Closed` under `ReconnectLimit::Infinite`
+    /// means the backoff loop is retrying.
+    pub fn ready_state(&self) -> Signal<ConnectionReadyState> {
+        self.ready_state
+    }
 }
 
 impl Drop for EventStream {
@@ -53,6 +63,7 @@ fn connect(
     }
     EventStream {
         close: Box::new(move || (ret.close)()),
+        ready_state: ret.ready_state,
     }
 }
 
