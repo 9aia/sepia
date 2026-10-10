@@ -6,6 +6,7 @@
 
 pub mod filter;
 pub mod keymap;
+pub mod palette;
 pub mod path;
 pub mod theme;
 pub mod transcript;

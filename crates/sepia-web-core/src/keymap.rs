@@ -2,8 +2,8 @@
 //! document `keydown` listeners in `app` and `pages::session_list`.
 //! Each listener translates its `KeyboardEvent` into `(key, Mods,
 //! KeyCtx)`, fills in the context it owns, and dispatches only the
-//! `Action`s in its scope (the shell owns `ToggleHelp`/`CloseHelp`;
-//! the session list owns the rest).
+//! `Action`s in its scope (the shell owns `ToggleHelp`/`CloseHelp`/
+//! `TogglePalette`/`OpenSettings`; the session list owns the rest).
 
 /// Modifier state for a keydown.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -48,8 +48,8 @@ pub enum Action {
     ToggleHelp,
     /// Escape while the cheat-sheet is open (shell).
     CloseHelp,
-    /// ⌘K / Ctrl-K — focus the session filter input.
-    FocusFilter,
+    /// ⌘K / Ctrl-K or `/` — open (⌘K also closes) the command palette.
+    TogglePalette,
     /// ⌘B / Ctrl-B — collapse/expand the list column.
     ToggleList,
     /// `n` — focus the new-session cwd input.
@@ -83,7 +83,7 @@ impl Action {
         matches!(
             self,
             Self::ToggleHelp
-                | Self::FocusFilter
+                | Self::TogglePalette
                 | Self::ToggleList
                 | Self::FocusNewSession
                 | Self::OpenSettings
@@ -102,7 +102,7 @@ impl Action {
 pub fn resolve_key(key: &str, mods: Mods, ctx: KeyCtx) -> Option<Action> {
     if mods.command() {
         if key.eq_ignore_ascii_case("k") {
-            return Some(Action::FocusFilter);
+            return Some(Action::TogglePalette);
         }
         if key.eq_ignore_ascii_case("b") {
             return Some(Action::ToggleList);
@@ -129,6 +129,10 @@ pub fn resolve_key(key: &str, mods: Mods, ctx: KeyCtx) -> Option<Action> {
     if key == "?" {
         // Shift allowed — it's how `?` is typed.
         return (!ctx.typing).then_some(Action::ToggleHelp);
+    }
+    if key == "/" && !mods.shift {
+        // `/` is the palette's second opener — needs no shift.
+        return (!ctx.typing).then_some(Action::TogglePalette);
     }
     if ctx.typing {
         return None;
@@ -206,26 +210,48 @@ mod tests {
     }
 
     #[test]
-    fn command_k_focuses_the_filter() {
+    fn command_k_toggles_the_palette() {
         assert_eq!(
             resolve_key("k", mods(false, true, false, false), NONE),
-            Some(Action::FocusFilter)
+            Some(Action::TogglePalette)
         );
         assert_eq!(
             resolve_key("K", mods(true, false, false, false), NONE),
-            Some(Action::FocusFilter)
+            Some(Action::TogglePalette)
         );
-        // Works while typing — the chord targets the filter itself.
+        // Works while typing — ⌘K must close the palette even with
+        // its input focused.
         assert_eq!(
             resolve_key(
                 "k",
                 mods(true, false, false, false),
                 ctx(true, false, false, false)
             ),
-            Some(Action::FocusFilter)
+            Some(Action::TogglePalette)
         );
         // Bare `k` does nothing.
         assert_eq!(resolve_key("k", NO_MODS, NONE), None);
+    }
+
+    #[test]
+    fn slash_opens_the_palette_unless_typing() {
+        assert_eq!(resolve_key("/", NO_MODS, NONE), Some(Action::TogglePalette));
+        assert_eq!(
+            resolve_key("/", NO_MODS, ctx(true, false, false, false)),
+            None
+        );
+        // `?` is Shift+/ — it resolves to help, not the palette.
+        assert_eq!(
+            resolve_key("/", mods(false, false, false, true), NONE),
+            None
+        );
+        for m in [
+            mods(true, false, false, false),
+            mods(false, true, false, false),
+            mods(false, false, true, false),
+        ] {
+            assert_eq!(resolve_key("/", m, NONE), None);
+        }
     }
 
     #[test]
@@ -403,7 +429,7 @@ mod tests {
     #[test]
     fn prevent_default_matches_the_chords() {
         for (a, pd) in [
-            (Action::FocusFilter, true),
+            (Action::TogglePalette, true),
             (Action::ToggleList, true),
             (Action::FocusNewSession, true),
             (Action::ToggleHelp, true),
