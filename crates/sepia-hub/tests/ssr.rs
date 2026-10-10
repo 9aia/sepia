@@ -331,6 +331,19 @@ impl NodeApi for StubNodeApi {
     }
 }
 
+/// Serialize test bodies: `router()` calls `generate_route_list(App)`
+/// — a full `App` render + `Owner::new_root` + global leptos-fetch
+/// scope registration — per test, and concurrent renders across
+/// parallel `#[tokio::test]` runtimes deadlock inside leptos' global
+/// state (whole file passes in 0.6s serial; ~16/26 parallel hang
+/// forever regardless of which tests). Upstream constraint — a real
+/// server has one runtime. Hold the guard for the test's duration.
+async fn locked_app(state: HubState) -> (axum::Router, tokio::sync::MutexGuard<'static, ()>) {
+    static RENDER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let guard = RENDER_LOCK.lock().await;
+    (router(state), guard)
+}
+
 fn test_state() -> HubState {
     let options = LeptosOptions::builder()
         .output_name("sepia_web")
@@ -382,7 +395,7 @@ async fn request(
 
 #[tokio::test]
 async fn session_list_ssr_contains_seeded_title() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -393,7 +406,7 @@ async fn session_list_ssr_contains_seeded_title() {
 
 #[tokio::test]
 async fn session_detail_ssr_contains_seeded_title() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/sessions/s1").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -404,7 +417,7 @@ async fn session_detail_ssr_contains_seeded_title() {
 
 #[tokio::test]
 async fn style_route_serves_embedded_css() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, css) = get(app, "/style.css").await;
     assert_eq!(status, StatusCode::OK);
     assert!(css.contains("--"), "stylesheet should contain CSS vars");
@@ -412,7 +425,7 @@ async fn style_route_serves_embedded_css() {
 
 #[tokio::test]
 async fn manifest_is_served_from_site_root() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, body) = get(app, "/manifest.json").await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("\"sepia\""));
@@ -420,7 +433,7 @@ async fn manifest_is_served_from_site_root() {
 
 #[tokio::test]
 async fn agents_ssr_lists_stubbed_agents() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/agents").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -434,7 +447,7 @@ async fn agents_ssr_lists_stubbed_agents() {
 
 #[tokio::test]
 async fn projects_ssr_lists_stubbed_projects() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/projects").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -446,7 +459,7 @@ async fn projects_ssr_lists_stubbed_projects() {
 
 #[tokio::test]
 async fn settings_ssr_renders_config_keys() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/settings").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -461,7 +474,7 @@ async fn settings_ssr_renders_config_keys() {
 
 #[tokio::test]
 async fn nodes_ssr_shows_identity_and_health() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/nodes").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -480,7 +493,7 @@ async fn nodes_ssr_shows_identity_and_health() {
 
 #[tokio::test]
 async fn session_detail_ssr_renders_action_row() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/sessions/s1").await;
     assert_eq!(status, StatusCode::OK);
     // Unlocked + not live → a plain Attach (the takeover label only
@@ -501,7 +514,7 @@ async fn session_detail_ssr_renders_action_row() {
 
 #[tokio::test]
 async fn session_list_ssr_renders_create_form() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -522,7 +535,7 @@ async fn session_list_ssr_renders_create_form() {
 
 #[tokio::test]
 async fn unauthenticated_request_is_unauthorized() {
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let ((status, headers), body) = request(app, "/", &[]).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(headers["www-authenticate"], "Bearer");
@@ -541,7 +554,7 @@ async fn unauthenticated_request_is_unauthorized() {
 
 #[tokio::test]
 async fn query_token_authenticates_and_sets_cookie() {
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let ((status, headers), html) = request(app, "/?token=test-hub-token", &[]).await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Seeded Session Title"));
@@ -560,7 +573,7 @@ async fn wrong_token_is_unauthorized() {
         vec![("cookie", "sepia_hub=wrong")],
         vec![],
     ] {
-        let app = router(authed_state());
+        let (app, _render_lock) = locked_app(authed_state()).await;
         let ((status, _), _) = request(app, "/?token=wrong", &headers).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "headers: {headers:?}");
     }
@@ -568,7 +581,7 @@ async fn wrong_token_is_unauthorized() {
 
 #[tokio::test]
 async fn bearer_header_and_cookie_authenticate() {
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let (status, _) = get_with(app, "/", &[("authorization", "Bearer test-hub-token")]).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -586,20 +599,20 @@ async fn get_with(app: axum::Router, uri: &str, headers: &[(&str, &str)]) -> (St
 async fn static_assets_stay_open() {
     // The PWA shell + service worker must load before any credential.
     for path in ["/style.css", "/manifest.json", "/sw.js", "/icon.svg"] {
-        let app = router(authed_state());
+        let (app, _render_lock) = locked_app(authed_state()).await;
         let (status, _) = get(app, path).await;
         assert_eq!(status, StatusCode::OK, "{path} should stay open");
     }
     // The wasm bundle dir is likewise ungated (404 here — no pkg staged
     // in the test site root — but never 401).
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let (status, _) = get(app, "/pkg/sepia_web.js").await;
     assert_ne!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
 async fn login_validates_then_redirects_with_cookie() {
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let ((status, headers), _) = request(app, "/login?token=test-hub-token", &[]).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers["location"], "/");
@@ -624,7 +637,7 @@ async fn login_validates_then_redirects_with_cookie() {
 #[tokio::test]
 async fn login_page_renders_the_form() {
     // /login is pre-auth: the Leptos page itself, gate or no gate.
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let (status, html) = get(app, "/login").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -645,7 +658,7 @@ async fn login_page_renders_the_form() {
 async fn html_gets_redirect_to_login_apis_stay_401() {
     // A browser navigation (Accept: text/html) bounces to /login with
     // the destination in `next`.
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let ((status, headers), _) = request(app, "/agents", &[("accept", "text/html")]).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers["location"], "/login?next=%2Fagents");
@@ -698,7 +711,7 @@ async fn post(
 #[tokio::test]
 async fn login_post_sets_cookie_or_bounces_back() {
     // Good token (form-encoded, like the page's <form>) → cookie + 303.
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let ((status, headers), _) = post(
         app,
         "/login",
@@ -742,7 +755,7 @@ async fn login_post_sets_cookie_or_bounces_back() {
 async fn sse_bridge_accepts_query_token() {
     // EventSource can't set headers. The stub upstream is unreachable
     // (127.0.0.1:9), so a passed gate surfaces as 502, never 401.
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let (status, _) = get(app, "/api/events?token=test-hub-token").await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     let app = router(authed_state());
@@ -754,7 +767,7 @@ async fn sse_bridge_accepts_query_token() {
 async fn hub_fns_require_auth_too() {
     // Leptos server fns ride the browser cookie same-origin — no creds,
     // no call.
-    let app = router(authed_state());
+    let (app, _render_lock) = locked_app(authed_state()).await;
     let ((status, _), _) = request(app, "/hub/list_sessions", &[]).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let app = router(authed_state());
@@ -772,7 +785,7 @@ async fn hub_fns_require_auth_too() {
 #[tokio::test]
 async fn tokenless_hub_stays_open() {
     // Loopback-only mode — every surface behaves exactly as before.
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Seeded Session Title"));
@@ -815,7 +828,7 @@ fn hub_config_refuses_non_loopback_without_token() {
 
 #[tokio::test]
 async fn session_list_ssr_marks_queued_writes() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/").await;
     assert_eq!(status, StatusCode::OK);
     // The stub queues a `prompt` for s1 and a dead-lettered
@@ -832,7 +845,7 @@ async fn session_list_ssr_marks_queued_writes() {
 
 #[tokio::test]
 async fn session_detail_ssr_shows_queued_badge() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/sessions/s1").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -843,7 +856,7 @@ async fn session_detail_ssr_shows_queued_badge() {
 
 #[tokio::test]
 async fn nodes_ssr_lists_queued_writes() {
-    let app = router(test_state());
+    let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/nodes").await;
     assert_eq!(status, StatusCode::OK);
     assert!(

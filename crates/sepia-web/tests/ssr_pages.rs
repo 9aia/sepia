@@ -39,7 +39,13 @@ async fn render(path: &str, api: Arc<dyn NodeApi>) -> String {
 
 /// `spawn_local` (used by suspense resources and leptos-fetch) goes
 /// through `any_spawner`; on tokio that needs a `LocalSet` in scope.
+/// The lock serializes renders — concurrent SSR across parallel
+/// `#[tokio::test]` runtimes deadlocks in leptos' global state
+/// (upstream constraint: one runtime per render process). Renders
+/// are ~ms; the lock costs nothing.
 async fn page(path: &str, api: Arc<dyn NodeApi>) -> String {
+    static RENDER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _serialize = RENDER_LOCK.lock().await;
     let _ = any_spawner::Executor::init_tokio();
     tokio::task::LocalSet::new()
         .run_until(render(path, api))

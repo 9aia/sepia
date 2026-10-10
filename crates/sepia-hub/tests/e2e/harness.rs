@@ -383,8 +383,102 @@ pub struct Browser {
     // Cross-process serialization — nextest runs each test in its own
     // process, so an in-process lock can't stop N concurrent Chromes
     // from renderer-timeouting each other under load.
-    _serialize: std::fs::File,
+    _serialize: BrowserLock,
     pub driver: WebDriver,
+}
+
+/// Lock-file guard for the cross-process browser serialization lock.
+/// Holding the `File` directly meant a panic before `Browser` existed
+/// leaked the path and starved every later test until the stale
+/// timeout — `Drop` removes it on unwind too.
+struct BrowserLock(PathBuf);
+
+impl BrowserLock {
+    fn acquire() -> Self {
+        let path = workspace_root().join("target/.e2e-browser.lock");
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Self(path),
+                Err(_) => {
+                    // Another test holds the browser — or died holding
+                    // it; retire after 20min.
+                    let stale = std::fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .map(|t| t.elapsed().unwrap_or_default() > Duration::from_secs(1200))
+                        .unwrap_or(false);
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                    std::thread::sleep(POLL);
+                }
+            }
+        }
+    }
+}
+
+impl Drop for BrowserLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Kills the spawned chromedriver if `connect` unwinds before
+/// `Browser` takes ownership — `Child`'s own Drop does not kill.
+struct ChildGuard(Option<Child>);
+
+impl ChildGuard {
+    fn into_inner(mut self) -> Child {
+        self.0.take().unwrap()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut c) = self.0.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+}
+
+/// Chrome caps — factored so the WebDriver-session retry gets a
+/// fresh `ChromeCapabilities` (it's consumed by `WebDriver::new`).
+fn chrome_caps(
+    window_size: (u32, u32),
+    profile: &std::path::Path,
+) -> thirtyfour::ChromeCapabilities {
+    let mut caps = DesiredCapabilities::chrome();
+    for arg in [
+        "--headless=new",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+    ] {
+        caps.add_arg(arg).unwrap();
+    }
+    caps.add_arg(&format!(
+        "--window-size={},{}",
+        window_size.0, window_size.1
+    ))
+    .unwrap();
+    caps.add_arg(&format!("--user-data-dir={}", profile.display()))
+        .unwrap();
+    caps.set_browser_log_level(thirtyfour::LoggingPrefsLogLevel::All)
+        .unwrap();
+    // The SSR stream stays open past `load` (out-of-order suspense
+    // fragments + SSE) — "normal" page-load strategy makes `goto`
+    // time out waiting for it. Eager returns at DOMContentLoaded;
+    // the tests poll for elements anyway.
+    caps.set_page_load_strategy(thirtyfour::PageLoadStrategy::Eager)
+        .unwrap();
+    if let Some(bin) = chrome_binary() {
+        caps.set_binary(&bin.display().to_string()).unwrap();
+    }
+    caps
 }
 
 impl Browser {
@@ -394,13 +488,15 @@ impl Browser {
         let wd_port = free_port();
         let wd_url = format!("http://127.0.0.1:{wd_port}");
         let bin = chromedriver_bin().expect("chromedriver not found");
-        let proc = Command::new(&bin)
-            .arg(format!("--port={wd_port}"))
-            .arg("--allowed-origins=*")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap_or_else(|e| panic!("spawn chromedriver {bin}: {e}"));
+        let proc = ChildGuard(Some(
+            Command::new(&bin)
+                .arg(format!("--port={wd_port}"))
+                .arg("--allowed-origins=*")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap_or_else(|e| panic!("spawn chromedriver {bin}: {e}")),
+        ));
 
         let probe = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(3)))
@@ -410,67 +506,24 @@ impl Browser {
             panic!("chromedriver never answered /status");
         }
 
-        let mut caps = DesiredCapabilities::chrome();
-        for arg in [
-            "--headless=new",
-            "--no-sandbox",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-        ] {
-            caps.add_arg(arg).unwrap();
-        }
-        caps.add_arg(&format!(
-            "--window-size={},{}",
-            window_size.0, window_size.1
-        ))
-        .unwrap();
         // Isolate the profile — a reused one would carry a stale
         // service worker between runs.
-        let serialize = loop {
-            let lock = workspace_root().join("target/.e2e-browser.lock");
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&lock)
-            {
-                Ok(f) => break f,
-                Err(_) => {
-                    // Another test holds the browser — or died holding
-                    // it; retire after 20min.
-                    let stale = std::fs::metadata(&lock)
-                        .and_then(|m| m.modified())
-                        .map(|t| t.elapsed().unwrap_or_default() > Duration::from_secs(1200))
-                        .unwrap_or(false);
-                    if stale {
-                        let _ = std::fs::remove_file(&lock);
-                    }
-                    std::thread::sleep(POLL);
-                }
-            }
-        };
-
+        let lock = BrowserLock::acquire();
         let profile = tempfile::tempdir().unwrap();
-        caps.add_arg(&format!("--user-data-dir={}", profile.path().display()))
-            .unwrap();
-        caps.set_browser_log_level(thirtyfour::LoggingPrefsLogLevel::All)
-            .unwrap();
-        // The SSR stream stays open past `load` (out-of-order suspense
-        // fragments + SSE) — "normal" page-load strategy makes `goto`
-        // time out waiting for it. Eager returns at DOMContentLoaded;
-        // the tests poll for elements anyway.
-        caps.set_page_load_strategy(thirtyfour::PageLoadStrategy::Eager)
-            .unwrap();
-        if let Some(bin) = chrome_binary() {
-            caps.set_binary(&bin.display().to_string()).unwrap();
-        }
 
-        let driver = WebDriver::new(&wd_url, caps)
-            .await
-            .unwrap_or_else(|e| panic!("new webdriver session: {e}"));
+        // Session creation itself flakes under load
+        // (`DevToolsActivePort` races); one fresh retry is cheaper
+        // than a failed suite.
+        let driver = match WebDriver::new(&wd_url, chrome_caps(window_size, profile.path())).await {
+            Ok(d) => d,
+            Err(first) => WebDriver::new(&wd_url, chrome_caps(window_size, profile.path()))
+                .await
+                .unwrap_or_else(|e| panic!("new webdriver session: {first}; retry: {e}")),
+        };
         Self {
-            proc,
+            proc: proc.into_inner(),
             profile,
-            _serialize: serialize,
+            _serialize: lock,
             driver,
         }
     }
@@ -605,7 +658,7 @@ impl Browser {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-        let _ = std::fs::remove_file(workspace_root().join("target/.e2e-browser.lock"));
+        // The BrowserLock field's Drop removes the lock file.
     }
 }
 
