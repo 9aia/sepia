@@ -23,6 +23,7 @@ depend on it; `sepia-node`/`sepia-cli`/`sepia-hub` compose ports.
 | `crates/sepia-node` | headless daemon binary |
 | `crates/sepia-cli` | `sepia` binary — store/node/config verbs, serve, pair, service |
 | `crates/sepia-{web,hub}` | Leptos UI + SSR host |
+| `crates/sepia-web-core` | pure UI logic (list filter/grouping, keymap, theme, transcript) — no DOM/leptos |
 | `crates/sepia-testkit` | conformance suites, golden fixtures, mock ACP agent |
 
 ## Commands
