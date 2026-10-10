@@ -20,14 +20,28 @@ fn target_debug() -> PathBuf {
 
 fn build_bin(name: &str) -> PathBuf {
     let root = workspace_root();
-    let status = std::process::Command::new("cargo")
-        .args(["build", "--bin", name])
-        .current_dir(&root)
-        .status();
     let binary = target_debug().join(name);
+    // Prebuilt mode: `cargo xtask test`/`e2e` build the binaries once
+    // up front — spawning `cargo` inside a test process serializes on
+    // the workspace+global package locks and can wedge nextest behind
+    // other projects' builds (observed: 120s test timeouts on
+    // "Blocking waiting for file lock on package cache").
+    let prebuilt = std::env::var_os("SEPIA_TESTKIT_PREBUILT").is_some()
+        || std::env::var_os("SEPIA_E2E_PREBUILT").is_some();
+    if !prebuilt {
+        let status = std::process::Command::new("cargo")
+            .args(["build", "--bin", name])
+            .current_dir(&root)
+            .status();
+        assert!(
+            status.is_ok_and(|s| s.success()),
+            "failed to build test binary {name}"
+        );
+    }
     assert!(
-        status.is_ok_and(|s| s.success()) && binary.exists(),
-        "failed to build test binary {name}"
+        binary.exists(),
+        "missing test binary {name} at {} — build it or unset SEPIA_TESTKIT_PREBUILT",
+        binary.display()
     );
     binary
 }

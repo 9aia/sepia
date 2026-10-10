@@ -44,11 +44,35 @@ fn main() -> anyhow::Result<()> {
         // `cargo test` when the subcommand is *missing* — a failing
         // nextest run must not re-run the whole suite a second way.
         Some("test") => {
-            if nextest_available() {
-                run("cargo", &["nextest", "run", "--workspace"])?;
+            // Prebuild the binaries tests shell out to (driver, node,
+            // hub, mock ACP agent) — one cargo invocation here beats N
+            // in-test `cargo build`s serializing on package/build-dir
+            // locks. Tests see SEPIA_TESTKIT_PREBUILT and resolve the
+            // paths directly.
+            run(
+                "cargo",
+                &[
+                    "build",
+                    "--bin",
+                    "sepia-driver-devin",
+                    "--bin",
+                    "sepia-node",
+                    "--bin",
+                    "sepia-hub",
+                    "--bin",
+                    "sepia-mock-acp-agent",
+                ],
+            )?;
+            let cmd = if nextest_available() {
+                &["nextest", "run", "--workspace"][..]
             } else {
-                run("cargo", &["test", "--workspace"])?;
-            }
+                &["test", "--workspace"][..]
+            };
+            let status = Command::new("cargo")
+                .args(cmd)
+                .env("SEPIA_TESTKIT_PREBUILT", "1")
+                .status()?;
+            anyhow::ensure!(status.success(), "workspace tests failed");
         }
         Some("install") => {
             // Build every user-facing binary in release and copy it to
@@ -109,6 +133,8 @@ fn main() -> anyhow::Result<()> {
                     "sepia-node",
                     "--bin",
                     "sepia-hub",
+                    "--bin",
+                    "sepia-mock-acp-agent",
                 ],
             )?;
             anyhow::ensure!(
