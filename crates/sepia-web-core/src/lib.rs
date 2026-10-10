@@ -6,11 +6,13 @@
 
 pub mod composer;
 pub mod filter;
+pub mod highlight;
 pub mod history;
 pub mod keymap;
 pub mod notify;
 pub mod palette;
 pub mod path;
 pub mod project;
+pub mod stream;
 pub mod theme;
 pub mod transcript;

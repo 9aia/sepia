@@ -179,6 +179,41 @@ pub fn import_body(file: &Value, target: &str, cwd: Option<&str>) -> Result<Valu
     Ok(body)
 }
 
+/// `> `-prefixed markdown quote of `text` — the payload the
+/// per-message reply/quote action inserts. Empty lines still carry
+/// the marker so the quote stays a contiguous block. `""` quotes
+/// nothing (an empty message has nothing to cite).
+pub fn quote_block(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    text.lines()
+        .map(|l| {
+            if l.is_empty() {
+                ">".to_string()
+            } else {
+                format!("> {l}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Insert a quote at the end of the composer draft — a blank line
+/// separates any existing text, and a trailing blank line leaves the
+/// caret ready for the reply itself. Empty quotes and empty messages
+/// leave the draft untouched.
+pub fn draft_with_quote(draft: &str, quote: &str) -> String {
+    let q = quote_block(quote);
+    if q.is_empty() {
+        return draft.to_string();
+    }
+    if draft.trim().is_empty() {
+        return format!("{q}\n\n");
+    }
+    format!("{}\n\n{q}\n\n", draft.trim_end())
+}
+
 /// A non-empty agent query pair for links — `("?agent=x", "")` usage
 /// keeps call sites ternary-free.
 pub fn agent_query(agent: Option<&str>) -> String {
@@ -291,6 +326,25 @@ mod tests {
         // Rejects non-session payloads and unknown targets.
         assert!(import_body(&json!([1, 2]), "devin", None).is_err());
         assert!(import_body(&json!({"id": "s"}), "claude", None).is_err());
+    }
+
+    #[test]
+    fn quote_block_prefixes_every_line() {
+        assert_eq!(quote_block("one\ntwo"), "> one\n> two");
+        assert_eq!(quote_block("a\n\nb"), "> a\n>\n> b");
+        assert_eq!(quote_block(""), "");
+    }
+
+    #[test]
+    fn draft_with_quote_appends_and_separates() {
+        // Empty draft → the quote stands alone, caret on a fresh line.
+        assert_eq!(draft_with_quote("", "hi"), "> hi\n\n");
+        assert_eq!(draft_with_quote("  ", "hi"), "> hi\n\n");
+        // Existing draft keeps its text, blank line before the quote.
+        assert_eq!(draft_with_quote("earlier\n", "hi"), "earlier\n\n> hi\n\n");
+        // Nothing to quote → draft untouched.
+        assert_eq!(draft_with_quote("keep me", ""), "keep me");
+        assert_eq!(draft_with_quote("", ""), "");
     }
 
     #[test]
