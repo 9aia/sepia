@@ -84,7 +84,9 @@ Missing (queued next):
       keybind *remapping* still open
 - [x] Settings depth — appearance (theme select), node identity +
       connection, agent catalog, outbox writes, push, shortcuts table
-- [ ] Session context tabs
+- [x] Session context tabs — system rows fold into a ContextCard
+      (Reports/Prompt/Rules/Skills) parsed in
+      `sepia-web-core::history::parse_system_context`
 - [ ] EmptyScreen/ErrorBanner parity — router fallback is a bare `<p>`;
       load failures render raw error text, no retry, no friendly 404/500
 
@@ -118,8 +120,10 @@ Missing features (wire-supported but no UI):
 - [ ] Prompt attachments — node accepts `{text?, attachments?}`;
       composer sends text only
 - [ ] Reply/quote + per-message copy/rewind actions
-- [ ] Usage footer (tokens/cost) — DTO doesn't decode usage
-- [ ] Run/provenance marker rows (`spans` on the wire, not rendered)
+- [x] Usage footer — `HistoryMessageDto` decodes `usage`; assistant
+      rows render ↑in/↓out/cost with cache+thinking on hover
+- [x] Run/provenance marker rows — `spans` fold into the transcript
+      as `agent @ node` dividers (live run start/end too)
 - [x] Sub-agent badges — `↳` mark on child rows, `↳ N` child count
       on parents
 - [~] Pinned/Recents sidebar sections — ✓ Pinned section (rows lifted
@@ -128,8 +132,9 @@ Missing features (wire-supported but no UI):
       order + e2e row anchors rely on
 - [ ] Per-session model picker (`patch_meta model` unwired; read-only
       chip today)
-- [ ] Per-tool renderers + live diffs (`diffs`/`locations`/`contents`
-      in proto, `live.rs` ignores them)
+- [x] Per-tool renderers + live diffs — exec/read/edit/search/fetch/
+      todo summaries, DiffBlock for recorded diffs, location chips,
+      `contents` segments (`sepia-web-core::history::tool_summary`)
 - [ ] Project membership mgmt (`projectIds` unwired), details dialog,
       node nickname editing (`PATCH /api/node` exists)
 - [x] Command palette — ⌘K or `/` opens a `role=dialog` overlay:
@@ -141,9 +146,11 @@ Missing features (wire-supported but no UI):
       `POST /api/pair` (`NodeApi::pair` → `redeem_pair_code` server fn)
       and shows the minted node credential once
 - [x] URL-persisted filter/sort state, group-header context menus
-- [ ] Message auto-load on scroll-top (manual button today), collapse
-      consecutive dupes, virtualized list at scale
-- [ ] Markdown parity: tables/GFM, syntax highlighting, mermaid
+- [~] Message auto-load on scroll-top + collapse consecutive dupes —
+      ✓ scroll-top auto-load with scroll anchoring, ✓ `×N` fold on
+      identical back-to-back rows; virtualized list still open
+- [~] Markdown parity — ✓ GFM tables (`MdBlock::Table`, alignment,
+      inline cells); syntax highlighting + mermaid still open
 - [ ] Toasts on mutation success (rename/pin/delete are silent)
 - [ ] a11y: focus trap + initial focus on Sheet/ConfirmDialog,
       `role=listbox` on cwd combobox, live-region announcements,

@@ -9,7 +9,13 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_navigate;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_use::core::ConnectionReadyState;
+use sepia_web_core::history::{
+    ChatRow, FileDiffView, RowInput, RunSpan, SystemContext, ToolSegment, build_rows,
+    file_diff_view, format_duration, format_usage, tool_content_segments, tool_summary,
+    usage_label,
+};
 use sepia_web_core::transcript::{LiveKind, LiveTranscript, PendingPermission};
+use serde_json::Value;
 
 use crate::api::{
     answer_permission, attach_session, cancel_run, delete_session, detach_session, rename_session,
@@ -29,13 +35,6 @@ const PAGE_SIZE: i64 = 100;
 /// Shared `<pre>` body for tool output and thinking dumps.
 const TOOL_PRE: &str = "max-h-80 overflow-auto whitespace-pre-wrap break-words border-t \
                         border-border/60 px-3 py-2 font-mono text-xs text-muted-foreground";
-/// `TOOL_PRE` minus the top border — for sections under a `TOOL_LABEL`
-/// heading inside a tool `<details>` (the label draws the separator).
-const TOOL_PRE_BARE: &str = "max-h-80 overflow-auto whitespace-pre-wrap break-words px-3 py-2 \
-                             font-mono text-xs text-muted-foreground";
-/// Section label inside a tool `<details>` — "arguments" / "result".
-const TOOL_LABEL: &str = "border-t border-border/60 px-3 pt-1.5 text-[10px] font-semibold \
-                          uppercase tracking-wide text-muted-foreground";
 
 /// `/sessions/:id` — standalone deep link: renders the panel inside
 /// the app shell (the same component `/` embeds next to the list).
@@ -59,64 +58,281 @@ fn non_empty_str(s: &str) -> Option<String> {
     (!s.trim().is_empty()).then(|| s.trim().to_string())
 }
 
-/// One-line preview of a tool call for the `<summary>` strip. When the
-/// raw text is JSON args, prefer a human-readable field (`command`,
-/// `path`, …) over the raw `{"command": …}` blob; either way the
-/// result is whitespace-collapsed and truncated to ~80 chars.
-fn tool_snippet(raw: &str) -> String {
-    const MAX: usize = 80;
-    let picked = serde_json::from_str::<serde_json::Value>(raw)
-        .ok()
-        .and_then(|v| {
-            ["command", "cmd", "path", "file_path", "query", "pattern"]
-                .iter()
-                .find_map(|k| {
-                    v.get(*k)
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string)
-                })
+/// `- `/`+ `/`⋮ ` prefixed diff lines → colored rows. `added`/`removed`
+/// count the real change when the text came from `file_diff_view`; a
+/// plain `-/+` block (args-derived diffs) passes `None`.
+#[component]
+fn DiffBlock(
+    #[prop(into)] text: String,
+    #[prop(optional_no_strip)] path: Option<String>,
+    #[prop(optional)] added: Option<usize>,
+    #[prop(optional)] removed: Option<usize>,
+) -> impl IntoView {
+    let lines = text
+        .lines()
+        .map(|line| {
+            let cls = if line.starts_with("+ ") || line == "+" {
+                "text-success bg-success/10"
+            } else if line.starts_with("- ") || line == "-" {
+                "text-destructive bg-destructive/10"
+            } else if line.starts_with('⋮') {
+                "italic text-muted-foreground"
+            } else {
+                "text-muted-foreground"
+            };
+            view! { <div class=format!("px-2 whitespace-pre-wrap break-words {cls}")>{line.to_string()}</div> }
         })
-        .unwrap_or_else(|| raw.to_string());
-    let collapsed = picked.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() <= MAX {
-        collapsed
-    } else {
-        let mut s: String = collapsed.chars().take(MAX).collect();
-        s.push('…');
-        s
+        .collect::<Vec<_>>();
+    view! {
+        <div data-name="DiffBlock" class="overflow-hidden border-t border-border/60">
+            {path.map(|p| {
+                view! {
+                    <div class="flex items-center gap-2 border-b border-border/60 bg-muted/40 px-2.5 py-1 font-mono text-[10px] text-muted-foreground">
+                        <span class="min-w-0 flex-1 truncate">{p}</span>
+                        {added.map(|a| view! { <span class="shrink-0 text-success">{format!("+{a}")}</span> })}
+                        {removed.map(|r| view! { <span class="shrink-0 text-destructive">{format!("−{r}")}</span> })}
+                    </div>
+                }
+            })}
+            <div class="max-h-72 overflow-auto py-1 font-mono text-[11px] leading-relaxed">{lines}</div>
+        </div>
     }
 }
 
-/// The body of a tool `<details>` — labeled `arguments`/`result`
-/// `<pre>`s when args are known, a single output `<pre>` when that's
-/// all the wire gave us, and a muted placeholder when empty.
-fn tool_body(args: Option<String>, result: Option<String>) -> impl IntoView {
-    let args = args.filter(|a| !a.trim().is_empty());
-    let result = result.filter(|r| !r.is_empty());
-    let labeled = args.is_some();
-    let empty = args.is_none() && result.is_none();
-    view! {
-        {args.map(|a| view! {
-            <p class=TOOL_LABEL>"arguments"</p>
-            <pre class=TOOL_PRE_BARE>{a}</pre>
-        })}
-        {result.map(|r| {
-            if labeled {
-                view! {
-                    <p class=TOOL_LABEL>"result"</p>
-                    <pre class=TOOL_PRE_BARE>{r}</pre>
-                }
-                .into_any()
+/// One typed body segment of a tool display — command line, code dump,
+/// inline diff, markdown, or a muted status note.
+fn tool_segment_view(segment: ToolSegment) -> impl IntoView {
+    match segment {
+        ToolSegment::Command(text) => view! {
+            <div class="flex items-start gap-1.5 border-t border-border/60 px-3 py-1.5 font-mono text-[11px]">
+                <span class="shrink-0 select-none text-muted-foreground/70">"$"</span>
+                <span class="min-w-0 whitespace-pre-wrap break-words text-foreground/80">{text}</span>
+            </div>
+        }
+        .into_any(),
+        ToolSegment::Code(text) => view! {
+            <pre class=TOOL_PRE>{text}</pre>
+        }
+        .into_any(),
+        ToolSegment::Diff(text) => view! {
+            <DiffBlock text=text/>
+        }
+        .into_any(),
+        ToolSegment::Markdown(text) => view! {
+            <div class="border-t border-border/60 px-3 py-1"><Markdown text=text/></div>
+        }
+        .into_any(),
+        ToolSegment::Note { text, error } => {
+            let cls = if error {
+                "text-destructive"
             } else {
-                view! { <pre class=TOOL_PRE>{r}</pre> }.into_any()
+                "text-muted-foreground/80"
+            };
+            view! {
+                <p class=format!("border-t border-border/60 px-3 py-1 text-[11px] {cls}")>{text}</p>
             }
-        })}
-        {empty.then(|| view! {
-            <p class="border-t border-border/60 px-3 py-2 text-xs italic text-muted-foreground">
-                "no output"
-            </p>
-        })}
+            .into_any()
+        }
     }
+}
+
+/// The collapsible tool row shared by history and live entries: a
+/// marker line (label + status + salient detail) over typed segments,
+/// recorded file diffs, touched-file locations, and live `contents`.
+#[allow(clippy::too_many_arguments)]
+#[component]
+fn ToolBlock(
+    /// The `tool_summary` result for this call.
+    display: sepia_web_core::history::ToolDisplay,
+    /// `"running…" | "done" | "error" | "pending" | "success" | "failed"`.
+    #[prop(into)]
+    status: String,
+    /// Open while streaming; settled rows collapse via native
+    /// `<details>` toggling (`open` keeps SSR/hydrate markup identical).
+    open: bool,
+    /// Degraded-surface border (`status == error` or a failed run).
+    error: bool,
+    /// Recorded before/after payloads → real diff blocks.
+    #[prop(into, optional)]
+    diffs: Vec<FileDiffView>,
+    /// Files the call touched, `path[:line]` — shown when present even
+    /// alongside diffs (the wire sends both).
+    #[prop(into, optional)]
+    locations: Vec<String>,
+    /// Extra live `contents` segments (terminal refs, embedded text).
+    #[prop(into, optional)]
+    contents: Vec<ToolSegment>,
+    /// `durationMs` chip on the marker line.
+    #[prop(optional_no_strip)]
+    duration_ms: Option<f64>,
+) -> impl IntoView {
+    let class = if error {
+        "rounded-md border border-destructive/40 bg-destructive/10"
+    } else {
+        "rounded-md border border-border bg-muted/40"
+    };
+    let status_cls = if error || status == "error" || status == "failed" {
+        "text-destructive"
+    } else {
+        "text-muted-foreground"
+    };
+    let detail = display.detail.clone().filter(|d| !d.is_empty());
+    let running = status == "running…";
+    let empty = display.segments.is_empty()
+        && diffs.is_empty()
+        && locations.is_empty()
+        && contents.is_empty();
+    view! {
+        <details class=class open=open data-name=display.category.hook()>
+            <summary class="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-xs">
+                {running.then(|| view! {
+                    <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-info"></span>
+                })}
+                <span class="shrink-0 font-semibold text-info">{display.label.clone()}</span>
+                {(!status.is_empty()).then(move || view! {
+                    <span class=format!("shrink-0 text-[10px] uppercase tracking-wide {status_cls}")>
+                        {status.clone()}
+                    </span>
+                })}
+                {duration_ms
+                    .map(format_duration)
+                    .filter(|d| !d.is_empty())
+                    .map(|d| view! {
+                        <span class="shrink-0 text-[10px] text-muted-foreground">{format!("({d})")}</span>
+                    })}
+                {detail.map(|d| {
+                    let label = d.clone();
+                    view! {
+                        <span class="min-w-0 flex-1 truncate text-muted-foreground" title=d>{label}</span>
+                    }
+                })}
+            </summary>
+            {display
+                .segments
+                .into_iter()
+                .map(tool_segment_view)
+                .collect::<Vec<_>>()}
+            {diffs
+                .into_iter()
+                .map(|d| {
+                    view! {
+                        <DiffBlock
+                            text=d.text
+                            path=Some(d.path)
+                            added=d.added
+                            removed=d.removed
+                        />
+                    }
+                })
+                .collect::<Vec<_>>()}
+            {(!locations.is_empty()).then(|| {
+                view! {
+                    <div class="flex flex-wrap items-center gap-1.5 border-t border-border/60 px-3 py-1.5">
+                        {locations
+                            .iter()
+                            .map(|loc| {
+                                view! {
+                                    <code class="truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground" title=loc.clone()>
+                                        {loc.clone()}
+                                    </code>
+                                }
+                            })
+                            .collect::<Vec<_>>()}
+                    </div>
+                }
+            })}
+            {contents.into_iter().map(tool_segment_view).collect::<Vec<_>>()}
+            {empty.then(|| view! {
+                <p class="border-t border-border/60 px-3 py-2 text-xs italic text-muted-foreground">
+                    "no output"
+                </p>
+            })}
+        </details>
+    }
+}
+
+/// Slim divider between transcript segments — run-span provenance
+/// (`agent @ node`), model switches (`model: X`), and live run
+/// boundaries (`run started`/`run ended`).
+#[component]
+fn RunMarker(#[prop(into)] label: String) -> impl IntoView {
+    view! {
+        <div data-name="RunMarker" class="flex items-center gap-2 px-1 py-0.5">
+            <span class="h-px flex-1 bg-border/60"></span>
+            <span class="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                {label}
+            </span>
+            <span class="h-px flex-1 bg-border/60"></span>
+        </div>
+    }
+}
+
+/// Non-text `blocks` entries — an image inlines, anything else (file,
+/// audio, uri-less image) collapses to a named chip.
+fn attachment_views(blocks: &[Value]) -> Vec<impl IntoView> {
+    blocks
+        .iter()
+        .filter(|b| b.get("type").and_then(Value::as_str) != Some("text"))
+        .map(|b| {
+            let ty = b.get("type").and_then(Value::as_str).unwrap_or("file");
+            if ty == "image" {
+                let src = b
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .map(|d| {
+                        let mime = b
+                            .get("mimeType")
+                            .and_then(Value::as_str)
+                            .unwrap_or("image/png");
+                        format!("data:{mime};base64,{d}")
+                    })
+                    .or_else(|| b.get("uri").and_then(Value::as_str).map(str::to_string));
+                if let Some(src) = src {
+                    let alt = b
+                        .get("uri")
+                        .and_then(Value::as_str)
+                        .or_else(|| b.get("mimeType").and_then(Value::as_str))
+                        .unwrap_or("image")
+                        .to_string();
+                    return view! {
+                        <img src=src alt=alt class="mt-1.5 max-h-72 rounded-md border border-border/60"/>
+                    }
+                    .into_any();
+                }
+            }
+            let name = b
+                .get("name")
+                .and_then(Value::as_str)
+                .or_else(|| b.get("uri").and_then(Value::as_str))
+                .unwrap_or(ty)
+                .to_string();
+            let detail = b
+                .get("mimeType")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    b.get("size").and_then(Value::as_f64).map(|bytes| {
+                        if bytes < 1024.0 {
+                            format!("{bytes:.0} B")
+                        } else if bytes < 1024.0 * 1024.0 {
+                            format!("{:.1} KB", bytes / 1024.0)
+                        } else {
+                            format!("{:.1} MB", bytes / (1024.0 * 1024.0))
+                        }
+                    })
+                })
+                .unwrap_or_default();
+            view! {
+                <span class="mt-1.5 inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+                    {name}
+                    {(!detail.is_empty()).then(|| view! {
+                        <span class="text-muted-foreground/70">{detail.clone()}</span>
+                    })}
+                </span>
+            }
+            .into_any()
+        })
+        .collect()
 }
 
 /// The session chat panel — transcript + prompt + ops. Embedded in the
@@ -279,6 +495,64 @@ pub fn SessionPanel(
     // the summary resolves). The `Reconnecting…` pill reads it.
     let conn_state: RwSignal<Option<Signal<ConnectionReadyState>>> = RwSignal::new(None);
 
+    // Auto-scroll the log while new live entries stream in — but only
+    // while the user is pinned to the bottom. Scrolling up unpins; the
+    // "jump to bottom" pill re-pins. `log_ref`/`pinned` live ahead of
+    // the history loader because the scroll-top auto-load and the
+    // prepend scroll-restore both touch them.
+    let log_ref = NodeRef::<leptos::html::Div>::new();
+    let pinned = RwSignal::new(true);
+
+    // Earlier-history paging — shared by the "Load earlier" button and
+    // the scroll-top trigger (the same guard gates both).
+    let latest_start = move || {
+        history
+            .get()
+            .and_then(|p| p.ok().map(|p| p.start))
+            .unwrap_or(0)
+    };
+    let has_older = move || {
+        older
+            .read()
+            .first()
+            .map_or_else(|| latest_start() > 0, |p| p.start > 0)
+    };
+    let older_loading = RwSignal::new(false);
+    // scrollHeight captured before a prepend resolves — the restore
+    // effect shifts scrollTop by the grown amount so prepends don't
+    // jump the viewport. Hydrate-only; the SSR build never touches it.
+    #[allow(unused_variables)]
+    let prepend_height = StoredValue::new(0.0_f64);
+    let load_older = move || {
+        if older_loading.get_untracked() {
+            return;
+        }
+        let before = older.read().first().map_or_else(latest_start, |p| p.start);
+        if before == 0 {
+            return;
+        }
+        older_loading.set(true);
+        #[cfg(feature = "hydrate")]
+        if let Some(el) = log_ref.get() {
+            prepend_height.set_value(f64::from(el.scroll_height()));
+        }
+        let id = session_id();
+        let agent = agent();
+        leptos::task::spawn_local(async move {
+            if let Ok(page) = session_history(
+                id,
+                agent,
+                Some(i64::try_from(before).unwrap_or(i64::MAX)),
+                Some(PAGE_SIZE),
+            )
+            .await
+            {
+                older.update(|v| v.insert(0, page));
+            }
+            older_loading.set(false);
+        });
+    };
+
     // Live stream — wasm only; SSR renders history without it.
     #[cfg(feature = "hydrate")]
     {
@@ -331,11 +605,6 @@ pub fn SessionPanel(
         crate::app::every_ms(30_000, move || pending.refetch());
     }
 
-    // Auto-scroll the log while new live entries stream in — but only
-    // while the user is pinned to the bottom. Scrolling up unpins; the
-    // "jump to bottom" pill re-pins.
-    let log_ref = NodeRef::<leptos::html::Div>::new();
-    let pinned = RwSignal::new(true);
     #[cfg(feature = "hydrate")]
     {
         let _cleanup = leptos_use::use_event_listener(log_ref, leptos::ev::scroll, move |ev| {
@@ -345,10 +614,14 @@ pub fn SessionPanel(
                 .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
             {
                 // 48px slop — "at bottom" is approximate for streaming rows.
-                let gap = f64::from(el.scroll_height())
-                    - f64::from(el.scroll_top())
-                    - f64::from(el.client_height());
+                let top = f64::from(el.scroll_top());
+                let gap = f64::from(el.scroll_height()) - top - f64::from(el.client_height());
                 pinned.set(gap < 48.0);
+                // Scroll-top auto-load — the manual "Load earlier"
+                // button stays for a11y; same guard gates both.
+                if top < 64.0 && has_older() {
+                    load_older();
+                }
             }
         });
         Effect::new(move |_| {
@@ -356,6 +629,22 @@ pub fn SessionPanel(
             if pinned.get_untracked() {
                 if let Some(el) = log_ref.get() {
                     el.set_scroll_top(el.scroll_height());
+                }
+            }
+        });
+        // Prepend scroll-restore — after an older page lands, shift
+        // scrollTop by the height the DOM grew so the reader's position
+        // holds steady.
+        Effect::new(move |_| {
+            let _ = older.read().len();
+            let captured = prepend_height.get_value();
+            if captured > 0.0 {
+                prepend_height.set_value(0.0);
+                if let Some(el) = log_ref.get() {
+                    let grown = f64::from(el.scroll_height()) - captured;
+                    if grown > 0.0 {
+                        el.set_scroll_top(el.scroll_top() + grown as i32);
+                    }
                 }
             }
         });
@@ -452,18 +741,6 @@ pub fn SessionPanel(
     };
 
     let running = move || live.read().running;
-    let latest_start = move || {
-        history
-            .get()
-            .and_then(|p| p.ok().map(|p| p.start))
-            .unwrap_or(0)
-    };
-    let has_older = move || {
-        older
-            .read()
-            .first()
-            .map_or_else(|| latest_start() > 0, |p| p.start > 0)
-    };
 
     view! {
         <Title text="session — sepia"/>
@@ -506,6 +783,10 @@ pub fn SessionPanel(
                                 // once the tree above has captured them.
                                 let prompt_cwd = session.cwd.clone();
                                 let prompt_model = session.model.clone();
+                                // Run-provenance spans → marker rows
+                                // between transcript segments.
+                                let spans: Vec<RunSpan> =
+                                    session.spans.iter().map(Into::into).collect();
                                 // Outbox rows for this session — match
                                 // the owning node too when both name one
                                 // (session ids can collide across nodes).
@@ -759,25 +1040,54 @@ pub fn SessionPanel(
                                         node_ref=log_ref
                                     >
                                         <OlderButton
-                                            older=older
-                                            latest_start=latest_start
-                                            session_id=session_id()
-                                            agent=agent()
+                                            loading=older_loading
+                                            load=load_older
                                             has_older=has_older
                                         />
-                                        {older
-                                            .read()
-                                            .iter()
-                                            .cloned()
-                                            .flat_map(|p| p.messages)
-                                            .map(|m| view! { <HistoryRow message=m/> })
-                                            .collect::<Vec<_>>()}
-                                        {page
-                                            .messages
-                                            .iter()
-                                            .cloned()
-                                            .map(|m| view! { <HistoryRow message=m/> })
-                                            .collect::<Vec<_>>()}
+                                        // All loaded history (earlier
+                                        // pages + the first page) folds
+                                        // through `build_rows` — system
+                                        // blobs → one context card,
+                                        // identical rows fold, spans/
+                                        // model changes → markers.
+                                        {move || {
+                                            let mut msgs: Vec<HistoryMessageDto> = older
+                                                .read()
+                                                .iter()
+                                                .flat_map(|p| p.messages.clone())
+                                                .collect();
+                                            msgs.extend(page.messages.iter().cloned());
+                                            let inputs: Vec<RowInput> = msgs
+                                                .iter()
+                                                .map(|m| RowInput {
+                                                    role: &m.role,
+                                                    content: &m.content,
+                                                    created_at: m.created_at,
+                                                    model: m.model.as_deref(),
+                                                    blocks: m.blocks.as_deref(),
+                                                })
+                                                .collect();
+                                            build_rows(&inputs, &spans)
+                                                .into_iter()
+                                                .map(|row| match row {
+                                                    ChatRow::Context(context) => view! {
+                                                        <ContextCard context=context/>
+                                                    }
+                                                    .into_any(),
+                                                    ChatRow::History { index, dup } => view! {
+                                                        <HistoryRow
+                                                            message=msgs[index].clone()
+                                                            dup=dup
+                                                        />
+                                                    }
+                                                    .into_any(),
+                                                    ChatRow::Marker { label, .. } => view! {
+                                                        <RunMarker label=label/>
+                                                    }
+                                                    .into_any(),
+                                                })
+                                                .collect::<Vec<_>>()
+                                        }}
                                         <LiveLog live=live/>
                                     </div>
                                     // Live-stream connection pill —
@@ -880,39 +1190,14 @@ pub fn SessionPanel(
 }
 
 /// "Load earlier messages" — fetches the page ending at the current
-/// window's `start` index.
+/// window's `start` index. The loader lives in `SessionPanel` so the
+/// scroll-top trigger shares the same `loading` guard.
 #[component]
 fn OlderButton(
-    older: RwSignal<Vec<HistoryPageDto>>,
-    latest_start: impl Fn() -> usize + 'static + Send + Sync + Copy,
-    session_id: String,
-    agent: Option<String>,
+    loading: RwSignal<bool>,
+    load: impl Fn() + 'static + Send + Sync + Copy,
     has_older: impl Fn() -> bool + 'static + Send + Sync + Copy,
 ) -> impl IntoView {
-    let loading = RwSignal::new(false);
-    let load = move || {
-        let before = older.read().first().map_or_else(latest_start, |p| p.start);
-        if before == 0 {
-            return;
-        }
-        loading.set(true);
-        let id = session_id.clone();
-        let agent = agent.clone();
-        leptos::task::spawn_local(async move {
-            if let Ok(page) = session_history(
-                id,
-                agent,
-                Some(i64::try_from(before).unwrap_or(i64::MAX)),
-                Some(PAGE_SIZE),
-            )
-            .await
-            {
-                older.update(|v| v.insert(0, page));
-            }
-            loading.set(false);
-        });
-    };
-    let load = std::sync::Arc::new(load);
     view! {
         <Show when=move || has_older() fallback=|| ()>
             <div class="flex justify-center">
@@ -920,10 +1205,7 @@ fn OlderButton(
                     variant=ButtonVariant::Ghost
                     size=ButtonSize::Sm
                     disabled=loading
-                    on_click=Box::new({
-                        let load = load.clone();
-                        move || load()
-                    })
+                    on_click=Box::new(load)
                 >
                     {move || {
                         if loading.get() {
@@ -939,63 +1221,76 @@ fn OlderButton(
 }
 
 #[component]
-fn HistoryRow(message: HistoryMessageDto) -> impl IntoView {
+fn HistoryRow(message: HistoryMessageDto, dup: usize) -> impl IntoView {
     let role = message.role.clone();
     let text = message.text();
     if role == "tool" {
         let name = message.tool_name.clone().unwrap_or_else(|| "tool".into());
-        let status = message.tool_status.clone().unwrap_or_default();
-        let args = message.args.clone();
-        let output = (!text.is_empty()).then(|| text.clone());
-        let class = if status == "error" {
-            "rounded-md border border-destructive/40 bg-destructive/10"
-        } else {
-            "rounded-md border border-border bg-muted/40"
-        };
-        let status_cls = if status == "error" {
-            "text-destructive"
-        } else {
-            "text-muted-foreground"
-        };
-        let preview = tool_snippet(args.as_deref().unwrap_or(&text));
+        let status = message.tool_status.clone().unwrap_or_else(|| "done".into());
+        let error = status == "error" || status == "failed";
+        let display = tool_summary(&name, message.args.as_deref(), &text, message.exit_code);
+        let diffs: Vec<FileDiffView> = message
+            .diffs
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(file_diff_view)
+            .collect();
+        let locations: Vec<String> = message
+            .locations
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|l| match l.line {
+                Some(line) => format!("{}:{line}", l.path),
+                None => l.path.clone(),
+            })
+            .collect();
         view! {
             // `open` keeps SSR/hydrate markup identical — collapsing
             // stays a client-side, native `<details>` toggle.
-            <details class=class open>
-                <summary class="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-xs">
-                    <span class="shrink-0 font-semibold text-info">{name}</span>
-                    {(!status.is_empty()).then(move || view! {
-                        <span class=format!("shrink-0 text-[10px] uppercase tracking-wide {status_cls}")>
-                            {status}
-                        </span>
-                    })}
-                    {message
-                        .exit_code
-                        .map(|c| view! {
-                            <span class="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] text-secondary-foreground">
-                                {format!("exit {c}")}
-                            </span>
-                        })}
-                    <span class="min-w-0 flex-1 truncate text-muted-foreground">{preview}</span>
-                </summary>
-                {tool_body(args, output)}
-            </details>
+            <ToolBlock
+                display=display
+                status=status
+                open=true
+                error=error
+                diffs=diffs
+                locations=locations
+                duration_ms=message.duration_ms
+            />
         }
         .into_any()
     } else {
         let thinking = message.thinking.clone();
+        let attachments = message
+            .blocks
+            .as_deref()
+            .map(attachment_views)
+            .unwrap_or_default();
+        let usage = message.usage.clone();
         let class = match role.as_str() {
             "user" => "rounded-md border border-info/30 bg-info/5 px-3 py-2",
-            "system" => {
-                "rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-sm \
-                 text-muted-foreground"
-            }
             _ => "rounded-md px-1 py-2",
         };
         view! {
             <article class=class>
-                <header class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <header class="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     {role.clone()}
+                    {message
+                        .model
+                        .clone()
+                        .map(|m| view! {
+                            <span class="font-mono normal-case text-muted-foreground/70">{m}</span>
+                        })}
+                    {(dup > 0).then(|| view! {
+                        <span
+                            data-name="DupFold"
+                            class="rounded bg-muted px-1 py-px font-mono normal-case text-muted-foreground"
+                            title=format!("{} identical messages folded", dup + 1)
+                        >
+                            {format!("×{}", dup + 1)}
+                        </span>
+                    })}
                 </header>
                 {thinking
                     .filter(|t| !t.is_empty())
@@ -1010,9 +1305,256 @@ fn HistoryRow(message: HistoryMessageDto) -> impl IntoView {
                         }
                     })}
                 <Markdown text=text/>
+                {attachments}
+                {usage.map(|u| {
+                    view! {
+                        <p
+                            data-name="UsageFooter"
+                            class="mt-1 whitespace-pre text-[11px] text-muted-foreground/80"
+                            title=format_usage(&u)
+                        >
+                            {usage_label(&u)}
+                        </p>
+                    }
+                })}
             </article>
         }
         .into_any()
+    }
+}
+
+/// All `system` messages rolled into one card — workspaces/platform in
+/// the trigger line, Reports/Prompt/Rules/Skills behind tab buttons
+/// (the visible set depends on what the store actually recorded).
+#[component]
+fn ContextCard(context: SystemContext) -> impl IntoView {
+    let summary = [
+        context.workspaces.first().cloned(),
+        context.platform.clone(),
+        context.os_version.clone(),
+        context.date.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ");
+    let summary = if summary.is_empty() {
+        if context.rules.len() == 1 {
+            "1 rule".to_string()
+        } else if !context.rules.is_empty() {
+            format!("{} rules", context.rules.len())
+        } else {
+            "System prompt".to_string()
+        }
+    } else {
+        summary
+    };
+    // Tab order matches the old app: Reports / Prompt / Rules / Skills.
+    let has_prompt = !context.prompt_text.is_empty() || !context.prompt_sections.is_empty();
+    let tabs: Vec<(&str, bool, usize)> = vec![
+        (
+            "Reports",
+            !context.reports.is_empty(),
+            context.reports.len(),
+        ),
+        ("Prompt", has_prompt, 0),
+        ("Rules", !context.rules.is_empty(), context.rules.len()),
+        ("Skills", !context.skills.is_empty(), context.skills.len()),
+    ];
+    let visible: Vec<(usize, &str, usize)> = tabs
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, shown, _))| *shown)
+        .map(|(i, (label, _, count))| (i, *label, *count))
+        .collect();
+    // `i` indexes the full tab list (Reports=0..Skills=3) — default to
+    // the first *visible* tab, not index 0.
+    let active = RwSignal::new(visible.first().map_or(0, |v| v.0));
+    let tab_cls = move |on: bool| {
+        if on {
+            "shrink-0 rounded px-2.5 py-1 text-xs bg-secondary text-foreground"
+        } else {
+            "shrink-0 rounded px-2.5 py-1 text-xs text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+        }
+    };
+    view! {
+        <details data-name="ContextCard" class="rounded-lg border border-border/60 bg-muted/30">
+            <summary class="group flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <span class="font-medium text-foreground/80">"Session context"</span>
+                <span class="min-w-0 flex-1 truncate">{summary}</span>
+                <svg
+                    class="size-3.5 shrink-0 transition-transform group-open:rotate-180"
+                    viewBox="0 0 12 12"
+                    fill="none"
+                >
+                    <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </summary>
+            <div class="border-t border-border/60 px-3 py-2.5">
+                <div class="flex gap-0.5 overflow-x-auto">
+                    {visible
+                        .iter()
+                        .map(|(i, label, count)| {
+                            let i = *i;
+                            let label = *label;
+                            let count = *count;
+                            view! {
+                                <button
+                                    type="button"
+                                    class=move || tab_cls(active.get() == i).to_string()
+                                    on:click=move |_| active.set(i)
+                                >
+                                    {label}
+                                    {(count > 0).then(|| view! {
+                                        <span class="ml-1 text-muted-foreground/70">{count}</span>
+                                    })}
+                                </button>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                </div>
+                <div class="mt-2 flex flex-col gap-1.5">
+                    {move || match active.get() {
+                        0 => context
+                            .reports
+                            .iter()
+                            .map(|r| {
+                                view! {
+                                    <div class="rounded-md border border-border/60 bg-muted/30">
+                                        <div class="flex min-w-0 items-center gap-2 px-2.5 pt-1.5 text-[11px]">
+                                            {r.title.clone().map(|t| {
+                                                let label = t.clone();
+                                                view! {
+                                                    <span class="min-w-0 flex-1 truncate font-medium text-foreground/70" title=t>
+                                                        {label}
+                                                    </span>
+                                                }
+                                            })}
+                                            {r.agent_id.clone().map(|id| view! {
+                                                <code class="shrink-0 text-muted-foreground/80">
+                                                    {format!("agent {id}")}
+                                                </code>
+                                            })}
+                                        </div>
+                                        <pre class="max-h-64 overflow-auto whitespace-pre-wrap p-2 text-xs text-muted-foreground">
+                                            {r.body.clone()}
+                                        </pre>
+                                    </div>
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .into_any(),
+                        1 => {
+                            let mut items: Vec<AnyView> = context
+                                .prompt_sections
+                                .iter()
+                                .map(|s| {
+                                    view! {
+                                        <details class="rounded-md border border-border/60 bg-muted/30">
+                                            <summary class="cursor-pointer select-none px-2.5 py-1.5 text-xs font-medium text-foreground/80">
+                                                {s.title.clone()}
+                                            </summary>
+                                            <pre class="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border/60 px-2.5 py-2 text-xs text-muted-foreground">
+                                                {s.body.clone()}
+                                            </pre>
+                                        </details>
+                                    }
+                                    .into_any()
+                                })
+                                .collect();
+                            if !context.prompt_text.is_empty() {
+                                items.push(if context.prompt_sections.is_empty() {
+                                    view! {
+                                        <pre class="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-2.5 text-xs text-muted-foreground">
+                                            {context.prompt_text.clone()}
+                                        </pre>
+                                    }
+                                    .into_any()
+                                } else {
+                                    view! {
+                                        <details class="rounded-md border border-border/60 bg-muted/30">
+                                            <summary class="cursor-pointer select-none px-2.5 py-1.5 text-xs font-medium text-foreground/80">
+                                                "Full prompt"
+                                            </summary>
+                                            <pre class="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border/60 px-2.5 py-2 text-xs text-muted-foreground">
+                                                {context.prompt_text.clone()}
+                                            </pre>
+                                        </details>
+                                    }
+                                    .into_any()
+                                });
+                            }
+                            items.into_any()
+                        }
+                        2 => context
+                            .rules
+                            .iter()
+                            .map(|rule| {
+                                if let Some(content) = &rule.content {
+                                    view! {
+                                        <details class="rounded-md border border-border/60 bg-muted/30">
+                                            <summary class="flex cursor-pointer select-none items-center gap-2 px-2.5 py-1.5 text-xs">
+                                                <span class="min-w-0 flex-1 truncate font-medium text-foreground/80">
+                                                    {rule.name.clone()}
+                                                </span>
+                                                <code class="max-w-2/5 shrink-0 truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title=rule.path.clone()>
+                                                    {rule.path.clone()}
+                                                </code>
+                                            </summary>
+                                            <pre class="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border/60 px-2.5 py-2 text-xs text-muted-foreground">
+                                                {content.clone()}
+                                            </pre>
+                                        </details>
+                                    }
+                                    .into_any()
+                                } else {
+                                    view! {
+                                        <div class="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5 text-xs">
+                                            <span class="min-w-0 flex-1 truncate font-medium text-foreground/80">
+                                                {rule.name.clone()}
+                                            </span>
+                                            <code class="max-w-2/5 shrink-0 truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title=rule.path.clone()>
+                                                {rule.path.clone()}
+                                            </code>
+                                        </div>
+                                    }
+                                    .into_any()
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .into_any(),
+                        _ => context
+                            .skills
+                            .iter()
+                            .map(|skill| {
+                                view! {
+                                    <div class="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5 text-xs">
+                                        <span class="min-w-0 flex-1 truncate font-medium text-foreground/80" title=skill.name.clone()>
+                                            {skill.name.clone()}
+                                        </span>
+                                        {skill.description.clone().map(|d| {
+                                            let text = d.clone();
+                                            view! {
+                                                <span class="shrink-0 truncate text-muted-foreground" title=d>{text}</span>
+                                            }
+                                        })}
+                                        {skill.source.clone().map(|s| {
+                                            let label = s.clone();
+                                            view! {
+                                                <code class="max-w-2/5 shrink-0 truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title=s>
+                                                    {label}
+                                                </code>
+                                            }
+                                        })}
+                                    </div>
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .into_any(),
+                    }}
+                </div>
+            </div>
+        </details>
     }
 }
 
@@ -1070,46 +1612,48 @@ fn LiveLog(live: RwSignal<LiveTranscript>) -> impl IntoView {
                                 }
                                 .into_any()
                             }
+                            LiveKind::Marker => {
+                                view! { <RunMarker label=e.title.clone()/> }.into_any()
+                            }
                             LiveKind::Tool => {
-                                let class = if e.error {
-                                    "rounded-md border border-destructive/50 bg-destructive/10"
-                                } else {
-                                    "rounded-md border border-border bg-muted/40"
-                                };
-                                let (status, status_cls) = if !e.done {
-                                    ("running…", "text-muted-foreground")
+                                let status = if !e.done {
+                                    "running…"
                                 } else if e.error {
-                                    ("error", "text-destructive")
+                                    "error"
                                 } else {
-                                    ("done", "text-muted-foreground")
+                                    "done"
                                 };
                                 // `text` accumulates the args deltas;
                                 // `result` lands on ToolCallResult.
                                 let args = (!e.text.trim().is_empty()).then(|| e.text.clone());
-                                let result = e.result.clone().filter(|r| !r.is_empty());
-                                let preview = tool_snippet(
-                                    args.as_deref().or(result.as_deref()).unwrap_or(""),
+                                let result = e.result.clone().unwrap_or_default();
+                                let display = tool_summary(
+                                    &e.title,
+                                    args.as_deref(),
+                                    &result,
+                                    None,
                                 );
+                                let diffs: Vec<FileDiffView> =
+                                    e.diffs.iter().map(file_diff_view).collect();
+                                let locations: Vec<String> = e
+                                    .locations
+                                    .iter()
+                                    .map(|l| match l.line {
+                                        Some(line) => format!("{}:{line}", l.path),
+                                        None => l.path.clone(),
+                                    })
+                                    .collect();
+                                let contents = tool_content_segments(&e.contents);
                                 view! {
-                                    <details class=class open=!e.done>
-                                        <summary class="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-xs">
-                                            {(!e.done).then(|| view! {
-                                                <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-info"></span>
-                                            })}
-                                            <span class="shrink-0 font-semibold text-info">
-                                                {e.title.clone()}
-                                            </span>
-                                            <span class=format!(
-                                                "shrink-0 text-[10px] uppercase tracking-wide {status_cls}"
-                                            )>
-                                                {status}
-                                            </span>
-                                            <span class="min-w-0 flex-1 truncate text-muted-foreground">
-                                                {preview}
-                                            </span>
-                                        </summary>
-                                        {tool_body(args, result)}
-                                    </details>
+                                    <ToolBlock
+                                        display=display
+                                        status=status
+                                        open=!e.done
+                                        error=e.error
+                                        diffs=diffs
+                                        locations=locations
+                                        contents=contents
+                                    />
                                 }
                                 .into_any()
                             }
@@ -1519,33 +2063,5 @@ fn CheckpointRow(
                 on_confirm=run_rewind
             />
         </li>
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::tool_snippet;
-
-    #[test]
-    fn snippet_collapses_and_truncates() {
-        assert_eq!(tool_snippet("  hello\n\tworld  "), "hello world");
-        assert_eq!(tool_snippet(""), "");
-        let long = "x".repeat(200);
-        let got = tool_snippet(&long);
-        assert_eq!(got.chars().count(), 81);
-        assert!(got.ends_with('…'));
-    }
-
-    #[test]
-    fn snippet_prefers_command_field() {
-        // JSON args surface their human-readable field…
-        assert_eq!(
-            tool_snippet(r#"{"command":"cargo test -p sepia-web","timeout":30}"#),
-            "cargo test -p sepia-web"
-        );
-        assert_eq!(tool_snippet(r#"{"file_path":"src/lib.rs"}"#), "src/lib.rs");
-        // …while plain args and unrecognized JSON pass through.
-        assert_eq!(tool_snippet("plain args"), "plain args");
-        assert_eq!(tool_snippet(r#"{"n":1}"#), r#"{"n":1}"#);
     }
 }

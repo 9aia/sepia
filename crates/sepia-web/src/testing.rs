@@ -15,10 +15,13 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::api::NodeApi;
+use sepia_core::{TokenUsage, ToolCallDiff, ToolCallLocation};
+
 use crate::dto::{
     AgentCapabilitiesDto, AgentDto, AttachResultDto, CheckpointDto, CreateResultDto,
     HistoryMessageDto, HistoryPageDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto,
-    PromptCapabilitiesDto, PushSubscriptionDto, SessionCapabilitiesDto, SessionSummaryDto,
+    PromptCapabilitiesDto, PushSubscriptionDto, RunSpanDto, SessionCapabilitiesDto,
+    SessionSummaryDto,
 };
 
 /// A `NodeApi` that answers every read from in-memory fixtures.
@@ -58,6 +61,21 @@ impl FakeNodeApi {
                     busy: true,
                     live: true,
                     project_ids: vec!["p1".into()],
+                    // Two provenance spans: the first heads the
+                    // transcript, the second marks a mid-transcript
+                    // transfer → both render marker rows.
+                    spans: vec![
+                        RunSpanDto {
+                            at: 1_791_441_500_000.0,
+                            agent: "devin".into(),
+                            node: "workbench".into(),
+                        },
+                        RunSpanDto {
+                            at: 1_791_441_615_000.0,
+                            agent: "devin".into(),
+                            node: "tower".into(),
+                        },
+                    ],
                     ..SessionSummaryDto::default()
                 },
                 SessionSummaryDto {
@@ -146,28 +164,57 @@ impl FakeNodeApi {
             ],
             history: HistoryPageDto {
                 start: 0,
-                total: 4,
+                total: 8,
                 messages: vec![
+                    // System blobs fold into the ContextCard — one
+                    // `<system_info>` and one `<rules>` row.
+                    HistoryMessageDto {
+                        role: "system".into(),
+                        node_id: 0,
+                        content: "<system_info>\nThe following information is automatically \
+                                  generated context about your current environment.\nCurrent \
+                                  workspace directories:\n  /work/acme-api (cwd)\n\nPlatform: \
+                                  linux\n</system_info>"
+                            .into(),
+                        created_at: 1_791_441_590_000.0,
+                        ..HistoryMessageDto::default()
+                    },
+                    HistoryMessageDto {
+                        role: "system".into(),
+                        node_id: 1,
+                        content: "<rules type=\"always-on\">\n<rule name=\"global_rules\" \
+                                  path=\"/x/global_rules.md\">\nbe nice\n</rule>\n</rules>"
+                            .into(),
+                        created_at: 1_791_441_591_000.0,
+                        ..HistoryMessageDto::default()
+                    },
                     HistoryMessageDto {
                         role: "user".into(),
-                        node_id: 0,
+                        node_id: 2,
                         content: "please fix the flaky login spec".into(),
                         created_at: 1_791_441_600_000.0,
                         ..HistoryMessageDto::default()
                     },
                     HistoryMessageDto {
                         role: "assistant".into(),
-                        node_id: 1,
+                        node_id: 3,
                         content: "On it — the fixture DB needs per-test isolation.".into(),
                         thinking: Some(
                             "The spec flakes because two tests share one database.".into(),
                         ),
+                        usage: Some(TokenUsage {
+                            input: 4200.0,
+                            output: 88.0,
+                            cache_read: Some(1024.0),
+                            cost: Some(0.013),
+                            ..TokenUsage::default()
+                        }),
                         created_at: 1_791_441_610_000.0,
                         ..HistoryMessageDto::default()
                     },
                     HistoryMessageDto {
                         role: "tool".into(),
-                        node_id: 2,
+                        node_id: 4,
                         content: "42 passed, 0 failed".into(),
                         tool_name: Some("run_command".into()),
                         tool_status: Some("success".into()),
@@ -176,11 +223,50 @@ impl FakeNodeApi {
                         created_at: 1_791_441_620_000.0,
                         ..HistoryMessageDto::default()
                     },
+                    // An edit row carrying recorded diffs + locations —
+                    // exercises ToolEdit + DiffBlock.
+                    HistoryMessageDto {
+                        role: "tool".into(),
+                        node_id: 5,
+                        content: "The file /work/acme-api/tests/login.rs has been updated.\n\n\
+                                  edited file:\nlet db = TestDb::isolated();"
+                            .into(),
+                        tool_name: Some("edit_file".into()),
+                        tool_status: Some("success".into()),
+                        args: Some(
+                            json!({"file_path": "/work/acme-api/tests/login.rs"}).to_string(),
+                        ),
+                        diffs: Some(vec![ToolCallDiff {
+                            path: "/work/acme-api/tests/login.rs".into(),
+                            old_text: Some("let db = shared_db();".into()),
+                            new_text: Some("let db = TestDb::isolated();".into()),
+                        }]),
+                        locations: Some(vec![ToolCallLocation {
+                            path: "/work/acme-api/tests/login.rs".into(),
+                            line: Some(14),
+                        }]),
+                        created_at: 1_791_441_625_000.0,
+                        ..HistoryMessageDto::default()
+                    },
+                    // Back-to-back identical assistant rows fold — the
+                    // surviving row carries a `×2` marker and a GFM
+                    // table.
                     HistoryMessageDto {
                         role: "assistant".into(),
-                        node_id: 3,
-                        content: "Fixed — each test now gets its own database.".into(),
+                        node_id: 6,
+                        content: "Fixed — each test now gets its own database.\n\n\
+                                  | File | Status |\n| --- | --- |\n| db.rs | fixed |"
+                            .into(),
                         created_at: 1_791_441_630_000.0,
+                        ..HistoryMessageDto::default()
+                    },
+                    HistoryMessageDto {
+                        role: "assistant".into(),
+                        node_id: 7,
+                        content: "Fixed — each test now gets its own database.\n\n\
+                                  | File | Status |\n| --- | --- |\n| db.rs | fixed |"
+                            .into(),
+                        created_at: 1_791_441_631_000.0,
                         ..HistoryMessageDto::default()
                     },
                 ],

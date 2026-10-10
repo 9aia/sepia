@@ -218,12 +218,41 @@ async fn session_detail_renders_summary_history_and_prompt() {
     // Action row: a live session offers Detach + Cancel run.
     assert_contains(&html, "Detach");
     assert_contains(&html, "Cancel run");
-    // History: user text, assistant text, reasoning block, tool row.
+    // History: user text, assistant text, reasoning block, tool rows.
     assert_contains(&html, "please fix the flaky login spec");
     assert_contains(&html, "On it — the fixture DB needs per-test isolation.");
     assert_contains(&html, ">thinking<");
-    assert_contains(&html, "run_command");
+    // Per-tool renderers: exec row → "Ran command" + `$ cmd` + exit note.
+    assert_contains(&html, "data-name=\"ToolExec\"");
+    assert_contains(&html, "Ran command");
     assert_contains(&html, "cargo test -p acme-api");
+    assert_contains(&html, "exit 0");
+    // Edit row → "Edited file" + recorded diff block + touched location.
+    assert_contains(&html, "data-name=\"ToolEdit\"");
+    assert_contains(&html, "Edited file");
+    assert_contains(&html, "data-name=\"DiffBlock\"");
+    assert_contains(&html, "let db = shared_db();");
+    assert_contains(&html, "let db = TestDb::isolated();");
+    assert_contains(&html, "/work/acme-api/tests/login.rs:14");
+    // Usage footer on the assistant row.
+    assert_contains(&html, "data-name=\"UsageFooter\"");
+    assert_contains(&html, "↑ 4.2k  ↓ 88 tok");
+    assert_contains(&html, "$0.01");
+    // Consecutive-identical fold.
+    assert_contains(&html, "data-name=\"DupFold\"");
+    assert_contains(&html, "×2");
+    // System rows fold into the context card (with tabs).
+    assert_contains(&html, "data-name=\"ContextCard\"");
+    assert_contains(&html, "Session context");
+    assert_contains(&html, ">Rules<");
+    assert_contains(&html, "global_rules");
+    // Provenance spans → marker rows.
+    assert_contains(&html, "data-name=\"RunMarker\"");
+    assert_contains(&html, "devin @ workbench");
+    assert_contains(&html, "devin @ tower");
+    // GFM table in the assistant row.
+    assert_contains(&html, "data-name=\"MdTable\"");
+    assert_contains(&html, "<table");
     // The prompt composer.
     assert_contains(&html, "<textarea");
     assert_contains(&html, "Message the agent");
