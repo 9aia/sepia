@@ -364,12 +364,22 @@ pub fn SessionPanel(
     let sending = RwSignal::new(false);
     let send_error: RwSignal<Option<String>> = RwSignal::new(None);
     let draft = RwSignal::new(String::new());
+    // Held by another client → send asks to take over first.
+    let confirm_takeover = RwSignal::new(false);
 
-    let submit = move || {
-        let text = draft.get().trim().to_string();
-        if text.is_empty() || sending.get() {
-            return;
-        }
+    // "Held" = `locked` while we are not the live attach. `locked` is
+    // the store's union flag (any holder counts); `live` is our side —
+    // `live_override` wins over the summary's feed-patched value.
+    let is_held = move || {
+        summary
+            .get()
+            .and_then(Result::ok)
+            .is_some_and(|s| s.locked && !live_override.get().unwrap_or(s.live))
+    };
+
+    // POST /prompt — the actual send. Shared by `submit` and the
+    // takeover-confirm path.
+    let do_send = move |text: String| {
         sending.set(true);
         send_error.set(None);
         let id = session_id();
@@ -381,6 +391,59 @@ pub fn SessionPanel(
                     live.update(|t| t.push_user(&text));
                     client.invalidate_query(crate::api::pending_scope, ());
                     client.invalidate_query(crate::api::sessions_scope, ());
+                }
+                Err(e) => send_error.set(Some(e.to_string())),
+            }
+            sending.set(false);
+        });
+    };
+
+    // The composer stays editable while the session is held
+    // (draft-while-held is intended); send then detours through the
+    // takeover `ConfirmDialog` instead of dying on a raw error.
+    let submit = move || {
+        let text = draft.get().trim().to_string();
+        if text.is_empty() || sending.get() {
+            return;
+        }
+        if is_held() {
+            confirm_takeover.set(true);
+            return;
+        }
+        do_send(text);
+    };
+
+    // "Take over and send" — attach with `takeover`, then send the
+    // unchanged draft once the lock is ours.
+    let takeover_send = move || {
+        let text = draft.get().trim().to_string();
+        if text.is_empty() || sending.get() {
+            return;
+        }
+        sending.set(true);
+        send_error.set(None);
+        let id = session_id();
+        let agent = agent();
+        leptos::task::spawn_local(async move {
+            match attach_session(id.clone(), agent.clone(), true).await {
+                Ok(res) => {
+                    live_override.set(Some(res.attached));
+                    client.invalidate_query(crate::api::sessions_scope, ());
+                    summary.refetch();
+                    if res.attached && !res.read_only {
+                        match send_prompt(id, agent, text.clone()).await {
+                            Ok(()) => {
+                                draft.set(String::new());
+                                live.update(|t| t.push_user(&text));
+                                client.invalidate_query(crate::api::pending_scope, ());
+                            }
+                            Err(e) => send_error.set(Some(e.to_string())),
+                        }
+                    } else {
+                        send_error.set(Some(
+                            "takeover refused — the session is still held".to_string(),
+                        ));
+                    }
                 }
                 Err(e) => send_error.set(Some(e.to_string())),
             }
@@ -805,6 +868,13 @@ pub fn SessionPanel(
                     })
                 }}
             </Suspense>
+            <ConfirmDialog
+                open=confirm_takeover
+                title="Session is held by another client"
+                body="Take over and send? The holding client is detached and the draft is sent from here."
+                confirm_label="Take over and send"
+                on_confirm=takeover_send
+            />
         </section>
     }
 }
