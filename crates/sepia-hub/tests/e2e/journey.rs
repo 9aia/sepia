@@ -44,7 +44,10 @@ async fn row_has(driver: &WebDriver, title: &str) -> bool {
 /// Poll until the hydrate bundle has run — `hydrate()` registers the
 /// service worker after mounting `App`, so a resolved registration
 /// means every document listener is attached. Under load wasm
-/// instantiation alone can eat most of a 30s wait.
+/// instantiation alone can eat most of a 30s wait. Caveat: SW
+/// registrations persist across same-origin navigations, so after a
+/// reload this resolves instantly — later interactive steps still
+/// need click/key retry loops for the re-hydration gap.
 async fn hydrated(browser: &Browser, deadline: Instant) -> bool {
     while Instant::now() < deadline {
         let regs = browser
@@ -334,16 +337,28 @@ async fn critical_path_journey() {
         burger.is_displayed().await.unwrap_or(false),
         "step 7: hamburger hidden at 500px width"
     );
-    js_click(&browser.driver, &burger).await;
     // The nav links are always mounted — assert the open marker.
-    assert!(
-        wait_elem(
+    // Click-retried: the handler attaches at hydration and a pre-
+    // hydration click is a no-op (`sidebar_open.set(true)` is
+    // idempotent once attached).
+    const SHEET_BODY: &str = r#"div[data-open] div[data-name="SheetBody"]"#;
+    let mut drawer_open = false;
+    while Instant::now() < deadline {
+        js_click(&browser.driver, &burger).await;
+        if wait_elem(
             &browser.driver,
-            r#"div[data-open] div[data-name="SheetBody"]"#,
-            deadline,
+            SHEET_BODY,
+            Instant::now() + Duration::from_millis(700),
         )
         .await
-        .is_some(),
+        .is_some()
+        {
+            drawer_open = true;
+            break;
+        }
+    }
+    assert!(
+        drawer_open,
         "step 7: nav drawer never opened (no open SheetBody)"
     );
 
