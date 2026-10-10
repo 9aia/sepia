@@ -38,7 +38,11 @@ async fn theme_toggle_cycles_light_dark_system() {
     // Click once — class must change. Poll rather than one-shot:
     // hydration may still be attaching the handler.
     let after = loop {
-        toggle.click().await.unwrap_or(());
+        // JS click — the webdriver path stalls the renderer under load.
+        let _ = browser
+            .driver
+            .execute("arguments[0].click()", vec![toggle.to_json().unwrap()])
+            .await;
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         let cur = browser
             .eval("return document.documentElement.className")
@@ -96,16 +100,19 @@ async fn question_mark_opens_and_esc_closes_the_shortcut_sheet() {
     wait_elem(&browser.driver, "body", deadline).await.unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
+    // The Sheet is always mounted — visibility is a `data-[open]`
+    // transform, so `offsetParent` lies. Assert the open marker on the
+    // panel containing the title.
+    const SHEET_OPEN: &str =
+        r#"return !!document.querySelector('[data-name="ShortcutsHelp"][data-open]')"#;
+
     // Hydration attaches the document listener async — press until
     // the sheet opens or the deadline dies.
     let mut found = false;
     while Instant::now() < deadline {
         browser.press("?").await;
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-        let got = browser.eval(
-            "return [...document.querySelectorAll('h3')].some(h => h.textContent === 'Keyboard shortcuts' && h.offsetParent !== null)"
-        ).await;
-        if got == serde_json::Value::Bool(true) {
+        if browser.eval(SHEET_OPEN).await == serde_json::Value::Bool(true) {
             found = true;
             break;
         }
@@ -113,10 +120,15 @@ async fn question_mark_opens_and_esc_closes_the_shortcut_sheet() {
     assert!(found, "? did not open the keyboard-shortcut sheet");
 
     browser.press(thirtyfour::Key::Escape).await;
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-    let still = browser.eval(
-        "return [...document.querySelectorAll('h3')].some(h => h.textContent === 'Keyboard shortcuts' && h.offsetParent !== null)"
-    ).await;
+    let mut still = serde_json::Value::Bool(true);
+    let esc_deadline = Instant::now() + std::time::Duration::from_secs(10);
+    while Instant::now() < esc_deadline {
+        still = browser.eval(SHEET_OPEN).await;
+        if still == serde_json::Value::Bool(false) {
+            break;
+        }
+        tokio::time::sleep(harness::POLL).await;
+    }
     assert_eq!(
         still,
         serde_json::Value::Bool(false),
@@ -154,15 +166,22 @@ async fn mobile_drawer_opens_at_narrow_viewports() {
         "hamburger hidden at 500px width"
     );
 
-    burger.click().await.unwrap();
-    // The sheet slides in — look for a nav link inside the overlay.
+    // JS click — webdriver's scroll+hit-test path stalls under load.
+    browser
+        .driver
+        .execute("arguments[0].click()", vec![burger.to_json().unwrap()])
+        .await
+        .unwrap();
+    // The sheet slides in — the nav links are always in the DOM, so
+    // the assertion must be on the open marker (`data-open`), not the
+    // link's presence.
     let link = wait_elem(
         &browser.driver,
-        r#"div[data-name="SheetBody"] a[href="/settings"]"#,
+        r#"div[data-open] div[data-name="SheetBody"] a[href="/settings"]"#,
         deadline,
     )
     .await;
-    assert!(link.is_some(), "drawer never opened (no sheet nav links)");
+    assert!(link.is_some(), "drawer never opened (no open sheet)");
 
     browser.shutdown().await;
     env.shutdown();

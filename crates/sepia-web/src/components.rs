@@ -419,6 +419,10 @@ pub fn Sheet(
         ></div>
         <div
             data-open=move || open.get().then_some("")
+            // Off-screen, not gone — without these the closed panel
+            // still takes tab focus and reads to screen readers.
+            aria-hidden=move || (!open.get()).then_some("true")
+            inert=move || (!open.get()).then_some("")
             class=format!(
                 "fixed top-0 z-50 flex h-dvh w-80 max-w-[85vw] flex-col bg-card shadow-xl transition-transform duration-200 {} {}",
                 side_cls, class

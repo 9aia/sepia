@@ -235,6 +235,8 @@ fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
     let rows = SHORTCUTS;
     view! {
         <div
+            data-name="ShortcutsHelp"
+            data-open=move || open.get().then_some("")
             class=move || {
                 if open.get() {
                     "fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 opacity-100 transition-opacity"
