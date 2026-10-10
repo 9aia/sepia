@@ -235,16 +235,6 @@ fn render_block(block: MdBlock) -> impl IntoView {
     }
 }
 
-/// Clipboard write — browser-only. The ssr stub keeps the `on:click`
-/// handler compiling; it emits no markup, so SSR/hydrate agree.
-#[cfg(feature = "hydrate")]
-fn copy_to_clipboard(text: &str) {
-    let _ = window().navigator().clipboard().write_text(text);
-}
-
-#[cfg(not(feature = "hydrate"))]
-fn copy_to_clipboard(_: &str) {}
-
 /// Fenced code block — a header strip carries the copy affordance and
 /// the right-aligned language badge; the `<pre>` sits below it.
 #[allow(clippy::needless_pass_by_value)] // component props are owned
@@ -294,6 +284,19 @@ pub fn Markdown(#[prop(into)] text: String) -> impl IntoView {
         </div>
     }
 }
+
+// Kept away from the `impl IntoView` items above — the `check` xtask
+// lints a cfg attr adjacent to markup (`view!`/`impl IntoView`).
+
+/// Clipboard write — browser-only. The ssr stub keeps the `on:click`
+/// handler compiling; it emits no markup, so SSR/hydrate agree.
+#[cfg(feature = "hydrate")]
+fn copy_to_clipboard(text: &str) {
+    let _ = window().navigator().clipboard().write_text(text);
+}
+
+#[cfg(not(feature = "hydrate"))]
+fn copy_to_clipboard(_: &str) {}
 
 #[cfg(test)]
 mod tests {

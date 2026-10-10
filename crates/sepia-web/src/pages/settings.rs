@@ -572,14 +572,17 @@ fn PushSection() -> impl IntoView {
                                             return;
                                         }
                                         busy.set(true);
-                                        let key = key.clone();
+                                        // Used only under `hydrate` —
+                                        // the underscore keeps the ssr
+                                        // build from warning.
+                                        let _key = key.clone();
                                         leptos::task::spawn_local(async move {
                                             #[cfg(feature = "hydrate")]
                                             {
                                                 let result = if subscribed.get() == Some(true) {
                                                     push::unsubscribe().await
                                                 } else {
-                                                    push::subscribe(&key).await
+                                                    push::subscribe(&_key).await
                                                 };
                                                 match result {
                                                     Ok(()) => {
@@ -596,8 +599,6 @@ fn PushSection() -> impl IntoView {
                                                     Err(e) => toast.error(e),
                                                 }
                                             }
-                                            #[cfg(not(feature = "hydrate"))]
-                                            let _ = key;
                                             busy.set(false);
                                         });
                                     };

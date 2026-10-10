@@ -16,6 +16,7 @@
 
 mod harness;
 mod hydration;
+mod journey;
 mod sessions;
 mod shell;
 mod ssr_integrity;

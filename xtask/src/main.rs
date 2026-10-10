@@ -24,6 +24,7 @@ fn nextest_available() -> bool {
 fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("check") => {
+            check_cfg_never_gates_markup()?;
             // clippy --all-targets type-checks every target already —
             // a separate `cargo check` pass would redo that work.
             run("cargo", &["fmt", "--all", "--check"])?;
@@ -117,8 +118,27 @@ fn main() -> anyhow::Result<()> {
             // PREBUILT tells the harness the binaries are fresh —
             // warm_binaries then skips its cargo invocation entirely.
             let env = [("SEPIA_BROWSER_E2E", "1"), ("SEPIA_E2E_PREBUILT", "1")];
-            let status = if nextest_available() {
-                Command::new("cargo")
+            if nextest_available() {
+                // Fast signal first: `journey` walks the whole critical
+                // path in one shared env+browser, so a regression fails
+                // in minutes instead of after the serialized suite.
+                let journey = Command::new("cargo")
+                    .args([
+                        "nextest",
+                        "run",
+                        "-p",
+                        "sepia-hub",
+                        "--test",
+                        "e2e",
+                        "--run-ignored",
+                        "all",
+                        "-E",
+                        "test(journey)",
+                    ])
+                    .envs(env)
+                    .status()?;
+                anyhow::ensure!(journey.success(), "journey e2e failed");
+                let status = Command::new("cargo")
                     .args([
                         "nextest",
                         "run",
@@ -130,9 +150,26 @@ fn main() -> anyhow::Result<()> {
                         "all",
                     ])
                     .envs(env)
-                    .status()?
+                    .status()?;
+                anyhow::ensure!(status.success(), "browser e2e failed");
             } else {
-                Command::new("cargo")
+                // `cargo test` has no filtersets — the positional
+                // substring filter selects the journey, then all.
+                let journey = Command::new("cargo")
+                    .args([
+                        "test",
+                        "-p",
+                        "sepia-hub",
+                        "--test",
+                        "e2e",
+                        "journey",
+                        "--",
+                        "--ignored",
+                    ])
+                    .envs(env)
+                    .status()?;
+                anyhow::ensure!(journey.success(), "journey e2e failed");
+                let status = Command::new("cargo")
                     .args([
                         "test",
                         "-p",
@@ -143,9 +180,9 @@ fn main() -> anyhow::Result<()> {
                         "--ignored",
                     ])
                     .envs(env)
-                    .status()?
-            };
-            anyhow::ensure!(status.success(), "browser e2e failed");
+                    .status()?;
+                anyhow::ensure!(status.success(), "browser e2e failed");
+            }
         }
         Some(other) => anyhow::bail!("unknown task {other}"),
         None => {
@@ -277,6 +314,72 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> 
             copy_dir(&entry.path(), &target)?;
         } else {
             std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// `check` gate: `#[cfg]` may gate *behavior* (listeners, storage,
+/// timers), never markup shape — a cfg'd `view!`/`impl IntoView` pair
+/// is exactly the divergence class behind the ThemeToggle hydration
+/// panic (SSR and hydrate silently emitting different nodes). The scan
+/// is a plain line pass over `crates/sepia-web/src`: any cfg attr
+/// mentioning `feature = "ssr"`/`"hydrate"` followed within a few
+/// lines by `view!` or `impl IntoView` fails. Whole-file gating stays
+/// clean by construction — the cfg sits on the `mod` decl (e.g.
+/// `shell.rs`), so the markup inside it is unconditional.
+fn check_cfg_never_gates_markup() -> anyhow::Result<()> {
+    /// Lines after the attribute to inspect — enough for an
+    /// intervening `#[component]` + signature, short enough not to
+    /// bleed into the next item.
+    const LOOKAHEAD: usize = 8;
+    let mut files = Vec::new();
+    rs_files(std::path::Path::new("crates/sepia-web/src"), &mut files)?;
+    let mut violations = Vec::new();
+    for path in files {
+        let text = std::fs::read_to_string(&path)?;
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let t = line.trim_start();
+            if !(t.starts_with("#[cfg(")
+                && (t.contains(r#"feature = "ssr""#) || t.contains(r#"feature = "hydrate""#)))
+            {
+                continue;
+            }
+            for (j, next) in lines.iter().enumerate().skip(i + 1).take(LOOKAHEAD) {
+                let n = next.trim_start();
+                if n.starts_with("//") {
+                    continue;
+                }
+                if n.contains("view!") || (n.contains("impl ") && n.contains("IntoView")) {
+                    violations.push(format!(
+                        "  {}:{} — `{t}` → `{}` (line {})",
+                        path.display(),
+                        i + 1,
+                        n,
+                        j + 1
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    anyhow::ensure!(
+        violations.is_empty(),
+        "cfg must gate behavior, never markup shape (view!/impl IntoView):\n{}",
+        violations.join("\n")
+    );
+    Ok(())
+}
+
+fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            rs_files(&path, out)?;
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
         }
     }
     Ok(())

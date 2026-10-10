@@ -107,10 +107,17 @@ async fn question_mark_opens_and_esc_closes_the_shortcut_sheet() {
         r#"return !!document.querySelector('[data-name="ShortcutsHelp"][data-open]')"#;
 
     // Hydration attaches the document listener async — press until
-    // the sheet opens or the deadline dies.
+    // the sheet opens or the deadline dies. `send_keys("?")` on <body>
+    // delivers keydown with `key=""` under chromedriver (text-input
+    // path on a non-editable target), so dispatch the keydown — it
+    // hits the same document listener.
     let mut found = false;
     while Instant::now() < deadline {
-        browser.press("?").await;
+        browser
+            .eval(
+                r#"document.dispatchEvent(new KeyboardEvent('keydown', {key: '?', bubbles: true}))"#,
+            )
+            .await;
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
         if browser.eval(SHEET_OPEN).await == serde_json::Value::Bool(true) {
             found = true;
