@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+sepia-core.workspace = true
 sepia-proto.workspace = true
 serde.workspace = true
 serde_json.workspace = true

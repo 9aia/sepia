@@ -5,6 +5,7 @@
 //! modules for every decision.
 
 pub mod filter;
+pub mod history;
 pub mod keymap;
 pub mod palette;
 pub mod path;
