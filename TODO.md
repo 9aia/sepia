@@ -135,13 +135,17 @@ Missing features (wire-supported but no UI):
       blocks, ≤8MiB base64, node's caps); `image/*` → ACP `image`
       parts, other files → `resource` blob parts; chips above the
       textarea with ×-remove; attachments send with or without text
-- [~] Reply/quote + per-message copy/rewind actions — ✓ hover strip
+- [x] Reply/quote + per-message copy/rewind actions — ✓ hover strip
       on user/assistant rows: `copy` (navigator.clipboard) + `reply`
       (inserts the `> ` quote block into the draft via
-      `composer::draft_with_quote` and focuses the textarea).
-      Deferred: per-message *rewind* — the node's rewind endpoint is
-      checkpoint-scoped (`POST /rewind {checkpoint}`), there's no
-      message-index target to aim it at
+      `composer::draft_with_quote` and focuses the textarea) +
+      `rewind` — turns out the wire's `POST /rewind` already took a
+      per-message `{nodeId}` selector (`RewindTarget::NodeId` keeps the
+      node + prefix; `HistoryMessage.nodeId` is the aim), the old
+      "checkpoint-scoped only" note was wrong. ConfirmDialog →
+      `RewindSelector::NodeId`; gated on the new `canRewind` summary
+      flag (the plane's registered `SessionRewinder`s — cursor has
+      none) + not held/busy. Older nodes omit `canRewind` → hidden.
 - [x] Usage footer — `HistoryMessageDto` decodes `usage`; assistant
       rows render ↑in/↓out/cost with cache+thinking on hover
 - [x] Run/provenance marker rows — `spans` fold into the transcript

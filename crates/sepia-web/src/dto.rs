@@ -54,6 +54,11 @@ pub struct SessionSummaryDto {
     /// Not part of the node's wire summary; absent → `None`.
     #[serde(default)]
     pub node: Option<String>,
+    /// `SummaryWire.can_rewind` — the node's control plane has a
+    /// transcript rewinder for this session's backend. Absent on older
+    /// nodes → `false` → the UI hides rewind affordances.
+    #[serde(default)]
+    pub can_rewind: bool,
 }
 
 /// `SummaryWire.spans[]` — `sepia_meta::RunSpan`/`sepia_control::RunSpan`
@@ -162,8 +167,12 @@ pub struct HistoryMessageDto {
     /// `"system" | "user" | "assistant" | "tool"`.
     #[serde(default)]
     pub role: String,
+    /// The transcript node this message is — the `nodeId` a per-message
+    /// `POST /rewind` truncates after. `Option` on purpose: a wire that
+    /// omits it must not aim the cut at a default id (node 0 would
+    /// truncate the whole session).
     #[serde(default)]
-    pub node_id: i64,
+    pub node_id: Option<i64>,
     #[serde(default)]
     pub content: String,
     /// Epoch milliseconds.
@@ -222,6 +231,19 @@ impl HistoryMessageDto {
             .collect::<Vec<_>>()
             .join("")
     }
+}
+
+/// `POST /api/sessions/{id}/rewind` response —
+/// `sepia_control::RewindResult` (`{kept, removed}`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewindResultDto {
+    /// Nodes that survived the cut.
+    #[serde(default)]
+    pub kept: i64,
+    /// Nodes the cut dropped; `0` means the target was already the tail.
+    #[serde(default)]
+    pub removed: i64,
 }
 
 /// `POST /api/sessions/import` response — the created summary row.

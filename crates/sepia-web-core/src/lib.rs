@@ -13,6 +13,7 @@ pub mod notify;
 pub mod palette;
 pub mod path;
 pub mod project;
+pub mod rewind;
 pub mod stream;
 pub mod theme;
 pub mod transcript;

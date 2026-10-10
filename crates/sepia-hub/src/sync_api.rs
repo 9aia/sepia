@@ -14,7 +14,7 @@ use sepia_web::api::NodeApi;
 use sepia_web::dto::{
     AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryMessageDto, HistoryPageDto,
     ImportResultDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto,
-    SessionSummaryDto,
+    RewindResultDto, SessionSummaryDto,
 };
 use serde_json::Value;
 
@@ -494,15 +494,22 @@ impl NodeApi for SyncNodeApi {
         .map(|_| ())
     }
 
-    async fn rewind(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String> {
-        self.post_direct(
-            id,
-            agent,
-            "rewind",
-            serde_json::json!({ "confirm": true, "checkpoint": checkpoint }),
-        )
-        .await
-        .map(|_| ())
+    async fn rewind(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        selector: &sepia_web::api::RewindSelector,
+    ) -> Result<RewindResultDto, String> {
+        // The selector serializes as the one wire field the node
+        // expects (`nodeId`/`checkpoint`) — merge it onto `confirm`.
+        let mut payload = serde_json::json!({ "confirm": true });
+        if let (Some(body), Ok(Value::Object(sel))) =
+            (payload.as_object_mut(), serde_json::to_value(selector))
+        {
+            body.extend(sel);
+        }
+        let body = self.post_direct(id, agent, "rewind", payload).await?;
+        serde_json::from_value(body).map_err(|e| format!("decode: {e}"))
     }
 
     async fn convert(&self, id: &str, agent: Option<&str>, target: &str) -> Result<String, String> {

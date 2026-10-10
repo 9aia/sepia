@@ -268,10 +268,15 @@ async fn session_detail_renders_summary_history_and_prompt() {
     // Consecutive-identical fold.
     assert_contains(&html, "data-name=\"DupFold\"");
     assert_contains(&html, "×2");
-    // Per-message actions on user/assistant rows (copy + quote).
+    // Per-message actions on user/assistant rows (copy + quote); the
+    // rewind affordance is gated — s1 is busy, so the per-message
+    // `MsgRewind` stays hidden even though the backend can rewind.
     assert_contains(&html, "data-name=\"MsgActions\"");
     assert_contains(&html, "aria-label=\"Copy message\"");
     assert_contains(&html, "aria-label=\"Quote in reply\"");
+    assert!(!html.contains("data-name=\"MsgRewind\""));
+    // The confirm dialog mounts closed — the title rides every page.
+    assert_contains(&html, "Rewind to this message?");
     // The live-stream pill mounts hidden — SSR has no EventSource.
     assert_contains(&html, "data-name=\"ReconnectingPill\"");
     // System rows fold into the context card (with tabs).
@@ -296,6 +301,22 @@ async fn session_detail_renders_summary_history_and_prompt() {
     assert_contains(&html, "placeholder=\"agent default\"");
     assert_contains(&html, "data-name=\"AttachButton\"");
     assert_contains(&html, "data-name=\"AttachmentInput\"");
+}
+
+#[tokio::test]
+async fn session_detail_per_message_rewind_gates_on_capability_and_state() {
+    // s3 — canRewind backend, idle, unheld → every user/assistant row
+    // with a wire nodeId offers the rewind action.
+    let html = page("/sessions/s3", FakeNodeApi::seeded().shared()).await;
+    assert_contains(&html, "data-name=\"MsgRewind\"");
+    assert_contains(&html, "aria-label=\"Rewind to this message\"");
+    // s4 — no canRewind on the summary (unsupported backend or older
+    // node) → the affordance never mounts.
+    let html = page("/sessions/s4", FakeNodeApi::seeded().shared()).await;
+    assert!(!html.contains("data-name=\"MsgRewind\""));
+    // s2 — capable but store-locked by another client → held gate.
+    let html = page("/sessions/s2", FakeNodeApi::seeded().shared()).await;
+    assert!(!html.contains("data-name=\"MsgRewind\""));
 }
 
 #[tokio::test]

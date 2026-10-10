@@ -60,6 +60,7 @@ impl FakeNodeApi {
                     updated_at: "2026-10-08T06:40:34.123Z".into(),
                     busy: true,
                     live: true,
+                    can_rewind: true,
                     project_ids: vec!["p1".into()],
                     // A pinned model — the composer's model input
                     // renders it as the override value.
@@ -88,6 +89,7 @@ impl FakeNodeApi {
                     agent: "claude".into(),
                     updated_at: "2026-10-08T05:10:00.000Z".into(),
                     locked: true,
+                    can_rewind: true,
                     lock_holder_pid: Some(4242.0),
                     ..SessionSummaryDto::default()
                 },
@@ -97,6 +99,9 @@ impl FakeNodeApi {
                     cwd: "/work/docs-site".into(),
                     agent: "devin".into(),
                     updated_at: "2026-10-07T18:02:11.000Z".into(),
+                    // The only session whose rows offer the per-message
+                    // rewind: capable backend + not busy + not held.
+                    can_rewind: true,
                     ..SessionSummaryDto::default()
                 },
                 SessionSummaryDto {
@@ -173,7 +178,7 @@ impl FakeNodeApi {
                     // `<system_info>` and one `<rules>` row.
                     HistoryMessageDto {
                         role: "system".into(),
-                        node_id: 0,
+                        node_id: Some(0),
                         content: "<system_info>\nThe following information is automatically \
                                   generated context about your current environment.\nCurrent \
                                   workspace directories:\n  /work/acme-api (cwd)\n\nPlatform: \
@@ -184,7 +189,7 @@ impl FakeNodeApi {
                     },
                     HistoryMessageDto {
                         role: "system".into(),
-                        node_id: 1,
+                        node_id: Some(1),
                         content: "<rules type=\"always-on\">\n<rule name=\"global_rules\" \
                                   path=\"/x/global_rules.md\">\nbe nice\n</rule>\n</rules>"
                             .into(),
@@ -193,14 +198,14 @@ impl FakeNodeApi {
                     },
                     HistoryMessageDto {
                         role: "user".into(),
-                        node_id: 2,
+                        node_id: Some(2),
                         content: "please fix the flaky login spec".into(),
                         created_at: 1_791_441_600_000.0,
                         ..HistoryMessageDto::default()
                     },
                     HistoryMessageDto {
                         role: "assistant".into(),
-                        node_id: 3,
+                        node_id: Some(3),
                         content: "On it — the fixture DB needs per-test isolation.".into(),
                         thinking: Some(
                             "The spec flakes because two tests share one database.".into(),
@@ -217,7 +222,7 @@ impl FakeNodeApi {
                     },
                     HistoryMessageDto {
                         role: "tool".into(),
-                        node_id: 4,
+                        node_id: Some(4),
                         content: "42 passed, 0 failed".into(),
                         tool_name: Some("run_command".into()),
                         tool_status: Some("success".into()),
@@ -230,7 +235,7 @@ impl FakeNodeApi {
                     // exercises ToolEdit + DiffBlock.
                     HistoryMessageDto {
                         role: "tool".into(),
-                        node_id: 5,
+                        node_id: Some(5),
                         content: "The file /work/acme-api/tests/login.rs has been updated.\n\n\
                                   edited file:\nlet db = TestDb::isolated();"
                             .into(),
@@ -256,7 +261,7 @@ impl FakeNodeApi {
                     // table.
                     HistoryMessageDto {
                         role: "assistant".into(),
-                        node_id: 6,
+                        node_id: Some(6),
                         content: "Fixed — each test now gets its own database.\n\n\
                                   | File | Status |\n| --- | --- |\n| db.rs | fixed |"
                             .into(),
@@ -265,7 +270,7 @@ impl FakeNodeApi {
                     },
                     HistoryMessageDto {
                         role: "assistant".into(),
-                        node_id: 7,
+                        node_id: Some(7),
                         content: "Fixed — each test now gets its own database.\n\n\
                                   | File | Status |\n| --- | --- |\n| db.rs | fixed |"
                             .into(),
@@ -489,9 +494,9 @@ impl NodeApi for FakeNodeApi {
         &self,
         _id: &str,
         _agent: Option<&str>,
-        _checkpoint: &str,
-    ) -> Result<(), String> {
-        Ok(())
+        _selector: &crate::api::RewindSelector,
+    ) -> Result<crate::dto::RewindResultDto, String> {
+        Ok(crate::dto::RewindResultDto::default())
     }
 
     async fn convert(

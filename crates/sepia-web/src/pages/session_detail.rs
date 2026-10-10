@@ -21,6 +21,7 @@ use sepia_web_core::history::{
     file_diff_view, format_duration, format_usage, tool_content_segments, tool_summary,
     usage_label,
 };
+use sepia_web_core::rewind::{RewindSelector, rewind_node_id, rewind_result_summary};
 use sepia_web_core::stream::ReconnectTracker;
 use sepia_web_core::transcript::{LiveKind, LiveTranscript, PendingPermission};
 use serde_json::Value;
@@ -735,6 +736,59 @@ pub fn SessionPanel(
         });
     };
 
+    // Per-message rewind — a transcript row's `nodeId` is the cut
+    // point; the page-level `ConfirmDialog` guards the destructive
+    // `POST /rewind`. `rewind_target` holds the row being asked about
+    // while the dialog is open.
+    let rewind_target: RwSignal<Option<i64>> = RwSignal::new(None);
+    let confirm_rewind = RwSignal::new(false);
+    let on_rewind = move |node: i64| {
+        rewind_target.set(Some(node));
+        confirm_rewind.set(true);
+    };
+    let do_rewind = move || {
+        let Some(node) = rewind_target.get() else {
+            return;
+        };
+        rewind_target.set(None);
+        if acting.get() {
+            return;
+        }
+        acting.set(true);
+        let id = session_id();
+        let agent = agent();
+        leptos::task::spawn_local(async move {
+            match rewind_session(id, agent, RewindSelector::NodeId(node)).await {
+                Ok(result) => {
+                    toast.success(rewind_result_summary(result.removed));
+                    // The plane detaches a live attach before it
+                    // truncates — drop the local live view to match,
+                    // and drop the prepended older pages (their tail
+                    // window no longer exists).
+                    live.set(LiveTranscript::default());
+                    live_override.set(Some(false));
+                    older.set(Vec::new());
+                    history.refetch();
+                    summary.refetch();
+                    checkpoints.refetch();
+                    client.invalidate_query(crate::api::sessions_scope, ());
+                }
+                Err(e) => toast.error(e.to_string()),
+            }
+            acting.set(false);
+        });
+    };
+    // `ConfirmDialog::on_confirm` requires `Send` — the dialog flips
+    // this flag and the effect runs the rewind inside the owner, the
+    // same detour `delete_confirmed` uses.
+    let rewind_confirmed = RwSignal::new(false);
+    Effect::new(move |_| {
+        if rewind_confirmed.get() {
+            rewind_confirmed.set(false);
+            do_rewind();
+        }
+    });
+
     // The composer stays editable while the session is held
     // (draft-while-held is intended); send then detours through the
     // takeover `ConfirmDialog` instead of dying on a raw error.
@@ -838,6 +892,14 @@ pub fn SessionPanel(
                                 let locked = session.locked;
                                 let busy = session.busy;
                                 let live_flag = session.live;
+                                // Per-message rewind affordance — the
+                                // node's flag AND a writable, idle
+                                // session (held/busy rows hide it;
+                                // the node would refuse anyway).
+                                let can_rewind = session.can_rewind;
+                                let rewind_ok = Signal::derive(move || {
+                                    can_rewind && !busy && !is_held() && !running()
+                                });
                                 let title_for_rename = session.title.clone();
                                 // Cloned up front — the macro's move
                                 // closures can't reach `session` fields
@@ -1189,6 +1251,8 @@ pub fn SessionPanel(
                                                             message=msgs[index].clone()
                                                             dup=dup
                                                             on_quote=quote_reply
+                                                            rewind_ok=rewind_ok
+                                                            on_rewind=on_rewind
                                                         />
                                                     }
                                                     .into_any(),
@@ -1308,6 +1372,15 @@ pub fn SessionPanel(
                 confirm_label="Take over and send"
                 on_confirm=takeover_send
             />
+            // Per-message rewind — the row's nodeId is the cut point.
+            <ConfirmDialog
+                open=confirm_rewind
+                title="Rewind to this message?"
+                body="Session state after this point is removed — every message past it is deleted from the transcript. Files the agent already changed are not touched (use restore for that)."
+                confirm_label="Rewind"
+                destructive=true
+                on_confirm=move || rewind_confirmed.set(true)
+            />
         </section>
     }
 }
@@ -1350,6 +1423,13 @@ fn HistoryRow(
     /// "Reply" action — inserts the message text as a `> ` quote into
     /// the composer draft and focuses it.
     on_quote: impl Fn(&str) + Copy + Send + Sync + 'static,
+    /// Whether the session may rewind right now — `canRewind` from the
+    /// wire plus not-held/not-busy. Signal so the affordance appears
+    /// and disappears as the run state flips.
+    rewind_ok: Signal<bool>,
+    /// "Rewind" action — the row's `nodeId` is the cut point the
+    /// page-level confirm dialog posts.
+    on_rewind: impl Fn(i64) + Copy + Send + Sync + 'static,
 ) -> impl IntoView {
     let role = message.role.clone();
     let text = message.text();
@@ -1402,45 +1482,82 @@ fn HistoryRow(
             "user" => "group relative rounded-md border border-info/30 bg-info/5 px-3 py-2",
             _ => "group relative rounded-md px-1 py-2",
         };
-        // Hover-revealed actions — copy the message text, or quote it
-        // into the composer. Per-message *rewind* is skipped: the
-        // node's rewind endpoint takes a checkpoint ref, not a
-        // message index, so there's nothing to aim it at.
+        // Hover-revealed actions — copy the text, quote it into the
+        // composer, or rewind the transcript to this message's node.
+        // `rewind_node` is `Some` only for user/assistant rows whose
+        // wire `nodeId` arrived; `rewind_ok` drops it while the
+        // session is held or a run is in flight.
+        let rewind_node = rewind_node_id(&role, message.node_id);
         let copied = RwSignal::new(false);
-        // SSR-safe — the callback never fires server-side.
-        let copy_reset = leptos_use::use_timeout_fn(move |()| copied.set(false), 1_500.0).start;
+        // SSR-safe — the callback never fires server-side. `Arc` so
+        // the FnMut `actions` closure can lend each render a copy.
+        let copy_reset = std::sync::Arc::new(
+            leptos_use::use_timeout_fn(move |()| copied.set(false), 1_500.0).start,
+        );
         let copy_text = text.clone();
         let quote_text = text.clone();
-        let actions = (!text.is_empty()).then(|| {
-            view! {
-                <div
-                    data-name="MsgActions"
-                    class="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-md border bg-popover p-0.5 opacity-0 shadow-sm transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                >
-                    <button
-                        type="button"
-                        aria-label="Copy message"
-                        class="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"
-                        on:click=move |_| {
-                            crate::components::copy_to_clipboard(&copy_text);
-                            copied.set(true);
-                            copy_reset(());
-                        }
+        let has_text = !text.is_empty();
+        let actions = move || {
+            (has_text || (rewind_ok.get() && rewind_node.is_some())).then(|| {
+                view! {
+                    <div
+                        data-name="MsgActions"
+                        class="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-md border bg-popover p-0.5 opacity-0 shadow-sm transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                     >
-                        {move || if copied.get() { "copied" } else { "copy" }}
-                    </button>
-                    <button
-                        type="button"
-                        aria-label="Quote in reply"
-                        title="Quote in reply"
-                        class="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"
-                        on:click=move |_| on_quote(&quote_text)
-                    >
-                        "reply"
-                    </button>
-                </div>
-            }
-        });
+                        {has_text.then(|| {
+                            // `actions` re-runs when the gate flips —
+                            // clone per render instead of moving the
+                            // row's text into a one-shot handler.
+                            let text = copy_text.clone();
+                            let copy_reset = copy_reset.clone();
+                            view! {
+                                <button
+                                    type="button"
+                                    aria-label="Copy message"
+                                    class="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"
+                                    on:click=move |_| {
+                                        crate::components::copy_to_clipboard(&text);
+                                        copied.set(true);
+                                        copy_reset(());
+                                    }
+                                >
+                                    {move || if copied.get() { "copied" } else { "copy" }}
+                                </button>
+                            }
+                        })}
+                        {has_text.then(|| {
+                            let text = quote_text.clone();
+                            view! {
+                                <button
+                                    type="button"
+                                    aria-label="Quote in reply"
+                                    title="Quote in reply"
+                                    class="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"
+                                    on:click=move |_| on_quote(&text)
+                                >
+                                    "reply"
+                                </button>
+                            }
+                        })}
+                        {(rewind_node.is_some() && rewind_ok.get()).then(|| {
+                            let node = rewind_node.unwrap_or(0);
+                            view! {
+                                <button
+                                    data-name="MsgRewind"
+                                    type="button"
+                                    aria-label="Rewind to this message"
+                                    title="Rewind to here"
+                                    class="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"
+                                    on:click=move |_| on_rewind(node)
+                                >
+                                    "rewind"
+                                </button>
+                            }
+                        })}
+                    </div>
+                }
+            })
+        };
         view! {
             <article class=class>
                 {actions}
@@ -2391,22 +2508,23 @@ fn CheckpointRow(
         let agent = agent.clone();
         let checkpoint = checkpoint_ref.clone();
         leptos::task::spawn_local(async move {
-            let result = if op == "restore" {
-                restore_checkpoint(id, agent, checkpoint).await
+            let changed = if op == "restore" {
+                toast
+                    .outcome(restore_checkpoint(id, agent, checkpoint).await, "Restored.")
+                    .is_some()
             } else {
-                rewind_session(id, agent, checkpoint).await
+                match rewind_session(id, agent, RewindSelector::Checkpoint(checkpoint)).await {
+                    Ok(r) => {
+                        toast.success(rewind_result_summary(r.removed));
+                        true
+                    }
+                    Err(e) => {
+                        toast.error(e.to_string());
+                        false
+                    }
+                }
             };
-            if toast
-                .outcome(
-                    result,
-                    if op == "restore" {
-                        "Restored."
-                    } else {
-                        "Rewound."
-                    },
-                )
-                .is_some()
-            {
+            if changed {
                 on_changed();
             }
             busy.set(false);

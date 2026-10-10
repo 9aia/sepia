@@ -13,9 +13,13 @@ use std::collections::BTreeMap;
 use leptos::prelude::*;
 use serde_json::Value;
 
+// Re-exported so `NodeApi` implementors (the hub's `SyncNodeApi`,
+// test stubs) name the selector type without a web-core dependency.
+pub use sepia_web_core::rewind::RewindSelector;
+
 use crate::dto::{
     AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryPageDto, ImportResultDto,
-    NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto,
+    NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto, RewindResultDto,
     SessionSummaryDto,
 };
 
@@ -93,8 +97,16 @@ pub trait NodeApi: Send + Sync + 'static {
     ) -> Result<Vec<CheckpointDto>, String>;
     /// `POST /api/sessions/{id}/restore` — `{confirm: true, checkpoint}`.
     async fn restore(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String>;
-    /// `POST /api/sessions/{id}/rewind` — `{confirm: true, checkpoint}`.
-    async fn rewind(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String>;
+    /// `POST /api/sessions/{id}/rewind` — `{confirm: true}` plus the
+    /// selector (`{nodeId}` for a per-message cut, `{checkpoint}` for a
+    /// snapshot ref). Backends without a store rewinder answer
+    /// `conflict` — the summary's `canRewind` gates the affordance.
+    async fn rewind(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        selector: &RewindSelector,
+    ) -> Result<RewindResultDto, String>;
     /// `POST /api/sessions/{id}/convert` — `{agent: "cline"|"devin"}` →
     /// `{sessionId}` of the converted copy.
     async fn convert(&self, id: &str, agent: Option<&str>, target: &str) -> Result<String, String>;
@@ -513,18 +525,20 @@ pub async fn restore_checkpoint(
         .map_err(ServerFnError::new)
 }
 
-/// `POST /api/sessions/{id}/rewind` — `{confirm: true, checkpoint}`.
+/// `POST /api/sessions/{id}/rewind` — `{confirm: true}` + the selector
+/// (`RewindSelector::NodeId` from the per-message action,
+/// `::Checkpoint` from the details sheet's checkpoint rows).
 #[server(prefix = "/hub")]
 pub async fn rewind_session(
     session_id: String,
     agent: Option<String>,
-    checkpoint: String,
-) -> Result<(), ServerFnError> {
-    if session_id.is_empty() || checkpoint.is_empty() {
-        return Err(ServerFnError::new("session id and checkpoint are required"));
+    selector: RewindSelector,
+) -> Result<RewindResultDto, ServerFnError> {
+    if session_id.is_empty() {
+        return Err(ServerFnError::new("session id is required"));
     }
     node_api()?
-        .rewind(&session_id, agent.as_deref(), &checkpoint)
+        .rewind(&session_id, agent.as_deref(), &selector)
         .await
         .map_err(ServerFnError::new)
 }
@@ -855,6 +869,20 @@ fn read_json<T: serde::de::DeserializeOwned>(
     Err(error_of(res, what))
 }
 
+/// `{confirm: true}` + the serialized selector — `RewindSelector`
+/// encodes as a one-field object (`{"nodeId": …}`/`{"checkpoint": …}`),
+/// the exact shape the node route wants.
+#[cfg(feature = "ssr")]
+fn rewind_body(selector: &RewindSelector) -> Value {
+    let mut body = serde_json::json!({ "confirm": true });
+    if let (Some(body), Ok(Value::Object(sel))) =
+        (body.as_object_mut(), serde_json::to_value(selector))
+    {
+        body.extend(sel);
+    }
+    body
+}
+
 #[cfg(feature = "ssr")]
 fn id_query(agent: Option<&str>) -> String {
     agent
@@ -1139,14 +1167,21 @@ impl NodeApi for HttpNodeApi {
         .map_err(|e| e.to_string())?
     }
 
-    async fn rewind(&self, id: &str, agent: Option<&str>, checkpoint: &str) -> Result<(), String> {
+    async fn rewind(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        selector: &RewindSelector,
+    ) -> Result<RewindResultDto, String> {
         let path = format!("/api/sessions/{id}/rewind{}", id_query(agent));
         let api = self.clone();
-        let body = serde_json::json!({ "confirm": true, "checkpoint": checkpoint });
+        let body = rewind_body(selector);
         tokio::task::spawn_blocking(move || {
             let res = api.send_json("POST", &path, &body)?;
             if res.status().is_success() {
-                Ok(())
+                res.into_body()
+                    .read_json::<RewindResultDto>()
+                    .map_err(|e| e.to_string())
             } else {
                 Err(error_of(res, "rewind"))
             }

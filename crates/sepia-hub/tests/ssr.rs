@@ -161,9 +161,9 @@ impl NodeApi for StubNodeApi {
         &self,
         _id: &str,
         _agent: Option<&str>,
-        _checkpoint: &str,
-    ) -> Result<(), String> {
-        Ok(())
+        _selector: &sepia_web::api::RewindSelector,
+    ) -> Result<sepia_web::dto::RewindResultDto, String> {
+        Ok(sepia_web::dto::RewindResultDto::default())
     }
 
     async fn convert(

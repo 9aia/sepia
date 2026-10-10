@@ -78,7 +78,11 @@ GET    /api/agents                    { agents: [{ id, label, capabilities? }] }
                                       attach advertises them
 GET    /api/sessions                  { sessions } — store summaries + meta
                                       overlay + meta-only pending rows;
-                                      ?withLocks=1 merges agent lock flags
+                                      ?withLocks=1 merges agent lock flags.
+                                      Rows carry `canRewind` — whether the
+                                      node has a store rewinder for the
+                                      session's backend (absent → treat as
+                                      unsupported)
 POST   /api/sessions                  create — { cwd (required), agent?,
                                       title?, model?, fallbacks? } →
                                       201 { id, agentId, capabilities }
@@ -128,7 +132,9 @@ POST   /api/sessions/:id/rewind       conversation rewind — truncates the
                                       transcript, not files (that's restore).
                                       Requires { confirm: true } plus exactly
                                       one selector: { nodeId } keeps that
-                                      node and everything before it,
+                                      node and everything before it — what
+                                      per-message rewind posts (the row's
+                                      `nodeId` from GET …/history),
                                       { turns } (positive int) drops the last
                                       N user turns, { checkpoint } rewinds
                                       to a recorded snapshot ref →
