@@ -288,6 +288,9 @@ async fn session_detail_renders_summary_history_and_prompt() {
     assert_contains(&html, "data-name=\"RunMarker\"");
     assert_contains(&html, "devin @ workbench");
     assert_contains(&html, "devin @ tower");
+    // Transcript virtualization — every scroller row carries the
+    // `content-visibility: auto` utility (SSR/hydrate markup identical).
+    assert_contains(&html, "cv-auto");
     // GFM table in the assistant row.
     assert_contains(&html, "data-name=\"MdTable\"");
     assert_contains(&html, "<table");

@@ -105,6 +105,28 @@
   }
 }
 
+/* Virtualized transcript rows — `content-visibility: auto` is the
+   virtualizer: off-screen rows keep their DOM + box but the browser
+   skips their style/layout/paint, so a 2k-row transcript renders only
+   the viewport. `contain-intrinsic-block-size: auto N` supplies a
+   height estimate until a row first renders — 10rem tracks the
+   measured average row height, so scrollbar drift stays small; the
+   `auto` keyword then pins each row's remembered real size, so
+   `scrollTop = scrollHeight` (the pinned-tail effect) stays exact.
+   Chosen over DOM windowing: SSR/hydrate markup is identical (pure
+   class), the DOM stays whole (find-in-page, a11y tree, scroll
+   anchoring, `<details>` state all keep working), and no JS
+   bookkeeping is needed around the live tail or prepended pages. */
+@utility cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 10rem;
+  /* The transcript scroller is a flex column: a skipped row's content
+     minimum is 0, so default flex-shrink would crush it to padding
+     height and the intrinsic-size estimate would never apply
+     (measured: 2k rows collapsed a ~330k px scrollHeight to ~42k). */
+  flex-shrink: 0;
+}
+
 /* Reduced motion — neutralize transitions/animations globally. The
    app animates only layout (sheets slide, toasts fade, skeletons
    pulse), so cutting durations loses nothing functionally. */

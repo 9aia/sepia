@@ -191,10 +191,12 @@ fn ToolBlock(
     #[prop(optional_no_strip)]
     duration_ms: Option<f64>,
 ) -> impl IntoView {
+    // `cv-auto` virtualizes the row (content-visibility) — see
+    // input.css; every direct child of the transcript scroller wears it.
     let class = if error {
-        "rounded-md border border-destructive/40 bg-destructive/10"
+        "cv-auto rounded-md border border-destructive/40 bg-destructive/10"
     } else {
-        "rounded-md border border-border bg-muted/40"
+        "cv-auto rounded-md border border-border bg-muted/40"
     };
     let status_cls = if error || status == "error" || status == "failed" {
         "text-destructive"
@@ -282,7 +284,7 @@ fn ToolBlock(
 #[component]
 fn RunMarker(#[prop(into)] label: String) -> impl IntoView {
     view! {
-        <div data-name="RunMarker" class="flex items-center gap-2 px-1 py-0.5">
+        <div data-name="RunMarker" class="cv-auto flex items-center gap-2 px-1 py-0.5">
             <span class="h-px flex-1 bg-border/60"></span>
             <span class="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {label}
@@ -1478,9 +1480,10 @@ fn HistoryRow(
             .unwrap_or_default();
         let usage = message.usage.clone();
         // `group relative` anchors the hover actions strip.
+        // `cv-auto` virtualizes off-screen rows — see input.css.
         let class = match role.as_str() {
-            "user" => "group relative rounded-md border border-info/30 bg-info/5 px-3 py-2",
-            _ => "group relative rounded-md px-1 py-2",
+            "user" => "cv-auto group relative rounded-md border border-info/30 bg-info/5 px-3 py-2",
+            _ => "cv-auto group relative rounded-md px-1 py-2",
         };
         // Hover-revealed actions — copy the text, quote it into the
         // composer, or rewind the transcript to this message's node.
@@ -1665,7 +1668,7 @@ fn ContextCard(context: SystemContext) -> impl IntoView {
         }
     };
     view! {
-        <details data-name="ContextCard" class="rounded-lg border border-border/60 bg-muted/30">
+        <details data-name="ContextCard" class="cv-auto rounded-lg border border-border/60 bg-muted/30">
             <summary class="group flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
                 <span class="font-medium text-foreground/80">"Session context"</span>
                 <span class="min-w-0 flex-1 truncate">{summary}</span>
@@ -1863,7 +1866,7 @@ fn LiveLog(live: RwSignal<LiveTranscript>) -> impl IntoView {
                                     "border-info/30 bg-info/5"
                                 };
                                 view! {
-                                    <article class=format!("rounded-md border px-3 py-2 {surface}")>
+                                    <article class=format!("cv-auto rounded-md border px-3 py-2 {surface}")>
                                         <header class="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                                             {(!e.done).then(|| view! {
                                                 <span class="size-1.5 animate-pulse rounded-full bg-info"></span>
@@ -1880,9 +1883,9 @@ fn LiveLog(live: RwSignal<LiveTranscript>) -> impl IntoView {
                             }
                             LiveKind::Reasoning => {
                                 let class = if e.error {
-                                    "rounded-md border border-destructive/50 bg-destructive/10"
+                                    "cv-auto rounded-md border border-destructive/50 bg-destructive/10"
                                 } else {
-                                    "rounded-md border border-border/60 bg-muted/40"
+                                    "cv-auto rounded-md border border-border/60 bg-muted/40"
                                 };
                                 view! {
                                     // Open while streaming; settles
