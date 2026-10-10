@@ -64,17 +64,31 @@ pub enum Action {
     ClearFilter,
     /// Escape otherwise — drop `?session=` (back to `/`).
     CloseSelection,
+    /// ⌘, / Ctrl-, — open `/settings` (shell).
+    OpenSettings,
+    /// ArrowLeft — fold the selected row's section, or every section
+    /// when nothing is selected.
+    FoldGroup,
+    /// ArrowRight — unfold the selected row's section, or all.
+    UnfoldGroup,
 }
 
 impl Action {
     /// Whether the DOM handler should `prevent_default()` the event —
     /// the chords and single-letter keys need it (they'd otherwise type
-    /// or trigger the browser's own binding); Escape and the arrows
-    /// keep their default.
+    /// or trigger the browser's own binding), and the fold arrows keep
+    /// the list container from scrolling sideways. Escape and the
+    /// up/down nav arrows keep their default (page scroll).
     pub fn prevent_default(self) -> bool {
         matches!(
             self,
-            Self::ToggleHelp | Self::FocusFilter | Self::ToggleList | Self::FocusNewSession
+            Self::ToggleHelp
+                | Self::FocusFilter
+                | Self::ToggleList
+                | Self::FocusNewSession
+                | Self::OpenSettings
+                | Self::FoldGroup
+                | Self::UnfoldGroup
         )
     }
 }
@@ -92,6 +106,10 @@ pub fn resolve_key(key: &str, mods: Mods, ctx: KeyCtx) -> Option<Action> {
         }
         if key.eq_ignore_ascii_case("b") {
             return Some(Action::ToggleList);
+        }
+        // `ev.key()` for ⌘, is "," on both layouts.
+        if key == "," {
+            return Some(Action::OpenSettings);
         }
     }
     if key == "Escape" {
@@ -121,6 +139,8 @@ pub fn resolve_key(key: &str, mods: Mods, ctx: KeyCtx) -> Option<Action> {
     match key {
         "ArrowDown" => Some(Action::NavNext),
         "ArrowUp" => Some(Action::NavPrev),
+        "ArrowLeft" => Some(Action::FoldGroup),
+        "ArrowRight" => Some(Action::UnfoldGroup),
         _ => None,
     }
 }
@@ -329,6 +349,51 @@ mod tests {
     }
 
     #[test]
+    fn command_comma_opens_settings() {
+        assert_eq!(
+            resolve_key(",", mods(false, true, false, false), NONE),
+            Some(Action::OpenSettings)
+        );
+        assert_eq!(
+            resolve_key(",", mods(true, false, false, false), NONE),
+            Some(Action::OpenSettings)
+        );
+        // Like the other chords it fires while typing (⌘, is a
+        // browser-level shortcut, not text input).
+        assert_eq!(
+            resolve_key(
+                ",",
+                mods(true, false, false, false),
+                ctx(true, false, false, false)
+            ),
+            Some(Action::OpenSettings)
+        );
+        // A bare comma types as usual.
+        assert_eq!(resolve_key(",", NO_MODS, NONE), None);
+    }
+
+    #[test]
+    fn left_right_fold_groups_unless_typing() {
+        assert_eq!(
+            resolve_key("ArrowLeft", NO_MODS, NONE),
+            Some(Action::FoldGroup)
+        );
+        assert_eq!(
+            resolve_key("ArrowRight", NO_MODS, NONE),
+            Some(Action::UnfoldGroup)
+        );
+        assert_eq!(
+            resolve_key("ArrowLeft", NO_MODS, ctx(true, false, false, false)),
+            None
+        );
+        // Alt+Left stays the browser's back gesture.
+        assert_eq!(
+            resolve_key("ArrowLeft", mods(false, false, true, false), NONE),
+            None
+        );
+    }
+
+    #[test]
     fn unknown_keys_resolve_to_none() {
         for key in ["x", "Enter", "Tab", "j", "1"] {
             assert_eq!(resolve_key(key, NO_MODS, NONE), None, "{key}");
@@ -348,6 +413,9 @@ mod tests {
             (Action::CloseSelection, false),
             (Action::NavNext, false),
             (Action::NavPrev, false),
+            (Action::OpenSettings, true),
+            (Action::FoldGroup, true),
+            (Action::UnfoldGroup, true),
         ] {
             assert_eq!(a.prevent_default(), pd, "{a:?}");
         }

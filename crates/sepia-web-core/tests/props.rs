@@ -6,11 +6,15 @@ use std::collections::BTreeMap;
 
 use proptest::prelude::*;
 use sepia_web_core::filter::{
-    ALL_AGENTS, CollapsedGroups, Group, SessionFilter, SessionRow, SortMode, StatusFilter,
-    group_by_cwd, visible_keys,
+    CollapsedGroups, Recency, Section, SectionKind, SessionFilter, SessionRow, SortMode,
+    StatusFilter, group_by_cwd, visible_keys,
 };
 use sepia_web_core::keymap::{self, Action, KeyCtx, Mods, NavDir, nav_index};
 use sepia_web_core::theme::Theme;
+
+/// A fixed "now" for the recency window — the arb pool's stamps sit
+/// both inside and outside 24h/7d/30d of it.
+const NOW: f64 = 1_791_590_400_000.0; // 2026-10-10T00:00:00Z
 
 /// Small pools so collisions (same id, same cwd) actually happen.
 fn arb_row() -> impl Strategy<Value = SessionRow> {
@@ -27,16 +31,22 @@ fn arb_row() -> impl Strategy<Value = SessionRow> {
             "",
         ]),
         any::<bool>(),
+        any::<bool>(),
+        any::<bool>(),
     )
-        .prop_map(|(id, title, cwd, agent, updated_at, locked)| SessionRow {
-            id: id.into(),
-            title: title.into(),
-            cwd: cwd.into(),
-            agent: agent.into(),
-            updated_at: updated_at.into(),
-            locked,
-            ..SessionRow::default()
-        })
+        .prop_map(
+            |(id, title, cwd, agent, updated_at, locked, pinned, archived)| SessionRow {
+                id: id.into(),
+                title: title.into(),
+                cwd: cwd.into(),
+                agent: agent.into(),
+                updated_at: updated_at.into(),
+                locked,
+                pinned,
+                archived,
+                ..SessionRow::default()
+            },
+        )
 }
 
 fn arb_filter() -> impl Strategy<Value = SessionFilter> {
@@ -47,15 +57,29 @@ fn arb_filter() -> impl Strategy<Value = SessionFilter> {
             StatusFilter::Free,
             StatusFilter::Locked,
         ]),
-        prop::sample::select(vec!["all", "claude", "cline", "ghost", ""]),
+        prop::collection::btree_set(
+            prop::sample::select(vec!["claude", "cline", "ghost"]).prop_map(str::to_string),
+            0..3,
+        ),
         prop::sample::select(vec![SortMode::Newest, SortMode::Oldest, SortMode::Title]),
+        prop::sample::select(vec![
+            Recency::Any,
+            Recency::Day,
+            Recency::Week,
+            Recency::Month,
+        ]),
+        any::<bool>(),
     )
-        .prop_map(|(query, status, agent, sort)| SessionFilter {
-            query: query.into(),
-            status,
-            agent: agent.into(),
-            sort,
-        })
+        .prop_map(
+            |(query, status, agents, sort, recency, show_archived)| SessionFilter {
+                query: query.into(),
+                status,
+                agents,
+                sort,
+                recency,
+                show_archived,
+            },
+        )
 }
 
 fn arb_ctx() -> impl Strategy<Value = KeyCtx> {
@@ -90,11 +114,16 @@ fn multiset(rows: &[SessionRow]) -> BTreeMap<(String, String), usize> {
 }
 
 proptest! {
-    /// A permissive filter is a permutation of the input — nothing
-    /// lost, nothing duplicated.
+    /// A maximally permissive filter is a permutation of the input —
+    /// nothing lost, nothing duplicated. (`show_archived` has to be
+    /// set: hidden-by-default is the pipeline's base contract.)
     #[test]
     fn permissive_filter_loses_nothing(rows in prop::collection::vec(arb_row(), 0..24)) {
-        let out = SessionFilter::default().apply(rows.clone());
+        let f = SessionFilter {
+            show_archived: true,
+            ..SessionFilter::default()
+        };
+        let out = f.apply(rows.clone(), NOW);
         prop_assert_eq!(multiset(&out), multiset(&rows));
     }
 
@@ -102,7 +131,7 @@ proptest! {
     /// kept row satisfies the predicate.
     #[test]
     fn filter_only_drops(rows in prop::collection::vec(arb_row(), 0..24), f in arb_filter()) {
-        let out = f.apply(rows.clone());
+        let out = f.apply(rows.clone(), NOW);
         let mut available = multiset(&rows);
         for r in &out {
             let key = (r.id.clone(), r.agent.clone());
@@ -123,7 +152,8 @@ proptest! {
                 StatusFilter::Locked => r.locked,
             };
             prop_assert!(status_ok);
-            prop_assert!(f.agent == ALL_AGENTS || r.agent == f.agent);
+            prop_assert!(f.agents.is_empty() || f.agents.contains(&r.agent));
+            prop_assert!(f.show_archived || !r.archived);
         }
     }
 
@@ -131,7 +161,7 @@ proptest! {
     #[test]
     fn output_is_sorted(rows in prop::collection::vec(arb_row(), 0..24), sort in prop::sample::select(vec![SortMode::Newest, SortMode::Oldest, SortMode::Title])) {
         let f = SessionFilter { sort, ..SessionFilter::default() };
-        let out = f.apply(rows);
+        let out = f.apply(rows, NOW);
         for w in out.windows(2) {
             let (a, b) = (&w[0], &w[1]);
             let ok = match sort {
@@ -152,7 +182,7 @@ proptest! {
     /// trails, and within-group order matches the input order.
     #[test]
     fn grouping_partitions(rows in prop::collection::vec(arb_row(), 0..24), f in arb_filter()) {
-        let filtered = f.apply(rows);
+        let filtered = f.apply(rows, NOW);
         let groups = group_by_cwd(filtered.clone());
         // Partition — same multiset of rows.
         let flat: Vec<SessionRow> = groups.iter().flat_map(|g| g.rows.clone()).collect();
@@ -187,16 +217,24 @@ proptest! {
         closed in prop::collection::vec(prop::sample::select(vec!["", "/home/u/app", "/var/www", "/tmp/x"]), 0..3),
         force_open in any::<bool>(),
     ) {
-        let groups = group_by_cwd(SessionFilter::default().apply(rows));
+        let sections: Vec<Section> = group_by_cwd(SessionFilter::default().apply(rows, NOW))
+            .into_iter()
+            .map(|g| Section {
+                kind: SectionKind::Project,
+                key: g.key,
+                label: g.label,
+                rows: g.rows,
+            })
+            .collect();
         let mut collapsed = CollapsedGroups::default();
         for c in closed {
             collapsed.toggle(c);
         }
-        let keys = visible_keys(&groups, &collapsed, force_open);
-        let expect: Vec<(String, String)> = groups
+        let keys = visible_keys(&sections, &collapsed, force_open);
+        let expect: Vec<(String, String)> = sections
             .iter()
-            .filter(|g: &&Group| force_open || !collapsed.is_closed(&g.key))
-            .flat_map(|g| g.rows.iter().map(|r| (r.id.clone(), r.agent.clone())))
+            .filter(|s: &&Section| force_open || !collapsed.is_closed(&s.key))
+            .flat_map(|s| s.rows.iter().map(|r| (r.id.clone(), r.agent.clone())))
             .collect();
         prop_assert_eq!(keys, expect);
     }
@@ -222,11 +260,12 @@ proptest! {
                 Action::CloseMenu | Action::ClearFilter | Action::CloseHelp | Action::CloseSelection
             ));
         }
-        // Beyond k/b chords and Escape, command/alt modifiers swallow
-        // the key entirely.
+        // Beyond the k/b/, chords and Escape, command/alt modifiers
+        // swallow the key entirely.
         if (mods.command() || mods.alt)
             && !key.eq_ignore_ascii_case("k")
             && !key.eq_ignore_ascii_case("b")
+            && key != ","
             && key != "Escape"
         {
             prop_assert!(false, "modifier chord produced {action:?} for {key:?}");

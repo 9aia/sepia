@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ba45443a60f97b54b58469ec19872baa31bfda98574912f2c59f0498743f7008 # shrinks to rows = [SessionRow { id: "a", title: "", cwd: "/g", agent: "claude", updated_at: "2026-10-09T12:00:00Z", locked: false, live: false, busy: false, pinned: false, archived: false, parent_session_id: None, node: None }], f = SessionFilter { query: "", status: All, agents: {}, sort: Newest, recency: Any, show_archived: false }
