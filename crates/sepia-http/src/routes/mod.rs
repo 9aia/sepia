@@ -246,6 +246,10 @@ pub struct SummaryWire {
     pub parent_session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// Whether the owning node's control plane can rewind this
+    /// session's transcript — `false` when no store rewinder is
+    /// registered for the backend.
+    pub can_rewind: bool,
 }
 
 impl SummaryWire {
@@ -269,12 +273,15 @@ impl SummaryWire {
             spans: meta.and_then(|m| m.spans.clone()).unwrap_or_default(),
             parent_session_id: session.parent_session_id,
             agent_id: session.agent_id,
+            can_rewind: session.can_rewind,
         }
     }
 
     /// A created-but-unflushed session — survives restarts only in the
     /// meta file, so the list surfaces it with recorded agent/cwd.
-    pub fn pending(id: &str, meta: &SessionMeta) -> Self {
+    /// `can_rewind` comes from the plane (the meta agent id passes
+    /// `agent_for_backend` unchanged for the built-in set).
+    pub fn pending(id: &str, meta: &SessionMeta, can_rewind: bool) -> Self {
         Self {
             id: id.to_string(),
             title: meta.title.clone().unwrap_or_else(|| "New session".into()),
@@ -292,6 +299,7 @@ impl SummaryWire {
             spans: meta.spans.clone().unwrap_or_default(),
             parent_session_id: None,
             agent_id: None,
+            can_rewind,
         }
     }
 }

@@ -496,7 +496,7 @@ impl ControlPlane {
         probe
     }
 
-    fn to_summary(session: &Session) -> SessionSummary {
+    fn to_summary(&self, session: &Session) -> SessionSummary {
         let agent = agent_for_backend(&session.backend_type).to_string();
         SessionSummary {
             id: session.id.clone(),
@@ -514,7 +514,16 @@ impl ControlPlane {
             spans: None,
             parent_session_id: session.parent_session_id.clone(),
             agent_id: session.agent_id.clone(),
+            can_rewind: self.can_rewind(&session.backend_type),
         }
+    }
+
+    /// Whether a `SessionRewinder` is registered for the backend (or
+    /// agent id — `agent_for_backend` passes known ids through).
+    /// `rewind` itself fails `conflict` without one; this flag lets
+    /// clients hide the affordance instead.
+    pub fn can_rewind(&self, backend_type: &str) -> bool {
+        self.rewinders.contains_key(agent_for_backend(backend_type))
     }
 
     /// Sessions from the IR store; `with_locks` also probes every
@@ -532,7 +541,8 @@ impl ControlPlane {
             .list()
             .await
             .map_err(storage_error("Failed to list sessions"))?;
-        let mut summaries: Vec<SessionSummary> = sessions.iter().map(Self::to_summary).collect();
+        let mut summaries: Vec<SessionSummary> =
+            sessions.iter().map(|s| self.to_summary(s)).collect();
         let stored: HashSet<String> = summaries.iter().map(|s| s.id.clone()).collect();
         {
             let state = self.state.lock().await;
@@ -556,6 +566,7 @@ impl ControlPlane {
                         spans: None,
                         parent_session_id: None,
                         agent_id: None,
+                        can_rewind: self.rewinders.contains_key(&live.agent_id),
                     });
                 }
             }

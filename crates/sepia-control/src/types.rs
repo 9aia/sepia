@@ -45,6 +45,10 @@ pub struct SessionSummary {
     /// Sub-agent identity within the parent's team (not the runtime).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// Whether the plane has a `SessionRewinder` for this session's
+    /// backend — the per-session capability flag a UI reads to offer
+    /// transcript rewind (`POST /rewind`).
+    pub can_rewind: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

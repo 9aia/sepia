@@ -125,7 +125,13 @@ async fn list(state: &AppState, with_locks: bool) -> Response {
             .unwrap_or_default()
             .into_iter()
             .filter(|(id, meta)| !known.contains(id) && meta.agent.is_some() && meta.cwd.is_some())
-            .map(|(id, meta)| SummaryWire::pending(&id, &meta))
+            .map(|(id, meta)| {
+                let can_rewind = meta
+                    .agent
+                    .as_deref()
+                    .is_some_and(|agent| state.plane.can_rewind(agent));
+                SummaryWire::pending(&id, &meta, can_rewind)
+            })
             .collect();
         let mut all = overlaid;
         all.extend(pending);
@@ -282,6 +288,7 @@ async fn get_one(state: &AppState, id: &str, agent: Option<&str>) -> Response {
             spans: None,
             parent_session_id: session.parent_session_id.clone(),
             agent_id: session.agent_id.clone(),
+            can_rewind: state.plane.can_rewind(&session.backend_type),
         };
         let meta = meta_of(state, &session.id);
         json!(SummaryWire::overlay(summary, meta.as_ref()))
