@@ -3,6 +3,7 @@
 //! blocks) so a newer node can add fields without breaking an older
 //! hub — and so one malformed message can't poison a whole page.
 
+use sepia_core::{TokenUsage, ToolCallDiff, ToolCallLocation};
 use sepia_web_core::filter::SessionRow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,10 +46,37 @@ pub struct SessionSummaryDto {
     /// raw row), so absence reads as `false`.
     #[serde(default)]
     pub live: bool,
+    /// Run provenance — each attach appends a `{at, agent, node}` span.
+    /// Rides `SummaryWire.spans`; empty until the first attach.
+    #[serde(default)]
+    pub spans: Vec<RunSpanDto>,
     /// Hub-side annotation — the node id that owns this session.
     /// Not part of the node's wire summary; absent → `None`.
     #[serde(default)]
     pub node: Option<String>,
+}
+
+/// `SummaryWire.spans[]` — `sepia_meta::RunSpan`/`sepia_control::RunSpan`
+/// on the wire (`{at, agent, node}`, `at` epoch ms).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunSpanDto {
+    #[serde(default)]
+    pub at: f64,
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub node: String,
+}
+
+impl From<&RunSpanDto> for sepia_web_core::history::RunSpan {
+    fn from(s: &RunSpanDto) -> Self {
+        Self {
+            at: s.at,
+            agent: s.agent.clone(),
+            node: s.node.clone(),
+        }
+    }
 }
 
 /// The list view's row — `sepia-web-core` runs the whole
@@ -159,10 +187,22 @@ pub struct HistoryMessageDto {
     pub tool_call_id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    /// Token metrics the store recorded for this message
+    /// (`sepia_core::TokenUsage` — `input`/`output` + optional
+    /// `cacheRead`/`cacheWrite`/`thinking`/`cost`).
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
     /// Structured content (`sepia_core::Block`, tagged `"type"`). Kept
     /// as `Value` so unknown block kinds degrade rather than fail.
     #[serde(default)]
     pub blocks: Option<Vec<Value>>,
+    /// Tool-result rows only: files the call touched, joined by
+    /// `tool_call_id`.
+    #[serde(default)]
+    pub locations: Option<Vec<ToolCallLocation>>,
+    /// Tool-result rows only: recorded before/after payloads.
+    #[serde(default)]
+    pub diffs: Option<Vec<ToolCallDiff>>,
 }
 
 impl HistoryMessageDto {

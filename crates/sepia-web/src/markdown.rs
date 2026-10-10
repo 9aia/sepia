@@ -1,7 +1,7 @@
 //! Markdown-lite — deliberately tiny: fenced code blocks, ATX headings,
-//! `-`/`*`/ordered lists, paragraphs, and `` `code` ``, `**bold**`,
-//! `*em*`, `[text](url)` inline. Everything else renders as literal
-//! text. Not a CommonMark implementation.
+//! `-`/`*`/ordered lists, GFM `|`-tables, paragraphs, and `` `code` ``,
+//! `**bold**`, `*em*`, `[text](url)` inline. Everything else renders as
+//! literal text. Not a CommonMark implementation.
 
 use leptos::prelude::*;
 
@@ -19,6 +19,20 @@ pub enum MdBlock {
         ordered: bool,
         items: Vec<Vec<MdInline>>,
     },
+    /// GFM table — `align` rides the `|:---:|---:|` separator row
+    /// (`None` = left).
+    Table {
+        header: Vec<Vec<MdInline>>,
+        align: Vec<Option<MdAlign>>,
+        rows: Vec<Vec<Vec<MdInline>>>,
+    },
+}
+
+/// Column alignment from a table separator cell (`:--`, `--:`, `:-:`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MdAlign {
+    Center,
+    Right,
 }
 
 /// Inline span.
@@ -29,6 +43,42 @@ pub enum MdInline {
     Strong(String),
     Em(String),
     Link { text: String, href: String },
+}
+
+/// Split a table row into trimmed cells — leading/trailing `|` come
+/// off first; `\|` escapes aren't honored (markdown-lite).
+fn table_cells(line: &str) -> Vec<String> {
+    let t = line.trim().trim_matches('|');
+    t.split('|').map(|c| c.trim().to_string()).collect()
+}
+
+/// A GFM separator row — `| --- | :--: | --: |` — returns the column
+/// alignments when every cell is `:?-+:?`.
+fn table_separator(line: &str) -> Option<Vec<Option<MdAlign>>> {
+    let t = line.trim();
+    if !t.contains('-') {
+        return None;
+    }
+    let cells = table_cells(t);
+    if cells.is_empty() {
+        return None;
+    }
+    let mut align = Vec::with_capacity(cells.len());
+    for cell in &cells {
+        let c = cell.trim();
+        let left = c.starts_with(':');
+        let right = c.ends_with(':');
+        let dashes = c.trim_matches(':');
+        if dashes.is_empty() || !dashes.bytes().all(|b| b == b'-') {
+            return None;
+        }
+        align.push(match (left, right) {
+            (true, true) => Some(MdAlign::Center),
+            (false, true) => Some(MdAlign::Right),
+            _ => None,
+        });
+    }
+    Some(align)
 }
 
 /// Parse a message into blocks.
@@ -113,6 +163,41 @@ pub fn parse(input: &str) -> Vec<MdBlock> {
                 flush_list(&mut list, &mut blocks);
                 list = Some((true, vec![inlines(item)]));
             }
+            continue;
+        }
+
+        // GFM table: a `|`-carrying line whose next line is the
+        // `---|---` separator. Consumes following `|` lines as rows.
+        // Runs after the list checks so `- a | b` items win.
+        if trimmed.contains('|')
+            && let Some(sep) = lines.peek().and_then(|next| table_separator(next))
+        {
+            flush_para(&mut para, &mut blocks);
+            flush_list(&mut list, &mut blocks);
+            lines.next(); // the separator itself
+            let header = table_cells(trimmed)
+                .iter()
+                .map(|c| inlines(c))
+                .collect::<Vec<_>>();
+            let mut rows = Vec::new();
+            while let Some(next) = lines.peek() {
+                let nt = next.trim_end();
+                if nt.trim().is_empty() || !nt.contains('|') {
+                    break;
+                }
+                rows.push(
+                    table_cells(nt)
+                        .iter()
+                        .map(|c| inlines(c))
+                        .collect::<Vec<_>>(),
+                );
+                lines.next();
+            }
+            blocks.push(MdBlock::Table {
+                header,
+                align: sep,
+                rows,
+            });
             continue;
         }
 
@@ -231,6 +316,56 @@ fn render_block(block: MdBlock) -> impl IntoView {
             } else {
                 view! { <ul>{items}</ul> }.into_any()
             }
+        }
+        MdBlock::Table {
+            header,
+            align,
+            rows,
+        } => {
+            let align_class = |i: usize| match align.get(i) {
+                Some(Some(MdAlign::Center)) => " text-center",
+                Some(Some(MdAlign::Right)) => " text-right",
+                _ => " text-left",
+            };
+            let th: Vec<_> = header
+                .into_iter()
+                .enumerate()
+                .map(|(i, cell)| {
+                    view! {
+                        <th class=format!("border border-border bg-muted px-2 py-1 font-semibold{}", align_class(i))>
+                            {cell.into_iter().map(render_inline).collect::<Vec<_>>()}
+                        </th>
+                    }
+                })
+                .collect();
+            let trs: Vec<_> = rows
+                .into_iter()
+                .map(|row| {
+                    let tds: Vec<_> = row
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, cell)| {
+                            view! {
+                                <td class=format!("border border-border px-2 py-1 align-top{}", align_class(i))>
+                                    {cell.into_iter().map(render_inline).collect::<Vec<_>>()}
+                                </td>
+                            }
+                        })
+                        .collect();
+                    view! { <tr>{tds}</tr> }
+                })
+                .collect();
+            view! {
+                <div class="my-2 overflow-x-auto" data-name="MdTable">
+                    <table class="w-full border-collapse text-sm">
+                        <thead>
+                            <tr>{th}</tr>
+                        </thead>
+                        <tbody>{trs}</tbody>
+                    </table>
+                </div>
+            }
+            .into_any()
         }
     }
 }
@@ -362,6 +497,50 @@ mod tests {
                 MdInline::Text(" done".into()),
             ]
         );
+    }
+
+    #[test]
+    fn gfm_tables() {
+        let md = parse("| Name | Cost |\n| --- | --: |\n| a | `1` |\n| b | 2 |\n\ntail");
+        assert_eq!(
+            md,
+            vec![
+                MdBlock::Table {
+                    header: vec![
+                        vec![MdInline::Text("Name".into())],
+                        vec![MdInline::Text("Cost".into())],
+                    ],
+                    align: vec![None, Some(MdAlign::Right)],
+                    rows: vec![
+                        vec![
+                            vec![MdInline::Text("a".into())],
+                            vec![MdInline::Code("1".into())],
+                        ],
+                        vec![
+                            vec![MdInline::Text("b".into())],
+                            vec![MdInline::Text("2".into())],
+                        ],
+                    ],
+                },
+                MdBlock::Paragraph(vec![MdInline::Text("tail".into())]),
+            ]
+        );
+    }
+
+    #[test]
+    fn tables_need_a_separator_and_pipes() {
+        // A pipe line without the `---` row stays a paragraph.
+        let md = parse("a | b\nno separator");
+        assert_eq!(
+            md,
+            vec![MdBlock::Paragraph(vec![MdInline::Text(
+                "a | b\nno separator".into()
+            )])]
+        );
+        // A bullet containing `|` isn't a table header even when the
+        // next line is a separator row.
+        let md = parse("- a | b\n| --- |");
+        assert!(matches!(&md[0], MdBlock::List { ordered: false, .. }));
     }
 
     #[test]
