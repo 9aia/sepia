@@ -371,7 +371,11 @@ fn render_block(block: MdBlock) -> impl IntoView {
 }
 
 /// Fenced code block — a header strip carries the copy affordance and
-/// the right-aligned language badge; the `<pre>` sits below it.
+/// the right-aligned language badge; the `<pre>` sits below it. The
+/// body is tokenized by `sepia_web_core::highlight` into one `<span>`
+/// per run (keywords/strings/numbers/comments get Catppuccin token
+/// colors); unknown languages come back as a single `Plain` token, so
+/// the markup is uniform either way.
 #[allow(clippy::needless_pass_by_value)] // component props are owned
 #[component]
 fn CodeBlock(#[prop(into)] lang: Option<String>, #[prop(into)] code: String) -> impl IntoView {
@@ -381,11 +385,12 @@ fn CodeBlock(#[prop(into)] lang: Option<String>, #[prop(into)] code: String) -> 
     let on_copy = {
         let code = code.clone();
         move |_| {
-            copy_to_clipboard(&code);
+            crate::components::copy_to_clipboard(&code);
             copied.set(true);
             reset(());
         }
     };
+    let tokens = sepia_web_core::highlight::highlight(lang.as_deref().unwrap_or_default(), &code);
     view! {
         <div class="overflow-hidden rounded-md border bg-secondary/60">
             <div class="flex items-center justify-end gap-2 border-b border-border/60 px-3 py-1">
@@ -403,7 +408,14 @@ fn CodeBlock(#[prop(into)] lang: Option<String>, #[prop(into)] code: String) -> 
                     {move || if copied.get() { "copied" } else { "copy" }}
                 </button>
             </div>
-            <pre class="overflow-x-auto p-3 font-mono text-xs leading-relaxed"><code>{code}</code></pre>
+            <pre class="overflow-x-auto p-3 font-mono text-xs leading-relaxed"><code>{tokens
+                .into_iter()
+                .map(|t| {
+                    // `class()` is "" for Plain — an empty attribute
+                    // keeps every span's shape identical.
+                    view! { <span class=t.kind.class()>{t.text}</span> }
+                })
+                .collect::<Vec<_>>()}</code></pre>
         </div>
     }
 }
@@ -419,19 +431,6 @@ pub fn Markdown(#[prop(into)] text: String) -> impl IntoView {
         </div>
     }
 }
-
-// Kept away from the `impl IntoView` items above — the `check` xtask
-// lints a cfg attr adjacent to markup (`view!`/`impl IntoView`).
-
-/// Clipboard write — browser-only. The ssr stub keeps the `on:click`
-/// handler compiling; it emits no markup, so SSR/hydrate agree.
-#[cfg(feature = "hydrate")]
-fn copy_to_clipboard(text: &str) {
-    let _ = window().navigator().clipboard().write_text(text);
-}
-
-#[cfg(not(feature = "hydrate"))]
-fn copy_to_clipboard(_: &str) {}
 
 #[cfg(test)]
 mod tests {

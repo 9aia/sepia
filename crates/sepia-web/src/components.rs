@@ -328,13 +328,25 @@ pub fn VisuallyHidden(children: Children) -> impl IntoView {
     view! { <span class="sr-only">{children()}</span> }
 }
 
+/// Clipboard write — browser-only (`navigator.clipboard`); the SSR
+/// stub keeps `on:click` handlers compiling. Shared by the code-fence
+/// copy button and the per-message copy action.
+#[cfg(feature = "hydrate")]
+pub(crate) fn copy_to_clipboard(text: &str) {
+    let _ = window().navigator().clipboard().write_text(text);
+}
+
+/// SSR counterpart — no DOM, nothing to write.
+#[cfg(not(feature = "hydrate"))]
+pub(crate) fn copy_to_clipboard(_: &str) {}
+
 /// Initial focus + return-focus for signal-driven overlay panels —
 /// the pragmatic half of a focus trap (`leptos-use` 0.19 has no
 /// `use_focus_trap`). `panel` needs `tabindex="-1"`; it takes focus
 /// when `open` flips true, and whatever was focused before regains it
 /// on close. Hydrate-only: SSR never runs effects and has no DOM.
 #[cfg(feature = "hydrate")]
-fn track_overlay_focus(open: RwSignal<bool>, panel: NodeRef<leptos::html::Div>) {
+pub(crate) fn track_overlay_focus(open: RwSignal<bool>, panel: NodeRef<leptos::html::Div>) {
     use std::cell::RefCell;
     use std::rc::Rc;
     use wasm_bindgen::JsCast;
@@ -359,7 +371,7 @@ fn track_overlay_focus(open: RwSignal<bool>, panel: NodeRef<leptos::html::Div>) 
 /// SSR/no-DOM counterpart — effects never run, there's nothing to
 /// focus. Keeps the call site unconditional (cfg never gates markup).
 #[cfg(not(feature = "hydrate"))]
-fn track_overlay_focus(_open: RwSignal<bool>, _panel: NodeRef<leptos::html::Div>) {}
+pub(crate) fn track_overlay_focus(_open: RwSignal<bool>, _panel: NodeRef<leptos::html::Div>) {}
 
 /// Inline SVG icons — lucide-style 24×24 stroke glyphs, hand-embedded
 /// so no icon crate is needed. Everything inherits `currentColor`.

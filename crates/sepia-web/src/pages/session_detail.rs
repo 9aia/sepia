@@ -10,7 +10,8 @@ use leptos_router::hooks::use_navigate;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_use::core::ConnectionReadyState;
 use sepia_web_core::composer::{
-    Attachment, attachment_label, attachments_payload, convert_targets, export_href,
+    Attachment, attachment_label, attachments_payload, convert_targets, draft_with_quote,
+    export_href,
 };
 #[cfg(feature = "hydrate")]
 use sepia_web_core::composer::{MAX_ATTACHMENT_CHARS, MAX_ATTACHMENTS, attachment_chars};
@@ -20,6 +21,7 @@ use sepia_web_core::history::{
     file_diff_view, format_duration, format_usage, tool_content_segments, tool_summary,
     usage_label,
 };
+use sepia_web_core::stream::ReconnectTracker;
 use sepia_web_core::transcript::{LiveKind, LiveTranscript, PendingPermission};
 use serde_json::Value;
 
@@ -530,6 +532,9 @@ pub fn SessionPanel(
     // EventStream is open, `None` otherwise (SSR, detached, or before
     // the summary resolves). The `Reconnecting…` pill reads it.
     let conn_state: RwSignal<Option<Signal<ConnectionReadyState>>> = RwSignal::new(None);
+    // The tracker gates the pill to *post-open* outages — the initial
+    // connect stays quiet.
+    let conn_tracker = RwSignal::new(ReconnectTracker::default());
 
     // Auto-scroll the log while new live entries stream in — but only
     // while the user is pinned to the bottom. Scrolling up unpins; the
@@ -625,6 +630,9 @@ pub fn SessionPanel(
                             live.set(LiveTranscript::default());
                         },
                     );
+                    // A fresh stream gets a fresh tracker — its own
+                    // initial connect is quiet too.
+                    conn_tracker.write().reset();
                     conn_state.set(Some(stream.ready_state()));
                     slot.set_value(Some(stream));
                 }
@@ -780,6 +788,17 @@ pub fn SessionPanel(
             }
             sending.set(false);
         });
+    };
+
+    // The composer textarea — lifted to the page so the transcript's
+    // per-message "reply" action can focus it after inserting the
+    // `> `-quoted block into the draft.
+    let composer_ref = NodeRef::<leptos::html::Textarea>::new();
+    let quote_reply = move |text: &str| {
+        draft.update(|d| *d = draft_with_quote(d, text));
+        if let Some(el) = composer_ref.get() {
+            let _ = el.focus();
+        }
     };
 
     let running = move || live.read().running;
@@ -1169,6 +1188,7 @@ pub fn SessionPanel(
                                                         <HistoryRow
                                                             message=msgs[index].clone()
                                                             dup=dup
+                                                            on_quote=quote_reply
                                                         />
                                                     }
                                                     .into_any(),
@@ -1185,17 +1205,25 @@ pub fn SessionPanel(
                                     // the same floating-overlay pattern
                                     // as "Jump to bottom" below. Always
                                     // rendered; visibility is
-                                    // class-only. Shows whenever the
-                                    // stream exists but isn't `Open`
-                                    // (connecting, or closed with the
-                                    // infinite backoff retrying).
+                                    // class-only. Shows only after the
+                                    // stream has been `Open` and then
+                                    // dropped (ReconnectTracker — the
+                                    // initial connect stays quiet).
+                                    // `conn_tracker.update` is a write,
+                                    // not a tracked read, so it can't
+                                    // re-trigger this class closure.
                                     <div
                                         data-name="ReconnectingPill"
                                         class=move || {
                                             let reconnecting = conn_state
                                                 .get()
                                                 .is_some_and(|s| {
-                                                    s.get() != ConnectionReadyState::Open
+                                                    let open =
+                                                        s.get() == ConnectionReadyState::Open;
+                                                    let mut show = false;
+                                                    conn_tracker
+                                                        .update(|t| show = t.observe(open));
+                                                    show
                                                 });
                                             let base = "absolute right-3 top-2 flex items-center gap-1.5 rounded-full border bg-popover px-3 py-1 text-xs text-muted-foreground shadow-md transition-opacity";
                                             if reconnecting {
@@ -1256,6 +1284,7 @@ pub fn SessionPanel(
                                         draft=draft
                                         sending=sending
                                         attachments=attachments
+                                        area_ref=composer_ref
                                         cwd=prompt_cwd.clone()
                                         model=prompt_model.clone()
                                         session_id=session_id()
@@ -1315,7 +1344,13 @@ fn OlderButton(
 }
 
 #[component]
-fn HistoryRow(message: HistoryMessageDto, dup: usize) -> impl IntoView {
+fn HistoryRow(
+    message: HistoryMessageDto,
+    dup: usize,
+    /// "Reply" action — inserts the message text as a `> ` quote into
+    /// the composer draft and focuses it.
+    on_quote: impl Fn(&str) + Copy + Send + Sync + 'static,
+) -> impl IntoView {
     let role = message.role.clone();
     let text = message.text();
     if role == "tool" {
@@ -1362,12 +1397,53 @@ fn HistoryRow(message: HistoryMessageDto, dup: usize) -> impl IntoView {
             .map(attachment_views)
             .unwrap_or_default();
         let usage = message.usage.clone();
+        // `group relative` anchors the hover actions strip.
         let class = match role.as_str() {
-            "user" => "rounded-md border border-info/30 bg-info/5 px-3 py-2",
-            _ => "rounded-md px-1 py-2",
+            "user" => "group relative rounded-md border border-info/30 bg-info/5 px-3 py-2",
+            _ => "group relative rounded-md px-1 py-2",
         };
+        // Hover-revealed actions — copy the message text, or quote it
+        // into the composer. Per-message *rewind* is skipped: the
+        // node's rewind endpoint takes a checkpoint ref, not a
+        // message index, so there's nothing to aim it at.
+        let copied = RwSignal::new(false);
+        // SSR-safe — the callback never fires server-side.
+        let copy_reset = leptos_use::use_timeout_fn(move |()| copied.set(false), 1_500.0).start;
+        let copy_text = text.clone();
+        let quote_text = text.clone();
+        let actions = (!text.is_empty()).then(|| {
+            view! {
+                <div
+                    data-name="MsgActions"
+                    class="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-md border bg-popover p-0.5 opacity-0 shadow-sm transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                >
+                    <button
+                        type="button"
+                        aria-label="Copy message"
+                        class="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"
+                        on:click=move |_| {
+                            crate::components::copy_to_clipboard(&copy_text);
+                            copied.set(true);
+                            copy_reset(());
+                        }
+                    >
+                        {move || if copied.get() { "copied" } else { "copy" }}
+                    </button>
+                    <button
+                        type="button"
+                        aria-label="Quote in reply"
+                        title="Quote in reply"
+                        class="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"
+                        on:click=move |_| on_quote(&quote_text)
+                    >
+                        "reply"
+                    </button>
+                </div>
+            }
+        });
         view! {
             <article class=class>
+                {actions}
                 <header class="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     {role.clone()}
                     {message
@@ -1902,6 +1978,9 @@ fn PromptBox(
     draft: RwSignal<String>,
     sending: RwSignal<bool>,
     attachments: RwSignal<Vec<Attachment>>,
+    /// Page-owned textarea ref — auto-grow uses it, and the
+    /// transcript's quote action focuses through it.
+    area_ref: NodeRef<leptos::html::Textarea>,
     cwd: String,
     /// The session's meta `model` — the input's baseline; a local edit
     /// overrides it until the next refetch.
@@ -1955,7 +2034,6 @@ fn PromptBox(
             submit();
         }
     };
-    let area_ref = NodeRef::<leptos::html::Textarea>::new();
     // Auto-grow, browser only: refit the height to the content on every
     // draft change (keystrokes and the clear-after-send reset), capped
     // at ~10 `text-sm` lines. SSR keeps the `rows=3` markup untouched —
