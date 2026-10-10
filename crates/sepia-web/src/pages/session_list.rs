@@ -14,18 +14,28 @@ use leptos_meta::Title;
 use leptos_router::NavigateOptions;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_query_map};
+#[cfg(feature = "hydrate")]
+use sepia_web_core::filter::visible_keys;
+use sepia_web_core::filter::{
+    ALL_AGENTS, CollapsedGroups, SessionFilter, SessionRow, SortMode, StatusFilter, agent_options,
+    group_open, session_href,
+};
+#[cfg(feature = "hydrate")]
+use sepia_web_core::keymap::{self, KeyCtx, Mods, NavDir};
+use sepia_web_core::path::{complete_path, non_empty, path_parts};
 
 #[cfg(feature = "hydrate")]
 use crate::api::list_agents;
 use crate::api::{create_session, delete_session, fs_dirs, pin_session, rename_session};
 use crate::app::Now;
+#[cfg(feature = "hydrate")]
+use crate::app::in_editable;
 use crate::components::icons::Icon;
 use crate::components::toast::use_toast;
 use crate::components::{
     Badge, BadgeVariant, Button, ConfirmDialog, EmptyState, Input, SELECT_CLASS, Skeleton,
 };
 use crate::dto::AgentDto;
-use crate::dto::SessionSummaryDto;
 use crate::pages::SessionPanel;
 use crate::time::relative;
 
@@ -67,17 +77,17 @@ pub fn SessionListPage() -> impl IntoView {
     let filter_text = RwSignal::new(String::new());
     let sort_mode = RwSignal::new(SortMode::default());
     let status_filter = RwSignal::new(StatusFilter::default());
-    let agent_filter = RwSignal::new("all".to_string());
+    let agent_filter = RwSignal::new(ALL_AGENTS.to_string());
     // `⌘B` hides the list column (desktop only — `lg:hidden`).
     let list_collapsed = RwSignal::new(false);
     // Cwds of collapsed project groups. Starts empty (all sections
     // open) on both targets; a post-hydration Effect adopts the set
     // persisted in localStorage, so collapse is purely class-driven.
-    let closed_groups = RwSignal::new(Vec::<String>::new());
+    let closed_groups = RwSignal::new(CollapsedGroups::default());
     // The last resolved list — feeds the agent select (whose options
     // render empty on SSR + first hydration either way) and keyboard
     // navigation, which live outside the Suspend view tree.
-    let all_sessions = RwSignal::new(Vec::<SessionSummaryDto>::new());
+    let all_sessions = RwSignal::new(Vec::<SessionRow>::new());
     // `n` focuses the new-session cwd input; `⌘K`/`Escape` the filter.
     let cwd_input_ref = NodeRef::<leptos::html::Input>::new();
     let filter_input_ref = NodeRef::<leptos::html::Input>::new();
@@ -132,23 +142,14 @@ pub fn SessionListPage() -> impl IntoView {
     // so ArrowUp/ArrowDown can move the `?session=` selection.
     #[cfg(feature = "hydrate")]
     let visible_order = move || -> Vec<(String, String)> {
-        let query = filter_text.get_untracked();
-        let filtered = apply_filters(
-            all_sessions.get_untracked(),
-            &query,
-            status_filter.get_untracked(),
-            &agent_filter.get_untracked(),
-            sort_mode.get_untracked(),
-        );
-        // Groups are force-expanded while a text filter is active.
-        let force_open = !query.trim().is_empty();
-        let closed = closed_groups.get_untracked();
-        group_by_cwd(filtered)
-            .into_iter()
-            .filter(|(cwd, _)| force_open || !closed.contains(cwd))
-            .flat_map(|(_, items)| items)
-            .map(|s| (s.id, s.agent))
-            .collect()
+        let filter = SessionFilter {
+            query: filter_text.get_untracked(),
+            status: status_filter.get_untracked(),
+            agent: agent_filter.get_untracked(),
+            sort: sort_mode.get_untracked(),
+        };
+        let groups = filter.groups(all_sessions.get_untracked());
+        visible_keys(&groups, &closed_groups.get_untracked(), filter.force_open())
     };
 
     // Refresh when the node feed reports a session/meta/project change.
@@ -171,7 +172,7 @@ pub fn SessionListPage() -> impl IntoView {
     #[cfg(feature = "hydrate")]
     {
         let (stored, set_stored, _clear) = leptos_use::storage::use_local_storage::<
-            Vec<String>,
+            CollapsedGroups,
             codee::string::JsonSerdeCodec,
         >("sepia-list-collapsed");
         let mut init = true;
@@ -185,7 +186,10 @@ pub fn SessionListPage() -> impl IntoView {
         });
     }
 
-    // Global hotkeys — document keydown, client only.
+    // Global hotkeys — document keydown, client only. The key→action
+    // mapping is pure (`sepia_web_core::keymap::resolve_key`); this
+    // listener owns the list-page actions — `ToggleHelp`/`CloseHelp`
+    // belong to the shell's listener in `app.rs`.
     #[cfg(feature = "hydrate")]
     {
         let navigate = use_navigate();
@@ -193,81 +197,80 @@ pub fn SessionListPage() -> impl IntoView {
             leptos::prelude::document(),
             leptos::ev::keydown,
             move |ev: web_sys::KeyboardEvent| {
-                let mod_key = ev.meta_key() || ev.ctrl_key();
-                let key = ev.key();
-                if mod_key && key.eq_ignore_ascii_case("k") {
+                let mods = Mods {
+                    ctrl: ev.ctrl_key(),
+                    meta: ev.meta_key(),
+                    alt: ev.alt_key(),
+                    shift: ev.shift_key(),
+                };
+                let filter_focused = filter_input_ref
+                    .get()
+                    .zip(leptos::prelude::document().active_element())
+                    .is_some_and(|(el, active)| {
+                        use wasm_bindgen::JsCast;
+                        active == *el.unchecked_ref::<web_sys::Element>()
+                    });
+                let ctx = KeyCtx {
+                    typing: in_editable(&ev),
+                    filter_focused,
+                    menu_open: menu_for.get_untracked().is_some(),
+                    ..KeyCtx::default()
+                };
+                let Some(action) = keymap::resolve_key(&ev.key(), mods, ctx) else {
+                    return;
+                };
+                if action.prevent_default() {
+                    ev.prevent_default();
+                }
+                match action {
                     // ⌘K / Ctrl-K — focus the filter input.
-                    ev.prevent_default();
-                    if let Some(el) = filter_input_ref.get() {
-                        let _ = el.focus();
+                    keymap::Action::FocusFilter => {
+                        if let Some(el) = filter_input_ref.get() {
+                            let _ = el.focus();
+                        }
                     }
-                } else if mod_key && key.eq_ignore_ascii_case("b") {
                     // ⌘B / Ctrl-B — toggle the list column.
-                    ev.prevent_default();
-                    list_collapsed.update(|v| *v = !*v);
-                } else if key == "Escape" {
-                    // Escape — close the row menu first, then clear +
-                    // blur the filter when focused, otherwise drop the
+                    keymap::Action::ToggleList => list_collapsed.update(|v| *v = !*v),
+                    // `n` — jump to the new-session cwd input.
+                    keymap::Action::FocusNewSession => {
+                        if let Some(el) = cwd_input_ref.get() {
+                            let _ = el.focus();
+                        }
+                    }
+                    // Escape cascade — row menu first, then clear +
+                    // blur the focused filter, otherwise drop the
                     // `?session=` selection. (The inline rename input
                     // stops propagation on its own Escape.)
-                    if menu_for.get_untracked().is_some() {
-                        menu_for.set(None);
-                        return;
-                    }
-                    let filter_active = filter_input_ref
-                        .get()
-                        .zip(leptos::prelude::document().active_element())
-                        .is_some_and(|(el, active)| {
-                            use wasm_bindgen::JsCast;
-                            active == *el.unchecked_ref::<web_sys::Element>()
-                        });
-                    if filter_active {
+                    keymap::Action::CloseMenu => menu_for.set(None),
+                    keymap::Action::ClearFilter => {
                         filter_text.set(String::new());
                         if let Some(el) = filter_input_ref.get() {
                             let _ = el.blur();
                         }
-                    } else {
+                    }
+                    keymap::Action::CloseSelection => {
                         navigate("/", NavigateOptions::default());
                     }
-                } else if !mod_key
-                    && !ev.alt_key()
-                    && !ev.shift_key()
-                    && key.eq_ignore_ascii_case("n")
-                    && !in_editable(&ev)
-                {
-                    // `n` — jump to the new-session cwd input.
-                    ev.prevent_default();
-                    if let Some(el) = cwd_input_ref.get() {
-                        let _ = el.focus();
-                    }
-                } else if !mod_key
-                    && !ev.alt_key()
-                    && (key == "ArrowDown" || key == "ArrowUp")
-                    && !in_editable(&ev)
-                {
                     // Arrow keys — move `?session=` through the visible
                     // row order (wrapping at the ends).
-                    let order = visible_order();
-                    if order.is_empty() {
-                        return;
+                    keymap::Action::NavNext | keymap::Action::NavPrev => {
+                        let order = visible_order();
+                        let cur = selected_id.get_untracked();
+                        let idx = cur
+                            .as_deref()
+                            .and_then(|id| order.iter().position(|(sid, _)| sid == id));
+                        let dir = if action == keymap::Action::NavNext {
+                            NavDir::Down
+                        } else {
+                            NavDir::Up
+                        };
+                        if let Some(next) = keymap::nav_index(idx, order.len(), dir) {
+                            let (id, agent) = &order[next];
+                            navigate(&session_href(id, agent), NavigateOptions::default());
+                        }
                     }
-                    let cur = selected_id.get_untracked();
-                    let idx = cur
-                        .as_deref()
-                        .and_then(|id| order.iter().position(|(sid, _)| sid == id));
-                    let next = match (key.as_str(), idx) {
-                        ("ArrowDown", Some(i)) => (i + 1) % order.len(),
-                        ("ArrowUp", Some(i)) => (i + order.len() - 1) % order.len(),
-                        ("ArrowDown", None) => 0,
-                        _ => order.len() - 1,
-                    };
-                    let (id, agent) = &order[next];
-                    let href = if agent.is_empty() {
-                        format!("/?session={id}")
-                    } else {
-                        format!("/?session={id}&agent={agent}")
-                    };
-                    navigate(&href, NavigateOptions::default());
+                    // Owned by the shell listener (`app.rs`).
+                    keymap::Action::ToggleHelp | keymap::Action::CloseHelp => {}
                 }
             },
         );
@@ -348,15 +351,7 @@ pub fn SessionListPage() -> impl IntoView {
                             >
                                 <option value="all">"all agents"</option>
                                 {move || {
-                                    let mut agents: Vec<String> = all_sessions
-                                        .read()
-                                        .iter()
-                                        .filter(|s| !s.agent.is_empty())
-                                        .map(|s| s.agent.clone())
-                                        .collect();
-                                    agents.sort();
-                                    agents.dedup();
-                                    agents
+                                    agent_options(&all_sessions.read())
                                         .into_iter()
                                         .map(|a| {
                                             let label = a.clone();
@@ -407,6 +402,10 @@ pub fn SessionListPage() -> impl IntoView {
                                             .into_any()
                                     }
                                     Ok(list) => {
+                                        // The whole view pipeline runs on
+                                        // the lightweight `SessionRow`.
+                                        let list: Vec<SessionRow> =
+                                            list.iter().map(SessionRow::from).collect();
                                         // `(queued, failed)` per session id.
                                         let mut writes: BTreeMap<String, (usize, usize)> =
                                             BTreeMap::new();
@@ -426,45 +425,41 @@ pub fn SessionListPage() -> impl IntoView {
                                         let total = list.len();
                                         view! {
                                             {move || {
-                                                let query = filter_text.get();
-                                                let status = status_filter.get();
-                                                let agent = agent_filter.get();
-                                                let sort = sort_mode.get();
-                                                let filtered = apply_filters(
-                                                    list.clone(),
-                                                    &query,
-                                                    status,
-                                                    &agent,
-                                                    sort,
-                                                );
-                                                let shown = filtered.len();
-                                                let filtering = !query.trim().is_empty()
-                                                    || status != StatusFilter::All
-                                                    || agent != "all";
+                                                let filter = SessionFilter {
+                                                    query: filter_text.get(),
+                                                    status: status_filter.get(),
+                                                    agent: agent_filter.get(),
+                                                    sort: sort_mode.get(),
+                                                };
+                                                let groups = filter.groups(list.clone());
+                                                let shown: usize =
+                                                    groups.iter().map(|g| g.rows.len()).sum();
                                                 // A text filter force-expands
                                                 // every section.
-                                                let force_open = !query.trim().is_empty();
-                                                let heading = if filtering {
-                                                    format!("{shown} of {total} sessions")
-                                                } else {
-                                                    format!("{total} sessions")
-                                                };
-                                                let sections = group_by_cwd(filtered)
+                                                let force_open = filter.force_open();
+                                                let heading = filter.heading(shown, total);
+                                                let sections = groups
                                                     .into_iter()
-                                                    .map(|(cwd, items)| {
-                                                        let count = items.len();
-                                                        let label = cwd_label(&cwd);
+                                                    .map(|group| {
+                                                        let count = group.rows.len();
+                                                        let label = group.label.clone();
+                                                        // Class-driven collapse —
+                                                        // the signal flips the
+                                                        // `<ul>` class without
+                                                        // re-rendering the rows.
                                                         let closed = Signal::derive({
-                                                            let cwd = cwd.clone();
+                                                            let key = group.key.clone();
                                                             move || {
-                                                                !force_open
-                                                                    && closed_groups
-                                                                        .read()
-                                                                        .contains(&cwd)
+                                                                !group_open(
+                                                                    &key,
+                                                                    &closed_groups.read(),
+                                                                    force_open,
+                                                                )
                                                             }
                                                         });
-                                                        let toggle_cwd = cwd.clone();
-                                                        let rows = items
+                                                        let toggle_key = group.key.clone();
+                                                        let rows = group
+                                                            .rows
                                                             .into_iter()
                                                             .map(|s| {
                                                                 let (queued, failed) = writes
@@ -480,7 +475,7 @@ pub fn SessionListPage() -> impl IntoView {
                                                                             == Some(row_id.as_str())
                                                                     });
                                                                 view! {
-                                                                    <SessionRow
+                                                                    <SessionRowView
                                                                         session=s
                                                                         queued=queued
                                                                         failed=failed
@@ -501,16 +496,8 @@ pub fn SessionListPage() -> impl IntoView {
                                                                     type="button"
                                                                     class="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                                                                     on:click=move |_| {
-                                                                        let cwd = toggle_cwd.clone();
                                                                         closed_groups.update(|v| {
-                                                                            if let Some(i) = v
-                                                                                .iter()
-                                                                                .position(|c| *c == cwd)
-                                                                            {
-                                                                                v.remove(i);
-                                                                            } else {
-                                                                                v.push(cwd);
-                                                                            }
+                                                                            v.toggle(&toggle_key);
                                                                         });
                                                                     }
                                                                 >
@@ -647,10 +634,7 @@ pub fn SessionListPage() -> impl IntoView {
             >
                 {move || {
                     menu_for.get().map(|(id, agent, _x, _y)| {
-                        let open_href = match &agent {
-                            Some(a) => format!("/?session={id}&agent={a}"),
-                            None => format!("/?session={id}"),
-                        };
+                        let open_href = session_href(&id, agent.as_deref().unwrap_or_default());
                         let detail_href = match &agent {
                             Some(a) => format!("/sessions/{id}?agent={a}"),
                             None => format!("/sessions/{id}"),
@@ -777,8 +761,8 @@ pub fn SessionListPage() -> impl IntoView {
 
 #[component]
 #[allow(clippy::needless_pass_by_value)] // component props are owned
-fn SessionRow(
-    session: SessionSummaryDto,
+fn SessionRowView(
+    session: SessionRow,
     queued: usize,
     failed: usize,
     selected: Signal<bool>,
@@ -796,10 +780,7 @@ fn SessionRow(
     } else {
         session.title.clone()
     };
-    let href = match &session.agent {
-        agent if agent.is_empty() => format!("/?session={}", session.id),
-        agent => format!("/?session={}&agent={agent}", session.id),
-    };
+    let href = session_href(&session.id, &session.agent);
     let iso = session.updated_at.clone();
     let row_cls = move || {
         if selected.get() {
@@ -1253,203 +1234,6 @@ fn NewSessionForm(
     }
 }
 
-fn non_empty(s: &str) -> Option<String> {
-    (!s.trim().is_empty()).then(|| s.trim().to_string())
-}
-
-/// `(parent dir, basename prefix)` for a typed absolute path —
-/// `/home/us` → `("/home", "us")`, `/home/` → `("/home", "")`,
-/// `/` → `("/", "")`. `None` for relative/empty input (the node's
-/// `/api/fs` requires absolute paths anyway).
-fn path_parts(typed: &str) -> Option<(String, String)> {
-    if !typed.starts_with('/') {
-        return None;
-    }
-    let (dir, base) = typed.rsplit_once('/')?;
-    let parent = if dir.is_empty() { "/" } else { dir };
-    Some((parent.to_string(), base.to_string()))
-}
-
-/// Filter `dirs` — the children of `typed`'s parent, as `/api/fs`
-/// returns them (full paths) — to those whose basename starts with the
-/// typed final segment, case-insensitively. Empty when `typed` isn't
-/// absolute.
-fn complete_path(typed: &str, dirs: &[String]) -> Vec<String> {
-    let Some((_, prefix)) = path_parts(typed) else {
-        return Vec::new();
-    };
-    let prefix = prefix.to_lowercase();
-    dirs.iter()
-        .filter(|d| {
-            d.rsplit('/')
-                .next()
-                .unwrap_or_default()
-                .to_lowercase()
-                .starts_with(prefix.as_str())
-        })
-        .cloned()
-        .collect()
-}
-
-/// Sort order for the session list (filter-bar select values).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum SortMode {
-    /// `updated_at` descending.
-    #[default]
-    Newest,
-    /// `updated_at` ascending.
-    Oldest,
-    /// A–Z by title, newest first on ties.
-    Title,
-}
-
-impl SortMode {
-    fn parse(s: &str) -> Self {
-        match s {
-            "oldest" => Self::Oldest,
-            "title" => Self::Title,
-            _ => Self::Newest,
-        }
-    }
-
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Newest => "newest",
-            Self::Oldest => "oldest",
-            Self::Title => "title",
-        }
-    }
-}
-
-/// Lock-state filter for the session list (filter-bar select values).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum StatusFilter {
-    #[default]
-    All,
-    /// Unlocked sessions only.
-    Free,
-    /// Locked sessions only.
-    Locked,
-}
-
-impl StatusFilter {
-    fn parse(s: &str) -> Self {
-        match s {
-            "free" => Self::Free,
-            "locked" => Self::Locked,
-            _ => Self::All,
-        }
-    }
-
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::Free => "free",
-            Self::Locked => "locked",
-        }
-    }
-}
-
-/// Apply the filter bar: case-insensitive substring match on title +
-/// cwd, lock-state filter, agent filter, then the chosen sort.
-/// `agent` is `"all"` or an exact agent id.
-fn apply_filters(
-    list: Vec<SessionSummaryDto>,
-    query: &str,
-    status: StatusFilter,
-    agent: &str,
-    sort: SortMode,
-) -> Vec<SessionSummaryDto> {
-    let q = query.trim().to_lowercase();
-    let mut list: Vec<SessionSummaryDto> = list
-        .into_iter()
-        .filter(|s| {
-            let query_ok = q.is_empty()
-                || s.title.to_lowercase().contains(&q)
-                || s.cwd.to_lowercase().contains(&q);
-            let status_ok = match status {
-                StatusFilter::All => true,
-                StatusFilter::Free => !s.locked,
-                StatusFilter::Locked => s.locked,
-            };
-            let agent_ok = agent == "all" || s.agent == agent;
-            query_ok && status_ok && agent_ok
-        })
-        .collect();
-    match sort {
-        SortMode::Newest => list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at)),
-        SortMode::Oldest => list.sort_by(|a, b| a.updated_at.cmp(&b.updated_at)),
-        SortMode::Title => list.sort_by(|a, b| {
-            a.title
-                .to_lowercase()
-                .cmp(&b.title.to_lowercase())
-                .then_with(|| b.updated_at.cmp(&a.updated_at))
-        }),
-    }
-    list
-}
-
-/// Group by `cwd`. Non-empty-cwd groups come first, ordered by the
-/// most recent `updated_at` within the group; the empty-cwd
-/// ("uncategorized") group is always last. Row order inside each
-/// group is preserved.
-fn group_by_cwd(list: Vec<SessionSummaryDto>) -> Vec<(String, Vec<SessionSummaryDto>)> {
-    let mut map: BTreeMap<String, Vec<SessionSummaryDto>> = BTreeMap::new();
-    for s in list {
-        map.entry(s.cwd.clone()).or_default().push(s);
-    }
-    let (mut named, unnamed): (Vec<_>, Vec<_>) =
-        map.into_iter().partition(|(cwd, _)| !cwd.is_empty());
-    named.sort_by(|(_, a), (_, b)| newest_updated(b).cmp(newest_updated(a)));
-    named.extend(unnamed);
-    named
-}
-
-/// The newest `updated_at` in a group — RFC 3339 strings order
-/// lexicographically.
-fn newest_updated(items: &[SessionSummaryDto]) -> &str {
-    items
-        .iter()
-        .map(|s| s.updated_at.as_str())
-        .max()
-        .unwrap_or_default()
-}
-
-/// Section label for a `cwd` — the last path segment, or
-/// `"No project"` when the cwd is empty (or a bare root).
-fn cwd_label(cwd: &str) -> String {
-    let trimmed = cwd.trim_end_matches(['/', '\\']);
-    let base = trimmed
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .trim();
-    if base.is_empty() {
-        "No project".to_string()
-    } else {
-        base.to_string()
-    }
-}
-
-/// Is the keydown aimed at a text-entry element? input/textarea/
-/// select/contenteditable swallow plain keys like `n` and the arrows.
-#[cfg(feature = "hydrate")]
-fn in_editable(ev: &web_sys::KeyboardEvent) -> bool {
-    use wasm_bindgen::JsCast;
-    let Some(el) = ev
-        .target()
-        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-    else {
-        return false;
-    };
-    if let Some(html) = el.dyn_ref::<web_sys::HtmlElement>() {
-        if html.is_content_editable() {
-            return true;
-        }
-    }
-    matches!(el.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT")
-}
-
 /// `<time datetime=…>` with a live relative label.
 #[component]
 pub fn RelativeTime(#[prop(into)] iso: String) -> impl IntoView {
@@ -1462,178 +1246,5 @@ pub fn RelativeTime(#[prop(into)] iso: String) -> impl IntoView {
         <time datetime=iso.clone() title=iso>
             {label}
         </time>
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used)]
-    use super::*;
-
-    fn s(
-        id: &str,
-        title: &str,
-        cwd: &str,
-        agent: &str,
-        updated_at: &str,
-        locked: bool,
-    ) -> SessionSummaryDto {
-        SessionSummaryDto {
-            id: id.into(),
-            title: title.into(),
-            cwd: cwd.into(),
-            agent: agent.into(),
-            updated_at: updated_at.into(),
-            locked,
-            ..SessionSummaryDto::default()
-        }
-    }
-
-    fn list() -> Vec<SessionSummaryDto> {
-        vec![
-            s(
-                "a",
-                "Fix Auth",
-                "/home/u/app",
-                "claude",
-                "2026-10-08T10:00:00Z",
-                false,
-            ),
-            s(
-                "b",
-                "docs",
-                "/home/u/app",
-                "cline",
-                "2026-10-09T10:00:00Z",
-                true,
-            ),
-            s(
-                "c",
-                "API work",
-                "/var/www/site",
-                "claude",
-                "2026-10-07T10:00:00Z",
-                false,
-            ),
-            s("d", "", "", "cursor", "2026-10-06T10:00:00Z", false),
-        ]
-    }
-
-    fn ids(list: &[SessionSummaryDto]) -> Vec<&str> {
-        list.iter().map(|s| s.id.as_str()).collect()
-    }
-
-    #[test]
-    fn query_matches_title_and_cwd_case_insensitively() {
-        let out = apply_filters(list(), "AUTH", StatusFilter::All, "all", SortMode::Newest);
-        assert_eq!(ids(&out), ["a"]);
-        let out = apply_filters(list(), "site", StatusFilter::All, "all", SortMode::Newest);
-        assert_eq!(ids(&out), ["c"]);
-        // Whitespace-only query behaves like no filter.
-        let out = apply_filters(list(), "   ", StatusFilter::All, "all", SortMode::Newest);
-        assert_eq!(out.len(), 4);
-        let out = apply_filters(list(), "nope", StatusFilter::All, "all", SortMode::Newest);
-        assert!(out.is_empty());
-    }
-
-    #[test]
-    fn status_and_agent_filters_apply() {
-        let locked = apply_filters(list(), "", StatusFilter::Locked, "all", SortMode::Newest);
-        assert_eq!(ids(&locked), ["b"]);
-        let free = apply_filters(list(), "", StatusFilter::Free, "all", SortMode::Newest);
-        assert_eq!(ids(&free), ["a", "c", "d"]);
-        let agent = apply_filters(list(), "", StatusFilter::All, "cline", SortMode::Newest);
-        assert_eq!(ids(&agent), ["b"]);
-        let missing = apply_filters(list(), "", StatusFilter::All, "ghost", SortMode::Newest);
-        assert!(missing.is_empty());
-    }
-
-    #[test]
-    fn sorts_by_newest_oldest_and_title() {
-        let newest = apply_filters(list(), "", StatusFilter::All, "all", SortMode::Newest);
-        assert_eq!(ids(&newest), ["b", "a", "c", "d"]);
-        let oldest = apply_filters(list(), "", StatusFilter::All, "all", SortMode::Oldest);
-        assert_eq!(ids(&oldest), ["d", "c", "a", "b"]);
-        // Title sort is case-insensitive; the empty title ranks first.
-        let title = apply_filters(list(), "", StatusFilter::All, "all", SortMode::Title);
-        assert_eq!(ids(&title), ["d", "c", "b", "a"]);
-    }
-
-    #[test]
-    fn groups_order_by_recency_with_uncategorized_last() {
-        let groups = group_by_cwd(list());
-        assert_eq!(groups.len(), 3);
-        // `/home/u/app` has the newest row (10-09), `/var/www/site`
-        // next (10-07), and the empty cwd trails.
-        assert_eq!(groups[0].0, "/home/u/app");
-        assert_eq!(groups[0].1.len(), 2);
-        assert_eq!(groups[1].0, "/var/www/site");
-        assert_eq!(groups[2].0, "");
-        assert_eq!(groups[2].1.len(), 1);
-        // Empty input → no groups.
-        assert!(group_by_cwd(Vec::new()).is_empty());
-    }
-
-    #[test]
-    fn cwd_label_uses_last_path_segment() {
-        assert_eq!(cwd_label("/home/u/app"), "app");
-        assert_eq!(cwd_label("/home/u/app/"), "app");
-        assert_eq!(cwd_label("app"), "app");
-        assert_eq!(cwd_label(""), "No project");
-        assert_eq!(cwd_label("/"), "No project");
-        assert_eq!(cwd_label("C:\\src\\proj"), "proj");
-    }
-
-    #[test]
-    fn path_parts_split_parent_and_prefix() {
-        assert_eq!(path_parts("/"), Some(("/".into(), String::new())));
-        assert_eq!(path_parts("/ho"), Some(("/".into(), "ho".into())));
-        assert_eq!(
-            path_parts("/home/u/a"),
-            Some(("/home/u".into(), "a".into()))
-        );
-        assert_eq!(
-            path_parts("/home/u/"),
-            Some(("/home/u".into(), String::new()))
-        );
-        // Relative and empty input never reach `/api/fs`.
-        assert_eq!(path_parts("rel/path"), None);
-        assert_eq!(path_parts(""), None);
-    }
-
-    #[test]
-    fn complete_path_matches_basename_prefix_case_insensitively() {
-        let dirs = vec![
-            "/home/u/app".to_string(),
-            "/home/u/Archive".to_string(),
-            "/home/u/zeta".to_string(),
-        ];
-        assert_eq!(
-            complete_path("/home/u/a", &dirs),
-            vec!["/home/u/app".to_string(), "/home/u/Archive".to_string()]
-        );
-        // Trailing slash → every child of the parent.
-        assert_eq!(complete_path("/home/u/", &dirs), dirs);
-        // Root-level prefix.
-        assert_eq!(
-            complete_path("/zet", vec!["/zeta".to_string()].as_slice()),
-            vec!["/zeta".to_string()]
-        );
-        // Relative/empty typed values yield nothing.
-        assert!(complete_path("rel/a", &dirs).is_empty());
-        assert!(complete_path("", &dirs).is_empty());
-    }
-
-    #[test]
-    fn select_parse_round_trips() {
-        assert_eq!(SortMode::parse("oldest"), SortMode::Oldest);
-        assert_eq!(SortMode::parse("bogus"), SortMode::Newest);
-        assert_eq!(SortMode::parse(SortMode::Title.as_str()), SortMode::Title);
-        assert_eq!(StatusFilter::parse("locked"), StatusFilter::Locked);
-        assert_eq!(StatusFilter::parse("bogus"), StatusFilter::All);
-        assert_eq!(
-            StatusFilter::parse(StatusFilter::Free.as_str()),
-            StatusFilter::Free
-        );
     }
 }

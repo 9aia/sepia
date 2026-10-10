@@ -25,6 +25,7 @@ sepia-outbox = { path = "crates/sepia-outbox" }
 sepia-push = { path = "crates/sepia-push" }
 sepia-sync = { path = "crates/sepia-sync" }
 sepia-web = { path = "crates/sepia-web" }
+sepia-web-core = { path = "crates/sepia-web-core" }
 sepia-hub = { path = "crates/sepia-hub" }
 sepia-driver-sdk = { path = "crates/sepia-driver-sdk" }
 sepia-driver-host = { path = "crates/sepia-driver-host" }

@@ -2,6 +2,9 @@
 //! frames. The UI renders `entries` in order; deltas accumulate into the
 //! entry keyed by `message_id`/`tool_call_id`, so a re-parsed stream
 //! stays append-only.
+//!
+//! (Moved verbatim from `sepia-web`'s `live` module — it was already
+//! DOM-free.)
 
 use sepia_proto::SessionEvent;
 
@@ -191,6 +194,7 @@ impl LiveTranscript {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]

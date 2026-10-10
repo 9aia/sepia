@@ -1,16 +1,18 @@
-//! sepia-web — the Leptos UI. Shared view code (`app`, pages, live
-//! transcript, markdown-lite) compiles for both targets; the `ssr`
-//! feature adds server functions, the `NodeApi` port, and the HTTP
-//! client used by `sepia-hub`; the `hydrate` feature adds the wasm
-//! entry point plus the `EventSource` glue.
+//! sepia-web — the Leptos UI. Shared view code (`app`, pages,
+//! markdown-lite) compiles for both targets; the `ssr` feature adds
+//! server functions, the `NodeApi` port, and the HTTP client used by
+//! `sepia-hub`; the `hydrate` feature adds the wasm entry point plus
+//! the `EventSource` glue. The testable UI logic (filters, keymap,
+//! theme state machine, live transcript) lives in `sepia-web-core`.
 
 pub mod api;
 pub mod app;
 pub mod components;
 pub mod dto;
-pub mod live;
 pub mod markdown;
 pub mod pages;
+#[cfg(feature = "ssr")]
+pub mod shell;
 #[cfg(feature = "hydrate")]
 pub mod sse;
 pub mod time;
@@ -57,34 +59,11 @@ pub async fn sleep_ms(ms: u32) {
 /// `dark`/`light` class to `<html>` and keeps it in sync with
 /// `prefers-color-scheme` while in system mode.
 pub mod theme {
-    #[cfg(feature = "hydrate")]
     use leptos::prelude::*;
 
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum Theme {
-        System,
-        Dark,
-        Light,
-    }
-
-    impl Theme {
-        pub fn label(self) -> &'static str {
-            match self {
-                Self::System => "System",
-                Self::Dark => "Dark",
-                Self::Light => "Light",
-            }
-        }
-        /// Cycle for the toggle button: dark → light → system → dark.
-        #[must_use]
-        pub fn next(self) -> Self {
-            match self {
-                Self::Dark => Self::Light,
-                Self::Light => Self::System,
-                Self::System => Self::Dark,
-            }
-        }
-    }
+    // The state machine (cycle, stored-value mapping, dark resolution)
+    // is pure — it lives in `sepia-web-core` and is tested there.
+    pub use sepia_web_core::theme::{STORAGE_KEY, Theme};
 
     /// RwSignal-backed theme state; `Dark` on SSR (the shell emits
     /// `class="dark"`); hydrate-only Effect reconciles storage + media.
@@ -98,7 +77,7 @@ pub mod theme {
         provide_context(theme);
 
         // localStorage — `FromToStringCodec` round-trips the label str.
-        let (stored, set_stored, _) = use_local_storage::<String, FromToStringCodec>("sepia-theme");
+        let (stored, set_stored, _) = use_local_storage::<String, FromToStringCodec>(STORAGE_KEY);
         let prefers_dark = use_media_query("(prefers-color-scheme: dark)");
 
         // Seed from storage once (SSR rendered `dark` unconditionally).
@@ -107,17 +86,9 @@ pub mod theme {
             let s = stored.get();
             if !seeded.get() {
                 seeded.set(true);
-                theme.set(match s.as_str() {
-                    "light" => Theme::Light,
-                    "dark" => Theme::Dark,
-                    _ => Theme::System,
-                });
+                theme.set(Theme::from_stored(&s));
             }
-            let effective = match theme.get() {
-                Theme::Dark => true,
-                Theme::Light => false,
-                Theme::System => prefers_dark.get(),
-            };
+            let effective = theme.get().prefers_dark(prefers_dark.get());
             if let Some(doc) = document().document_element() {
                 let _ = doc.class_list().toggle_with_force("dark", effective);
                 let _ = doc.class_list().toggle_with_force("light", !effective);
@@ -133,17 +104,16 @@ pub mod theme {
             if !seeded.get() {
                 return;
             }
-            match theme.get() {
-                Theme::System => set_stored.set(String::new()),
-                Theme::Dark => set_stored.set("dark".into()),
-                Theme::Light => set_stored.set("light".into()),
-            }
+            set_stored.set(theme.get().stored().to_string());
         });
         theme
     }
 
-    /// Compact toggle button for the sidebar/topbar.
-    #[cfg(feature = "hydrate")]
+    /// Compact toggle button for the sidebar/topbar. One component for
+    /// both targets — a cfg'd markup pair is the hydration-panic class
+    /// (SSR and hydrate must emit the same nodes). SSR evaluates the
+    /// closures once against the `Dark` default, which is what hydrate
+    /// renders before its seeding Effect runs.
     #[component]
     pub fn ThemeToggle() -> impl IntoView {
         let theme = expect_context::<RwSignal<Theme>>();
@@ -154,34 +124,19 @@ pub mod theme {
                 class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 on:click=move |_| theme.update(|t| *t = t.next())
             >
-                {move || match theme.get() {
-                    Theme::Dark => "☾",
-                    Theme::Light => "☀",
-                    Theme::System => "◐",
-                }}
+                {move || theme.get().icon()}
             </button>
         }
     }
 
-    /// SSR stub — the shell always emits `class="dark"`; hydrate
-    /// reconciles. Keeps `App` unconditional.
+    /// SSR counterpart — storage/media don't exist server-side. The
+    /// shell always emits `class="dark"`, so `Dark` is the default;
+    /// the context must exist so `ThemeToggle`/`AppearanceSection`
+    /// render the same shape as hydrate.
     #[cfg(not(feature = "hydrate"))]
-    pub fn provide_theme() {}
-    #[cfg(not(feature = "hydrate"))]
-    #[leptos::prelude::component]
-    pub fn ThemeToggle() -> impl leptos::prelude::IntoView {
-        // SSR must emit the same node shape hydrate expects — the
-        // button markup, minus reactivity. The shell always emits
-        // `class="dark"`, so the static glyph is the dark icon.
-        use leptos::prelude::*;
-        leptos::prelude::view! {
-            <button
-                type="button"
-                title="Theme: dark (click to cycle)"
-                class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-                "☾"
-            </button>
-        }
+    pub fn provide_theme() -> RwSignal<Theme> {
+        let theme = RwSignal::new(Theme::Dark);
+        provide_context(theme);
+        theme
     }
 }

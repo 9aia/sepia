@@ -8,6 +8,7 @@ use leptos_router::components::A;
 #[cfg(feature = "hydrate")]
 use leptos_router::hooks::use_navigate;
 use leptos_router::hooks::{use_params_map, use_query_map};
+use sepia_web_core::transcript::{LiveKind, LiveTranscript, PendingPermission};
 
 use crate::api::{
     answer_permission, attach_session, cancel_run, delete_session, detach_session, rename_session,
@@ -20,7 +21,6 @@ use crate::components::{
     SheetTitle, Skeleton, TEXTAREA_CLASS,
 };
 use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
-use crate::live::{LiveKind, LiveTranscript, PendingPermission};
 use crate::markdown::Markdown;
 
 const PAGE_SIZE: i64 = 100;

@@ -3,6 +3,7 @@
 //! blocks) so a newer node can add fields without breaking an older
 //! hub — and so one malformed message can't poison a whole page.
 
+use sepia_web_core::filter::SessionRow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -48,6 +49,25 @@ pub struct SessionSummaryDto {
     /// Not part of the node's wire summary; absent → `None`.
     #[serde(default)]
     pub node: Option<String>,
+}
+
+/// The list view's row — `sepia-web-core` runs the whole
+/// filter/sort/group pipeline on it.
+impl From<&SessionSummaryDto> for SessionRow {
+    fn from(s: &SessionSummaryDto) -> Self {
+        Self {
+            id: s.id.clone(),
+            title: s.title.clone(),
+            cwd: s.cwd.clone(),
+            agent: s.agent.clone(),
+            updated_at: s.updated_at.clone(),
+            locked: s.locked,
+            live: s.live,
+            busy: s.busy,
+            pinned: s.pinned,
+            node: s.node.clone(),
+        }
+    }
 }
 
 /// `POST /api/sessions` → `CreateResultWire` (`{id, agentId,

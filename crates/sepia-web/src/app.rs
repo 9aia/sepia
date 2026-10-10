@@ -4,12 +4,14 @@
 //! Layout: a persistent left sidebar (brand + nav) on `lg+`; a slim
 //! topbar with a hamburger opening a left `Sheet` on smaller screens.
 
-use leptos::prelude::*;
 #[cfg(feature = "ssr")]
-use leptos_meta::MetaTags;
+pub use crate::shell::shell;
+use leptos::prelude::*;
 use leptos_meta::{Title, provide_meta_context};
 use leptos_router::components::{A, Route, Router, Routes};
 use leptos_router::path;
+#[cfg(feature = "hydrate")]
+use sepia_web_core::keymap::{self, KeyCtx, Mods};
 use tw_merge::IntoTailwindClass;
 
 use crate::components::icons::Icon;
@@ -41,6 +43,25 @@ pub fn every_ms(ms: i32, f: impl FnMut() + 'static) {
         },
         u64::try_from(ms).unwrap_or(1_000),
     );
+}
+
+/// Is the keydown aimed at a text-entry element? input/textarea/
+/// select/contenteditable swallow plain keys like `n` and the arrows.
+#[cfg(feature = "hydrate")]
+pub fn in_editable(ev: &web_sys::KeyboardEvent) -> bool {
+    use wasm_bindgen::JsCast;
+    let Some(el) = ev
+        .target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+    else {
+        return false;
+    };
+    if let Some(html) = el.dyn_ref::<web_sys::HtmlElement>() {
+        if html.is_content_editable() {
+            return true;
+        }
+    }
+    matches!(el.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT")
 }
 
 /// Ghost nav link classes — muted until hovered, foreground when the
@@ -109,37 +130,34 @@ pub fn App() -> impl IntoView {
     let sidebar_open = RwSignal::new(false);
     let help_open = RwSignal::new(false);
 
-    // `?` opens the shortcut cheat-sheet (skipped while typing).
+    // `?` opens the shortcut cheat-sheet (skipped while typing);
+    // Escape closes it. Key resolution is pure — see
+    // `sepia_web_core::keymap`; this listener owns the help actions.
     #[cfg(feature = "hydrate")]
     {
         let _k = leptos_use::use_event_listener(
             document(),
             leptos::ev::keydown,
             move |ev: leptos::ev::KeyboardEvent| {
-                if ev.key() != "?" || ev.ctrl_key() || ev.meta_key() || ev.alt_key() {
-                    return;
-                }
-                let typing = ev
-                    .target()
-                    .and_then(|t| {
-                        wasm_bindgen::JsCast::dyn_ref::<web_sys::HtmlElement>(&t).map(|el| {
-                            matches!(el.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT")
-                                || el.is_content_editable()
-                        })
-                    })
-                    .unwrap_or(false);
-                if !typing {
-                    ev.prevent_default();
-                    help_open.update(|o| *o = !*o);
-                }
-            },
-        );
-        let _esc = leptos_use::use_event_listener(
-            document(),
-            leptos::ev::keydown,
-            move |ev: leptos::ev::KeyboardEvent| {
-                if ev.key() == "Escape" {
-                    help_open.set(false);
+                let mods = Mods {
+                    ctrl: ev.ctrl_key(),
+                    meta: ev.meta_key(),
+                    alt: ev.alt_key(),
+                    shift: ev.shift_key(),
+                };
+                let ctx = KeyCtx {
+                    typing: in_editable(&ev),
+                    help_open: help_open.get_untracked(),
+                    ..KeyCtx::default()
+                };
+                match keymap::resolve_key(&ev.key(), mods, ctx) {
+                    Some(keymap::Action::ToggleHelp) => {
+                        ev.prevent_default();
+                        help_open.update(|o| *o = !*o);
+                    }
+                    Some(keymap::Action::CloseHelp) => help_open.set(false),
+                    // Everything else is owned by the page listener.
+                    _ => {}
                 }
             },
         );
@@ -277,38 +295,5 @@ fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
                 </dl>
             </div>
         </div>
-    }
-}
-
-/// The HTML document shell for SSR — head tags, hydration bootstrap,
-/// and the stylesheet.
-#[cfg(feature = "ssr")]
-pub fn shell(options: LeptosOptions) -> impl IntoView {
-    view! {
-        <!DOCTYPE html>
-        <html lang="en" class="dark">
-            <head>
-                <meta charset="utf-8"/>
-                <meta name="viewport" content="width=device-width, initial-scale=1"/>
-                <meta name="theme-color" content="#1e1e2e"/>
-                <title>"sepia"</title>
-                <link rel="manifest" href="/manifest.json"/>
-                <link rel="icon" href="/icon.svg" type="image/svg+xml"/>
-                <link rel="stylesheet" href="/style.css"/>
-                // Pre-paint theme reconcile — SSR always emits
-                // `class="dark"` and the hydrate Effect runs after
-                // wasm boots, so without this a stored light/system
-                // theme flashes dark on every reload (FOUC).
-                <script>
-                    "try{var t=localStorage.getItem('sepia-theme'),d=t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches,e=document.documentElement;e.classList.toggle('dark',d);e.classList.toggle('light',!d);e.style.colorScheme=d?'dark':'light'}catch(_){}"
-                </script>
-                <AutoReload options=options.clone()/>
-                <HydrationScripts options=options/>
-                <MetaTags/>
-            </head>
-            <body>
-                <App/>
-            </body>
-        </html>
     }
 }

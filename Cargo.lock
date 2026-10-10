@@ -4289,6 +4289,7 @@ dependencies = [
  "leptos_ui",
  "sepia-core",
  "sepia-proto",
+ "sepia-web-core",
  "serde",
  "serde_json",
  "tokio",
@@ -4297,6 +4298,16 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "sepia-web-core"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "sepia-proto",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

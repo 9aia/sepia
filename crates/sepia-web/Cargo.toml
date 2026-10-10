@@ -44,6 +44,7 @@ leptos_router.workspace = true
 leptos_meta.workspace = true
 sepia-core.workspace = true
 sepia-proto.workspace = true
+sepia-web-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
