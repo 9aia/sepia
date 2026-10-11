@@ -20,3 +20,4 @@ mod journey;
 mod sessions;
 mod shell;
 mod ssr_integrity;
+mod user_sim;

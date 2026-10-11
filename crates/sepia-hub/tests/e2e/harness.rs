@@ -209,6 +209,17 @@ pub async fn wait_elem(driver: &WebDriver, css: &str, deadline: Instant) -> Opti
     }
 }
 
+/// The node's spawn spec — kept so [`E2eEnv::start_node`] can
+/// respawn it identically after [`E2eEnv::stop_node`].
+pub struct NodeSpec {
+    driver_dir: PathBuf,
+    db: PathBuf,
+    home: PathBuf,
+    tmp_home: PathBuf,
+    port: u16,
+    log: std::fs::File,
+}
+
 /// A seeded node + hub pair. Drop kills the children; call
 /// [`E2eEnv::shutdown`] on the success path to collect stderr.
 pub struct E2eEnv {
@@ -219,6 +230,7 @@ pub struct E2eEnv {
     hub: Child,
     node_log: PathBuf,
     hub_log: PathBuf,
+    node_spec: NodeSpec,
 }
 
 impl E2eEnv {
@@ -268,19 +280,15 @@ impl E2eEnv {
         // each other's output.
         let node_out = std::fs::File::create(&node_log).unwrap();
         let hub_out = std::fs::File::create(&hub_log).unwrap();
-        let node = Command::new(bin_path("sepia-node"))
-            .env("SEPIA_DRIVER_DIR", &driver_dir)
-            .env("SEPIA_DEVIN_DB", &db)
-            .env("SEPIA_HOME", &node_home)
-            .env("SEPIA_META", node_home.join("meta.json"))
-            .env("SEPIA_NODE", node_home.join("node.json"))
-            .env("SEPIA_PORT", node_port.to_string())
-            .env("SEPIA_HOST", "127.0.0.1")
-            .env("HOME", tmp.path())
-            .stdout(Stdio::from(node_out.try_clone().unwrap()))
-            .stderr(Stdio::from(node_out))
-            .spawn()
-            .unwrap();
+        let node_spec = NodeSpec {
+            driver_dir: driver_dir.clone(),
+            db: db.clone(),
+            home: node_home.clone(),
+            tmp_home: tmp.path().to_path_buf(),
+            port: node_port,
+            log: node_out.try_clone().unwrap(),
+        };
+        let node = Self::spawn_node(&node_spec);
 
         let hub = match Command::new(bin_path("sepia-hub"))
             .env("SEPIA_NODE_URL", &node_url)
@@ -318,6 +326,7 @@ impl E2eEnv {
             hub,
             node_log,
             hub_log,
+            node_spec,
         };
         if !hub_ready(&env.http, &env.hub_url, Instant::now() + SPAWN_WAIT) {
             let (hub_err, node_err) = env.shutdown();
@@ -326,6 +335,34 @@ impl E2eEnv {
             );
         }
         env
+    }
+
+    fn spawn_node(spec: &NodeSpec) -> Child {
+        Command::new(bin_path("sepia-node"))
+            .env("SEPIA_DRIVER_DIR", &spec.driver_dir)
+            .env("SEPIA_DEVIN_DB", &spec.db)
+            .env("SEPIA_HOME", &spec.home)
+            .env("SEPIA_META", spec.home.join("meta.json"))
+            .env("SEPIA_NODE", spec.home.join("node.json"))
+            .env("SEPIA_PORT", spec.port.to_string())
+            .env("SEPIA_HOST", "127.0.0.1")
+            .env("HOME", &spec.tmp_home)
+            .stdout(Stdio::from(spec.log.try_clone().unwrap()))
+            .stderr(Stdio::from(spec.log.try_clone().unwrap()))
+            .spawn()
+            .unwrap()
+    }
+
+    /// Stop the node — simulates a laptop dropping off the network.
+    pub fn stop_node(&mut self) {
+        let _ = self.node.kill();
+        let _ = self.node.wait();
+    }
+
+    /// Respawn the node with the same spec — the hub's next
+    /// status poll / SSE reconnect picks it back up.
+    pub fn start_node(&mut self) {
+        self.node = Self::spawn_node(&self.node_spec);
     }
 
     /// GET a hub path and return the body. Fails the test on
