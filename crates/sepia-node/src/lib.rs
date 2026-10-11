@@ -313,11 +313,15 @@ async fn run(env: &Env, state: AppState, node: Node) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind((env.host.as_str(), env.port)).await?;
     tracing::info!("sepia-node listening on {}:{}", env.host, env.port);
     let app = sepia_http::app(state);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
-            tracing::info!("sepia-node shutting down");
-            node.plane.close_all().await;
-        })
-        .await
+    // `ConnectInfo` feeds the /api/pair limiter its client-IP key.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("sepia-node shutting down");
+        node.plane.close_all().await;
+    })
+    .await
 }

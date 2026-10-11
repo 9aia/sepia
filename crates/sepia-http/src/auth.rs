@@ -2,8 +2,10 @@
 //! plus `routes/auth.ts` (login/logout cookie exchange) and
 //! `routes/pair.ts` (`POST /api/pair` code redemption).
 
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -158,8 +160,32 @@ pub async fn auth_gate(State(state): State<AppState>, req: Request<Body>, next: 
     next.run(req).await
 }
 
+/// The limiter key — the peer socket IP (`ConnectInfo`), never
+/// `X-Forwarded-For`: nothing here runs behind a trusted proxy, so a
+/// spoofable header must not reset an attacker's budget. In-process
+/// callers (oneshot tests, embedded routers) share the 0.0.0.0 bucket.
+fn client_ip(req: &Request) -> IpAddr {
+    req.extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED), |c| c.0.ip())
+}
+
+fn too_many_requests(retry_after: std::time::Duration) -> Response {
+    let mut res = json_response(
+        serde_json::json!({ "error": "Too many pairing attempts" }),
+        StatusCode::TOO_MANY_REQUESTS,
+    );
+    // Whole seconds, ceil — never a zero/negative Retry-After.
+    let secs = retry_after.as_secs().saturating_add(1);
+    if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+        res.headers_mut().insert(header::RETRY_AFTER, v);
+    }
+    res
+}
+
 /// `POST /api/pair` — pairing (docs/protocol.md): deliberately
 /// unauthenticated — the code, not a bearer token, authorizes it.
+/// Per-IP throttled: every POST counts, malformed bodies included.
 pub async fn pair(State(state): State<AppState>, req: Request<Body>) -> Response {
     if req.method() != Method::POST {
         return crate::routes::not_found();
@@ -170,6 +196,9 @@ pub async fn pair(State(state): State<AppState>, req: Request<Body>) -> Response
             StatusCode::NOT_IMPLEMENTED,
         );
     };
+    if let Err(retry_after) = state.pair_limit.check(client_ip(&req)) {
+        return too_many_requests(retry_after);
+    }
     let body = match read_json_body(req).await {
         Ok(b) => b,
         Err(res) => return *res,

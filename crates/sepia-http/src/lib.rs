@@ -8,6 +8,7 @@ pub mod env;
 pub mod feed;
 pub mod node;
 pub mod pair;
+pub mod ratelimit;
 pub mod routes;
 
 use std::collections::HashSet;
@@ -31,6 +32,7 @@ pub use node::{
     NodeIdentity, PROTOCOL_VERSION, SEPIA_VERSION, load_node_identity, save_node_identity,
 };
 pub use pair::{Pairing, PairingStore};
+pub use ratelimit::{Quota, RateLimiter};
 pub use routes::sessions::{ConvertSession, ImportSession, ImportTarget};
 
 /// Shared state threaded through every handler — the `createApp`
@@ -51,6 +53,11 @@ pub struct AppState {
     pub node_path: Option<PathBuf>,
     /// Pairing backend for `POST /api/pair` + issued-credential auth.
     pub pairing: Option<Pairing>,
+    /// Per-client-IP throttle on `POST /api/pair` — the one route that
+    /// mints a bearer credential with no prior auth, so it's the brute-
+    /// force surface. Keyed by `ConnectInfo` socket IP (never
+    /// `X-Forwarded-For` — the node doesn't run behind a trusted proxy).
+    pub pair_limit: RateLimiter,
     /// `SEPIA_TOKEN` — `None`/empty means bearer auth is off entirely.
     pub token: Option<String>,
     /// CORS allowlist — `*` echoes any Origin back (bearer auth, not
@@ -84,6 +91,10 @@ impl AppState {
             })),
             node_path: None,
             pairing: None,
+            pair_limit: RateLimiter::pair(
+                env::DEFAULT_PAIR_LIMIT_PER_MIN,
+                env::DEFAULT_PAIR_LIMIT_PER_DAY,
+            ),
             token: None,
             origins: vec![
                 "http://localhost:3000".to_string(),
@@ -117,6 +128,7 @@ impl AppState {
                 env.pair_code_path.clone(),
                 env.tokens_path.clone(),
             )),
+            pair_limit: RateLimiter::pair(env.pair_limit_per_min, env.pair_limit_per_day),
             token: env.token.clone(),
             origins: env.origins.clone(),
             keep_alive: env.sse_keep_alive,
@@ -145,6 +157,13 @@ impl AppState {
     #[must_use]
     pub fn with_pairing(mut self, pairing: Pairing) -> Self {
         self.pairing = Some(pairing);
+        self
+    }
+
+    /// Override the `/api/pair` throttle (tests inject tiny quotas).
+    #[must_use]
+    pub fn with_pair_limit(mut self, pair_limit: RateLimiter) -> Self {
+        self.pair_limit = pair_limit;
         self
     }
 
@@ -352,5 +371,10 @@ pub fn app(state: AppState) -> Router {
 pub async fn serve(env: &Env, state: AppState) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind((env.host.as_str(), env.port)).await?;
     tracing::info!("sepia-server listening on {}:{}", env.host, env.port);
-    axum_serve(listener, app(state)).await
+    // `ConnectInfo` feeds the /api/pair limiter its client-IP key.
+    axum_serve(
+        listener,
+        app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
 }

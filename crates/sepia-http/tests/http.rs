@@ -482,6 +482,49 @@ async fn pair_redeems_code_into_bearer_token() {
     plane.close_all().await;
 }
 
+#[tokio::test]
+async fn pair_redeem_is_rate_limited_per_ip() {
+    let (plane, _) = mk_plane(vec![], vec![]);
+    let dir = tempfile::tempdir().unwrap();
+    let pairing = Pairing::open(dir.path().join("pair-code"), dir.path().join("tokens.json"));
+    let state = AppState::new(plane.clone())
+        .with_pairing(pairing)
+        // 3 attempts/minute — the 4th must bounce.
+        .with_pair_limit(sepia_http::RateLimiter::pair(3, 20))
+        .with_held_watch(Duration::ZERO);
+    let app = app(state);
+
+    for _ in 0..3 {
+        let (status, _, _) = call(
+            &app,
+            post("/api/pair", Some(json!({ "code": "XXXX-XXXX" }))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    // Attempt 4 (same IP bucket — oneshot has no ConnectInfo, so all
+    // in-process requests share the fallback key) → 429 + Retry-After.
+    let (status, headers, body) = call(
+        &app,
+        post("/api/pair", Some(json!({ "code": "XXXX-XXXX" }))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(body["error"].is_string());
+    let retry_after: u64 = headers["retry-after"].to_str().unwrap().parse().unwrap();
+    assert!(retry_after > 0 && retry_after <= 60);
+
+    // Malformed bodies count too — no skipping the limiter.
+    let (status, _, _) = call(&app, post("/api/pair", Some(json!({})))).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+
+    // Other routes are untouched — the limiter is pair-scoped.
+    let (status, _, _) = call(&app, get("/api/health")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    plane.close_all().await;
+}
+
 // ---------- sessions ---------------------------------------------------
 
 #[tokio::test]

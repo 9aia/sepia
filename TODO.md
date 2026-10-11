@@ -4,9 +4,13 @@
 
 ### Security
 
-- [ ] **Pair rate limiting** — `POST /api/pair` has none. Codes are
-      ~40 bits/60s so online brute force is infeasible, but add a per-IP
-      throttle if a node is ever exposed off-LAN without a proxy.
+- [x] ~~**Pair rate limiting**~~ — done: `POST /api/pair` is
+      throttled per client IP (`sepia-http::ratelimit`, sliding window:
+      `SEPIA_PAIR_LIMIT_PER_MIN`=5 / `SEPIA_PAIR_LIMIT_PER_DAY`=20,
+      `0` disables; `429` + `Retry-After`). Keyed by `ConnectInfo`
+      socket IP (X-Forwarded-For deliberately untrusted); the IP table
+      is capped (4096 keys, idle-then-LRU eviction). Mint needs no
+      limit — `sepia pair` writes a local file, no HTTP mint exists.
 - [ ] **Hub `SEPIA_NODES` token storage** — node tokens live in
       `$SEPIA_HOME/hub/` config env today; keyring-backed storage is the
       upgrade path.
@@ -95,8 +99,9 @@ Missing (queued next):
 - [x] Session context tabs — system rows fold into a ContextCard
       (Reports/Prompt/Rules/Skills) parsed in
       `sepia-web-core::history::parse_system_context`
-- [ ] EmptyScreen/ErrorBanner parity — router fallback is a bare `<p>`;
-      load failures render raw error text, no retry, no friendly 404/500
+- [x] EmptyScreen/ErrorBanner parity — `Routes fallback` renders an
+      `EmptyState` 404 card (icon + "Page not found" + Back-to-sessions
+      button); `ErrorBanner` covers load failures across the pages
 
 ### Parity audit 2026-10 (from old TS bundle + reflog)
 

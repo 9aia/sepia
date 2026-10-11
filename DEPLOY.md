@@ -50,6 +50,11 @@ Key env (full list in `crates/sepia-http/src/env.rs`):
   `~/.claude`, `~/.cursor`).
 - `SEPIA_HOME` (default `~/.local/share/sepia`) — meta.json, node
   identity, driver dir.
+- `SEPIA_PAIR_LIMIT_PER_MIN` / `SEPIA_PAIR_LIMIT_PER_DAY` (defaults
+  `5`/`20`) — per-client-IP sliding-window throttle on
+  `POST /api/pair`, answered with `429` + `Retry-After`. `0` disables
+  the window; both at `0` turns the throttle off. Keyed by socket IP —
+  put a real proxy in front only if you also terminate client IPs there.
 - `SEPIA_ORIGINS`, `SEPIA_AGENT_<ID>_COMMAND` (override an agent's
   spawn command), `SEPIA_IDLE_TTL_MS`, `SEPIA_SWEEP_MS`,
   `SEPIA_LOCK_TTL_MS`, `SEPIA_HELD_WATCH_MS`, `SEPIA_HISTORY_LIMIT`,
@@ -133,7 +138,9 @@ sepia pair        # on the node — mints a one-time code
 
 The code + node URL redeem through the hub's pair flow (or
 `POST /api/pair` directly) for a bearer token, then the token goes in
-`SEPIA_NODES` as `id=url@token`.
+`SEPIA_NODES` as `id=url@token`. Redeem is per-IP rate limited
+(`SEPIA_PAIR_LIMIT_*` above); minting stays local — only the machine
+owner can write `$SEPIA_HOME/pair-code`, there's no HTTP mint.
 
 ## Service units
 

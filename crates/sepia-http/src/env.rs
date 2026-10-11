@@ -16,6 +16,11 @@ pub const DEFAULT_SSE_KEEPALIVE_MS: u64 = 15_000;
 pub const DEFAULT_HELD_WATCH_MS: u64 = 5_000;
 pub const DEFAULT_IDLE_TTL_MS: u64 = 600_000;
 pub const DEFAULT_SWEEP_MS: u64 = 30_000;
+/// `POST /api/pair` redeem attempts per client IP: ~40-bit codes make
+/// online guessing infeasible anyway, so these only need to throttle
+/// abuse on nodes exposed off-LAN — not gate legit pairing.
+pub const DEFAULT_PAIR_LIMIT_PER_MIN: u32 = 5;
+pub const DEFAULT_PAIR_LIMIT_PER_DAY: u32 = 20;
 
 const DEFAULT_ORIGINS: [&str; 2] = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
@@ -55,6 +60,12 @@ pub struct Env {
     pub idle_ttl: Duration,
     /// `SEPIA_SWEEP_MS` — idle sweep cadence (plane option).
     pub sweep: Duration,
+    /// `SEPIA_PAIR_LIMIT_PER_MIN` — `/api/pair` attempts/min per client
+    /// IP (sliding window); `0` disables this window.
+    pub pair_limit_per_min: u32,
+    /// `SEPIA_PAIR_LIMIT_PER_DAY` — `/api/pair` attempts/24h per client
+    /// IP; `0` disables. Both at `0` turns the throttle off entirely.
+    pub pair_limit_per_day: u32,
     /// `<home>/pair-code` — written by `sepia pair`, consumed on read.
     pub pair_code_path: PathBuf,
     /// `<home>/tokens.json` — sha256 hashes of issued pair credentials.
@@ -96,6 +107,14 @@ fn ms_or_default(raw: Option<&String>, default: u64) -> u64 {
 
 fn millis_u64(raw: Option<&String>, default: u64) -> u64 {
     raw.and_then(|v| v.parse::<u64>().ok()).unwrap_or(default)
+}
+
+/// Count-valued knob: absent/unparseable → default (never silently 0 —
+/// a typo must not disable the knob), `0` is the explicit off switch.
+fn count_or_default(raw: Option<&String>, default: u32) -> u32 {
+    raw.filter(|v| !v.is_empty())
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(default)
 }
 
 impl Env {
@@ -195,6 +214,14 @@ impl Env {
                 get("SEPIA_SWEEP_MS").as_ref(),
                 DEFAULT_SWEEP_MS,
             )),
+            pair_limit_per_min: count_or_default(
+                get("SEPIA_PAIR_LIMIT_PER_MIN").as_ref(),
+                DEFAULT_PAIR_LIMIT_PER_MIN,
+            ),
+            pair_limit_per_day: count_or_default(
+                get("SEPIA_PAIR_LIMIT_PER_DAY").as_ref(),
+                DEFAULT_PAIR_LIMIT_PER_DAY,
+            ),
             pair_code_path: home.join("pair-code"),
             tokens_path: home.join("tokens.json"),
             home,
