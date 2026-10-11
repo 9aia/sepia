@@ -58,7 +58,7 @@ camino = { version = "1", features = ["serde1"] }
 ureq = { version = "3", features = ["json"] }
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.6", features = ["fs", "limit"] }
 leptos = { version = "0.8.21", default-features = false }
 leptos_router = { version = "0.8.17", default-features = false }
 leptos_meta = { version = "0.8.7", default-features = false }

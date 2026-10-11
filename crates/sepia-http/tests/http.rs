@@ -1381,3 +1381,48 @@ async fn query_token_works_on_sse_paths() {
 
     plane.close_all().await;
 }
+
+// ---------- request body caps -----------------------------------------
+
+#[tokio::test]
+async fn oversized_json_bodies_get_413() {
+    use sepia_http::routes::{PROMPT_JSON_BODY, SMALL_JSON_BODY};
+
+    let (plane, _) = mk_plane(vec![], vec![]);
+    let app = mk_app(&plane);
+
+    let post_bytes = |path: &str, n: usize| {
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("origin", "http://localhost:3000")
+            .header("content-type", "application/json")
+            .body(Body::from(vec![b' '; n]))
+            .unwrap()
+    };
+
+    // Small-body route (64KiB): one byte over → 413, not 400.
+    let (status, _, body) = call(
+        &app.router,
+        post_bytes("/api/sessions", SMALL_JSON_BODY + 1),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(body["error"], "Request body too large");
+
+    // A body just under the cap still reaches the handler (400 for a
+    // whitespace-only body — read but not JSON).
+    let (status, _, _) = call(&app.router, post_bytes("/api/sessions", SMALL_JSON_BODY)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Prompt route (16MiB): the attachment-payload cap is per-part;
+    // the raw body cap is the outer bound.
+    let (status, _, _) = call(
+        &app.router,
+        post_bytes("/api/sessions/s1/prompt", PROMPT_JSON_BODY + 1),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+
+    app.plane.close_all().await;
+}

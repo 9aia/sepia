@@ -20,9 +20,11 @@ use futures::stream;
 
 use crate::HubState;
 
-/// Cap on a proxied request body — prompts carry attachments but the
-/// node caps them well below this.
-const MAX_PROXY_BODY: usize = 16 * 1024 * 1024;
+/// Cap on a proxied request body — sits just above the node's own
+/// `MAX_JSON_BODY` (32MiB, the `/api/sessions/import` transcript
+/// ceiling) so an oversized body hits the *node's* 413, whose error
+/// shape the client already understands.
+pub(crate) const MAX_PROXY_BODY: usize = 40 * 1024 * 1024;
 
 fn upstream_url(state: &HubState, path_and_query: &str) -> String {
     format!("{}{}", state.node_url, path_and_query)

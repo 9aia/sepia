@@ -38,8 +38,17 @@
       the locked crate version.
 - [ ] **macOS verification** — all e2e ran on Linux; devin/cline path
       defaults and service install need a mac pass.
-- [ ] **Body-cap audit** — large JSON handlers are capped; sweep for any
-      remaining unbounded body read in `sepia-http`.
+- [x] ~~**Body-cap audit**~~ — done: `read_json_body` took `usize::MAX`
+      under a global `DefaultBodyLimit::disable()` — every body read was
+      unbounded. Now per-route caps (`SMALL_JSON_BODY` 64KiB /
+      `PROMPT_JSON_BODY` 16MiB / `MAX_JSON_BODY` 32MiB — sized for the
+      import transcript), 413 on `LengthLimitError`; the axum 2MiB
+      default is back on as the extractor backstop and push
+      `body: String` was folded into `read_json_body`. Hub: login 64KiB
+      + passthrough `MAX_PROXY_BODY` (bumped 16→40MiB so it clears the
+      node's 32MiB), subscribe capped at 64KiB, and
+      `RequestBodyLimitLayer` bounds the otherwise-uncapped `/hub/*`
+      leptos server-fn bodies.
 
 ### UI/UX parity with the TS app
 

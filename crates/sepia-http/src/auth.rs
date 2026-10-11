@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
 
 use crate::AppState;
-use crate::routes::{json_response, read_json_body};
+use crate::routes::{SMALL_JSON_BODY, json_response, read_json_body};
 
 /// Cookie name — value is the credential itself (env token or paired).
 pub const AUTH_COOKIE: &str = "sepia_token";
@@ -199,7 +199,7 @@ pub async fn pair(State(state): State<AppState>, req: Request<Body>) -> Response
     if let Err(retry_after) = state.pair_limit.check(client_ip(&req)) {
         return too_many_requests(retry_after);
     }
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };
@@ -242,7 +242,7 @@ pub async fn handle(State(state): State<AppState>, req: Request<Body>) -> Respon
     let path = req.uri().path().to_string();
     let https = request_is_https(&req);
     if req.method() == Method::POST && path == "/api/auth/login" {
-        let body = match read_json_body(req).await {
+        let body = match read_json_body(req, SMALL_JSON_BODY).await {
             Ok(body) => body,
             Err(res) => return *res,
         };

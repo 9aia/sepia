@@ -27,6 +27,7 @@ tracing.workspace = true
 uuid.workspace = true
 time.workspace = true
 axum = "0.8"
+http-body-util = "0.1"
 sha2 = "0.10"
 base64 = "0.22"
 ed25519-dalek = "2"

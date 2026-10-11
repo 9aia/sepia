@@ -79,14 +79,49 @@ pub fn not_found() -> Response {
     )
 }
 
+/* ---- body caps --------------------------------------------------------*/
+
+/// Small bodies — pair codes, login tokens, renames, meta patches,
+/// project names, config values. The biggest legit field anywhere on
+/// these routes is a 200-char title; 64KiB is generous.
+pub const SMALL_JSON_BODY: usize = 64 * 1024;
+
+/// Prompt bodies — `attachments` carry base64 payload capped post-parse
+/// at `MAX_PROMPT_PART_CHARS` (8MiB); 16MiB covers that plus JSON
+/// framing without opening the import-sized door.
+pub const PROMPT_JSON_BODY: usize = 16 * 1024 * 1024;
+
+/// Hard ceiling — `POST /api/sessions/import` carries a whole exported
+/// transcript; nothing else legitimately approaches this.
+pub const MAX_JSON_BODY: usize = 32 * 1024 * 1024;
+
 /// `readJsonBody` — empty body → `None` (TS `undefined`); parse failure
-/// → the boxed 400 `Invalid JSON body` response (`Box` keeps the `Err`
-/// variant small for `clippy::result_large_err`).
-pub async fn read_json_body(req: Request<Body>) -> Result<Option<Value>, Box<Response>> {
-    let bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
+/// → the boxed 400 `Invalid JSON body` response; over `limit` bytes →
+/// 413 (`Box` keeps the `Err` variant small for
+/// `clippy::result_large_err`).
+pub async fn read_json_body(
+    req: Request<Body>,
+    limit: usize,
+) -> Result<Option<Value>, Box<Response>> {
+    let bytes = axum::body::to_bytes(req.into_body(), limit)
         .await
-        .map_err(|_| Box::new(invalid_json()))?;
+        .map_err(|e| {
+            if std::error::Error::source(&e)
+                .is_some_and(<dyn std::error::Error>::is::<http_body_util::LengthLimitError>)
+            {
+                Box::new(payload_too_large())
+            } else {
+                Box::new(invalid_json())
+            }
+        })?;
     read_json_bytes(&bytes)
+}
+
+fn payload_too_large() -> Response {
+    json_response(
+        serde_json::json!({ "error": "Request body too large" }),
+        StatusCode::PAYLOAD_TOO_LARGE,
+    )
 }
 
 fn invalid_json() -> Response {

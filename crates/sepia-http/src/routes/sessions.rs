@@ -26,8 +26,9 @@ use tokio::sync::broadcast;
 
 use crate::AppState;
 use crate::routes::{
-    AttachResultWire, CreateResultWire, HistoryPageWire, SummaryWire, agent_param, error_response,
-    iso_now, iso_of_secs, json_response, not_found, now_ms_f64, ok, query_param, read_json_body,
+    AttachResultWire, CreateResultWire, HistoryPageWire, MAX_JSON_BODY, PROMPT_JSON_BODY,
+    SMALL_JSON_BODY, SummaryWire, agent_param, error_response, iso_now, iso_of_secs, json_response,
+    not_found, now_ms_f64, ok, query_param, read_json_body,
 };
 
 /// `POST /api/sessions/import` target store.
@@ -141,7 +142,7 @@ async fn list(state: &AppState, with_locks: bool) -> Response {
 
 /// `POST /api/sessions` — create a session under an agent runtime.
 async fn create(state: &AppState, req: Request<Body>) -> Response {
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };
@@ -300,7 +301,7 @@ async fn meta_patch(state: &AppState, id: &str, req: Request<Body>) -> Response 
     let Some(meta) = &state.meta else {
         return not_configured("Rename");
     };
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };
@@ -560,7 +561,7 @@ pub async fn attach(
         return not_found();
     }
     let agent = agent_param(&req);
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };
@@ -794,7 +795,7 @@ pub async fn prompt(
         return not_found();
     }
     let agent = agent_param(&req);
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, PROMPT_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };
@@ -844,7 +845,7 @@ pub async fn permission(
         return not_found();
     }
     let agent = agent_param(&req);
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };
@@ -886,7 +887,7 @@ pub async fn restore(
         return not_found();
     }
     let agent = agent_param(&req);
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };
@@ -944,7 +945,7 @@ pub async fn rewind(
         return not_found();
     }
     let agent = agent_param(&req);
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };
@@ -1020,7 +1021,7 @@ pub async fn convert(
     let Some(convert) = &state.convert else {
         return not_configured("Convert");
     };
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };
@@ -1164,7 +1165,7 @@ pub async fn import_session(
     if state.convert.is_none() {
         return not_configured("Import");
     }
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, MAX_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };

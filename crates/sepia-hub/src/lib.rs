@@ -284,6 +284,13 @@ pub fn router(state: HubState) -> Router {
             provide_node,
             shell,
         ))
+        // Hard ceiling for *every* request body — the leptos server-fn
+        // (`/hub/*`) reads happen inside leptos_axum with no per-route
+        // knob, so this is their only bound. Sized at the passthrough
+        // cap so legit node-bound bodies never hit it.
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            proxy::MAX_PROXY_BODY,
+        ))
         // Browser gate — a no-op until `hub_token` is set.
         .layer(middleware::from_fn_with_state(
             state.clone(),

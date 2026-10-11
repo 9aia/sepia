@@ -9,7 +9,7 @@ use axum::response::Response;
 use serde_json::{Value, json};
 
 use crate::AppState;
-use crate::routes::{json_response, not_found, read_json_body};
+use crate::routes::{SMALL_JSON_BODY, json_response, not_found, read_json_body};
 
 const INTERNAL_CONFIG: [&str; 2] = ["vapid", "pushSubscriptions"];
 
@@ -49,7 +49,7 @@ pub async fn set(
     let Some(meta) = &state.meta else {
         return meta_missing();
     };
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };

@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::AppState;
 use crate::node::PROTOCOL_VERSION;
-use crate::routes::{json_response, not_found, query_param, read_json_body};
+use crate::routes::{SMALL_JSON_BODY, json_response, not_found, query_param, read_json_body};
 
 /// `GET /api/health` — deliberately ahead of the auth gate. The TS
 /// health check is a 1.5s-bounded session list.
@@ -192,7 +192,7 @@ async fn node_get(state: &AppState) -> Response {
 /// `PATCH /api/node` — `{name}` renames the node, persists to
 /// `SEPIA_NODE` (`node.json`) and returns the updated descriptor.
 async fn node_patch(state: &AppState, req: Request<Body>) -> Response {
-    let body = match read_json_body(req).await {
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
         Ok(b) => b,
         Err(res) => return *res,
     };

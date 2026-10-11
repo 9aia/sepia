@@ -351,7 +351,11 @@ pub fn app(state: AppState) -> Router {
         .route("/api/push/vapid", any(routes::push::vapid))
         .route("/api/push/subscribe", any(routes::push::subscribe))
         .fallback(async || routes::not_found())
-        .layer(axum::extract::DefaultBodyLimit::disable())
+        // Every body read goes through `read_json_body` with an
+        // explicit per-route cap (SMALL/PROMPT/MAX_JSON_BODY); axum's
+        // 2MiB `DefaultBodyLimit` stays on as the backstop for any
+        // future extractor-based read (Json/Bytes/String/Multipart
+        // all honor it).
         // Innermost → outermost: auth gate, request log, CORS.
         .layer(middleware::from_fn_with_state(
             state.clone(),

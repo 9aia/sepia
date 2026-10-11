@@ -4,7 +4,8 @@
 //! each node's live listener) drive the fan-out.
 
 use axum::Json;
-use axum::extract::State;
+use axum::body::Body;
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
@@ -12,6 +13,10 @@ use serde_json::{Value, json};
 use sepia_push::{PushPrefs, PushSubscription, SubscriptionKeys};
 
 use crate::HubState;
+
+/// A push subscription is endpoint + two base64 keys — a few hundred
+/// bytes; 64KiB is generous.
+const MAX_SUBSCRIBE_BODY: usize = 64 * 1024;
 
 fn not_configured() -> Response {
     (
@@ -33,12 +38,19 @@ pub async fn vapid(State(state): State<HubState>) -> Response {
 pub async fn subscribe(
     State(state): State<HubState>,
     method: axum::http::Method,
-    body: String,
+    req: Request<Body>,
 ) -> Response {
     let Some(push) = &state.push else {
         return not_configured();
     };
-    let body: Value = match serde_json::from_str(&body) {
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), MAX_SUBSCRIBE_BODY).await else {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(json!({"error": "Request body too large"})),
+        )
+            .into_response();
+    };
+    let body: Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(_) => {
             return (

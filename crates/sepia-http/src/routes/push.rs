@@ -3,7 +3,8 @@
 //! register their own endpoint and receive notification payloads.
 
 use axum::Json;
-use axum::extract::State;
+use axum::body::Body;
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
@@ -11,6 +12,7 @@ use serde_json::{Value, json};
 use sepia_push::{PushPrefs, PushSubscription, SubscriptionKeys};
 
 use crate::AppState;
+use crate::routes::{SMALL_JSON_BODY, read_json_body};
 
 fn not_configured() -> Response {
     (
@@ -33,17 +35,19 @@ pub async fn vapid(State(state): State<AppState>) -> Response {
 }
 
 /// `POST`/`DELETE /api/push/subscribe` — register or drop an endpoint.
+/// Subscriptions are a few hundred bytes; the small-body cap applies.
 pub async fn subscribe(
     State(state): State<AppState>,
     method: axum::http::Method,
-    body: String,
+    req: Request<Body>,
 ) -> Response {
     let Some(push) = &state.push else {
         return not_configured();
     };
-    let body: Value = match serde_json::from_str(&body) {
-        Ok(v) => v,
-        Err(_) => return invalid("Invalid JSON body"),
+    let body = match read_json_body(req, SMALL_JSON_BODY).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return invalid("Invalid JSON body"),
+        Err(res) => return *res,
     };
     if method == axum::http::Method::POST {
         let Some(obj) = body.as_object() else {
