@@ -34,12 +34,79 @@ fn err_view(e: &ServerFnError, retry: impl Fn() + Send + Sync + 'static) -> AnyV
     view! { <ErrorBanner message=e.to_string() on_retry=Box::new(retry)/> }.into_any()
 }
 
+/// The scrollspy sections, in document order — the nav and the
+/// observer both read this list.
+const SECTIONS: &[(&str, &str)] = &[
+    ("appearance", "Appearance"),
+    ("node", "Node"),
+    ("agents", "Agents"),
+    ("outbox", "Queued writes"),
+    ("config", "Configuration"),
+    ("notifications", "Notifications"),
+    ("keyboard", "Keyboard"),
+];
+
 #[component]
 pub fn SettingsPage() -> impl IntoView {
+    // The section nav's highlighted entry — the scrollspy keeps it in
+    // step with the scroll position; SSR renders the first item
+    // active (hydrate markup agrees).
+    let active = RwSignal::new("appearance".to_string());
+    let spy_root = NodeRef::<leptos::html::Div>::new();
+    // Scrollspy — the old SettingsDialog's IntersectionObserver: the
+    // top ~30% of the scrollport is the hot band (`-70%` bottom
+    // margin), and the deepest intersecting section owns the nav
+    // highlight (`sepia_web_core::scrollspy`). Hydrate-only — SSR has
+    // no DOM; the anchors still navigate.
+    #[cfg(feature = "hydrate")]
+    {
+        use wasm_bindgen::JsCast;
+        let _observer = StoredValue::new_local(None::<web_sys::IntersectionObserver>);
+        Effect::new(move |_| {
+            let Some(root) = spy_root.get() else { return };
+            let Ok(sections) = root.query_selector_all("[data-spy]") else {
+                return;
+            };
+            if sections.length() == 0 {
+                return;
+            }
+            let order: Vec<&str> = SECTIONS.iter().map(|(id, _)| *id).collect();
+            let cb = wasm_bindgen::closure::Closure::<
+                dyn FnMut(Vec<web_sys::IntersectionObserverEntry>),
+            >::new(move |entries: Vec<web_sys::IntersectionObserverEntry>| {
+                let ids: Vec<String> = entries
+                    .into_iter()
+                    .filter(|e| e.is_intersecting())
+                    .filter_map(|e| e.target().get_attribute("data-spy"))
+                    .collect();
+                let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+                if let Some(next) = sepia_web_core::scrollspy::active(&order, &refs) {
+                    active.set(next.to_string());
+                }
+            });
+            let options = web_sys::IntersectionObserverInit::new();
+            options.set_root_margin("0px 0px -70% 0px");
+            if let Ok(observer) = web_sys::IntersectionObserver::new_with_options(
+                cb.as_ref().unchecked_ref(),
+                &options,
+            ) {
+                for i in 0..sections.length() {
+                    if let Some(el) = sections
+                        .item(i)
+                        .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
+                    {
+                        observer.observe(&el);
+                    }
+                }
+                _observer.set_value(Some(observer));
+            }
+            cb.forget();
+        });
+    }
     view! {
         <Title text="settings — sepia"/>
-        <section class="mx-auto w-full max-w-5xl space-y-6 p-4 md:p-6">
-            <PageHead class="mb-0">
+        <section class="mx-auto w-full max-w-5xl p-4 md:p-6">
+            <PageHead>
                 <div>
                     <PageTitle>"Settings"</PageTitle>
                     <PageDescription>
@@ -47,37 +114,67 @@ pub fn SettingsPage() -> impl IntoView {
                     </PageDescription>
                 </div>
             </PageHead>
-            // One long scroll — anchor chips jump between sections.
-            <nav aria-label="Settings sections" class="flex flex-wrap gap-1.5">
-                {[
-                    ("appearance", "Appearance"),
-                    ("node", "Node"),
-                    ("agents", "Agents"),
-                    ("outbox", "Queued writes"),
-                    ("config", "Configuration"),
-                    ("notifications", "Notifications"),
-                    ("keyboard", "Keyboard"),
-                ]
-                    .iter()
-                    .map(|(id, label)| {
-                        view! {
-                            <a
-                                href=format!("#{id}")
-                                class="rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                            >
-                                {*label}
-                            </a>
-                        }
-                    })
-                    .collect::<Vec<_>>()}
-            </nav>
-            <section id="appearance" class="scroll-mt-6"><AppearanceSection/></section>
-            <section id="node" class="scroll-mt-6"><NodeSection/></section>
-            <section id="agents" class="scroll-mt-6"><AgentsSection/></section>
-            <section id="outbox" class="scroll-mt-6"><OutboxSection/></section>
-            <section id="config" class="scroll-mt-6"><ConfigSection/></section>
-            <section id="notifications" class="scroll-mt-6"><PushSection/></section>
-            <section id="keyboard" class="scroll-mt-6"><KeyboardSection/></section>
+            // The old dialog's two-pane layout — a section nav rail
+            // (sticky on md+, a wrapping row below) beside the long
+            // scroll of cards.
+            <div class="flex flex-col gap-6 md:flex-row">
+                <nav
+                    aria-label="Settings sections"
+                    data-name="SettingsNav"
+                    class="flex flex-row flex-wrap gap-1 p-1 md:sticky md:top-6 md:w-36 md:shrink-0 md:flex-col md:gap-0.5 md:self-start"
+                >
+                    {SECTIONS
+                        .iter()
+                        .map(|(id, label)| {
+                            view! {
+                                <a
+                                    href=format!("#{id}")
+                                    aria-current=move || {
+                                        sepia_web_core::scrollspy::is_active(&active.get(), id)
+                                            .then_some("true")
+                                    }
+                                    class=move || {
+                                        let base = "rounded-md px-3 py-1.5 text-left text-sm font-medium whitespace-nowrap transition-colors";
+                                        if sepia_web_core::scrollspy::is_active(&active.get(), id) {
+                                            format!("{base} bg-accent text-foreground")
+                                        } else {
+                                            format!(
+                                                "{base} text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                                            )
+                                        }
+                                    }
+                                    on:click=move |_| active.set((*id).to_string())
+                                >
+                                    {*label}
+                                </a>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                </nav>
+                <div node_ref=spy_root class="flex min-w-0 flex-1 flex-col gap-6">
+                    <section id="appearance" data-spy="appearance" class="scroll-mt-6">
+                        <AppearanceSection/>
+                    </section>
+                    <section id="node" data-spy="node" class="scroll-mt-6">
+                        <NodeSection/>
+                    </section>
+                    <section id="agents" data-spy="agents" class="scroll-mt-6">
+                        <AgentsSection/>
+                    </section>
+                    <section id="outbox" data-spy="outbox" class="scroll-mt-6">
+                        <OutboxSection/>
+                    </section>
+                    <section id="config" data-spy="config" class="scroll-mt-6">
+                        <ConfigSection/>
+                    </section>
+                    <section id="notifications" data-spy="notifications" class="scroll-mt-6">
+                        <PushSection/>
+                    </section>
+                    <section id="keyboard" data-spy="keyboard" class="scroll-mt-6">
+                        <KeyboardSection/>
+                    </section>
+                </div>
+            </div>
         </section>
     }
 }

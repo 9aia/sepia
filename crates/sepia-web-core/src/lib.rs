@@ -16,6 +16,7 @@ pub mod palette;
 pub mod path;
 pub mod project;
 pub mod rewind;
+pub mod scrollspy;
 pub mod stream;
 pub mod theme;
 pub mod transcript;

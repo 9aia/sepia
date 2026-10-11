@@ -321,7 +321,11 @@ pub fn App() -> impl IntoView {
                             <ThemeToggle/>
                         </span>
                     </header>
-                    <main class="flex min-w-0 flex-1 flex-col overflow-y-auto">
+                    // scroll-smooth: settings' section anchors glide
+                    // (reduced-motion kills it via input.css). Nested
+                    // scrollers (the transcript) keep `auto` — it's
+                    // not inherited.
+                    <main class="flex min-w-0 flex-1 scroll-smooth flex-col overflow-y-auto">
                         <Routes fallback=|| {
                             view! {
                                 <EmptyState
