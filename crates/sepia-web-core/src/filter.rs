@@ -69,6 +69,15 @@ impl SortMode {
             Self::Title => "title",
         }
     }
+
+    /// The sort menu's display label (the old `SORT_LABELS`).
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Newest => "Newest",
+            Self::Oldest => "Oldest",
+            Self::Title => "Title",
+        }
+    }
 }
 
 /// Lock-state filter for the session list (filter-bar select values).
@@ -96,6 +105,15 @@ impl StatusFilter {
             Self::All => "all",
             Self::Free => "free",
             Self::Locked => "locked",
+        }
+    }
+
+    /// The status submenu's display label (the old `STATUS_LABELS`).
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::All => "Any status",
+            Self::Free => "Free",
+            Self::Locked => "Locked",
         }
     }
 }
@@ -169,6 +187,16 @@ impl Recency {
         }
     }
 
+    /// The recency submenu's display label (the old `DATE_LABELS`).
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Any => "Any time",
+            Self::Day => "Today",
+            Self::Week => "Last 7 days",
+            Self::Month => "Last 30 days",
+        }
+    }
+
     /// The window width in milliseconds — `None` for `Any`.
     pub const fn max_age_ms(self) -> Option<f64> {
         match self {
@@ -213,6 +241,15 @@ impl SessionFilter {
     /// visible); the other filters don't.
     pub fn force_open(&self) -> bool {
         !self.query.trim().is_empty()
+    }
+
+    /// The filter-menu trigger's badge count — picked agents plus
+    /// the recency/status flags (the old `active` sum; the text
+    /// query has its own affordance and isn't counted).
+    pub fn badge_count(&self) -> usize {
+        self.agents.len()
+            + usize::from(self.recency != Recency::Any)
+            + usize::from(self.status != StatusFilter::All)
     }
 
     /// Filter + sort the rows. `now_ms` (epoch ms) feeds the recency
@@ -902,6 +939,17 @@ mod tests {
         let mut f = filter("", StatusFilter::All, &[], SortMode::Newest);
         f.recency = Recency::Day;
         assert!(f.is_active());
+    }
+
+    #[test]
+    fn badge_count_tallies_agents_recency_and_status() {
+        let mut f = filter("text", StatusFilter::All, &[], SortMode::Newest);
+        assert_eq!(f.badge_count(), 0);
+        f.agents = BTreeSet::from(["claude".to_string(), "cline".to_string()]);
+        f.status = StatusFilter::Locked;
+        f.recency = Recency::Week;
+        // The query doesn't count — it has its own affordance.
+        assert_eq!(f.badge_count(), 4);
     }
 
     #[test]

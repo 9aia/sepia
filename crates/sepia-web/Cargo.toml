@@ -118,6 +118,7 @@ lucide-leptos = { version = "=3.48.0", default-features = false, features = [
     "shapes",
     "social",
     "text",
+    "time",
 ] }
 leptos-use = { version = "0.19", default-features = false, features = [
   "use_event_source", "use_interval_fn", "use_event_listener",

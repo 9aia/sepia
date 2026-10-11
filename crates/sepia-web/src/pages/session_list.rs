@@ -14,8 +14,11 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::NavigateOptions;
 use leptos_router::components::A;
-use leptos_router::hooks::{use_navigate, use_query_map};
+#[cfg(feature = "hydrate")]
+use leptos_router::hooks::use_navigate;
+use leptos_router::hooks::use_query_map;
 use sepia_web_core::composer::{CONVERT_TARGETS, import_body};
+use sepia_web_core::desktop::{create_target, effective_node, node_for_cwd, resolve_create_cwd};
 #[cfg(feature = "hydrate")]
 use sepia_web_core::filter::query_href;
 use sepia_web_core::filter::{
@@ -26,13 +29,10 @@ use sepia_web_core::filter::{
 use sepia_web_core::filter::{fold_keys, session_href, visible_keys};
 #[cfg(feature = "hydrate")]
 use sepia_web_core::keymap::{self, KeyCtx, Mods, NavDir};
-use sepia_web_core::path::{complete_path, non_empty, path_parts};
+use sepia_web_core::path::non_empty;
 
-#[cfg(feature = "hydrate")]
-use crate::api::list_agents;
 use crate::api::{
-    archive_session, create_session, delete_session, fs_dirs, import_session, pin_session,
-    rename_session,
+    archive_session, create_session, delete_session, import_session, pin_session, rename_session,
 };
 use crate::app::Now;
 #[cfg(feature = "hydrate")]
@@ -43,6 +43,7 @@ use crate::components::{
     Badge, BadgeVariant, Button, ButtonClass, ButtonSize, ButtonVariant, ConfirmDialog, EmptyState,
     ErrorBanner, Input, SELECT_CLASS, Sheet, SheetBody, SheetHeader, SheetTitle, Skeleton,
 };
+use crate::desktop::Desktop;
 use crate::dto::AgentDto;
 use crate::pages::SessionPanel;
 use crate::time::relative;
@@ -137,9 +138,10 @@ pub fn SessionListPage() -> impl IntoView {
 }
 
 /// The sidebar-09 Sessions panel — the content column that opens next
-/// to the icon rail: panel header, new-session/import controls, the
-/// filter bar, and the pinned/grouped session list (row + group
-/// context menus and the delete confirm ride inside). Mounted by `/`
+/// to the icon rail: panel header (search/filter/sort menus), the
+/// new-session/import buttons, and the pinned/grouped session list
+/// (row + group context menus and the delete confirm ride inside).
+/// Mounted by `/`
 /// (master-detail) and `/sessions/:id` (deep links keep the list
 /// beside the transcript). `selected_id` is the highlighted row +
 /// "a session is open" flag — `?session=` on `/`, the `:id` param on
@@ -162,8 +164,20 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
     let sessions = client.resource(crate::api::sessions_scope, || ());
     let pending = client.resource(crate::api::pending_scope, || ());
     // Node health — the empty list reads "No nodes connected" instead
-    // of "No sessions yet" when nothing is reachable.
+    // of "No sessions yet" when nothing is reachable, and the "New
+    // session" button hides.
     let nodes = client.resource(crate::api::node_status_scope, || ());
+    // The agent roster (filter labels + the submenu's empty state)
+    // and the primary node's descriptor (bare `node: None` wire
+    // annotations resolve through it). Created unconditionally on
+    // both targets like the rest — hydrate-only Effects mirror them
+    // into signals; the view never touches the handles directly.
+    let agents_q = client.resource(crate::api::agents_scope, || ());
+    let info_q = client.resource(crate::api::node_info_scope, || ());
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = (agents_q, info_q);
+    }
     let query = use_query_map();
 
     // Filter/sort state — seeded from the `?…` params so deep links
@@ -191,9 +205,11 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
     // client, request-time snapshot during SSR).
     let now = use_context::<Now>();
     let now_ms = move || now.map_or_else(crate::time::now_ms, |n| n.0.get());
-    // Prefill for the new-session form's cwd field — "New session
-    // here" in the group menu writes it.
-    let new_cwd = RwSignal::new(String::new());
+    // The desktop aim — the rail footer's pick of which node/agent/
+    // model/dir "New session" points at (the old ClientBar's
+    // `settings.desktop`; `DesktopMenu` writes it, the create reads
+    // it directly).
+    let aim = expect_context::<Desktop>().0;
     // `⌘B` / the rail's Sessions button collapse this panel — the
     // open flag lives in the shell (`PanelOpen`) so the rail can
     // reach it; desktop-only (`lg:hidden` when closed).
@@ -202,12 +218,22 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
     // open) on both targets; a post-hydration Effect adopts the set
     // persisted in localStorage, so collapse is purely class-driven.
     let closed_groups = RwSignal::new(CollapsedGroups::default());
-    // The last resolved list — feeds the agent select (whose options
-    // render empty on SSR + first hydration either way) and keyboard
-    // navigation, which live outside the Suspend view tree.
+    // The last resolved list — feeds the Agents submenu (whose
+    // options render empty on SSR + first hydration either way),
+    // keyboard navigation, and the create's recent-cwd fallback.
     let all_sessions = RwSignal::new(Vec::<SessionRow>::new());
-    // `n` focuses the new-session cwd input; `⌘K`/`Escape` the filter.
-    let cwd_input_ref = NodeRef::<leptos::html::Input>::new();
+    // Mirror signals — empty/false on SSR and first hydration alike;
+    // the Effects below fill them post-mount so markup is identical
+    // at the hydration boundary (same dance as `DesktopMenu`).
+    let node_connected = RwSignal::new(false);
+    let node_primary = RwSignal::new(None::<String>);
+    let agents_roster = RwSignal::new(Vec::<AgentDto>::new());
+    let agents_loaded = RwSignal::new(false);
+    // The header's "New session" button state — in-flight flag plus
+    // the inline error line (the old form's `form_error` slot).
+    let creating = RwSignal::new(false);
+    let create_error = RwSignal::new(None::<String>);
+    // `Escape` while the search popover's input is focused clears it.
     let filter_input_ref = NodeRef::<leptos::html::Input>::new();
     // Row context menu — one instance repositioned to the pointer:
     // `(session id, agent, clientX, clientY)`, `None` when closed.
@@ -263,6 +289,57 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
         }
     });
 
+    // The "New session" create — the header button, the `n` hotkey,
+    // and the group menu's "New session here" all land here (the old
+    // `create(resolvedCwd)`). `dir` names an explicit cwd (the group
+    // key); `explicit_node` routes the create to the row's node.
+    // Everything else resolves from the desktop aim: cwd = explicit
+    // pick > the aim's dir > the focused node's most recent session
+    // cwd > `/`; node/agent/model = the aim's pick, scoped away when
+    // the explicit node isn't the focused one.
+    let create_in = move |dir: Option<String>, explicit_node: Option<String>| {
+        // No reachable node → a create can only fail; the header
+        // affordance is hidden, so the hotkey no-ops to match (the
+        // old `nodesConnected !== "connected"` guard).
+        if creating.get_untracked() || !node_connected.get_untracked() {
+            return;
+        }
+        let aim_now = aim.get_untracked();
+        let primary = node_primary.get_untracked();
+        let focused = effective_node(&aim_now.node, &primary);
+        let cwd = resolve_create_cwd(
+            dir.as_deref(),
+            &aim_now,
+            all_sessions
+                .read_untracked()
+                .iter()
+                .map(|r| (r.cwd.as_str(), &r.node)),
+            &focused,
+            &primary,
+        );
+        let (node, agent, model) = create_target(&aim_now, explicit_node.as_deref(), &primary);
+        creating.set(true);
+        create_error.set(None);
+        leptos::task::spawn_local(async move {
+            match create_session(cwd, agent, None, model, node).await {
+                Ok(res) => {
+                    creating.set(false);
+                    sessions.refetch();
+                    let href = if res.agent_id.is_empty() {
+                        format!("/?session={}", res.id)
+                    } else {
+                        format!("/?session={}&agent={}", res.id, res.agent_id)
+                    };
+                    navigate.with_value(|n| n(&href, NavigateOptions::default()));
+                }
+                Err(e) => {
+                    create_error.set(Some(e.to_string()));
+                    creating.set(false);
+                }
+            }
+        });
+    };
+
     // Ordered `(id, agent)` of the rows currently on screen —
     // filtered, sorted, sectioned, and with collapsed sections
     // skipped — so ArrowUp/ArrowDown can move the `?session=`
@@ -292,10 +369,34 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
             sessions.refetch();
             pending.refetch();
             nodes.refetch();
+            agents_q.refetch();
         }));
         crate::app::every_ms(30_000, move || {
             pending.refetch();
             nodes.refetch();
+        });
+        // Resource → mirror-signal Effects — the menus + create
+        // button read the signals so SSR and first hydration emit
+        // the same (empty) markup; values land post-mount.
+        Effect::new(move |_| {
+            node_connected.set(
+                nodes
+                    .get()
+                    .and_then(Result::ok)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|r| r.status == "up"),
+            );
+        });
+        Effect::new(move |_| {
+            if let Some(n) = info_q.get().and_then(Result::ok) {
+                node_primary.set((!n.id.is_empty()).then_some(n.id));
+            }
+        });
+        Effect::new(move |_| {
+            let q = agents_q.get();
+            agents_loaded.set(q.is_some());
+            agents_roster.set(q.and_then(Result::ok).unwrap_or_default());
         });
         // Clicking anywhere outside the menus closes them (the
         // right-click that opens one precedes `contextmenu`, not a
@@ -411,11 +512,11 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                     ev.prevent_default();
                 }
                 match action {
-                    // `n` — jump to the new-session cwd input.
+                    // `n` — the same create the header's "New
+                    // session" button runs (no fields anymore; the
+                    // desktop aim drives it).
                     keymap::Action::FocusNewSession => {
-                        if let Some(el) = cwd_input_ref.get() {
-                            let _ = el.focus();
-                        }
+                        create_in(None, None);
                     }
                     // Escape cascade — row menu first, then clear +
                     // blur the focused filter, otherwise drop the
@@ -511,123 +612,91 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                 }
             }
         >
-            // Panel header — the sidebar-09 section title + the same
-            // collapse affordance the rail button and ⌘B drive.
-            <div class="flex h-11 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
-                <span class="text-sm font-semibold">"Sessions"</span>
-                <button
-                    type="button"
-                    aria-label="Collapse the sessions panel"
-                    title="Collapse the sessions panel (⌘B)"
-                    class="hidden size-7 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground lg:inline-flex"
-                    on:click=move |_| panel_open.0.update(|o| *o = !*o)
-                >
-                    <Icon name="panel-left-close" class="size-4"/>
-                </button>
-            </div>
             {
                 // `.into_any()` at each layout joint caps rustc's
-                // view-type depth — the form/import subtree is the
-                // deepest chain in this file (nested `into_any`
-                // instantiations across a component boundary overflow
-                // the query-depth limit in the wasm build).
+                // view-type depth — the header menus make this subtree
+                // as deep as the list itself.
                 view! {
-            <div class="border-b p-3">
-                <NewSessionForm
-                    cwd_ref=cwd_input_ref
-                    cwd=new_cwd
-                    on_created=move || sessions.refetch()
-                />
-                <ImportCard on_imported=move || sessions.refetch()/>
+            // Panel header — the sidebar-09 section title + the old
+            // sidebar's icon row: search popover, filters menu, sort
+            // menu, then the collapse affordance the rail button and
+            // ⌘B drive (kept last, like the old `PanelLeftClose`).
+            <div class="flex h-11 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
+                <span class="text-sm font-semibold">"Sessions"</span>
+                <div class="flex items-center gap-0.5">
+                    <SessionSearchMenu text=filter_text input_ref=filter_input_ref/>
+                    <SessionFilterMenu
+                        rows=all_sessions
+                        roster=agents_roster
+                        loaded=agents_loaded
+                        agents=agent_filter
+                        recency=recency_filter
+                        status=status_filter
+                    />
+                    <SessionSortMenu sort=sort_mode/>
+                    <button
+                        type="button"
+                        aria-label="Collapse the sessions panel"
+                        title="Collapse the sessions panel (⌘B)"
+                        class="hidden size-7 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground lg:inline-flex"
+                        on:click=move |_| panel_open.0.update(|o| *o = !*o)
+                    >
+                        <Icon name="panel-left-close" class="size-4"/>
+                    </button>
+                </div>
             </div>
                 }
                 .into_any()
             }
             {
-                // Filter bar — client-side only. The agent options read
-                // `all_sessions`, which is empty until the Suspend below
-                // resolves, so SSR and first hydration emit the same
-                // empty checkbox list (like the agent select in
-                // NewSessionForm). `.into_any()` caps this joint's
-                // view-type depth like the layout joints above.
+                // `.into_any()` at each layout joint caps rustc's
+                // view-type depth — the buttons/menus subtree is the
+                // deepest chain in this file (nested `into_any`
+                // instantiations across a component boundary overflow
+                // the query-depth limit in the wasm build).
                 view! {
-            <div class="border-b p-2">
-                    <div class="flex flex-col gap-1.5">
-                        // `{..}` marks everything after it as spread
-                        // attrs on the component's root element —
-                        // `node_ref` only works that way on components.
-                        <Input
-                            {..}
-                            node_ref=filter_input_ref
-                            attr:r#type="text"
-                            attr:placeholder="Filter sessions…"
-                            prop:value=move || filter_text.get()
-                            on:input=move |ev| filter_text.set(event_target_value(&ev))
-                        />
-                        <div class="flex gap-1.5">
-                            <select
-                                class=format!("{SELECT_CLASS} flex-1")
-                                prop:value=move || sort_mode.get().as_str()
-                                on:change=move |ev| {
-                                    sort_mode.set(SortMode::parse(&event_target_value(&ev)));
-                                }
-                            >
-                                <option value="newest">"newest"</option>
-                                <option value="oldest">"oldest"</option>
-                                <option value="title">"title"</option>
-                            </select>
-                            <select
-                                class=format!("{SELECT_CLASS} flex-1")
-                                prop:value=move || status_filter.get().as_str()
-                                on:change=move |ev| {
-                                    status_filter.set(StatusFilter::parse(&event_target_value(&ev)));
-                                }
-                            >
-                                <option value="all">"any"</option>
-                                <option value="free">"free"</option>
-                                <option value="locked">"locked"</option>
-                            </select>
-                            <AgentFilter rows=all_sessions selected=agent_filter/>
-                        </div>
-                        // Recency chips — fixed 24h/7d/30d windows on
-                        // `updated_at`.
-                        <div class="flex gap-1" data-name="RecencyFilter">
-                            {[
-                                (Recency::Any, "any"),
-                                (Recency::Day, "24h"),
-                                (Recency::Week, "7d"),
-                                (Recency::Month, "30d"),
-                            ]
-                                .into_iter()
-                                .map(|(r, label)| {
-                                    view! {
-                                        <button
-                                            type="button"
-                                            data-name="RecencyChip"
-                                            data-active=move || {
-                                                (recency_filter.get() == r).then_some("")
-                                            }
-                                            class=move || {
-                                                let base = "rounded-md border px-2 py-0.5 text-[11px]";
-                                                if recency_filter.get() == r {
-                                                    format!("{base} border-border bg-accent text-foreground")
-                                                } else {
-                                                    format!("{base} border-transparent text-muted-foreground hover:text-foreground")
-                                                }
-                                            }
-                                            on:click=move |_| recency_filter.set(r)
-                                        >
-                                            {label}
-                                        </button>
+            <div class="flex shrink-0 flex-col gap-1.5 border-b p-3">
+                // "New session" — one click creates immediately with
+                // the desktop aim (the old `create(resolvedCwd)`);
+                // hidden while no node is reachable. The signal stays
+                // false through SSR + first hydration — the mirror
+                // Effect flips it post-mount, so markup agrees.
+                {move || {
+                    node_connected.get().then(|| {
+                        view! {
+                            <button
+                                type="button"
+                                data-name="NewSessionButton"
+                                class=format!(
+                                    "{} w-full",
+                                    ButtonClass {
+                                        variant: ButtonVariant::Secondary,
+                                        size: ButtonSize::Default,
                                     }
-                                })
-                                .collect::<Vec<_>>()}
-                        </div>
-                    </div>
-                </div>
-                    }
-                    .into_any()
+                                    .to_class()
+                                )
+                                disabled=move || creating.get()
+                                title="New session (n)"
+                                on:click=move |_| create_in(None, None)
+                            >
+                                <Icon name="plus" class="size-3.5"/>
+                                {move || {
+                                    if creating.get() { "Creating…" } else { "New session" }
+                                }}
+                            </button>
+                        }
+                    })
+                }}
+                <ImportCard on_imported=move || sessions.refetch()/>
+                {move || {
+                    create_error
+                        .get()
+                        .map(|e| view! { <ErrorBanner message=e/> })
+                }}
+            </div>
                 }
+                .into_any()
+            }
             // `min-h-0` lets the scroll area shrink inside the column
             // instead of pushing the header/form off-screen.
             <div class="flex min-h-0 flex-1 overflow-y-auto p-2">
@@ -1237,10 +1306,22 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                         active=group_menu_active
                                         on_click=Box::new(move || {
                                             group_menu.set(None);
-                                            new_cwd.set(key.clone());
-                                            if let Some(el) = cwd_input_ref.get() {
-                                                let _ = el.focus();
-                                            }
+                                            // Straight into the shared
+                                            // create — the old
+                                            // `setCreateCwd` → create
+                                            // semantics, scoped to the
+                                            // group's node.
+                                            let node = node_for_cwd(
+                                                all_sessions
+                                                    .read_untracked()
+                                                    .iter()
+                                                    .map(|r| {
+                                                        (r.cwd.as_str(), &r.node)
+                                                    }),
+                                                &key,
+                                                &node_primary.get_untracked(),
+                                            );
+                                            create_in(Some(key.clone()), node);
                                         })
                                     >
                                         "New session here"
@@ -1805,436 +1886,400 @@ fn CtxMenuItem(
     }
 }
 
-/// Agent multi-select — a `<details>` dropdown of checkboxes over the
-/// resolved list's distinct agents. Empty selection means "all
-/// agents"; the trigger shows the pick count. Same native-details
-/// pattern as `components::Dropdown`, bespoke because the label is
-/// reactive and the items stay open while toggled.
+/// Header-menu trigger — the ghost `icon-xs` cell the search/filters/
+/// sort buttons share (the collapse button's sibling size); on a
+/// `<summary>` it hides the native marker.
+const HDR_MENU_BTN: &str = "relative inline-flex size-7 shrink-0 cursor-pointer select-none \
+                          list-none items-center justify-center rounded-md \
+                          text-sidebar-foreground/60 transition-colors \
+                          hover:bg-sidebar-accent hover:text-sidebar-accent-foreground \
+                          focus-visible:ring-2 focus-visible:ring-ring \
+                          [&::-webkit-details-marker]:hidden";
+/// The dropdown panel under a header-menu trigger — right-aligned
+/// like the old `align="end"` popovers.
+const HDR_MENU_PANEL: &str = "absolute right-0 z-50 mt-1 rounded-3xl bg-popover p-1.5 text-sm \
+                            text-popover-foreground shadow-lg ring-1 ring-border";
+/// Muted/inert menu row — the empty-submenu filler ("No agents").
+const MENU_ITEM_DISABLED_CLS: &str = "flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 \
+                                    text-sm font-medium text-muted-foreground cursor-default";
+/// Close the whole menu tree — pick rows climb to the `[data-panel-menu]`
+/// root (their `closest('details')` would stop at a submenu). Runs
+/// pre-hydration like the backdrop's handler; the backdrop itself is a
+/// direct child of the outer `<details>`, so the same script serves.
+const CLOSE_MENU_ALL: &str = "var r=this.closest('[data-panel-menu]');\
+                            r.querySelectorAll('details').forEach(function(d){d.removeAttribute('open')});\
+                            r.removeAttribute('open')";
+
+/// The checked state marker shared by the header menus' pick rows —
+/// a trailing `✓`, the old CheckboxItem/RadioItem indicator slot.
+fn check_icon() -> impl IntoView {
+    view! { <Icon name="check" class="size-3.5 shrink-0 text-primary"/> }
+}
+
+/// A `<details>` submenu inside a header menu — the `AimSubMenu`
+/// shape (icon + label + muted right-hand hint + chevron) with the
+/// panel flying LEFT: the header menus anchor at the panel's right
+/// edge, so `right-full` keeps flyouts on-screen (the old
+/// `DropdownMenuSubContent` flipped toward the viewport the same
+/// way).
 #[component]
-fn AgentFilter(
-    /// The last resolved session list — options derive from it.
-    rows: RwSignal<Vec<SessionRow>>,
-    /// Selected agent ids (empty = all).
-    selected: RwSignal<BTreeSet<String>>,
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+fn PanelSubMenu(
+    /// Lucide name for the leading glyph.
+    #[prop(into)]
+    icon: String,
+    #[prop(into)] label: String,
+    /// The current pick, right-aligned in muted text — the old
+    /// `Hint` slot ("" while the default applies).
+    #[prop(into)]
+    value: Signal<String>,
+    /// `data-name` hook for tests/e2e.
+    #[prop(into, optional)]
+    data_name: String,
+    children: Children,
 ) -> impl IntoView {
     view! {
-        <details class="group relative flex-1" data-name="AgentFilter">
-            <summary class="list-none cursor-pointer select-none [&::-webkit-details-marker]:hidden">
-                <span class=format!("{SELECT_CLASS} items-center justify-between")>
-                    {move || {
-                        let n = selected.read().len();
-                        if n == 0 {
-                            "all agents".to_string()
-                        } else {
-                            format!("{n} agent{}", if n == 1 { "" } else { "s" })
-                        }
-                    }}
-                    <Icon
-                        name="chevron-down"
-                        class="size-3 opacity-60 transition-transform group-open:rotate-180"
-                    />
+        <details class="group/sub relative" data-name=data_name>
+            <summary
+                class=format!(
+                    "{MENU_ITEM_CLS} list-none select-none [&::-webkit-details-marker]:hidden"
+                )
+            >
+                <Icon name=icon class="size-4 shrink-0 text-muted-foreground"/>
+                <span class="flex min-w-0 flex-1 items-baseline justify-between gap-2">
+                    <span class="shrink-0">{label}</span>
+                    <span class="truncate text-xs font-normal text-muted-foreground">
+                        {move || value.get()}
+                    </span>
                 </span>
+                <Icon
+                    name="chevron-left"
+                    class="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/sub:-rotate-90"
+                />
             </summary>
-            // open: sibling backdrop swallows the outside click
-            <span
-                class="fixed inset-0 z-40 hidden cursor-default group-open:block"
-                onclick="this.parentElement.removeAttribute('open')"
-            ></span>
-            <div class="absolute inset-x-0 z-50 mt-1 max-h-56 overflow-auto rounded-3xl bg-popover p-1.5 text-sm text-popover-foreground shadow-lg ring-1 ring-border">
-                <button
-                    type="button"
-                    class=MENU_ITEM_CLS
-                    on:click=move |_| selected.set(BTreeSet::new())
-                >
-                    "All agents"
-                </button>
-                {move || {
-                    agent_options(&rows.read())
-                        .into_iter()
-                        .map(|a| {
-                            let for_check = a.clone();
-                            let for_toggle = a.clone();
-                            view! {
-                                <label class="flex w-full cursor-pointer items-center gap-2 rounded-2xl px-3 py-2 hover:bg-accent">
-                                    <input
-                                        type="checkbox"
-                                        class="size-3.5 shrink-0 accent-primary"
-                                        prop:checked={
-                                            let a = for_check.clone();
-                                            move || selected.read().contains(&a)
-                                        }
-                                        on:change={
-                                            let a = for_toggle.clone();
-                                            move |ev| {
-                                                let on = event_target_checked(&ev);
-                                                let a = a.clone();
-                                                selected.update(|s| {
-                                                    if on {
-                                                        s.insert(a.clone());
-                                                    } else {
-                                                        s.remove(&a);
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    />
-                                    <span class="min-w-0 truncate">{a}</span>
-                                </label>
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                }}
+            <div class="absolute -top-1.5 right-full z-50 w-52 rounded-3xl bg-popover p-1.5 text-sm text-popover-foreground shadow-lg ring-1 ring-border">
+                {children()}
             </div>
         </details>
     }
+        .into_any()
 }
 
-/// `POST /api/sessions` `{cwd, agent?, title?, model?}`. The agent
-/// select encodes `node|agent` in the option value so a multi-node hub
-/// routes the create to the node advertising that agent; a bare agent
-/// id (or the empty "default") goes to the primary. `cwd_ref` exposes
-/// the working-directory input so the `n` hotkey can focus it; `cwd`
-/// is page-owned so the group menu's "New session here" can prefill.
-///
-/// The fields seed from the desktop aim (`crate::desktop::Desktop` —
-/// the rail footer's menu picks it, `sepia-desktop` persists it):
-/// the Effect below diffs each aim write and copies only the fields
-/// the pick touched, so a half-typed cwd survives an unrelated agent
-/// pick while a node change clears the dir exactly like the old
-/// `pick()` semantics did.
+/// Search — the filter `<input>` inside a header popover (the old
+/// `FilterBar` `Popover`). Same `<details>` pattern as the rail's
+/// desktop menu: works without wasm, a sibling backdrop swallows
+/// outside clicks, and inline handlers cover focus-on-open and
+/// Escape-to-close so both run pre-hydration. `filter_input_ref`
+/// still feeds `KeyCtx::filter_focused`, so the page's Escape
+/// cascade clears the text as the popover closes — the old
+/// `filter.clear` binding's behavior.
 #[component]
-fn NewSessionForm(
-    on_created: impl Fn() + 'static + Send + Sync + Copy,
-    cwd_ref: NodeRef<leptos::html::Input>,
-    cwd: RwSignal<String>,
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+fn SessionSearchMenu(
+    /// The filter text signal — same one the URL sync and the list
+    /// read.
+    text: RwSignal<String>,
+    input_ref: NodeRef<leptos::html::Input>,
 ) -> impl IntoView {
-    // Filled post-hydration — a Resource here resolves during SSR
-    // differently than hydrate (tachys option-vs-comment mismatch).
-    let agents = RwSignal::new(Vec::<AgentDto>::new());
-    #[cfg(feature = "hydrate")]
-    wasm_bindgen_futures::spawn_local(async move {
-        if let Ok(list) = list_agents().await {
-            agents.set(list);
-        }
-    });
-    let navigate = use_navigate();
-    let title = RwSignal::new(String::new());
-    let model = RwSignal::new(String::new());
-    let agent_sel = RwSignal::new(String::new());
-    let creating = RwSignal::new(false);
-    let form_error: RwSignal<Option<String>> = RwSignal::new(None);
-
-    // Adopt the desktop aim — the first run seeds the stored picks
-    // (`sepia-desktop` lands via the provider's own Effect right
-    // before this one); a later menu pick re-seeds only the fields it
-    // changed. `prev` snapshots what was last applied so typing in a
-    // field isn't clobbered by an unrelated aim write.
-    #[cfg(feature = "hydrate")]
-    {
-        let aim = expect_context::<crate::desktop::Desktop>().0;
-        let mut prev = aim.get_untracked();
-        Effect::new(move |_| {
-            let next = aim.get();
-            if next.cwd != prev.cwd {
-                cwd.set(next.cwd.clone().unwrap_or_default());
-            }
-            if next.model != prev.model {
-                model.set(next.model.clone().unwrap_or_default());
-            }
-            if next.node != prev.node || next.agent != prev.agent {
-                agent_sel.set(next.select_value());
-            }
-            prev = next;
-        });
-    }
-
-    // Cwd autocomplete. `dir_results` is `(fetched parent, subdirs)` —
-    // keyed by parent so a stale response can't feed a newer typed
-    // value. Empty on SSR and first hydration alike; the dropdown is
-    // always-rendered markup toggled only by class.
-    let dir_results = RwSignal::new((String::new(), Vec::<String>::new()));
-    let suggest_open = RwSignal::new(false);
-    let highlight = RwSignal::new(0usize);
-    let suggestions = Memo::new(move |_| {
-        let (parent, dirs) = dir_results.get();
-        let typed = cwd.get();
-        match path_parts(&typed) {
-            Some((p, _)) if p == parent => complete_path(&typed, &dirs),
-            _ => Vec::new(),
-        }
-    });
-
-    // Fetch the children of the typed path's parent (no-op for
-    // non-absolute input). Routed to the node the `node|agent` select
-    // encodes, like `create` below.
-    let fetch_dirs = move |typed: &str| {
-        let Some((parent, _)) = path_parts(typed) else {
-            dir_results.set((String::new(), Vec::new()));
-            return;
-        };
-        let node = agent_sel
-            .get_untracked()
-            .split_once('|')
-            .map(|(n, _)| n.to_string());
-        leptos::task::spawn_local(async move {
-            if let Ok(dirs) = fs_dirs(parent.clone(), node).await {
-                dir_results.set((parent, dirs));
-            }
-        });
-    };
-
-    // Complete the typed path to `dir` + a trailing `/`, then fetch its
-    // children so the dropdown drills straight into the next level.
-    let pick_dir = move |dir: String| {
-        let next = format!("{}/", dir.trim_end_matches('/'));
-        cwd.set(next.clone());
-        highlight.set(0);
-        suggest_open.set(true);
-        fetch_dirs(&next);
-    };
-
-    let create = move || {
-        let cwd_value = cwd.get().trim().to_string();
-        if cwd_value.is_empty() || creating.get() {
-            return;
-        }
-        creating.set(true);
-        form_error.set(None);
-        let sel = agent_sel.get();
-        let (node, agent_id) = match sel.split_once('|') {
-            Some((n, a)) => (Some(n.to_string()), non_empty(a)),
-            None => (None, non_empty(&sel)),
-        };
-        let title = non_empty(&title.get());
-        let model = non_empty(&model.get());
-        let navigate = navigate.clone();
-        leptos::task::spawn_local(async move {
-            match create_session(cwd_value, agent_id, title, model, node).await {
-                Ok(res) => {
-                    on_created();
-                    let href = if res.agent_id.is_empty() {
-                        format!("/?session={}", res.id)
-                    } else {
-                        format!("/?session={}&agent={}", res.id, res.agent_id)
-                    };
-                    navigate(&href, NavigateOptions::default());
-                }
-                Err(e) => {
-                    form_error.set(Some(e.to_string()));
-                    creating.set(false);
-                }
-            }
-        });
-    };
-
     view! {
-        <form
-            class="flex flex-col gap-2"
-            on:submit=move |ev| {
-                ev.prevent_default();
-                create();
-            }
-        >
-            <div class="relative">
-                // `{..}` so `node_ref` lands as a spread attr on the
-                // rendered `<input>` (component props can't take it).
-                <Input
-                    {..}
-                    node_ref=cwd_ref
-                    attr:r#type="text"
-                    attr:placeholder="Working directory (required)…"
-                    attr:autocomplete="off"
-                    attr:spellcheck="false"
-                    attr:role="combobox"
-                    attr:aria-controls="cwd-suggest"
-                    attr:aria-expanded=move || {
-                        (suggest_open.get() && !suggestions.read().is_empty()).to_string()
-                    }
-                    attr:aria-activedescendant=move || {
-                        (suggest_open.get() && !suggestions.read().is_empty())
-                            .then(|| format!("cwd-suggest-{}", highlight.get()))
-                    }
-                    prop:value=move || cwd.get()
-                    on:input=move |ev| {
-                        let v = event_target_value(&ev);
-                        cwd.set(v.clone());
-                        highlight.set(0);
-                        suggest_open.set(true);
-                        fetch_dirs(&v);
-                    }
-                    on:focus=move |_| {
-                        suggest_open.set(true);
-                        fetch_dirs(&cwd.get_untracked());
-                    }
-                    on:blur=move |_| suggest_open.set(false)
-                    on:keydown=move |ev| {
-                        let count = suggestions.get_untracked().len();
-                        let open = suggest_open.get_untracked() && count > 0;
-                        match ev.key().as_str() {
-                            // The document-level ArrowUp/Down + Escape
-                            // hotkeys skip editable targets, so these
-                            // never fight the session-cycling keys.
-                            "ArrowDown" if open => {
-                                ev.prevent_default();
-                                highlight.update(|h| *h = (*h + 1) % count);
-                            }
-                            "ArrowUp" if open => {
-                                ev.prevent_default();
-                                highlight.update(|h| *h = (*h + count - 1) % count);
-                            }
-                            "Enter" if open => {
-                                // Complete the highlighted dir instead
-                                // of submitting the form.
-                                ev.prevent_default();
-                                let i = highlight.get_untracked().min(count - 1);
-                                if let Some(dir) = suggestions.get_untracked().get(i).cloned() {
-                                    pick_dir(dir);
-                                }
-                            }
-                            "Escape" if open => {
-                                // The global Escape handler would drop
-                                // `?session=` — the dropdown owns it.
-                                ev.stop_propagation();
-                                suggest_open.set(false);
-                            }
-                            _ => {}
-                        }
-                    }
-                />
-                // Suggestion popover — always rendered so SSR and first
-                // hydration agree; `hidden` until a `dir_results` entry
-                // lands post-hydration.
-                <ul
-                    id="cwd-suggest"
-                    role="listbox"
-                    aria-label="Directory suggestions"
-                    class=move || {
-                        let base = "absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-auto \
-                                    rounded-md border bg-popover p-1 text-sm text-popover-foreground \
-                                    shadow-md";
-                        if suggest_open.get() && !suggestions.read().is_empty() {
-                            base.to_string()
-                        } else {
-                            format!("{base} hidden")
-                        }
-                    }
-                >
-                    {move || {
-                        suggestions
-                            .get()
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, dir)| {
-                                let pick = dir.clone();
-                                view! {
-                                    <li
-                                        id=format!("cwd-suggest-{i}")
-                                        role="option"
-                                        aria-selected=move || {
-                                            (highlight.get() == i).to_string()
-                                        }
-                                        class=move || {
-                                            let base = "cursor-pointer truncate rounded-sm px-2 \
-                                                        py-1 font-mono text-xs";
-                                            if highlight.get() == i {
-                                                format!("{base} bg-accent text-accent-foreground")
-                                            } else {
-                                                base.to_string()
-                                            }
-                                        }
-                                        // `mousedown`'s default would
-                                        // blur the input before `click`
-                                        // lands — prevent it so the
-                                        // pick keeps focus.
-                                        on:mousedown=move |ev| ev.prevent_default()
-                                        on:click=move |_| pick_dir(pick.clone())
-                                    >
-                                        {dir}
-                                    </li>
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    }}
-                </ul>
+        <details class="group relative" data-name="SearchMenu" data-panel-menu>
+            <summary
+                class=HDR_MENU_BTN
+                aria-label="Search sessions"
+                title="Search (⌘K)"
+                // Focus the input once `open` lands — the old popover's
+                // `requestAnimationFrame` focus. Plain inline JS so it
+                // runs pre-hydration like the backdrop.
+                onclick="setTimeout(function(){var d=this.parentElement;                         if(d.open){var i=d.querySelector('input');if(i)i.focus()}},0)"
+            >
+                <Icon name="search" class="size-4"/>
+            </summary>
+            // open: sibling backdrop swallows the outside click and
+            // folds the tree.
+            <span
+                class="fixed inset-0 z-40 hidden cursor-default group-open:block"
+                onclick=CLOSE_MENU_ALL
+            ></span>
+            <div class=format!("{HDR_MENU_PANEL} w-72")>
+                <div class="relative">
+                    // `{..}` so `node_ref` lands as a spread attr on the
+                    // rendered `<input>` (component props can't take it).
+                    <Input
+                        {..}
+                        node_ref=input_ref
+                        attr:r#type="search"
+                        attr:placeholder="Filter sessions…"
+                        attr:aria-label="Filter sessions"
+                        class="pr-16"
+                        prop:value=move || text.get()
+                        on:input=move |ev| text.set(event_target_value(&ev))
+                        attr:onkeydown="if(event.key==='Escape'){                            this.closest('details').removeAttribute('open')}"
+                    />
+                    <span
+                        class="pointer-events-none absolute inset-y-0 right-2 my-auto inline-flex items-center gap-0.5"
+                        aria-hidden="true"
+                    >
+                        <kbd class="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                            "⌘"
+                        </kbd>
+                        <kbd class="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                            "K"
+                        </kbd>
+                    </span>
+                </div>
             </div>
-            <div class="flex gap-2">
-                <Input
-                    attr:r#type="text"
-                    attr:placeholder="Title (optional)…"
-                    attr:maxlength="200"
-                    class="flex-1"
-                    prop:value=move || title.get()
-                    on:input=move |ev| title.set(event_target_value(&ev))
-                />
-                <Input
-                    attr:r#type="text"
-                    attr:placeholder="Model…"
-                    attr:maxlength="100"
-                    class="w-28"
-                    prop:value=move || model.get()
-                    on:input=move |ev| model.set(event_target_value(&ev))
-                />
-            </div>
-            <div class="flex gap-2">
-                <select
-                    class=format!("{SELECT_CLASS} flex-1")
-                    prop:value=move || agent_sel.get()
-                    on:change=move |ev| agent_sel.set(event_target_value(&ev))
-                >
-                    <option value="">"default agent"</option>
-                    // A node-only aim (`"node|"`) has no roster option
-                    // — this synthetic one keeps the pick visible
-                    // until the user picks something else.
-                    {move || {
-                        let sel = agent_sel.get();
-                        sel.strip_suffix('|').map(|node| {
-                            let label = format!("{node} · node default");
-                            let value = sel.clone();
-                            view! { <option value=value>{label}</option> }
-                        })
-                    }}
-                    // SSR + hydrate both render empty initially — options
-                    // land post-hydration when `agents` fills.
-                    {move || {
-                        agents
-                            .get()
-                            .into_iter()
-                            .map(|a| {
-                                let value = match &a.node {
-                                    Some(n) if !n.is_empty() => format!("{n}|{}", a.id),
-                                    _ => a.id.clone(),
-                                };
-                                let base = if a.label.trim().is_empty() {
-                                    a.id.clone()
-                                } else {
-                                    a.label.clone()
-                                };
-                                let label = match &a.node {
-                                    Some(n) if !n.is_empty() => format!("{base} · {n}"),
-                                    _ => base,
-                                };
-                                view! { <option value=value>{label}</option> }
-                            })
-                            .collect::<Vec<_>>()
-                    }}
-                </select>
-                <Button
-                    button_type="submit"
-                    disabled=Signal::derive(move || {
-                        creating.get() || cwd.read().trim().is_empty()
+        </details>
+    }
+        .into_any()
+}
+
+/// Filters — the header's three-submenu dropdown (the old
+/// `FilterMenu`): Agents checkboxes (options from the resolved
+/// session list, labels from the node roster), plus Recency and
+/// Status radios. Picks keep the menu open like the old
+/// `closeOnClick={false}` items; the trigger carries the
+/// `active`-count dot (`SessionFilter::badge_count`).
+#[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+fn SessionFilterMenu(
+    /// The last resolved session list — agent options derive from it.
+    rows: RwSignal<Vec<SessionRow>>,
+    /// The node roster — agent ids map to display labels.
+    roster: RwSignal<Vec<AgentDto>>,
+    /// `true` once the roster query resolved (gates the empty state).
+    loaded: RwSignal<bool>,
+    /// Selected agent ids (empty = all).
+    agents: RwSignal<BTreeSet<String>>,
+    recency: RwSignal<Recency>,
+    status: RwSignal<StatusFilter>,
+) -> impl IntoView {
+    view! {
+        <details class="group relative" data-name="FilterMenu" data-panel-menu>
+            <summary class=HDR_MENU_BTN aria-label="Filters" title="Filters">
+                <Icon name="sliders-horizontal" class="size-4"/>
+                {move || {
+                    // `badge_count` — agents + recency + status; the
+                    // search text carries its own affordance.
+                    let f = SessionFilter {
+                        query: String::new(),
+                        status: status.get(),
+                        agents: agents.read().clone(),
+                        sort: SortMode::Newest,
+                        recency: recency.get(),
+                        show_archived: false,
+                    };
+                    (f.badge_count() > 0).then(|| {
+                        view! {
+                            <span
+                                data-name="FilterBadge"
+                                class="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-primary"
+                            ></span>
+                        }
+                    })
+                }}
+            </summary>
+            <span
+                class="fixed inset-0 z-40 hidden cursor-default group-open:block"
+                onclick=CLOSE_MENU_ALL
+            ></span>
+            <div class=format!("{HDR_MENU_PANEL} w-52")>
+                <PanelSubMenu
+                    icon="bot"
+                    label="Agents"
+                    data_name="AgentsSubmenu"
+                    value=Signal::derive(move || {
+                        let n = agents.read().len();
+                        if n == 0 { String::new() } else { n.to_string() }
                     })
                 >
-                    <Icon name="plus" class="size-3.5"/>
-                    {move || if creating.get() { "…" } else { "New" }}
-                </Button>
+                    {move || {
+                        let opts = agent_options(&rows.read());
+                        if loaded.get() && opts.is_empty() {
+                            // Empty roster = no node reachable — point
+                            // at the fix instead of a blank submenu
+                            // (the old `agentsLoaded && empty` gate).
+                            view! {
+                                <button
+                                    type="button"
+                                    class=MENU_ITEM_DISABLED_CLS
+                                    disabled=true
+                                >
+                                    <span class="min-w-0 flex-1 truncate text-left">
+                                        "No agents — connect a node"
+                                    </span>
+                                </button>
+                                <A
+                                    href="/nodes"
+                                    attr:class=MENU_ITEM_CLS
+                                    attr:onclick=CLOSE_MENU_ALL
+                                >
+                                    <Icon
+                                        name="plus"
+                                        class="size-4 shrink-0 text-muted-foreground"
+                                    />
+                                    <span class="min-w-0 flex-1 truncate text-left">
+                                        "Add a node"
+                                    </span>
+                                </A>
+                            }
+                                .into_any()
+                        } else {
+                            let labels: BTreeMap<String, String> = roster
+                                .read()
+                                .iter()
+                                .map(|a| {
+                                    let label = if a.label.trim().is_empty() {
+                                        a.id.clone()
+                                    } else {
+                                        a.label.clone()
+                                    };
+                                    (a.id.clone(), label)
+                                })
+                                .collect();
+                            opts.into_iter()
+                                .map(|id| {
+                                    let label = labels.get(&id).cloned().unwrap_or(id.clone());
+                                    let checked = agents.read().contains(&id);
+                                    let for_toggle = id.clone();
+                                    view! {
+                                        <button
+                                            type="button"
+                                            class=MENU_ITEM_CLS
+                                            data-name="AgentCheckItem"
+                                            on:click=move |_| {
+                                                let id = for_toggle.clone();
+                                                agents.update(|s| {
+                                                    if !s.remove(&id) {
+                                                        s.insert(id);
+                                                    }
+                                                });
+                                            }
+                                        >
+                                            <span class="min-w-0 flex-1 truncate text-left">
+                                                {label}
+                                            </span>
+                                            {checked.then(check_icon)}
+                                        </button>
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .into_any()
+                        }
+                    }}
+                </PanelSubMenu>
+                <PanelSubMenu
+                    icon="clock"
+                    label="Recency"
+                    data_name="RecencySubmenu"
+                    value=Signal::derive(move || {
+                        let r = recency.get();
+                        if r == Recency::Any {
+                            String::new()
+                        } else {
+                            r.label().to_string()
+                        }
+                    })
+                >
+                    {[Recency::Any, Recency::Day, Recency::Week, Recency::Month]
+                        .into_iter()
+                        .map(|r| {
+                            view! {
+                                <button
+                                    type="button"
+                                    class=MENU_ITEM_CLS
+                                    data-name="RecencyItem"
+                                    on:click=move |_| recency.set(r)
+                                >
+                                    <span class="min-w-0 flex-1 truncate text-left">
+                                        {r.label()}
+                                    </span>
+                                    {move || (recency.get() == r).then(check_icon)}
+                                </button>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                </PanelSubMenu>
+                <PanelSubMenu
+                    icon="circle-dot"
+                    label="Status"
+                    data_name="StatusSubmenu"
+                    value=Signal::derive(move || {
+                        let s = status.get();
+                        if s == StatusFilter::All {
+                            String::new()
+                        } else {
+                            s.label().to_string()
+                        }
+                    })
+                >
+                    {[StatusFilter::All, StatusFilter::Free, StatusFilter::Locked]
+                        .into_iter()
+                        .map(|s| {
+                            view! {
+                                <button
+                                    type="button"
+                                    class=MENU_ITEM_CLS
+                                    data-name="StatusItem"
+                                    on:click=move |_| status.set(s)
+                                >
+                                    <span class="min-w-0 flex-1 truncate text-left">
+                                        {s.label()}
+                                    </span>
+                                    {move || (status.get() == s).then(check_icon)}
+                                </button>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                </PanelSubMenu>
             </div>
-            {move || {
-                form_error
-                    .get()
-                    .map(|e| view! { <ErrorBanner message=e/> })
-            }}
-        </form>
+        </details>
     }
+    .into_any()
+}
+
+/// Sort — the header's radio dropdown (the old `SortMenu`):
+/// newest/oldest/title, picks close the menu, and the trigger's
+/// `title` carries `Sort: {label}`.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+fn SessionSortMenu(sort: RwSignal<SortMode>) -> impl IntoView {
+    view! {
+        <details class="group relative" data-name="SortMenu" data-panel-menu>
+            <summary
+                class=HDR_MENU_BTN
+                aria-label="Sort sessions"
+                title=move || format!("Sort: {}", sort.get().label())
+            >
+                <Icon name="arrow-up-down" class="size-4"/>
+            </summary>
+            <span
+                class="fixed inset-0 z-40 hidden cursor-default group-open:block"
+                onclick=CLOSE_MENU_ALL
+            ></span>
+            <div class=format!("{HDR_MENU_PANEL} w-44")>
+                {[SortMode::Newest, SortMode::Oldest, SortMode::Title]
+                    .into_iter()
+                    .map(|m| {
+                        view! {
+                            <button
+                                type="button"
+                                class=MENU_ITEM_CLS
+                                data-name="SortItem"
+                                onclick=CLOSE_MENU_ALL
+                                on:click=move |_| sort.set(m)
+                            >
+                                <span class="min-w-0 flex-1 truncate text-left">
+                                    {m.label()}
+                                </span>
+                                {move || (sort.get() == m).then(check_icon)}
+                            </button>
+                        }
+                    })
+                    .collect::<Vec<_>>()}
+            </div>
+        </details>
+    }
+    .into_any()
 }
 
 /// The import card's file `change` → read the pick as text and parse
@@ -2350,13 +2395,16 @@ fn ImportCard(
     };
 
     view! {
-        <div data-name="ImportCard" class="pt-2">
+        <div data-name="ImportCard">
+            // The second w-full button under "New session" — the old
+            // card's ghost affordance with the upload glyph; the Sheet
+            // it opens is unchanged.
             <Button
                 variant=ButtonVariant::Ghost
-                size=ButtonSize::Sm
-                class="w-full justify-start text-muted-foreground"
+                class="w-full text-muted-foreground hover:text-foreground"
                 on_click=Box::new(move || open.set(true))
             >
+                <Icon name="upload" class="size-3.5"/>
                 "Import session…"
             </Button>
             <Sheet open=open side="right" class="w-96" label="Import session">

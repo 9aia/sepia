@@ -608,7 +608,8 @@ pub mod icons {
     /// `check`, `download`, `upload`, `archive`, `info`, `plug`,
     /// `unplug`, `square`, `loader-circle`, `trash`, `folder-open`,
     /// `globe`, `octagon-x`, `file`, `monitor`, `rotate-ccw`,
-    /// `keyboard`.
+    /// `keyboard`, `search`, `sliders-horizontal`, `arrow-up-down`,
+    /// `clock`, `circle-dot`, `chevron-left`.
     #[component]
     #[allow(clippy::needless_pass_by_value)] // component props are owned
     pub fn Icon(
@@ -685,6 +686,18 @@ pub mod icons {
                     "monitor" => view! { <lucide_leptos::Monitor/> }.into_any(),
                     "rotate-ccw" => view! { <lucide_leptos::RotateCcw/> }.into_any(),
                     "keyboard" => view! { <lucide_leptos::Keyboard/> }.into_any(),
+                    "search" => view! { <lucide_leptos::Search/> }.into_any(),
+                    "sliders-horizontal" => {
+                        view! { <lucide_leptos::SlidersHorizontal/> }.into_any()
+                    }
+                    "arrow-up-down" => {
+                        view! { <lucide_leptos::ArrowUpDown/> }.into_any()
+                    }
+                    "clock" => view! { <lucide_leptos::Clock/> }.into_any(),
+                    "circle-dot" => view! { <lucide_leptos::CircleDot/> }.into_any(),
+                    "chevron-left" => {
+                        view! { <lucide_leptos::ChevronLeft/> }.into_any()
+                    }
                     _ => view! { <lucide_leptos::MessageSquare/> }.into_any(),
                 }}
             </span>

@@ -59,7 +59,8 @@ pub enum Action {
     TogglePalette,
     /// ⌘B / Ctrl-B — collapse/expand the list column.
     ToggleList,
-    /// `n` — focus the new-session cwd input.
+    /// `n` — create a session with the desktop aim (the old
+    /// `session.new` binding).
     FocusNewSession,
     /// ArrowDown — move `?session=` to the next visible row.
     NavNext,

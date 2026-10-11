@@ -187,21 +187,28 @@ async fn user_simulation() {
     }
     gate(&browser, "step 3: desktop menu").await;
 
-    // -- 4. New-session form seeds from the aim. ----------------------
-    // If a pick landed, the form's agent select / cwd should reflect
-    // it after a reload (the adoption Effect).
+    // -- 4. "New session" button mounts once the node probe lands. ----
+    // The aim drives the create directly now — no form fields. With
+    // the node up the affordance renders enabled; the desktop pick
+    // persists in `sepia-desktop` and feeds the create call.
     browser.goto(&format!("{url}/")).await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        wait_js(
+            &browser,
+            "!!document.querySelector('button[data-name=\"NewSessionButton\"]')",
+            Instant::now() + WAIT,
+            "new session button",
+        )
+        .await,
+        "step 4: New session button never mounted with a node up"
+    );
     if picked {
-        let cwd_val = browser
-            .eval(
-                "var i=[...document.querySelectorAll('input')].find(x=>/cwd|director|path|folder/i.test((x.placeholder||'')+(x.getAttribute('aria-label')||'')));\
-                 return i ? i.value : '__no_cwd__'",
-            )
+        let aim = browser
+            .eval("return localStorage.getItem('sepia-desktop')")
             .await;
-        eprintln!("step 4: cwd field value after aim seed: {cwd_val:?}");
+        eprintln!("step 4: persisted desktop aim feeding create: {aim:?}");
     }
-    gate(&browser, "step 4: new-session form").await;
+    gate(&browser, "step 4: new session button").await;
 
     // -- 5. Row context menu opens with real actions. -----------------
     assert!(
@@ -288,6 +295,30 @@ async fn user_simulation() {
         "down-node indicator",
     )
     .await;
+    // The old `nodesConnected` gate — the create affordance must not
+    // mount while nothing is reachable. The live page's status poll
+    // is a 30s tick (and headless timers throttle), so reload: the
+    // probe lands fresh and the mirror must stay disconnected.
+    browser.goto(&format!("{url}/")).await;
+    // Wait for the hydrated-era signal — the button only mounts
+    // post-hydration, so an immediate "absent" would prove nothing.
+    // The probe resolves within seconds; give it a beat past that.
+    let _ = wait_js(
+        &browser,
+        "document.readyState==='complete'",
+        Instant::now() + WAIT,
+        "page load",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let hidden = browser
+        .eval("return !document.querySelector('button[data-name=\"NewSessionButton\"]')")
+        .await;
+    assert_eq!(
+        hidden.as_bool(),
+        Some(true),
+        "step 8: New session button stayed visible with the node down"
+    );
     // Console errors from the dead SSE are expected here — drain
     // them without asserting.
     let _ = browser.severe_logs().await;

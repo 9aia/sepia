@@ -196,32 +196,53 @@ async fn session_list_deep_link_applies_filter_params() {
 }
 
 #[tokio::test]
-async fn session_list_filter_bar_renders_new_controls() {
+async fn session_list_header_renders_filter_menus() {
     let html = page("/", FakeNodeApi::seeded().shared()).await;
-    // Agent multi-select dropdown + recency chips + group headers.
-    assert_contains(&html, "data-name=\"AgentFilter\"");
-    assert_contains(&html, "all agents");
-    assert_contains(&html, "data-name=\"RecencyFilter\"");
+    // The old sidebar's header icon row — search popover + filters +
+    // sort menus before the panel-collapse affordance.
+    assert_contains(&html, "data-name=\"SearchMenu\"");
+    assert_contains(&html, "aria-label=\"Search sessions\"");
+    assert_contains(&html, "data-name=\"FilterMenu\"");
+    assert_contains(&html, "aria-label=\"Filters\"");
+    assert_contains(&html, "data-name=\"SortMenu\"");
+    assert_contains(&html, "aria-label=\"Sort sessions\"");
+    assert_contains(&html, "title=\"Sort: Newest\"");
+    // The search popover holds the filter input + the ⌘K hint; its
+    // focus-on-open and Escape-close hooks are plain inline handlers
+    // so they run pre-hydration like the rail menus' backdrop.
+    assert_contains(&html, "type=\"search\"");
+    assert_contains(&html, "placeholder=\"Filter sessions…\"");
+    assert_contains(&html, "onkeydown");
+    assert_contains(&html, "onclick");
+    // Filter submenus — Agents/Recency/Status with the old labels.
+    assert_contains(&html, "data-name=\"AgentsSubmenu\"");
+    assert_contains(&html, "data-name=\"RecencySubmenu\"");
+    assert_contains(&html, "data-name=\"StatusSubmenu\"");
+    for label in ["Agents", "Any time", "Last 7 days", "Any status", "Locked"] {
+        assert_contains(&html, label);
+    }
+    assert_contains(&html, "data-name=\"SortItem\"");
+    // Group headers + their context menu are unchanged.
     assert_contains(&html, "data-name=\"GroupHeader\"");
     assert_contains(&html, "data-name=\"GroupMenu\"");
-    // The group menu rides the same keyboard-nav wiring as the row
-    // menu; its header button advertises the popup.
     assert_contains(&html, "id=\"sepia-group-menu\"");
     assert_contains(&html, "aria-label=\"Group actions\"");
     assert_contains(&html, "aria-controls=\"sepia-group-menu\"");
 }
 
 #[tokio::test]
-async fn session_list_renders_create_form() {
+async fn session_list_create_button_waits_for_the_node_probe() {
     let html = page("/", FakeNodeApi::seeded().shared()).await;
-    assert_contains(&html, "<form");
-    assert_contains(&html, "Working directory");
-    assert_contains(&html, "default agent");
-    // The cwd autocomplete carries combobox/listbox semantics; the
-    // popover mounts empty (suggestions land post-hydration).
-    assert_contains(&html, "role=\"combobox\"");
-    assert_contains(&html, "role=\"listbox\"");
-    assert_contains(&html, "id=\"cwd-suggest\"");
+    // "New session" is mirror-gated on node health — it mounts
+    // post-hydration (SSR and first-hydration markup agree on its
+    // absence). The old form is gone entirely (the import Sheet's
+    // own cwd override remains, behind its dialog).
+    assert!(!html.contains("data-name=\"NewSessionButton\""));
+    assert!(!html.contains("<form"));
+    assert!(!html.contains("cwd-suggest"));
+    // The import affordance + its always-mounted Sheet do SSR.
+    assert_contains(&html, "data-name=\"ImportCard\"");
+    assert_contains(&html, "Import session…");
 }
 
 #[tokio::test]

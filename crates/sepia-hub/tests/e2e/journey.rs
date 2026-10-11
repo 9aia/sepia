@@ -14,7 +14,7 @@ use crate::harness::{self, Browser, E2eEnv, SESSION_A, TITLE_A, TITLE_B, WAIT, w
 /// Rows in the master-detail list are `<a href="/?session=…">`.
 const ROW: &str = r#"a[href^="/?session="]"#;
 /// The detail panel's prompt textarea.
-const PROMPT: &str = r#"textarea[placeholder*="Message the agent"]"#;
+const PROMPT: &str = r#"textarea[placeholder*="Prompt the agent"]"#; // the composer's live placeholder
 /// The session-list filter box.
 const FILTER: &str = r#"input[placeholder*="Filter sessions"]"#;
 /// The shortcut cheat-sheet's open marker — the markup is always

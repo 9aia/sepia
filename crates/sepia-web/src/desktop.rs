@@ -4,7 +4,8 @@
 //!
 //! [`Desktop`] is an `App`-provided `RwSignal<DesktopAim>` persisted
 //! to localStorage (`sepia-desktop`) — the menu writes it, the
-//! new-session form seeds its fields from it. The menu itself is the
+//! sessions panel's "New session" create reads it directly. The menu
+//! itself is the
 //! codebase's `<details>`-menu pattern (works without wasm, SSR and
 //! hydrate emit identical markup): node submenus list each reachable
 //! node's agent roster (a pick sets node+agent together), and a
@@ -22,7 +23,7 @@ use crate::components::icons::Icon;
 use crate::dto::{AgentDto, NodeStatusDto};
 
 /// The shared aim — `App` provides it; `DesktopMenu` writes it and
-/// `NewSessionForm` reads it. Starts unscoped on both targets; the
+/// sessions panel's create reads it. Starts unscoped on both targets; the
 /// stored aim is adopted post-hydration like `PanelOpen`.
 #[derive(Clone, Copy)]
 pub struct Desktop(pub RwSignal<DesktopAim>);

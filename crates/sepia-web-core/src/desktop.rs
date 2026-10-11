@@ -122,6 +122,72 @@ pub fn recent_cwds<'a>(
         .collect()
 }
 
+/// The spawn dir for a default create — port of the old
+/// `resolveCreateCwd`: an explicit pick (a group row's "New session
+/// here" cwd) wins, then the aim's dir pick, then the focused node's
+/// most recent session cwd, else `"/"` (the wire exposes no homedir —
+/// the old chain's `homedir ?? "/"` tail lands the same way when it
+/// was unset). `sessions` is `(cwd, node-annotation)` pairs in list
+/// order — merged lists arrive newest-first, so the first match IS
+/// the most recent. `node` is the RESOLVED focused id — callers pass
+/// `effective_node(&aim.node, &primary)` so an unset aim scopes the
+/// fallback to the primary's rows.
+pub fn resolve_create_cwd<'a>(
+    picked: Option<&'a str>,
+    aim: &DesktopAim,
+    sessions: impl Iterator<Item = (&'a str, &'a Option<String>)>,
+    node: &Option<String>,
+    primary: &Option<String>,
+) -> String {
+    if let Some(c) = picked.filter(|c| !c.is_empty()) {
+        return c.to_string();
+    }
+    if let Some(c) = &aim.cwd {
+        return c.clone();
+    }
+    sessions
+        .filter(|(cwd, _)| !cwd.is_empty())
+        .find(|(_, n)| effective_node(n, primary) == *node)
+        .map_or_else(|| "/".to_string(), |(cwd, _)| cwd.to_string())
+}
+
+/// The `node`/`agent`/`model` a create carries — port of the old
+/// `resolveCreateTarget`. An explicit node (a group row's "New
+/// session here" naming its machine) always wins; the aim's
+/// agent/model apply only when that node IS the focused one — a pick
+/// scoped to one machine never leaks onto another. `None` fields mean
+/// "the node decides" — the wire tolerates missing values.
+pub fn create_target(
+    aim: &DesktopAim,
+    explicit_node: Option<&str>,
+    primary: &Option<String>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    match explicit_node {
+        Some(node) => {
+            let scoped = effective_node(&aim.node, primary).as_deref() == Some(node);
+            (
+                Some(node.to_string()),
+                if scoped { aim.agent.clone() } else { None },
+                if scoped { aim.model.clone() } else { None },
+            )
+        }
+        None => (aim.node.clone(), aim.agent.clone(), aim.model.clone()),
+    }
+}
+
+/// The node a cwd group's rows belong to — the first matching row's
+/// effective node (the merged list is newest-first; the group menu's
+/// "New session here" passes it as the create's explicit node).
+/// `None` when no row carries that cwd.
+pub fn node_for_cwd<'a>(
+    mut rows: impl Iterator<Item = (&'a str, &'a Option<String>)>,
+    cwd: &str,
+    primary: &Option<String>,
+) -> Option<String> {
+    rows.find(|(c, _)| *c == cwd)
+        .and_then(|(_, n)| effective_node(n, primary))
+}
+
 /// Last two path segments (`9aia/sepia`) — the menu's compact dir
 /// label (the old `dirLabel`; the row keeps the full path in `title`).
 pub fn dir_label(path: &str) -> String {
@@ -297,6 +363,139 @@ mod tests {
                 1
             ),
             vec!["/w/a"]
+        );
+    }
+
+    #[test]
+    fn create_cwd_prefers_pick_then_aim_then_recents() {
+        let primary = Some("n1".to_string());
+        let focused = Some("n1".to_string());
+        let rows = [
+            ("/w/recent", Some("n1".to_string())),
+            ("/w/older", Some("n1".to_string())),
+            ("/remote/x", Some("tower".to_string())),
+        ];
+        let empty_aim = DesktopAim::default();
+        let iter = || rows.iter().map(|(c, n)| (*c, n));
+        // Explicit pick wins outright.
+        assert_eq!(
+            resolve_create_cwd(Some("/picked"), &empty_aim, iter(), &focused, &primary),
+            "/picked"
+        );
+        // The aim's dir pick is next.
+        let aim = DesktopAim {
+            cwd: Some("/aim".into()),
+            ..DesktopAim::default()
+        };
+        assert_eq!(
+            resolve_create_cwd(None, &aim, iter(), &focused, &primary),
+            "/aim"
+        );
+        // Then the focused node's most recent session cwd.
+        assert_eq!(
+            resolve_create_cwd(None, &empty_aim, iter(), &focused, &primary),
+            "/w/recent"
+        );
+        // A peer focus only sees its own recents; nothing → "/".
+        assert_eq!(
+            resolve_create_cwd(
+                None,
+                &empty_aim,
+                iter(),
+                &Some("tower".to_string()),
+                &primary
+            ),
+            "/remote/x"
+        );
+        assert_eq!(
+            resolve_create_cwd(None, &empty_aim, std::iter::empty(), &focused, &primary),
+            "/"
+        );
+        // Bare annotations land in the primary bucket — a focused
+        // primary sees them.
+        let local_rows = [("/local/only", None)];
+        assert_eq!(
+            resolve_create_cwd(
+                None,
+                &empty_aim,
+                local_rows.iter().map(|(c, n)| (*c, n)),
+                &focused,
+                &primary
+            ),
+            "/local/only"
+        );
+    }
+
+    #[test]
+    fn create_target_scopes_aim_fields_to_the_picked_node() {
+        let primary = Some("n1".to_string());
+        let aim = DesktopAim {
+            node: Some("tower".into()),
+            agent: Some("devin".into()),
+            model: Some("m1".into()),
+            cwd: None,
+        };
+        // Default create — the aim passes through verbatim.
+        assert_eq!(
+            create_target(&aim, None, &primary),
+            (
+                Some("tower".to_string()),
+                Some("devin".to_string()),
+                Some("m1".to_string())
+            )
+        );
+        // "New session here" on the focused node — scoped fields apply.
+        assert_eq!(
+            create_target(&aim, Some("tower"), &primary),
+            (
+                Some("tower".to_string()),
+                Some("devin".to_string()),
+                Some("m1".to_string())
+            )
+        );
+        // …on another node the scoped picks don't leak.
+        assert_eq!(
+            create_target(&aim, Some("other"), &primary),
+            (Some("other".to_string()), None, None)
+        );
+        // An unset aim creates with all-defaults.
+        assert_eq!(
+            create_target(&DesktopAim::default(), None, &primary),
+            (None, None, None)
+        );
+        // An unset aim focused on the primary scopes there — bare
+        // annotations resolve through `primary`.
+        let primary_aim = DesktopAim {
+            agent: Some("claude".into()),
+            ..DesktopAim::default()
+        };
+        assert_eq!(
+            create_target(&primary_aim, Some("n1"), &primary),
+            (Some("n1".to_string()), Some("claude".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn node_for_cwd_resolves_the_rows_node() {
+        let primary = Some("n1".to_string());
+        let rows = [
+            ("/w/a", Some("tower".to_string())),
+            ("/w/b", None),
+            ("/w/a", Some("n1".to_string())),
+        ];
+        // First match wins (newest first) — tower's row leads.
+        assert_eq!(
+            node_for_cwd(rows.iter().map(|(c, n)| (*c, n)), "/w/a", &primary),
+            Some("tower".to_string())
+        );
+        // A bare annotation resolves to the primary.
+        assert_eq!(
+            node_for_cwd(rows.iter().map(|(c, n)| (*c, n)), "/w/b", &primary),
+            Some("n1".to_string())
+        );
+        assert_eq!(
+            node_for_cwd(rows.iter().map(|(c, n)| (*c, n)), "/nope", &primary),
+            None
         );
     }
 
