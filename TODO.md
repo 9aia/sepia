@@ -209,15 +209,19 @@ Missing features (wire-supported but no UI):
       convert (detail), pin/archive/rename/delete (list rows), restore/
       rewind (checkpoint rows), model patch, import, attachment-stage
       failures; prompt-send failures toast too
-- [~] a11y — ✓ Sheet/ConfirmDialog/`?` ShortcutsHelp: `role=dialog` +
-      `aria-modal` + `aria-labelledby`/`aria-label`, initial focus +
-      return-focus + Esc (`track_overlay_focus`; no full Tab trap —
-      leptos-use 0.19 lacks `use_focus_trap`), ✓ toast live region
-      (`role=status`, `aria-live=polite` inside the mounted
-      `Toaster`), ✓ `prefers-reduced-motion` in input.css, ✓
+- [~] a11y — ✓ Sheet/ConfirmDialog/`?` ShortcutsHelp/palette:
+      `role=dialog` + `aria-modal` + `aria-labelledby`/`aria-label`,
+      full Tab trap + initial focus + return-focus + Esc (hand-rolled
+      in `components::overlay` on a shared overlay stack — topmost
+      traps, focusables re-queried per press; pure wrap math in
+      `sepia-web-core::focus` since leptos-use 0.19 lacks
+      `use_focus_trap`), ✓ toast live region (`role=status`,
+      `aria-live=polite` inside the mounted `Toaster`), ✓
+      `prefers-reduced-motion` in input.css, ✓
       `role=combobox`/`listbox`/`option` + `aria-activedescendant` on
       the new-session cwd autocomplete, ✓ `aria-haspopup=menu` on the
-      row `⋯` trigger, ✓ keybind remapping. Left: a real focus trap
+      row `⋯` trigger, ✓ keybind remapping. Left: roving arrow-key
+      nav for `role=menu` context menus
 
 Intentionally dropped (v0):
 
