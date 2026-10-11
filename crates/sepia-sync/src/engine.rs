@@ -214,7 +214,10 @@ impl SyncHandle {
         Arc::clone(&self.shared.active_pumps)
     }
 
-    /// Register a node and start syncing it.
+    /// Register a node and start syncing it. Re-registering an existing
+    /// id retargets the node — the running loop is aborted and respawned
+    /// with the new target (e.g. a credential minted after boot); the
+    /// projection's node row + session index survive the swap.
     ///
     /// # Errors
     /// [`SyncError::Shutdown`] if the engine is gone; sqlite failure
@@ -355,8 +358,12 @@ async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Cmd>, cancel: Can
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .insert(target.node.id.clone(), target.clone());
-                    if tasks.contains_key(&target.node.id) {
-                        continue;
+                    // A re-add retargets the node — abort the old loop
+                    // (its SSE pump exits at the next frame or the
+                    // `sse_max_age` deadline) and respawn with the new
+                    // url/token. The projection keeps its rows.
+                    if let Some(prev) = tasks.remove(&target.node.id) {
+                        prev.abort();
                     }
                     let abort = set.spawn(node_loop(
                         target.clone(),

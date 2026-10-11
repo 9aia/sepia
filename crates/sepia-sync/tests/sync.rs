@@ -180,6 +180,12 @@ impl StubNode {
 }
 
 async fn start_stub(sessions: Vec<Session>) -> StubNode {
+    start_stub_with(sessions, None).await
+}
+
+/// `token` arms the node's bearer gate — credential tests connect
+/// tokenless first, then retarget with the minted token.
+async fn start_stub_with(sessions: Vec<Session>, token: Option<String>) -> StubNode {
     let store = Arc::new(MemStore {
         sessions: Mutex::new(sessions.into_iter().map(|s| (s.id.clone(), s)).collect()),
     });
@@ -194,6 +200,7 @@ async fn start_stub(sessions: Vec<Session>) -> StubNode {
     let meta = MetaStore::open(&dir.path().join("meta.json"));
     let state = AppState::new(plane)
         .with_meta(meta.clone())
+        .with_token(token)
         .with_held_watch(Duration::ZERO)
         .with_keep_alive(Duration::from_millis(40));
     let feed = state.feed.clone();
@@ -617,6 +624,49 @@ async fn reconnect_after_node_restart_resyncs() {
     )
     .await;
 
+    handle.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn re_add_retargets_a_node_with_new_credentials() {
+    // The node requires a bearer token; the engine starts tokenless —
+    // every connect 401s, the node stays down. Re-adding the node with
+    // the token restarts its loop under the new credential (this is
+    // the path the hub's pair flow takes after minting a token).
+    let mut stub = start_stub_with(vec![session("s1", "S1")], Some("tok".into())).await;
+    let projection = ProjectionStore::in_memory().unwrap();
+    let handle = SyncEngine::spawn(
+        projection.clone(),
+        Outbox::in_memory().unwrap(),
+        [NodeTarget::new(stub.node_ref("n1"))],
+        fast_options(),
+    );
+    let proj = projection.clone();
+    wait_until(
+        || {
+            proj.node("n1")
+                .unwrap()
+                .is_some_and(|n| n.status == NodeStatus::Down)
+        },
+        Duration::from_secs(10),
+        "tokenless loop stays down",
+    )
+    .await;
+    assert!(indexed("n1", "s1")(&projection).is_none());
+
+    handle
+        .add_node(NodeTarget::with_token(stub.node_ref("n1"), "tok"))
+        .await
+        .unwrap();
+    let proj = projection.clone();
+    wait_until(
+        || indexed("n1", "s1")(&proj).is_some(),
+        Duration::from_secs(10),
+        "retargeted loop synced",
+    )
+    .await;
+
+    stub.down();
     handle.shutdown().await;
 }
 
