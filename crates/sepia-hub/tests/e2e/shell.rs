@@ -148,6 +148,108 @@ async fn question_mark_opens_and_esc_closes_the_shortcut_sheet() {
 
 #[ignore = "needs chromedriver + chrome; set SEPIA_BROWSER_E2E=1"]
 #[tokio::test]
+async fn tab_traps_focus_inside_the_shortcut_sheet() {
+    let Some((env, browser)) = setup().await else {
+        return;
+    };
+    let deadline = Instant::now() + WAIT;
+    wait_elem(&browser.driver, "body", deadline).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    const SHEET_OPEN: &str =
+        r#"return !!document.querySelector('[data-name="ShortcutsHelp"][data-open]')"#;
+    // True while `document.activeElement` lives inside the sheet's
+    // dialog — the whole point of the trap.
+    const FOCUS_INSIDE: &str = r#"const d = document.querySelector(
+            '[data-name="ShortcutsHelp"] [role="dialog"]');
+        return !!d && d.contains(document.activeElement)"#;
+
+    // Open with the same dispatched '?' the hotkey test uses.
+    let mut found = false;
+    while Instant::now() < deadline {
+        browser
+            .eval(
+                r#"document.dispatchEvent(new KeyboardEvent('keydown', {key: '?', bubbles: true}))"#,
+            )
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        if browser.eval(SHEET_OPEN).await == serde_json::Value::Bool(true) {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "? did not open the keyboard-shortcut sheet");
+
+    // Initial focus lands inside the dialog — the trap focuses the
+    // first focusable (or the panel itself) on open.
+    let mut inside = serde_json::Value::Bool(false);
+    let focus_deadline = Instant::now() + std::time::Duration::from_secs(10);
+    while Instant::now() < focus_deadline {
+        inside = browser.eval(FOCUS_INSIDE).await;
+        if inside == serde_json::Value::Bool(true) {
+            break;
+        }
+        tokio::time::sleep(harness::POLL).await;
+    }
+    assert_eq!(
+        inside,
+        serde_json::Value::Bool(true),
+        "opening the sheet never moved focus inside it"
+    );
+
+    // Hammer real Tab presses — more presses than the sheet has
+    // focusables proves the wrap, not luck. The trusted key event
+    // also exercises `preventDefault` against the browser's own
+    // focus traversal.
+    for _ in 0..6 {
+        browser.press(thirtyfour::Key::Tab).await;
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        assert_eq!(
+            browser.eval(FOCUS_INSIDE).await,
+            serde_json::Value::Bool(true),
+            "Tab escaped the shortcut sheet's focus trap"
+        );
+    }
+
+    // Shift+Tab wraps the other way — dispatched, since modifier
+    // chords over send_keys are chromedriver-fragile.
+    for _ in 0..6 {
+        browser
+            .eval(
+                r#"document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Tab', shiftKey: true, bubbles: true}))"#,
+            )
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert_eq!(
+            browser.eval(FOCUS_INSIDE).await,
+            serde_json::Value::Bool(true),
+            "Shift+Tab escaped the shortcut sheet's focus trap"
+        );
+    }
+
+    // Esc still closes the sheet.
+    browser.press(thirtyfour::Key::Escape).await;
+    let mut still = serde_json::Value::Bool(true);
+    let esc_deadline = Instant::now() + std::time::Duration::from_secs(10);
+    while Instant::now() < esc_deadline {
+        still = browser.eval(SHEET_OPEN).await;
+        if still == serde_json::Value::Bool(false) {
+            break;
+        }
+        tokio::time::sleep(harness::POLL).await;
+    }
+    assert_eq!(
+        still,
+        serde_json::Value::Bool(false),
+        "Esc did not close the shortcut sheet"
+    );
+
+    browser.shutdown().await;
+    env.shutdown();
+}
+
+#[ignore = "needs chromedriver + chrome; set SEPIA_BROWSER_E2E=1"]
+#[tokio::test]
 async fn mobile_drawer_opens_at_narrow_viewports() {
     let Some((env, browser)) = setup().await else {
         return;
