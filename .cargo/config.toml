@@ -6,3 +6,7 @@ xtask = "run --package xtask --"
 # RAM, and profile.dev keeps per-unit memory modest.
 [build]
 jobs = 6
+# Compile cache (sccache) — install `sccache` once (`cargo install sccache`
+# or your package manager), then every cargo build reuses cached artifacts.
+# Disable by deleting this line.
+build.rustc-wrapper = "sccache"

@@ -87,3 +87,20 @@ cargo xtask e2e    # needs `cargo xtask site` output in target/site
 - `docs/session-formats.md`, `docs/protocol.md`, `docs/agent-configs.md`
   — domain references (written for the TS tree; still accurate on IR +
   wire semantics).
+
+## Faster iteration (community tools, not homemade)
+
+- **sccache** (`cargo install sccache`): compile cache for repeat builds.
+  Enabled via `build.rustc-wrapper = "sccache"` in `.cargo/config.toml`.
+  Spills to disk instead of RAM.
+- **cargo-nextest** (`cargo nextest run -p <crate>`): faster, lower-RAM
+  test runner — already wired into `cargo xtask test` when installed.
+  Always scope to one crate; avoid `cargo test --workspace`.
+- **cargo-watch** (`cargo install cargo-watch`): re-run `check`/`clippy`/
+  `test` on save during iteration (`cargo watch -x 'check -p sepia-node'`).
+- **cargo-hack** (`cargo install cargo-hack`): feature-matrix checks
+  (`cargo hack check --each-feature`) instead of manually toggling feature
+  flags when trimming dependencies.
+- **isolated worktree** (`git worktree add --detach <path>`) for big
+  rebuilds so your in-progress WIP is untouched.
+
