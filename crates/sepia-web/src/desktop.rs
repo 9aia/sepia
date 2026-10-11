@@ -291,7 +291,19 @@ pub fn DesktopMenu(
     // when even the descriptor hasn't landed).
     let focused_id = move || {
         let a = aim.get();
-        effective_node(&a.node, &primary()).or_else(|| status_rows().first().map(|r| r.id.clone()))
+        if let Some(n) = &a.node {
+            return Some(n.clone());
+        }
+        let rows = status_rows();
+        let p = primary();
+        // The descriptor's self-id (`node_…`) isn't the registry id
+        // (`main`) — prefer a registered row so the same node doesn't
+        // surface twice ("a16x — unavailable" next to a healthy
+        // `main`). Only when no rows landed does the raw self-id win.
+        if let Some(row) = rows.iter().find(|r| Some(&r.id) == p.as_ref()) {
+            return Some(row.id.clone());
+        }
+        rows.first().map(|r| r.id.clone()).or(p)
     };
 
     // Label for an id — the status row's `label`, the node
