@@ -273,12 +273,14 @@ pub fn SessionListPage() -> impl IntoView {
     }
 
     // Global hotkeys — document keydown, client only. The key→action
-    // mapping is pure (`sepia_web_core::keymap::resolve_key`); this
+    // mapping is pure (`sepia_web_core::keymap`, resolved through the
+    // `keybinds` context so per-browser overrides apply); this
     // listener owns the list-page actions — `ToggleHelp`/`CloseHelp`
     // belong to the shell's listener in `app.rs`.
     #[cfg(feature = "hydrate")]
     {
         let navigate = use_navigate();
+        let keybinds = crate::keybinds::use_keybinds();
         let _stop = leptos_use::use_event_listener(
             leptos::prelude::document(),
             leptos::ev::keydown,
@@ -303,7 +305,7 @@ pub fn SessionListPage() -> impl IntoView {
                         || group_menu.get_untracked().is_some(),
                     ..KeyCtx::default()
                 };
-                let Some(action) = keymap::resolve_key(&ev.key(), mods, ctx) else {
+                let Some(action) = keybinds.resolve(&ev.key(), mods, ctx) else {
                     return;
                 };
                 if action.prevent_default() {

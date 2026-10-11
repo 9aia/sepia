@@ -489,6 +489,40 @@ async fn settings_renders_section_nav_and_nickname_edit() {
     assert_contains(&html, "data-name=\"NicknameEdit\"");
 }
 
+#[tokio::test]
+async fn settings_keyboard_section_lists_bindable_actions() {
+    let html = page("/settings", FakeNodeApi::seeded().shared()).await;
+    // The editable surface: every bindable action row with its
+    // default binding, Change + Disable, and Restore defaults.
+    assert_contains(&html, "id=\"keyboard\"");
+    assert_contains(&html, "data-name=\"KeybindRow\"");
+    assert_contains(&html, "Restore defaults");
+    for label in [
+        "New session",
+        "Next session",
+        "Previous session",
+        "Collapse group",
+        "Expand group",
+        "Command palette",
+        "Toggle session list",
+        "Settings",
+        "Keyboard shortcuts",
+    ] {
+        assert_contains(&html, label);
+    }
+    // Default chords render as kbd glyphs — ⌘K's second binding `/`
+    // and the `?` help key both show.
+    assert_contains(&html, "⌘K / /");
+    assert_contains(&html, ">n<");
+    assert_contains(&html, ">?<");
+    // Sessions/App groups + the fixed-Escape note.
+    assert_contains(&html, ">Sessions<");
+    assert_contains(&html, ">App<");
+    assert_contains(&html, "Escape itself is fixed");
+    // The `?` sheet on the same page reads the same map.
+    assert_contains(&html, "data-name=\"ShortcutsHelp\"");
+}
+
 // ── shell chrome (every page) ────────────────────────────────────────
 
 #[tokio::test]

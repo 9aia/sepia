@@ -125,6 +125,7 @@ pub fn App() -> impl IntoView {
     provide_meta_context();
     provide_toaster();
     crate::theme::provide_theme();
+    crate::keybinds::provide_keybinds();
     // Shared async cache — keyed queries dedupe across components and
     // survive remounts; mutations invalidate by scope fn.
     leptos_fetch::QueryClient::new().provide();
@@ -244,6 +245,7 @@ fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView 
         let now = expect_context::<Now>().0;
         every_ms(30_000, move || now.set(crate::time::now_ms()));
         let navigate = use_navigate();
+        let keybinds = crate::keybinds::use_keybinds();
         let _k = leptos_use::use_event_listener(
             document(),
             leptos::ev::keydown,
@@ -259,7 +261,7 @@ fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView 
                     help_open: open.get_untracked(),
                     ..KeyCtx::default()
                 };
-                match keymap::resolve_key(&ev.key(), mods, ctx) {
+                match keybinds.resolve(&ev.key(), mods, ctx) {
                     Some(keymap::Action::ToggleHelp) => {
                         ev.prevent_default();
                         open.update(|o| *o = !*o);
@@ -298,17 +300,20 @@ fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView 
     }
 }
 
-/// The global shortcut list — rendered by the `?` cheat-sheet and,
-/// read-only, by `/settings`.
-pub const SHORTCUTS: &[(&str, &str)] = &[
-    ("n", "focus the new-session field"),
-    ("⌘K or /", "command palette"),
-    ("Esc", "clear filter / close session"),
-    ("⌘B", "toggle the session list"),
-    ("⌘,", "open settings"),
-    ("↑ / ↓", "cycle sessions"),
-    ("← / →", "fold / unfold groups"),
-    ("?", "this sheet"),
+/// The `?` sheet's row order — the bindable actions in their old
+/// visual sequence with the fixed Escape row spliced in at its
+/// original spot.
+const HELP_ORDER: &[Option<sepia_web_core::keymap::Action>] = &[
+    Some(sepia_web_core::keymap::Action::FocusNewSession),
+    Some(sepia_web_core::keymap::Action::TogglePalette),
+    None, // the fixed Escape cascade row
+    Some(sepia_web_core::keymap::Action::ToggleList),
+    Some(sepia_web_core::keymap::Action::OpenSettings),
+    Some(sepia_web_core::keymap::Action::NavNext),
+    Some(sepia_web_core::keymap::Action::NavPrev),
+    Some(sepia_web_core::keymap::Action::FoldGroup),
+    Some(sepia_web_core::keymap::Action::UnfoldGroup),
+    Some(sepia_web_core::keymap::Action::ToggleHelp),
 ];
 
 /// `?` — the shortcut cheat-sheet. Always rendered, visibility via
@@ -318,9 +323,13 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
 /// the panel and return-focus on close (`track_overlay_focus`), and
 /// `aria-hidden` while closed so the faded-out copy stays out of the
 /// a11y tree. Escape closes via the shell's `CloseHelp` hotkey.
+///
+/// Rows read the effective keymap (defaults + `sepia-keymap`
+/// overrides) so the sheet always shows what will actually fire —
+/// SSR renders defaults; overrides land post-hydrate.
 #[component]
 fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
-    let rows = SHORTCUTS;
+    let keybinds = crate::keybinds::use_keybinds();
     let panel = NodeRef::<leptos::html::Div>::new();
     crate::components::track_overlay_focus(open, panel);
     view! {
@@ -358,19 +367,34 @@ fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
                     </button>
                 </div>
                 <dl class="mt-3 space-y-1.5">
-                    {rows
+                    {move || {
+                        HELP_ORDER
                         .iter()
-                        .map(|(k, d)| {
+                        .map(|row| {
+                            let (keys, desc) = match row {
+                                None => (
+                                    "Esc".to_string(),
+                                    "clear filter / close session".to_string(),
+                                ),
+                                Some(action) => (
+                                    keybinds
+                                        .keymap()
+                                        .binding_label(*action)
+                                        .unwrap_or_else(|| "disabled".to_string()),
+                                    action.label().to_string(),
+                                ),
+                            };
                             view! {
                                 <div class="flex items-center gap-3">
                                     <kbd class="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]">
-                                        {*k}
+                                        {keys}
                                     </kbd>
-                                    <dd class="text-xs text-muted-foreground">{*d}</dd>
+                                    <dd class="text-xs text-muted-foreground">{desc}</dd>
                                 </div>
                             }
                         })
-                        .collect::<Vec<_>>()}
+                        .collect::<Vec<_>>()
+                    }}
                 </dl>
             </div>
         </div>

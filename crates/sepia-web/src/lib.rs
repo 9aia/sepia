@@ -9,6 +9,7 @@ pub mod api;
 pub mod app;
 pub mod components;
 pub mod dto;
+pub mod keybinds;
 pub mod markdown;
 pub mod mermaid;
 pub mod pages;

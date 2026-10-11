@@ -1,9 +1,10 @@
 //! `/settings` — the settings surface: appearance (theme), node
 //! identity + connection health, the agent catalog, the hub's queued
 //! writes, the public `GET /api/config` map edited generically (one
-//! row per key), push notifications, and the keyboard-shortcut
-//! reference. Browser-only pieces (`PushManager`, the theme signal)
-//! are hydrate-only; SSR renders identical markup, inert.
+//! row per key), push notifications, and the remappable keyboard
+//! bindings. Browser-only pieces (`PushManager`, the theme signal,
+//! the chord recorder) are hydrate-only; SSR renders identical
+//! markup with the default map, inert.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -13,8 +14,9 @@ use sepia_web_core::notify::NotifyPrefs;
 #[cfg(feature = "hydrate")]
 use sepia_web_core::notify::STORAGE_KEY;
 
+use sepia_web_core::keymap::{self, Action};
+
 use crate::api::{get_config, push_vapid_key, set_config};
-use crate::app::SHORTCUTS;
 use crate::components::toast::use_toast;
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
@@ -54,7 +56,7 @@ pub fn SettingsPage() -> impl IntoView {
                     ("outbox", "Queued writes"),
                     ("config", "Configuration"),
                     ("notifications", "Notifications"),
-                    ("shortcuts", "Shortcuts"),
+                    ("keyboard", "Keyboard"),
                 ]
                     .iter()
                     .map(|(id, label)| {
@@ -75,7 +77,7 @@ pub fn SettingsPage() -> impl IntoView {
             <section id="outbox" class="scroll-mt-6"><OutboxSection/></section>
             <section id="config" class="scroll-mt-6"><ConfigSection/></section>
             <section id="notifications" class="scroll-mt-6"><PushSection/></section>
-            <section id="shortcuts" class="scroll-mt-6"><ShortcutsSection/></section>
+            <section id="keyboard" class="scroll-mt-6"><KeyboardSection/></section>
         </section>
     }
 }
@@ -438,35 +440,177 @@ fn ConfigSection() -> impl IntoView {
     }
 }
 
-/// Read-only mirror of the `?` cheat-sheet (`app::SHORTCUTS`).
+/// "Keyboard" — every remappable action, grouped like the old TS
+/// settings dialog (`Sessions` / `App`). "Change" arms a one-shot
+/// chord recorder; the `recording` flag parks the global hotkey
+/// listeners so the captured keydown lands here. Escape cancels,
+/// Backspace/Delete disables the binding, and a chord that collides
+/// with another action is rejected with a toast. Escape itself stays
+/// fixed — the menu → filter → help → selection cascade isn't a
+/// binding. SSR renders the default map; overrides seed post-hydrate.
 #[component]
-fn ShortcutsSection() -> impl IntoView {
+fn KeyboardSection() -> impl IntoView {
+    let keybinds = crate::keybinds::use_keybinds();
+    let toast = use_toast();
+    #[cfg(not(feature = "hydrate"))]
+    let _ = toast;
+
+    // One-shot chord capture — hydrate only. The listener checks
+    // `recording` on every event, so it can stay mounted; the global
+    // listeners bail on the same flag.
+    #[cfg(feature = "hydrate")]
+    let _recorder = leptos_use::use_event_listener(
+        document(),
+        leptos::ev::keydown,
+        move |ev: web_sys::KeyboardEvent| {
+            let Some(action) = keybinds.recording.get_untracked() else {
+                return;
+            };
+            ev.prevent_default();
+            ev.stop_propagation();
+            match ev.key().as_str() {
+                // Cancel — Escape is also the reserved cascade key.
+                "Escape" => keybinds.recording.set(None),
+                // Disable the binding outright.
+                "Backspace" | "Delete" => {
+                    keybinds.overrides.update(|o| {
+                        o.0.insert(action, None);
+                    });
+                    keybinds.recording.set(None);
+                }
+                key => {
+                    let mods = keymap::Mods {
+                        ctrl: ev.ctrl_key(),
+                        meta: ev.meta_key(),
+                        alt: ev.alt_key(),
+                        shift: ev.shift_key(),
+                    };
+                    let Some(chord) = keymap::Chord::from_event(key, mods) else {
+                        return; // a bare modifier — keep recording.
+                    };
+                    let km = keymap::Keymap::from_overrides(&keybinds.overrides.get_untracked());
+                    if let Some(other) = km.conflict(action, &chord) {
+                        toast.error(format!(
+                            "{} is already bound to {}.",
+                            chord.label(),
+                            other.label()
+                        ));
+                    } else {
+                        keybinds.overrides.update(|o| {
+                            o.0.insert(action, Some(chord));
+                        });
+                    }
+                    keybinds.recording.set(None);
+                }
+            }
+        },
+    );
+
     view! {
         <Card>
             <CardHeader>
-                <CardTitle>"Keyboard shortcuts"</CardTitle>
+                <div class="flex items-center justify-between gap-3">
+                    <CardTitle>"Keyboard"</CardTitle>
+                    <Button
+                        variant=ButtonVariant::Ghost
+                        size=ButtonSize::Sm
+                        disabled=move || keybinds.overrides.get().0.is_empty()
+                        on_click=Box::new(move || {
+                            keybinds.recording.set(None);
+                            keybinds.overrides.set(keymap::KeyOverrides::default());
+                        })
+                    >
+                        "Restore defaults"
+                    </Button>
+                </div>
                 <CardDescription>
-                    "Global keys — press ? anywhere to see the same list."
+                    "Global keys for this browser — pick a shortcut to rebind it. \
+                     Escape cancels, Backspace disables; Escape itself is fixed."
                 </CardDescription>
             </CardHeader>
-            <CardContent>
-                <dl class="space-y-1.5">
-                    {SHORTCUTS
-                        .iter()
-                        .map(|(k, d)| {
-                            view! {
-                                <div class="flex items-center gap-3">
-                                    <kbd class="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]">
-                                        {*k}
-                                    </kbd>
-                                    <dd class="text-xs text-muted-foreground">{*d}</dd>
-                                </div>
-                            }
-                        })
-                        .collect::<Vec<_>>()}
-                </dl>
+            <CardContent class="space-y-4">
+                {["Sessions", "App"]
+                    .iter()
+                    .map(|group| {
+                        view! {
+                            <div>
+                                <h4 class="py-1 text-xs font-medium text-muted-foreground">
+                                    {*group}
+                                </h4>
+                                <ul class="divide-y divide-border/50 rounded-lg border border-border">
+                                    {Action::BINDABLE
+                                        .iter()
+                                        .filter(|a| a.group() == *group)
+                                        .map(|a| view! { <KeybindRow action=*a/> })
+                                        .collect::<Vec<_>>()}
+                                </ul>
+                            </div>
+                        }
+                    })
+                    .collect::<Vec<_>>()}
             </CardContent>
         </Card>
+    }
+}
+
+/// One remappable action — label, current binding, Change +
+/// Disable/Enable. Rows render identically on SSR (defaults,
+/// recording off) and re-render reactively once overrides seed.
+#[component]
+fn KeybindRow(action: Action) -> impl IntoView {
+    let keybinds = crate::keybinds::use_keybinds();
+    let binding = move || keybinds.keymap().binding_label(action);
+    let recording = move || keybinds.recording.get() == Some(action);
+    let disabled = move || keybinds.disabled(action);
+
+    view! {
+        <li class="flex items-center gap-3 px-3 py-2" data-name="KeybindRow">
+            <span class="flex-1 text-sm">{action.label()}</span>
+            {move || {
+                if disabled() {
+                    view! {
+                        <span class="text-xs text-muted-foreground">"Disabled"</span>
+                    }
+                        .into_any()
+                } else {
+                    view! {
+                        <kbd class="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+                            {binding()}
+                        </kbd>
+                    }
+                        .into_any()
+                }
+            }}
+            <Button
+                variant=ButtonVariant::Outline
+                size=ButtonSize::Sm
+                on_click=Box::new(move || {
+                    keybinds.recording.update(|r| {
+                        *r = if *r == Some(action) { None } else { Some(action) };
+                    });
+                })
+            >
+                {move || if recording() { "Press keys…" } else { "Change" }}
+            </Button>
+            <Button
+                variant=ButtonVariant::Ghost
+                size=ButtonSize::Sm
+                on_click=Box::new(move || {
+                    if keybinds.disabled(action) {
+                        // Enable = drop the override → defaults return.
+                        keybinds.overrides.update(|o| {
+                            o.0.remove(&action);
+                        });
+                    } else {
+                        keybinds.overrides.update(|o| {
+                            o.0.insert(action, None);
+                        });
+                    }
+                })
+            >
+                {move || if disabled() { "Enable" } else { "Disable" }}
+            </Button>
+        </li>
     }
 }
 

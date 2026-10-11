@@ -85,8 +85,11 @@ Missing (queued next):
 - [x] Theme toggle — light/dark/system (`sepia-theme` localStorage +
       `use_media_query`, `.light` Catppuccin Latte token block, toggle
       in sidebar + mobile topbar; prose is `dark:prose-invert`)
-- [~] Customizable keybinds + help dialog — ✓ `?` cheat-sheet landed;
-      keybind *remapping* still open
+- [x] Customizable keybinds + help dialog — ✓ `?` cheat-sheet, ✓
+      remapping: Settings → Keyboard records a chord per action
+      (Escape cancels, Backspace disables, conflicts rejected,
+      `sepia-keymap` localStorage — `KeyOverrides`/`Keymap` in
+      web-core; Escape itself stays fixed)
 - [x] Settings depth — appearance (theme select), node identity +
       connection, agent catalog, outbox writes, push, shortcuts table
 - [x] Session context tabs — system rows fold into a ContextCard
@@ -214,7 +217,7 @@ Missing features (wire-supported but no UI):
       `Toaster`), ✓ `prefers-reduced-motion` in input.css, ✓
       `role=combobox`/`listbox`/`option` + `aria-activedescendant` on
       the new-session cwd autocomplete, ✓ `aria-haspopup=menu` on the
-      row `⋯` trigger. Left: keybind remapping, a real focus trap
+      row `⋯` trigger, ✓ keybind remapping. Left: a real focus trap
 
 Intentionally dropped (v0):
 
