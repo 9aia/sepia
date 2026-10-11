@@ -1,7 +1,8 @@
-//! `/` — master-detail home. The session list lives in a left column
-//! (sidebar-style on `lg+`, full-width below); selecting a row sets
+//! `/` — master-detail home. The session list lives in the sidebar-09
+//! Sessions panel (`SessionListPanel`) beside the icon rail — a fixed
+//! column on `lg+`, full-width below; selecting a row sets
 //! `?session=<id>&agent=<agent>` and the chat pane mounts
-//! `SessionPanel` inline. `/sessions/:id` redirects here.
+//! `SessionPanel` inline. `/sessions/:id` composes the same pair.
 //!
 //! SSR renders the first page; on the client the list refreshes when
 //! `/api/events` says a session row changed, and on a 30s ticker
