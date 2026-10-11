@@ -12,6 +12,7 @@
 //!   `sw.js`, `icon.svg`, `pkg/` when cargo-leptos has run).
 
 pub mod auth;
+pub mod credentials;
 pub mod proxy;
 pub mod push_routes;
 pub mod sync_api;
@@ -292,14 +293,26 @@ pub fn router(state: HubState) -> Router {
 }
 
 /// HubState for a running hub: the sync engine + [`SyncNodeApi`].
-/// `SEPIA_NODES` (`id=url[:token];…`) wins; `SEPIA_NODE_URL`/`SEPIA_NODE_TOKEN`
-/// is the single-node shorthand. The projection + outbox live under
-/// `$SEPIA_HOME/hub/` so they survive restarts.
+/// `SEPIA_NODES` (`id=url[@token];…`) wins; `SEPIA_NODE_URL`/`SEPIA_NODE_TOKEN`
+/// is the single-node shorthand. Nodes listed without a token resolve
+/// one from the [`credentials`] store (OS keyring → file fallback —
+/// that store is also where the pair flow persists minted tokens).
+/// The projection + outbox live under `$SEPIA_HOME/hub/` so they
+/// survive restarts.
 ///
 /// # Errors
 /// `String` on a missing/empty node list or a projection/outbox open failure.
 pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
-    let nodes = std::env::var("SEPIA_NODES")
+    let home = std::env::var_os("SEPIA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share/sepia"))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from(".sepia"))
+        .join("hub");
+    std::fs::create_dir_all(&home).map_err(|e| format!("create {}: {e}", home.display()))?;
+    let creds = credentials::open(&home);
+    let mut nodes = std::env::var("SEPIA_NODES")
         .ok()
         .filter(|v| !v.trim().is_empty())
         .map(|raw| sync_api::parse_nodes(&raw))
@@ -311,14 +324,25 @@ pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
                 token: config.node_token.clone(),
             }]
         });
-    let home = std::env::var_os("SEPIA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share/sepia"))
-        })
-        .unwrap_or_else(|| std::path::PathBuf::from(".sepia"))
-        .join("hub");
-    std::fs::create_dir_all(&home).map_err(|e| format!("create {}: {e}", home.display()))?;
+    // Env tokens are explicit config — they win. Only tokenless nodes
+    // consult the store.
+    let mut stored = 0usize;
+    for node in &mut nodes {
+        if node.token.is_some() {
+            continue;
+        }
+        match creds.get(&node.id) {
+            Ok(Some(token)) => {
+                node.token = Some(token);
+                stored += 1;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(node = %node.id, "credential store lookup failed: {e}");
+            }
+        }
+    }
+    tracing::info!(backend = creds.backend(), stored, "node credential store");
     let projection = sepia_sync::ProjectionStore::open(&home.join("projection.db"))
         .map_err(|e| format!("projection open: {e}"))?;
     let outbox = sepia_outbox::Outbox::open(&home.join("outbox.db")).map_err(|e| e.to_string())?;
@@ -380,7 +404,7 @@ pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
     let Some(upstream) = nodes.first().cloned() else {
         return Err("no nodes configured".into());
     };
-    let api = Arc::new(sync_api::SyncNodeApi::new(engine, nodes));
+    let api = Arc::new(sync_api::SyncNodeApi::new(engine, nodes, creds));
     let mut state = HubState::new(
         options,
         Arc::clone(&api) as Arc<dyn NodeApi>,

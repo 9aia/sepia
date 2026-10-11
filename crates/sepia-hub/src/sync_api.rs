@@ -4,12 +4,16 @@
 //! through `SyncEngine::submit_op` so they queue when the node is down.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use std::collections::BTreeMap;
 
 use sepia_sync::client::NodeClient;
-use sepia_sync::{IndexedSession, NodeWrite, OpKind, OutboxEntry, OutboxStatus, SyncHandle};
+use sepia_sync::{
+    IndexedSession, NodeRef, NodeTarget, NodeWrite, OpKind, OutboxEntry, OutboxStatus, SyncHandle,
+};
+
+use crate::credentials::NodeCredentials;
 use sepia_web::api::NodeApi;
 use sepia_web::dto::{
     AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryMessageDto, HistoryPageDto,
@@ -84,18 +88,28 @@ fn owner<'a>(
         .ok_or_else(|| format!("node {node_id} not registered"))
 }
 
+/// The mutable node registry — `pair` rewrites a node's token + client
+/// after minting a credential, so reads take the lock.
+#[derive(Default)]
+struct Registry {
+    nodes: HashMap<String, HubNode>,
+    clients: HashMap<String, Arc<NodeClient>>,
+}
+
 /// `NodeApi` over the sync projection + per-node clients.
 pub struct SyncNodeApi {
     engine: SyncHandle,
-    nodes: HashMap<String, HubNode>,
-    clients: HashMap<String, Arc<NodeClient>>,
+    registry: RwLock<Registry>,
+    /// Where `pair` persists minted tokens (keyring or file — picked at
+    /// boot by [`crate::credentials::open`]).
+    creds: Arc<dyn NodeCredentials>,
     /// First configured node — the canonical target for registry
     /// writes (projects/config/push) that have no session to route by.
     primary: Option<String>,
 }
 
 impl SyncNodeApi {
-    pub fn new(engine: SyncHandle, nodes: Vec<HubNode>) -> Self {
+    pub fn new(engine: SyncHandle, nodes: Vec<HubNode>, creds: Arc<dyn NodeCredentials>) -> Self {
         let clients = nodes
             .iter()
             .filter_map(|n| {
@@ -107,9 +121,24 @@ impl SyncNodeApi {
         Self {
             engine,
             primary: nodes.first().map(|n| n.id.clone()),
-            nodes: nodes.into_iter().map(|n| (n.id.clone(), n)).collect(),
-            clients,
+            registry: RwLock::new(Registry {
+                nodes: nodes.into_iter().map(|n| (n.id.clone(), n)).collect(),
+                clients,
+            }),
+            creds,
         }
+    }
+
+    fn registry(&self) -> std::sync::RwLockReadGuard<'_, Registry> {
+        self.registry
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn registry_mut(&self) -> std::sync::RwLockWriteGuard<'_, Registry> {
+        self.registry
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn projection(&self) -> sepia_sync::ProjectionStore {
@@ -117,7 +146,8 @@ impl SyncNodeApi {
     }
 
     fn client(&self, node_id: &str) -> Result<Arc<NodeClient>, String> {
-        self.clients
+        self.registry()
+            .clients
             .get(node_id)
             .cloned()
             .ok_or_else(|| format!("node {node_id} not registered"))
@@ -127,6 +157,7 @@ impl SyncNodeApi {
     /// merged output.
     fn client_list(&self) -> Vec<(String, Arc<NodeClient>)> {
         let mut list: Vec<_> = self
+            .registry()
             .clients
             .iter()
             .map(|(id, c)| (id.clone(), Arc::clone(c)))
@@ -192,13 +223,17 @@ impl SyncNodeApi {
     /// The upstream `(url, token)` for a session — the proxy uses it to
     /// route session-scoped requests to the owning node.
     pub fn node_url_for(&self, id: &str, agent: Option<&str>) -> Option<(String, Option<String>)> {
-        let (node_id, node) = owner(&self.projection(), id, agent, &self.nodes).ok()?;
+        let registry = self.registry();
+        let (node_id, node) = owner(&self.projection(), id, agent, &registry.nodes).ok()?;
         let _ = node_id;
         Some((node.url.clone(), node.token.clone()))
     }
 
     fn resolve(&self, id: &str, agent: Option<&str>) -> Result<(String, Arc<NodeClient>), String> {
-        let (node_id, _) = owner(&self.projection(), id, agent, &self.nodes)?;
+        let node_id = {
+            let registry = self.registry();
+            owner(&self.projection(), id, agent, &registry.nodes)?.0
+        };
         Ok((node_id.clone(), self.client(&node_id)?))
     }
 
@@ -243,7 +278,10 @@ impl SyncNodeApi {
         kind: OpKind,
         payload: Value,
     ) -> Result<(), String> {
-        let (node_id, _) = owner(&self.projection(), id, agent, &self.nodes)?;
+        let node_id = {
+            let registry = self.registry();
+            owner(&self.projection(), id, agent, &registry.nodes)?.0
+        };
         self.engine
             .submit_op(NodeWrite {
                 node_id,
@@ -258,6 +296,60 @@ impl SyncNodeApi {
             .await
             .map(|_| ())
             .map_err(|e| e.to_string())
+    }
+
+    /// Persist a minted credential and start using it: store → registry
+    /// (token + rebuilt client) → engine retarget (re-add restarts the
+    /// node's sync loop under the new credential). Failures degrade to
+    /// in-memory use until restart — the token is still returned to
+    /// the caller, so nothing minted is lost.
+    async fn adopt_credential(&self, node_id: &str, token: &str) {
+        // Blocking store I/O (a dbus round-trip on the keyring backend)
+        // stays off the executor.
+        let creds = Arc::clone(&self.creds);
+        let id = node_id.to_string();
+        let tok = token.to_string();
+        match tokio::task::spawn_blocking(move || creds.set(&id, &tok)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                tracing::warn!(node = %node_id, "credential store write failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!(node = %node_id, "credential store write failed: {e}");
+            }
+        }
+        let target = {
+            let mut registry = self.registry_mut();
+            let (node_ref, token_opt) = {
+                let Some(entry) = registry.nodes.get_mut(node_id) else {
+                    return;
+                };
+                entry.token = Some(token.to_string());
+                (
+                    NodeRef {
+                        id: entry.id.clone(),
+                        url: entry.url.clone(),
+                        label: entry.id.clone(),
+                    },
+                    entry.token.clone(),
+                )
+            };
+            match NodeClient::new(&node_ref.url, token_opt) {
+                Ok(client) => {
+                    registry
+                        .clients
+                        .insert(node_id.to_string(), Arc::new(client));
+                }
+                // The rebuild can't fail for a URL that parsed at boot.
+                Err(e) => {
+                    tracing::warn!(node = %node_id, "rebuild node client failed: {e}");
+                }
+            }
+            NodeTarget::with_token(node_ref, token)
+        };
+        if let Err(e) = self.engine.add_node(target).await {
+            tracing::warn!(node = %node_id, "engine retarget failed: {e}");
+        }
     }
 }
 
@@ -312,7 +404,10 @@ impl NodeApi for SyncNodeApi {
         id: &str,
         agent: Option<&str>,
     ) -> Result<SessionSummaryDto, String> {
-        let (node_id, _) = owner(&self.projection(), id, agent, &self.nodes)?;
+        let node_id = {
+            let registry = self.registry();
+            owner(&self.projection(), id, agent, &registry.nodes)?.0
+        };
         let row = self
             .projection()
             .session(&node_id, id)
@@ -543,7 +638,7 @@ impl NodeApi for SyncNodeApi {
         // Pairing redeems a code on one specific node — `node` picks
         // it, else the primary. Goes direct: the code is single-use
         // and queueing it in the outbox makes no sense.
-        let (_, client) = self.scoped_client(node)?;
+        let (node_id, client) = self.scoped_client(node)?;
         let body = serde_json::json!({ "code": code });
         let res = tokio::task::spawn_blocking(move || client.send_json("POST", "/api/pair", &body))
             .await
@@ -558,10 +653,13 @@ impl NodeApi for SyncNodeApi {
                 }
                 e => e.to_string(),
             })?;
-        res.get("token")
+        let token = res
+            .get("token")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| "node returned no token".to_string())
+            .ok_or_else(|| "node returned no token".to_string())?;
+        self.adopt_credential(&node_id, &token).await;
+        Ok(token)
     }
 
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String> {
@@ -696,7 +794,7 @@ impl NodeApi for SyncNodeApi {
 
     async fn node_status(&self) -> Result<Vec<NodeStatusDto>, String> {
         let projection = self.projection();
-        let registry = self.nodes.clone();
+        let registry = self.registry().nodes.clone();
         tokio::task::spawn_blocking(move || {
             let mut rows: Vec<NodeStatusDto> = projection
                 .nodes()
@@ -734,7 +832,7 @@ impl NodeApi for SyncNodeApi {
         // single list. Entries queued for a since-removed node have no
         // reader — the outbox has no scan-all for `pending`.
         let outbox = self.engine.outbox();
-        let mut node_ids: Vec<String> = self.nodes.keys().cloned().collect();
+        let mut node_ids: Vec<String> = self.registry().nodes.keys().cloned().collect();
         node_ids.sort_unstable();
         tokio::task::spawn_blocking(move || -> Result<Vec<PendingWriteDto>, String> {
             let mut out = Vec::new();
