@@ -10,6 +10,7 @@ pub mod focus;
 pub mod highlight;
 pub mod history;
 pub mod keymap;
+pub mod menu;
 pub mod notify;
 pub mod palette;
 pub mod path;
