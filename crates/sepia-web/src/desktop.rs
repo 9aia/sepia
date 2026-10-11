@@ -232,13 +232,22 @@ pub fn DesktopMenu(
     // with their resource handles.
     let probe_loaded = RwSignal::new(false);
 
+    // The query handles exist on both targets — resource creation
+    // must stay symmetric so hydrate-side indexing matches the
+    // serialized SSR pool (hydrate-only handles shift every later
+    // resource's id and break Suspense adoption).
+    let client = crate::api::query_client();
+    let status_q = client.resource(crate::api::node_status_scope, || ());
+    let info_q = client.resource(crate::api::node_info_scope, || ());
+    let agents_q = client.resource(crate::api::agents_scope, || ());
+    let sessions_q = client.resource(crate::api::sessions_scope, || ());
+
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = (status_q, info_q, agents_q, sessions_q);
+    }
     #[cfg(feature = "hydrate")]
     {
-        let client = crate::api::query_client();
-        let status_q = client.resource(crate::api::node_status_scope, || ());
-        let info_q = client.resource(crate::api::node_info_scope, || ());
-        let agents_q = client.resource(crate::api::agents_scope, || ());
-        let sessions_q = client.resource(crate::api::sessions_scope, || ());
         Effect::new(move |_| {
             let q = status_q.get();
             let resolved = q.is_some();
