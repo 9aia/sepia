@@ -246,7 +246,7 @@ fn IconRail() -> impl IntoView {
                     aria-label="Sessions"
                     aria-controls="sessions-panel"
                     aria-expanded=move || panel.0.get().to_string()
-                    attr:aria-current=move || on_sessions().then_some("page")
+                    aria-current=move || on_sessions().then_some("page")
                     title="Sessions"
                     class=move || {
                         if on_sessions() {
@@ -443,8 +443,8 @@ fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView 
         <span
             class="hidden"
             data-name="ShellHotkeys"
-            attr:data-help-open=move || open.get().then_some("")
-            attr:data-palette-open=move || palette.get().then_some("")
+            data-help-open=move || open.get().then_some("")
+            data-palette-open=move || palette.get().then_some("")
         ></span>
     }
 }
@@ -486,7 +486,7 @@ fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
         <div
             data-name="ShortcutsHelp"
             data-open=move || open.get().then_some("")
-            attr:aria-hidden=move || (!open.get()).then_some("true")
+            aria-hidden=move || (!open.get()).then_some("true")
             class=move || {
                 if open.get() {
                     "fixed inset-0 z-[80] grid place-items-center bg-black/30 p-4 opacity-100 transition-opacity supports-backdrop-filter:backdrop-blur-sm"

@@ -603,7 +603,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                         <button
                                             type="button"
                                             data-name="RecencyChip"
-                                            attr:data-active=move || {
+                                            data-active=move || {
                                                 (recency_filter.get() == r).then_some("")
                                             }
                                             class=move || {
