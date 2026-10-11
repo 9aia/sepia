@@ -429,7 +429,7 @@ fn CodeBlock(#[prop(into)] lang: Option<String>, #[prop(into)] code: String) -> 
     }
 }
 
-/// ```mermaid fence — SSR/hydrate emit the same markup: the usual
+/// ` ```mermaid ` fence — SSR/hydrate emit the same markup: the usual
 /// code-block chrome, a `hidden` diagram target, and the diagram
 /// source as a plain code `<pre>`. On mount the hydrate-only
 /// `crate::mermaid::render` lazy-loads `/vendor/mermaid.min.js`,
