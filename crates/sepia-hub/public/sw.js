@@ -46,7 +46,9 @@ self.addEventListener("fetch", (event) => {
 
   // The bundle stem is content-hashed (`sepia_web_<hash>.*`) — a
   // cached hit is byte-identical, so pkg/ is cache-first immutable.
-  if (url.pathname.startsWith("/pkg/")) {
+  // /vendor/ files are pinned upstream content (mermaid, Geist) —
+  // same treatment.
+  if (url.pathname.startsWith("/pkg/") || url.pathname.startsWith("/vendor/")) {
     event.respondWith(
       caches.match(event.request).then(
         (hit) =>

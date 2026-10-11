@@ -3,69 +3,140 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* shadcn/rust-ui tokens — Catppuccin Mocha palette. Dark-first:
-   `:root` carries the dark values (the app ships `class="dark"`);
-   `.light` is provided for a future toggle. */
-:root {
-  --radius: 0.5rem;
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
-
-  --background: oklch(0.221 0.015 281);      /* #1e1e2e base */
-  --foreground: oklch(0.889 0.035 281);      /* #cdd6f4 text */
-  --card: oklch(0.184 0.015 281);            /* #181825 mantle */
-  --card-foreground: oklch(0.889 0.035 281);
-  --popover: oklch(0.184 0.015 281);
-  --popover-foreground: oklch(0.889 0.035 281);
-  --primary: oklch(0.744 0.138 305);         /* #cba6f7 mauve */
-  --primary-foreground: oklch(0.152 0.013 281);
-  --secondary: oklch(0.301 0.022 281);       /* #313244 surface0 */
-  --secondary-foreground: oklch(0.889 0.035 281);
-  --muted: oklch(0.301 0.022 281);
-  --muted-foreground: oklch(0.731 0.032 281); /* #a6adc8 subtext */
-  --accent: oklch(0.359 0.023 281);          /* #45475a surface1 */
-  --accent-foreground: oklch(0.889 0.035 281);
-  --destructive: oklch(0.702 0.13 10);       /* #f38ba8 red */
-  --destructive-foreground: oklch(0.152 0.013 281);
-  --border: oklch(0.301 0.022 281);
-  --input: oklch(0.359 0.023 281);
-  --ring: oklch(0.744 0.138 305 / 60%);
-
-  /* extra semantic colors used by the app */
-  --success: oklch(0.845 0.151 140);         /* #a6e3a1 green */
-  --warning: oklch(0.863 0.104 92);          /* #f9e2af yellow */
-  --info: oklch(0.746 0.108 258);            /* #89b4fa blue */
-  --overlay: oklch(0.554 0.028 281);         /* #6c7086 */
+/* Geist Variable — vendored woff2 served by sepia-hub at /vendor/fonts/.
+ * Source: @fontsource-variable/geist@5.3.0 (npm, MIT-licensed Geist from
+ * Vercel) — files/geist-{latin,latin-ext}-wght-{normal,italic}.woff2,
+ * with fontsource's unicode-range splits. */
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/vendor/fonts/geist-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/vendor/fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: "Geist Variable";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/vendor/fonts/geist-latin-ext-wght-italic.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: "Geist Variable";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/vendor/fonts/geist-latin-wght-italic.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
 }
 
-/* Light theme — Catppuccin Latte equivalents of the Mocha tokens. */
-.light {
-  --background: oklch(0.960 0.020 280);      /* #eff1f5 base */
-  --foreground: oklch(0.435 0.043 279);      /* #4c4f69 text */
-  --card: oklch(0.919 0.025 280);            /* #e6e9ef mantle */
-  --card-foreground: oklch(0.435 0.043 279);
-  --popover: oklch(0.919 0.025 280);
-  --popover-foreground: oklch(0.435 0.043 279);
-  --primary: oklch(0.590 0.186 310);         /* #8839ef mauve */
-  --primary-foreground: oklch(0.960 0.020 280);
-  --secondary: oklch(0.884 0.028 282);       /* #ccd0da surface0 */
-  --secondary-foreground: oklch(0.435 0.043 279);
-  --muted: oklch(0.884 0.028 282);
-  --muted-foreground: oklch(0.546 0.035 280); /* #6c6f85 subtext */
-  --accent: oklch(0.850 0.031 282);          /* #bcc0cc surface1 */
-  --accent-foreground: oklch(0.435 0.043 279);
-  --destructive: oklch(0.550 0.212 20);      /* #d20f39 red */
-  --destructive-foreground: oklch(0.960 0.020 280);
-  --border: oklch(0.884 0.028 282);
-  --input: oklch(0.850 0.031 282);
-  --ring: oklch(0.590 0.186 310 / 60%);
-  --success: oklch(0.645 0.169 150);         /* #40a02b green */
-  --warning: oklch(0.681 0.162 75);          /* #df8e1d yellow */
-  --info: oklch(0.582 0.186 260);            /* #1e66f5 blue */
-  --overlay: oklch(0.611 0.030 280);         /* #7c7f93 */
+/* shadcn/rust-ui tokens — the old TS app's theme (neutral/zinc oklch
+ * ramp, radius 0.875). Dark-first: `:root` carries the dark values
+ * (the shell ships `class="dark"`; the pre-paint script + hydrate
+ * Effect toggle `light`/`dark` on <html> and set inline
+ * `color-scheme` — the `color-scheme` declarations here are the
+ * no-JS / pre-script fallback). */
+:root {
+  color-scheme: dark;
+  --radius: 0.875rem;
+  --font-sans: "Geist Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  --background: oklch(0.141 0.005 285.823);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.21 0.006 285.885);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.21 0.006 285.885);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.45 0.085 224.283);
+  --primary-foreground: oklch(0.984 0.019 200.873);
+  --secondary: oklch(0.274 0.006 286.033);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.274 0.006 286.033);
+  --muted-foreground: oklch(0.705 0.015 286.067);
+  --accent: oklch(0.274 0.006 286.033);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.32 0.008 286.033);
+  --input: oklch(0.38 0.012 286.033);
+  --ring: oklch(0.62 0.11 216);
+  --chart-1: oklch(0.871 0.006 286.286);
+  --chart-2: oklch(0.552 0.016 285.938);
+  --chart-3: oklch(0.442 0.017 285.786);
+  --chart-4: oklch(0.37 0.013 285.805);
+  --chart-5: oklch(0.274 0.006 286.033);
+  --sidebar: oklch(0.21 0.006 285.885);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.715 0.143 215.221);
+  --sidebar-primary-foreground: oklch(0.302 0.056 229.695);
+  --sidebar-accent: oklch(0.274 0.006 286.033);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.32 0.008 286.033);
+  --sidebar-ring: oklch(0.62 0.11 216);
+
+  /* extra semantic colors used by the app (session badges, syntax
+   * highlighting) — saturated accents tuned against the zinc ramp */
+  --success: oklch(0.765 0.177 163.223);
+  --warning: oklch(0.828 0.189 84.429);
+  --info: oklch(0.707 0.165 254.624);
+  --overlay: oklch(0.552 0.016 285.938);
+}
+
+html.light {
+  color-scheme: light;
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.141 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.141 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+  --primary: oklch(0.55 0.13 225);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.967 0.001 286.375);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.552 0.016 285.938);
+  --accent: oklch(0.92 0.004 286.32);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.9 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.55 0.13 225);
+  --chart-1: oklch(0.37 0.013 285.805);
+  --chart-2: oklch(0.552 0.016 285.938);
+  --chart-3: oklch(0.442 0.017 285.786);
+  --chart-4: oklch(0.705 0.015 286.067);
+  --chart-5: oklch(0.871 0.006 286.286);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.141 0.005 285.823);
+  --sidebar-primary: oklch(0.55 0.13 225);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.967 0.001 286.375);
+  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
+  --sidebar-border: oklch(0.9 0.004 286.32);
+  --sidebar-ring: oklch(0.55 0.13 225);
+  --success: oklch(0.627 0.194 149.214);
+  --warning: oklch(0.666 0.179 58.318);
+  --info: oklch(0.546 0.245 262.881);
+  --overlay: oklch(0.552 0.016 285.938);
 }
 
 @theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -85,24 +156,74 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
   --color-overlay: var(--overlay);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-mono);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Tailwind's reset leaves bare border/outline utilities on currentColor —
+ * white text would mean white borders. Inside @layer base so the utilities
+ * layer (incl. border-transparent on ghost buttons) still wins. */
 @layer base {
-  * {
-    @apply border-border;
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+    outline-color: var(--ring);
   }
+  /* One focus mechanism: a --ring ring, always. Standalone controls carry
+   * focus-visible:ring-* utilities; the fallback below covers every other
+   * focusable — inset so it can't clip against overflow-hidden scroll
+   * containers. */
+  *:focus {
+    outline: none;
+  }
+  /* Fallback ring for focusables that declare no focus treatment of their
+   * own — any element carrying a focus/focus-visible/data-[] variant or a
+   * menu/tree-item role already has its mechanism; stacking a second
+   * indicator on top reads as two outlines. */
+  *:focus-visible:not([class*="focus"]):not([class*="data-["]):not([role="menuitem"]):not(
+      [role="option"]
+    ):not([data-slot$="-item"]) {
+    box-shadow: inset 0 0 0 2px var(--ring);
+  }
+
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
 }
 
 /* Virtualized transcript rows — `content-visibility: auto` is the

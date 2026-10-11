@@ -262,6 +262,7 @@ pub fn router(state: HubState) -> Router {
     Router::new()
         .route("/style.css", get(serve_css))
         .route("/vendor/mermaid.min.js", get(serve_mermaid))
+        .route("/vendor/fonts/{*name}", get(serve_font))
         // The browser's SW update check honors HTTP cache — without
         // no-cache a stale sw.js could keep serving old cache rules.
         .route("/sw.js", get(serve_sw))
@@ -489,6 +490,44 @@ async fn serve_mermaid() -> impl axum::response::IntoResponse {
         ],
         MERMAID_JS,
     )
+}
+
+/// The vendored Geist variable font — `@fontsource-variable/geist@5.3.0`
+/// (`npm i @fontsource-variable/geist@5.3.0`, `files/geist-*-wght-*.woff2`;
+/// Geist is MIT-licensed, © Vercel). Latin + Latin-Extended subsets,
+/// normal + italic, matching the `@font-face` blocks in
+/// `sepia-web/style/input.css`. sha256:
+/// `19f9c9…d54e1` latin normal, `824f48…4313f` latin-ext normal,
+/// `9b1049…f5acaf` latin italic, `56dc9a…bc1e74` latin-ext italic.
+/// Embedded like `MERMAID_JS`; content is pinned → immutable.
+const GEIST_LATIN: &[u8] = include_bytes!("../vendor/fonts/geist-latin-wght-normal.woff2");
+const GEIST_LATIN_EXT: &[u8] = include_bytes!("../vendor/fonts/geist-latin-ext-wght-normal.woff2");
+const GEIST_LATIN_ITALIC: &[u8] = include_bytes!("../vendor/fonts/geist-latin-wght-italic.woff2");
+const GEIST_LATIN_EXT_ITALIC: &[u8] =
+    include_bytes!("../vendor/fonts/geist-latin-ext-wght-italic.woff2");
+
+async fn serve_font(
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::response::Response {
+    let bytes = match name.as_str() {
+        "geist-latin-wght-normal.woff2" => GEIST_LATIN,
+        "geist-latin-ext-wght-normal.woff2" => GEIST_LATIN_EXT,
+        "geist-latin-wght-italic.woff2" => GEIST_LATIN_ITALIC,
+        "geist-latin-ext-wght-italic.woff2" => GEIST_LATIN_EXT_ITALIC,
+        _ => {
+            return axum::response::IntoResponse::into_response(axum::http::StatusCode::NOT_FOUND);
+        }
+    };
+    axum::response::IntoResponse::into_response((
+        [
+            (axum::http::header::CONTENT_TYPE, "font/woff2"),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "public, max-age=31536000, immutable",
+            ),
+        ],
+        bytes,
+    ))
 }
 
 /// `sw.js` lives in `site_root` (staged by `cargo xtask site`) — serve

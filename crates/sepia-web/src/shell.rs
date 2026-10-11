@@ -20,10 +20,19 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
             <head>
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-                <meta name="theme-color" content="#1e1e2e"/>
+                <meta name="theme-color" content="#09090b"/>
                 <title>"sepia"</title>
                 <link rel="manifest" href="/manifest.json"/>
                 <link rel="icon" href="/icon.svg" type="image/svg+xml"/>
+                // Geist latin subset — the one face body text always
+                // resolves to; preloading kills the swap flash.
+                <link
+                    rel="preload"
+                    href="/vendor/fonts/geist-latin-wght-normal.woff2"
+                    attr:as="font"
+                    type="font/woff2"
+                    crossorigin="anonymous"
+                />
                 <link rel="stylesheet" href="/style.css"/>
                 // Pre-paint theme reconcile — SSR always emits
                 // `class="dark"` and the hydrate Effect runs after
