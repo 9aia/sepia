@@ -98,6 +98,23 @@ tokio = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }
 leptos_ui = "0.3.22"
 tw_merge = "0.1"
+# Lucide icons — RustForWeb's leptos port (inline SVG components, so
+# SSR/hydrate identical and no JS). Pinned to a released version ≥7d
+# old; only the icon categories we use are compiled in.
+lucide-leptos = { version = "=3.48.0", default-features = false, features = [
+    "account",
+    "arrows",
+    "connectivity",
+    "devices",
+    "files",
+    "layout",
+    "math",
+    "navigation",
+    "notifications",
+    "security",
+    "social",
+    "text",
+] }
 leptos-use = { version = "0.19", default-features = false, features = [
   "use_event_source", "use_interval_fn", "use_event_listener",
   "on_click_outside", "use_media_query", "use_timeout_fn", "storage",

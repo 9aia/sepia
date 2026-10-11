@@ -2913,6 +2913,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
+name = "lucide-leptos"
+version = "3.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e25575ea43fe7cab04337ba30b2c5c8f21a0f0b43c472bf6e3a8da8a61b7e6ed"
+dependencies = [
+ "leptos",
+]
+
+[[package]]
 name = "manyhow"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4643,6 +4652,7 @@ dependencies = [
  "leptos_router",
  "leptos_toaster",
  "leptos_ui",
+ "lucide-leptos",
  "sepia-core",
  "sepia-proto",
  "sepia-web-core",

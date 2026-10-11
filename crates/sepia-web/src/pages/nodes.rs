@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::api::{redeem_pair_code, rename_node};
+use crate::components::icons::Icon;
 use crate::components::toast::use_toast;
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardDescription,
@@ -506,7 +507,7 @@ pub(crate) fn NicknameEdit(
                                 editing.set(true);
                             }
                         >
-                            "✎"
+                            <Icon name="pencil" class="size-3.5"/>
                         </button>
                     }
                         .into_any()

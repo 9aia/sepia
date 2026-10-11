@@ -942,7 +942,8 @@ pub fn SessionPanel(
                                                 href="/"
                                                 attr:class="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
                                             >
-                                                "← sessions"
+                                                <Icon name="arrow-left" class="size-3.5"/>
+                                                "sessions"
                                             </A>
                                             <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                                                 <CardTitle class="break-words text-base sm:text-lg">
@@ -1058,7 +1059,7 @@ pub fn SessionPanel(
                                                     size=ButtonSize::Sm
                                                     on_click=Box::new(move || details_open.set(true))
                                                 >
-                                                    <Icon name="details"/>
+                                                    <Icon name="panel-right"/>
                                                     "Details"
                                                 </Button>
                                                 <Dropdown label="Actions">
@@ -1098,7 +1099,7 @@ pub fn SessionPanel(
                                                 class="size-7"
                                                 on_click=Box::new(move || details_open.set(false))
                                             >
-                                                "✕"
+                                                <Icon name="x" class="size-4"/>
                                             </Button>
                                         </SheetHeader>
                                         <SheetBody class="space-y-5">
@@ -1321,7 +1322,8 @@ pub fn SessionPanel(
                                             }
                                         }
                                     >
-                                        "↓ Jump to bottom"
+                                        <Icon name="arrow-down" class="size-3.5"/>
+                                        "Jump to bottom"
                                     </button>
                                     </div>
                                     }.into_any()}
@@ -1672,13 +1674,10 @@ fn ContextCard(context: SystemContext) -> impl IntoView {
             <summary class="group flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
                 <span class="font-medium text-foreground/80">"Session context"</span>
                 <span class="min-w-0 flex-1 truncate">{summary}</span>
-                <svg
-                    class="size-3.5 shrink-0 transition-transform group-open:rotate-180"
-                    viewBox="0 0 12 12"
-                    fill="none"
-                >
-                    <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
+                <Icon
+                    name="chevron-down"
+                    class="size-3.5 transition-transform group-open:rotate-180"
+                />
             </summary>
             <div class="border-t border-border/60 px-3 py-2.5">
                 <div class="flex gap-0.5 overflow-x-auto">
@@ -2231,7 +2230,7 @@ fn PromptBox(
                                                     });
                                                 }
                                             >
-                                                "✕"
+                                                <Icon name="x" class="size-3"/>
                                             </button>
                                         </span>
                                     }
@@ -2293,6 +2292,7 @@ fn PromptBox(
                             }
                         })
                     >
+                        <Icon name="paperclip" class="size-3.5"/>
                         "Attach"
                     </Button>
                 </span>
@@ -2318,6 +2318,7 @@ fn PromptBox(
                     }
                     on_click=Box::new(submit)
                 >
+                    <Icon name="send" class="size-3.5"/>
                     {move || if sending.get() { "Sending…" } else { "Send" }}
                 </Button>
             </div>

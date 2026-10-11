@@ -568,6 +568,7 @@ pub fn SessionListPage() -> impl IntoView {
                                         } else {
                                             view! {
                                                 <EmptyState
+                                                    icon="cloud-off"
                                                     title="No nodes connected"
                                                     description="Sessions appear here once a node is reachable. Check node health or pair a device."
                                                 >
@@ -728,9 +729,25 @@ pub fn SessionListPage() -> impl IntoView {
                                                                         )));
                                                                     }
                                                                 >
-                                                                    <span class="inline-block w-3 shrink-0">
+                                                                    <span class="inline-flex w-3 shrink-0 items-center">
                                                                         {move || {
-                                                                            if closed.get() { "▸" } else { "▾" }
+                                                                            if closed.get() {
+                                                                                view! {
+                                                                                    <Icon
+                                                                                        name="chevron-right"
+                                                                                        class="size-3"
+                                                                                    />
+                                                                                }
+                                                                                    .into_any()
+                                                                            } else {
+                                                                                view! {
+                                                                                    <Icon
+                                                                                        name="chevron-down"
+                                                                                        class="size-3"
+                                                                                    />
+                                                                                }
+                                                                                    .into_any()
+                                                                            }
                                                                         }}
                                                                     </span>
                                                                     {pinned_hdr.then(|| {
@@ -857,7 +874,7 @@ pub fn SessionListPage() -> impl IntoView {
                                     class="hidden lg:flex"
                                     title="Select a session"
                                     description="Pick a session from the list, or start a new one."
-                                    icon="◈"
+                                    icon="message-square-dashed"
                                 />
                             }
                                 .into_any()
@@ -1332,17 +1349,17 @@ fn SessionRowView(
                         } else {
                             view! {
                                 <span class="flex min-w-0 items-center gap-1 text-sm font-medium">
-                                    // `↳` marks sub-agent sessions —
-                                    // the parent id points at the
-                                    // session that spawned them.
+                                    // Marks sub-agent sessions — the
+                                    // parent id points at the session
+                                    // that spawned them.
                                     {is_sub.then(|| {
                                         view! {
                                             <span
-                                                class="shrink-0 text-muted-foreground"
+                                                class="inline-flex shrink-0 text-muted-foreground"
                                                 title="Sub-agent session"
                                                 data-name="SubAgentMark"
                                             >
-                                                "↳"
+                                                <Icon name="corner-down-right" class="size-3"/>
                                             </span>
                                         }
                                     })}
@@ -1361,7 +1378,12 @@ fn SessionRowView(
                             .busy
                             .then(|| view! { <Badge variant=BadgeVariant::Warning>"busy"</Badge> })}
                         {session.locked.then(|| {
-                            view! { <Badge variant=BadgeVariant::Warning>"locked"</Badge> }
+                            view! {
+                                <Badge variant=BadgeVariant::Warning>
+                                    <Icon name="lock" class="size-2.5"/>
+                                    "locked"
+                                </Badge>
+                            }
                         })}
                         {(queued > 0).then(|| {
                             let label = if queued > 1 {
@@ -1402,11 +1424,12 @@ fn SessionRowView(
                     {(children > 0).then(|| {
                         view! {
                             <span
-                                class="shrink-0"
+                                class="inline-flex shrink-0 items-center gap-0.5"
                                 title="Sub-agent sessions"
                                 data-name="ChildCount"
                             >
-                                {format!("↳ {children}")}
+                                <Icon name="corner-down-right" class="size-3"/>
+                                {children}
                             </span>
                         }
                     })}
@@ -1415,7 +1438,7 @@ fn SessionRowView(
                     </span>
                 </span>
             </A>
-            // `⋯` — hover-reveal shortcut to the SAME menu
+            // The ellipsis — hover-reveal shortcut to the SAME menu
             // `contextmenu` opens (contextmenu never fires on touch;
             // `[@media(hover:none)]` keeps it visible there). Pointer
             // coords feed the shared `menu_for` signal; `menu_anchor`
@@ -1433,7 +1456,7 @@ fn SessionRowView(
                         .to_string()
                 }
                 data-name="RowMenuButton"
-                class="absolute right-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md border bg-popover text-sm leading-none text-muted-foreground opacity-0 shadow-sm transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                class="absolute right-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md border bg-popover text-muted-foreground opacity-0 shadow-sm transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                 on:click=move |ev| {
                     ev.prevent_default();
                     ev.stop_propagation();
@@ -1446,7 +1469,7 @@ fn SessionRowView(
                     )));
                 }
             >
-                "⋯"
+                <Icon name="ellipsis-vertical" class="size-3.5"/>
             </button>
         </li>
     }
@@ -1737,19 +1760,10 @@ fn AgentFilter(
                             format!("{n} agent{}", if n == 1 { "" } else { "s" })
                         }
                     }}
-                    <svg
+                    <Icon
+                        name="chevron-down"
                         class="size-3 opacity-60 transition-transform group-open:rotate-180"
-                        viewBox="0 0 12 12"
-                        fill="none"
-                    >
-                        <path
-                            d="M3 4.5L6 7.5L9 4.5"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        />
-                    </svg>
+                    />
                 </span>
             </summary>
             // open: sibling backdrop swallows the outside click
@@ -2243,7 +2257,7 @@ fn ImportCard(
                         class="size-7"
                         on_click=Box::new(move || open.set(false))
                     >
-                        "✕"
+                        <Icon name="x" class="size-4"/>
                     </Button>
                 </SheetHeader>
                 <SheetBody class="space-y-4">

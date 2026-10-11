@@ -32,18 +32,18 @@ const PAGES: &[(&str, &str)] = &[
     ("/settings", "Settings"),
 ];
 
-/// Icon per row kind — session rows get the session glyph, pages use
+/// Icon per row kind — session rows get the message glyph, pages use
 /// their nav icon where one exists, actions the `+`.
 fn row_icon(item: &PaletteItem) -> &'static str {
     match item.kind {
-        PaletteKind::Session => "sessions",
+        PaletteKind::Session => "message-square",
         PaletteKind::Action => "plus",
         PaletteKind::Page => match item.target.as_str() {
-            "/agents" => "agents",
-            "/projects" => "projects",
-            "/nodes" => "nodes",
+            "/agents" => "bot",
+            "/projects" => "folder",
+            "/nodes" => "server",
             "/settings" => "settings",
-            _ => "sessions",
+            _ => "message-square",
         },
     }
 }

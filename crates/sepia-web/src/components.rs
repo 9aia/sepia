@@ -152,9 +152,10 @@ pub fn Dropdown(
                     size: ButtonSize::Sm,
                 }.to_class()>
                     {label}
-                    <svg class="size-3 opacity-60 transition-transform group-open:rotate-180" viewBox="0 0 12 12" fill="none">
-                        <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
+                    <icons::Icon
+                        name="chevron-down"
+                        class="size-3 opacity-60 transition-transform group-open:rotate-180"
+                    />
                 </span>
             </summary>
             // open: sibling backdrop swallows the outside click
@@ -304,7 +305,7 @@ pub fn ErrorBanner(
                 class
             )
         >
-            <icons::Icon name="alert"/>
+            <icons::Icon name="triangle-alert"/>
             <span class="min-w-0 flex-1 break-words">{message}</span>
             {on_retry.map(|cb| {
                 view! {
@@ -536,85 +537,81 @@ mod overlay {
     }
 }
 
-/// Inline SVG icons — lucide-style 24×24 stroke glyphs, hand-embedded
-/// so no icon crate is needed. Everything inherits `currentColor`.
+/// Lucide icons (`lucide-leptos` — inline SVG components, so SSR and
+/// hydrate emit identical markup and no JS is involved). The crate's
+/// components take `size`/`color` props but no `class`, so `Icon`
+/// wraps the glyph in a span that carries the Tailwind box: `size-*`
+/// shrinks the span and `[&>svg]:size-full` scales the svg inside,
+/// `text-*` colors flow through `stroke="currentColor"`.
 pub mod icons {
     use leptos::prelude::*;
 
-    /// A 24×24 stroke icon. Known `name`s: `sessions` (default),
-    /// `agents`, `projects`, `nodes`, `settings`, `pin`, `plus`,
-    /// `details`, `alert`.
+    /// A stroke icon. `name` is the lucide kebab-case id; known names:
+    /// `message-square` (default), `bot`, `folder`, `server`,
+    /// `settings`, `pin`, `plus`, `panel-right`, `triangle-alert`,
+    /// `x`, `ellipsis-vertical`, `menu`, `arrow-left`, `arrow-down`,
+    /// `chevron-right`, `chevron-down`, `corner-down-right`,
+    /// `cloud-off`, `file-question-mark`, `message-square-dashed`,
+    /// `send`, `paperclip`, `lock`, `inbox`, `pencil`, `copy`,
+    /// `check`, `download`, `upload`.
     #[component]
     #[allow(clippy::needless_pass_by_value)] // component props are owned
     pub fn Icon(
         #[prop(into)] name: String,
         #[prop(into, optional)] class: String,
     ) -> impl IntoView {
-        let class = tw_merge::tw_merge!("size-4 shrink-0", class);
+        let class = tw_merge::tw_merge!(
+            "inline-flex size-4 shrink-0 items-center justify-center [&>svg]:size-full",
+            class
+        );
         view! {
-            <svg
-                class=class
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-            >
+            <span class=class aria-hidden="true">
                 {match name.as_str() {
-                    "agents" => view! {
-                        <path d="M12 8V4H8"/>
-                        <rect width="16" height="12" x="4" y="8" rx="2"/>
-                        <path d="M2 14h2"/>
-                        <path d="M20 14h2"/>
-                        <path d="M15 13v2"/>
-                        <path d="M9 13v2"/>
+                    "bot" => view! { <lucide_leptos::Bot/> }.into_any(),
+                    "folder" => view! { <lucide_leptos::Folder/> }.into_any(),
+                    "server" => view! { <lucide_leptos::Server/> }.into_any(),
+                    "settings" => view! { <lucide_leptos::Settings/> }.into_any(),
+                    "pin" => view! { <lucide_leptos::Pin/> }.into_any(),
+                    "plus" => view! { <lucide_leptos::Plus/> }.into_any(),
+                    "panel-right" => view! { <lucide_leptos::PanelRight/> }.into_any(),
+                    "triangle-alert" => {
+                        view! { <lucide_leptos::TriangleAlert/> }.into_any()
                     }
-                        .into_any(),
-                    "projects" => view! {
-                        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                    "x" => view! { <lucide_leptos::X/> }.into_any(),
+                    "ellipsis-vertical" => {
+                        view! { <lucide_leptos::EllipsisVertical/> }.into_any()
                     }
-                        .into_any(),
-                    "nodes" => view! {
-                        <rect width="20" height="8" x="2" y="2" rx="2"/>
-                        <rect width="20" height="8" x="2" y="14" rx="2"/>
-                        <line x1="6" x2="6.01" y1="6" y2="6"/>
-                        <line x1="6" x2="6.01" y1="18" y2="18"/>
+                    "menu" => view! { <lucide_leptos::Menu/> }.into_any(),
+                    "arrow-left" => view! { <lucide_leptos::ArrowLeft/> }.into_any(),
+                    "arrow-down" => view! { <lucide_leptos::ArrowDown/> }.into_any(),
+                    "chevron-right" => {
+                        view! { <lucide_leptos::ChevronRight/> }.into_any()
                     }
-                        .into_any(),
-                    "settings" => view! {
-                        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
-                        <circle cx="12" cy="12" r="3"/>
+                    "chevron-down" => {
+                        view! { <lucide_leptos::ChevronDown/> }.into_any()
                     }
-                        .into_any(),
-                    "pin" => view! {
-                        <path d="M12 17v5"/>
-                        <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V5h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/>
+                    "corner-down-right" => {
+                        view! { <lucide_leptos::CornerDownRight/> }.into_any()
                     }
-                        .into_any(),
-                    "plus" => view! {
-                        <path d="M5 12h14"/>
-                        <path d="M12 5v14"/>
+                    "cloud-off" => view! { <lucide_leptos::CloudOff/> }.into_any(),
+                    "file-question-mark" => {
+                        view! { <lucide_leptos::FileQuestionMark/> }.into_any()
                     }
-                        .into_any(),
-                    "details" => view! {
-                        <rect width="18" height="18" x="3" y="3" rx="2"/>
-                        <path d="M15 3v18"/>
+                    "message-square-dashed" => {
+                        view! { <lucide_leptos::MessageSquareDashed/> }.into_any()
                     }
-                        .into_any(),
-                    "alert" => view! {
-                        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
-                        <path d="M12 9v4"/>
-                        <path d="M12 17h.01"/>
-                    }
-                        .into_any(),
-                    _ => view! {
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                    }
-                        .into_any(),
+                    "send" => view! { <lucide_leptos::Send/> }.into_any(),
+                    "paperclip" => view! { <lucide_leptos::Paperclip/> }.into_any(),
+                    "lock" => view! { <lucide_leptos::Lock/> }.into_any(),
+                    "inbox" => view! { <lucide_leptos::Inbox/> }.into_any(),
+                    "pencil" => view! { <lucide_leptos::Pencil/> }.into_any(),
+                    "copy" => view! { <lucide_leptos::Copy/> }.into_any(),
+                    "check" => view! { <lucide_leptos::Check/> }.into_any(),
+                    "download" => view! { <lucide_leptos::Download/> }.into_any(),
+                    "upload" => view! { <lucide_leptos::Upload/> }.into_any(),
+                    _ => view! { <lucide_leptos::MessageSquare/> }.into_any(),
                 }}
-            </svg>
+            </span>
         }
     }
 }
@@ -786,7 +783,9 @@ clx! { SheetHeader, div, "flex items-center justify-between border-b px-4 py-3" 
 clx! { SheetTitle, h3, "text-sm font-semibold" }
 clx! { SheetBody, div, "flex-1 overflow-y-auto p-4" }
 
-/// Centered empty state — icon glyph, title, description, actions.
+/// Centered empty state — lucide icon tile (the old app's `EmptyMedia`
+/// recipe), title, description, actions. `icon` is a lucide name (see
+/// `icons::Icon`); empty falls back to `inbox`.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // component props are owned
 pub fn EmptyState(
@@ -797,11 +796,14 @@ pub fn EmptyState(
     #[prop(optional)] children: Option<Children>,
 ) -> impl IntoView {
     view! {
-        <div class=tw_merge::tw_merge!("flex h-full min-h-64 flex-col items-center justify-center gap-3 p-8 text-center", class)>
-            <span class="grid size-14 place-items-center rounded-xl border bg-secondary text-2xl text-muted-foreground">
-                {if icon.is_empty() { "◇".to_string() } else { icon }}
+        <div class=tw_merge::tw_merge!("flex h-full min-h-64 flex-col items-center justify-center gap-4 p-8 text-center", class)>
+            <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
+                <icons::Icon
+                    name=if icon.is_empty() { "inbox".to_string() } else { icon }
+                    class="size-5"
+                />
             </span>
-            <h3 class="text-base font-semibold">{title}</h3>
+            <h3 class="text-lg font-medium tracking-tight">{title}</h3>
             {if description.is_empty() {
                 None
             } else {

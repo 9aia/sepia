@@ -97,19 +97,19 @@ fn nav_items(extra: &str, on_nav: Option<std::sync::Arc<dyn Fn() + Send + Sync>>
             }
         >
             <A href="/" exact=true attr:class=nav_link("w-full")>
-                <Icon name="sessions"/>
+                <Icon name="message-square"/>
                 "Sessions"
             </A>
             <A href="/agents" attr:class=nav_link("w-full")>
-                <Icon name="agents"/>
+                <Icon name="bot"/>
                 "Agents"
             </A>
             <A href="/projects" attr:class=nav_link("w-full")>
-                <Icon name="projects"/>
+                <Icon name="folder"/>
                 "Projects"
             </A>
             <A href="/nodes" attr:class=nav_link("w-full")>
-                <Icon name="nodes"/>
+                <Icon name="server"/>
                 "Nodes"
             </A>
             <A href="/settings" attr:class=nav_link("w-full")>
@@ -168,9 +168,7 @@ pub fn App() -> impl IntoView {
                             class="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                             on:click=move |_| sidebar_open.set(true)
                         >
-                            <svg class="size-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
-                                <path d="M3 5h14M3 10h14M3 15h14" stroke-linecap="round"/>
-                            </svg>
+                            <Icon name="menu" class="size-5"/>
                         </button>
                         <A href="/" attr:class="font-bold tracking-tight text-primary">
                             "sepia"
@@ -183,7 +181,7 @@ pub fn App() -> impl IntoView {
                         <Routes fallback=|| {
                             view! {
                                 <EmptyState
-                                    icon="404"
+                                    icon="file-question-mark"
                                     title="Page not found"
                                     description="That page doesn't exist — the link may be stale or the session was deleted."
                                 >
@@ -362,10 +360,10 @@ fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
                     <button
                         type="button"
                         aria-label="Close"
-                        class="text-xs text-muted-foreground hover:text-foreground"
+                        class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                         on:click=move |_| open.set(false)
                     >
-                        "✕"
+                        <Icon name="x" class="size-3.5"/>
                     </button>
                 </div>
                 <dl class="mt-3 space-y-1.5">
