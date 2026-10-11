@@ -479,6 +479,46 @@ impl ProjectionStore {
         Ok(PatchStatus::Applied)
     }
 
+    /// Drop every row belonging to a node id that's no longer
+    /// registered — a renamed id (`node`→`main`), a node removed from
+    /// `SEPIA_NODES`, or the single-node shorthand id replaced by a
+    /// real one. Their session rows have no sync loop anymore and
+    /// would serve dead sessions forever (click → "node not found").
+    /// The store is a cache — a still-configured node resyncs itself.
+    ///
+    /// # Errors
+    /// On sqlite failure.
+    pub fn purge_unregistered(&self, keep: &[String]) -> Result<(), SyncError> {
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if keep.is_empty() {
+            // No nodes configured — dropping everything would also
+            // wipe the visible list; only a bug could get here, keep
+            // the data and let the caller decide.
+            return Ok(());
+        }
+        let marks = std::iter::repeat_n("?", keep.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let bind: Vec<&dyn rusqlite::ToSql> =
+            keep.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let tx = conn.unchecked_transaction()?;
+        for table in ["session_index", "sync_state"] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE node_id NOT IN ({marks})"),
+                rusqlite::params_from_iter(bind.iter()),
+            )?;
+        }
+        tx.execute(
+            &format!("DELETE FROM nodes WHERE id NOT IN ({marks})"),
+            rusqlite::params_from_iter(bind.iter()),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Drop one projected session (tombstone applied).
     ///
     /// # Errors

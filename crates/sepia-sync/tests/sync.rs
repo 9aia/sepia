@@ -357,6 +357,35 @@ fn projection_upserts_patches_and_reconciles() {
     assert!(row.last_seen_at.is_some());
 }
 
+#[test]
+fn purge_unregistered_drops_stale_node_rows() {
+    let store = ProjectionStore::in_memory().unwrap();
+    for id in ["main", "node"] {
+        store
+            .upsert_node(&NodeRef {
+                id: id.into(),
+                url: "http://x".into(),
+                label: id.into(),
+            })
+            .unwrap();
+        store
+            .upsert_summary(
+                id,
+                &json!({"id":"s1","title":"T","updatedAt":"2024-01-01T00:00:00.000Z"}),
+            )
+            .unwrap();
+    }
+    // The legacy `node` id is gone from config — its rows go with it.
+    store.purge_unregistered(&["main".to_string()]).unwrap();
+    assert!(store.session("main", "s1").unwrap().is_some());
+    assert!(store.session("node", "s1").unwrap().is_none());
+    assert!(store.node("main").unwrap().is_some());
+    assert!(store.node("node").unwrap().is_none());
+    // Empty keep-list is a no-op guard, not a wipe.
+    store.purge_unregistered(&[]).unwrap();
+    assert!(store.session("main", "s1").unwrap().is_some());
+}
+
 /* ---- full cycle -------------------------------------------------------*/
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -353,6 +353,13 @@ pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
     tracing::info!(backend = creds.backend(), stored, "node credential store");
     let projection = sepia_sync::ProjectionStore::open(&home.join("projection.db"))
         .map_err(|e| format!("projection open: {e}"))?;
+    // Rows from node ids no longer configured (renamed, removed, or the
+    // legacy `node` shorthand) have no sync loop — purge them once at
+    // boot so dead sessions stop surfacing in the list.
+    let keep: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+    if let Err(e) = projection.purge_unregistered(&keep) {
+        tracing::warn!("purge_unregistered failed: {e}");
+    }
     let outbox = sepia_outbox::Outbox::open(&home.join("outbox.db")).map_err(|e| e.to_string())?;
     let targets = nodes.iter().map(|n| {
         let node = sepia_sync::NodeRef {
