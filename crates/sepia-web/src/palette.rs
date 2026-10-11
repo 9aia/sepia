@@ -62,6 +62,7 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
     #[cfg(feature = "hydrate")]
     let toast = use_toast();
     let theme = expect_context::<RwSignal<Theme>>();
+    let keybinds = crate::keybinds::use_keybinds();
     // `use_navigate` isn't Send — same StoredValue dance as the
     // session list (SSR never navigates).
     #[cfg(feature = "hydrate")]
@@ -96,7 +97,13 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
             "Toggle theme",
             "cycle system → dark → light",
         ));
-        v.push(PaletteItem::action("help", "Keyboard shortcuts", "?"));
+        // The hint tracks the effective binding — an override or a
+        // disabled help key shows the same thing the sheet would.
+        let help_hint = keybinds
+            .keymap()
+            .binding_label(sepia_web_core::keymap::Action::ToggleHelp)
+            .unwrap_or_else(|| "disabled".to_string());
+        v.push(PaletteItem::action("help", "Keyboard shortcuts", help_hint));
         let list = session_rows.get();
         if let Some((id, _agent)) = selected() {
             if let Some(row) = list.iter().find(|s| s.id == id) {
