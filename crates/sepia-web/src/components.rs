@@ -385,9 +385,28 @@ pub fn VisuallyHidden(children: Children) -> impl IntoView {
 /// Clipboard write — browser-only (`navigator.clipboard`); the SSR
 /// stub keeps `on:click` handlers compiling. Shared by the code-fence
 /// copy button and the per-message copy action.
+///
+/// `writeText` rejects when the document isn't focused (headless,
+/// backgrounded tab, permission denied) — an uncaught rejection is a
+/// console SEVERE with zero user feedback, so failures surface a toast.
 #[cfg(feature = "hydrate")]
 pub(crate) fn copy_to_clipboard(text: &str) {
-    let _ = window().navigator().clipboard().write_text(text);
+    // Resolve the store now — the async block runs detached from the
+    // owner, where `use_context` can't reach it.
+    let toast = use_context::<toast::ToastStore>();
+    let text = text.to_string();
+    wasm_bindgen_futures::spawn_local(async move {
+        let p = window().navigator().clipboard().write_text(&text);
+        if let Err(e) = wasm_bindgen_futures::JsFuture::from(p).await {
+            let msg = e
+                .as_string()
+                .unwrap_or_else(|| "clipboard unavailable".to_string());
+            match toast {
+                Some(t) => t.error(format!("Copy failed — {msg}")),
+                None => leptos::logging::warn!("clipboard write rejected: {msg}"),
+            }
+        }
+    });
 }
 
 /// SSR counterpart — no DOM, nothing to write.
