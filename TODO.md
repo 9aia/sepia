@@ -214,7 +214,7 @@ Missing features (wire-supported but no UI):
       convert (detail), pin/archive/rename/delete (list rows), restore/
       rewind (checkpoint rows), model patch, import, attachment-stage
       failures; prompt-send failures toast too
-- [~] a11y — ✓ Sheet/ConfirmDialog/`?` ShortcutsHelp/palette:
+- [x] a11y — ✓ Sheet/ConfirmDialog/`?` ShortcutsHelp/palette:
       `role=dialog` + `aria-modal` + `aria-labelledby`/`aria-label`,
       full Tab trap + initial focus + return-focus + Esc (hand-rolled
       in `components::overlay` on a shared overlay stack — topmost
@@ -225,8 +225,15 @@ Missing features (wire-supported but no UI):
       `prefers-reduced-motion` in input.css, ✓
       `role=combobox`/`listbox`/`option` + `aria-activedescendant` on
       the new-session cwd autocomplete, ✓ `aria-haspopup=menu` on the
-      row `⋯` trigger, ✓ keybind remapping. Left: roving arrow-key
-      nav for `role=menu` context menus
+      row `⋯` trigger, ✓ `role=menu` keyboard nav — both context
+      menus (row `⋯`/right-click + group header) hold DOM focus on
+      the container and drive `aria-activedescendant` (palette
+      pattern): ↑/↓/Home/End/typeahead move (disabled-skipping),
+      Enter/Space activates, Esc closes + returns focus to the
+      opener, Tab dismisses without trapping; triggers carry
+      `aria-expanded`/`aria-controls`; pure math in
+      `sepia-web-core::menu` (`track_menu_focus`/`menu_keydown`/
+      `CtxMenuItem` in session_list.rs), ✓ keybind remapping
 
 Intentionally dropped (v0):
 

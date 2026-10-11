@@ -131,9 +131,14 @@ pub fn SessionListPage() -> impl IntoView {
     // `(session id, agent, clientX, clientY)`, `None` when closed.
     let menu_for: RwSignal<MenuTarget> = RwSignal::new(None);
     let menu_ref = NodeRef::<leptos::html::Div>::new();
+    // `menu_active` is the `aria-activedescendant` index — the menu
+    // container keeps DOM focus (palette pattern, not roving
+    // tabindex); the signal names the highlighted item.
+    let menu_active = RwSignal::new(0usize);
     // Group-header context menu — same pattern, keyed by section.
     let group_menu: RwSignal<GroupMenuTarget> = RwSignal::new(None);
     let group_menu_ref = NodeRef::<leptos::html::Div>::new();
+    let group_menu_active = RwSignal::new(0usize);
     // Inline rename — the id whose row title is swapped for an input.
     let renaming: RwSignal<Option<String>> = RwSignal::new(None);
     let rename_draft = RwSignal::new(String::new());
@@ -215,6 +220,15 @@ pub fn SessionListPage() -> impl IntoView {
         // `click`, so it can't immediately re-close).
         let _outside = leptos_use::on_click_outside(menu_ref, move |_| menu_for.set(None));
         let _outside2 = leptos_use::on_click_outside(group_menu_ref, move |_| group_menu.set(None));
+        // Menu focus on open (first enabled item + container focus)
+        // and back to the opener on close — the roving
+        // `aria-activedescendant` half of WAI-ARIA menu practice.
+        track_menu_focus(move || menu_for.read().is_some(), menu_ref, menu_active);
+        track_menu_focus(
+            move || group_menu.read().is_some(),
+            group_menu_ref,
+            group_menu_active,
+        );
     }
 
     // Filter bar → URL. First run is adoption (the params already
@@ -640,6 +654,7 @@ pub fn SessionListPage() -> impl IntoView {
                                                         });
                                                         let toggle_key = section.key.clone();
                                                         let menu_key = section.key.clone();
+                                                        let expanded_key = section.key.clone();
                                                         let rows = section
                                                             .rows
                                                             .into_iter()
@@ -689,6 +704,15 @@ pub fn SessionListPage() -> impl IntoView {
                                                                 <button
                                                                     type="button"
                                                                     data-name="GroupHeader"
+                                                                    aria-haspopup="menu"
+                                                                    aria-controls="sepia-group-menu"
+                                                                    aria-expanded=move || {
+                                                                        group_menu
+                                                                            .read()
+                                                                            .as_ref()
+                                                                            .is_some_and(|(k, _, _)| *k == expanded_key)
+                                                                            .to_string()
+                                                                    }
                                                                     class="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                                                                     on:click=move |_| {
                                                                         closed_groups.update(|v| {
@@ -848,14 +872,31 @@ pub fn SessionListPage() -> impl IntoView {
             // to the pointer on `contextmenu`. Always rendered (`hidden`
             // while closed) so SSR and hydrate emit identical DOM;
             // closes on outside click and Escape.
+            //
+            // a11y: the container keeps DOM focus (`tabindex="-1"` +
+            // `aria-activedescendant`, the palette's pattern — no
+            // roving tabindex on items); arrows/Home/End/typeahead
+            // move `menu_active`, Enter/Space clicks it, Escape
+            // returns focus to the opener (`track_menu_focus` +
+            // `menu_keydown`). Item clicks can't steal focus —
+            // `mousedown` is eaten on the container.
             {
                 view! {
             <div
                 node_ref=menu_ref
                 role="menu"
+                id="sepia-row-menu"
+                aria-label="Session actions"
+                tabindex="-1"
+                aria-activedescendant=move || {
+                    menu_for
+                        .read()
+                        .is_some()
+                        .then(|| format!("sepia-row-menu-item-{}", menu_active.get()))
+                }
                 class=move || {
                     if menu_for.read().is_some() {
-                        "fixed z-50 w-44 rounded-md border bg-popover p-1 shadow-lg"
+                        "fixed z-50 w-44 rounded-md border bg-popover p-1 shadow-lg focus:outline-none"
                     } else {
                         "hidden"
                     }
@@ -867,6 +908,10 @@ pub fn SessionListPage() -> impl IntoView {
                             "left:min({x}px, calc(100vw - 12rem)); top:min({y}px, calc(100vh - 14rem))"
                         )
                     })
+                }
+                on:mousedown=move |ev| ev.prevent_default()
+                on:keydown=move |ev| {
+                    menu_keydown(&ev, menu_ref, menu_active, move || menu_for.set(None));
                 }
             >
                 {move || {
@@ -887,29 +932,29 @@ pub fn SessionListPage() -> impl IntoView {
                             .map(|s| (s.pinned, s.archived))
                             .unwrap_or_default();
                         view! {
-                            <button
-                                type="button"
-                                role="menuitem"
-                                class=MENU_ITEM_CLS
-                                on:click={
+                            <CtxMenuItem
+                                id="sepia-row-menu-item-0"
+                                index=0
+                                active=menu_active
+                                on_click=Box::new({
                                     let href = open_href.clone();
-                                    move |_| {
+                                    move || {
                                         menu_for.set(None);
                                         navigate.with_value(|n| {
                                             n(&href, NavigateOptions::default());
                                         });
                                     }
-                                }
+                                })
                             >
                                 "Open"
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                class=MENU_ITEM_CLS
-                                on:click={
+                            </CtxMenuItem>
+                            <CtxMenuItem
+                                id="sepia-row-menu-item-1"
+                                index=1
+                                active=menu_active
+                                on_click=Box::new({
                                     let id = id.clone();
-                                    move |_| {
+                                    move || {
                                         menu_for.set(None);
                                         let draft = all_sessions
                                             .read()
@@ -919,18 +964,18 @@ pub fn SessionListPage() -> impl IntoView {
                                         rename_draft.set(draft);
                                         renaming.set(Some(id.clone()));
                                     }
-                                }
+                                })
                             >
                                 "Rename…"
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                class=MENU_ITEM_CLS
-                                on:click={
+                            </CtxMenuItem>
+                            <CtxMenuItem
+                                id="sepia-row-menu-item-2"
+                                index=2
+                                active=menu_active
+                                on_click=Box::new({
                                     let id = id.clone();
                                     let agent = agent.clone();
-                                    move |_| {
+                                    move || {
                                         menu_for.set(None);
                                         let id = id.clone();
                                         let agent = agent.clone();
@@ -951,18 +996,18 @@ pub fn SessionListPage() -> impl IntoView {
                                             }
                                         });
                                     }
-                                }
+                                })
                             >
                                 {if pinned_now { "Unpin" } else { "Pin" }}
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                class=MENU_ITEM_CLS
-                                on:click={
+                            </CtxMenuItem>
+                            <CtxMenuItem
+                                id="sepia-row-menu-item-3"
+                                index=3
+                                active=menu_active
+                                on_click=Box::new({
                                     let id = id.clone();
                                     let agent = agent.clone();
-                                    move |_| {
+                                    move || {
                                         menu_for.set(None);
                                         let id = id.clone();
                                         let agent = agent.clone();
@@ -983,42 +1028,43 @@ pub fn SessionListPage() -> impl IntoView {
                                             }
                                         });
                                     }
-                                }
+                                })
                             >
                                 {if archived_now { "Unarchive" } else { "Archive" }}
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                class=MENU_ITEM_DESTRUCTIVE_CLS
-                                on:click={
+                            </CtxMenuItem>
+                            <CtxMenuItem
+                                id="sepia-row-menu-item-4"
+                                index=4
+                                active=menu_active
+                                destructive=true
+                                on_click=Box::new({
                                     let id = id.clone();
                                     let agent = agent.clone();
-                                    move |_| {
+                                    move || {
                                         menu_for.set(None);
                                         pending_delete.set(Some((id.clone(), agent.clone())));
                                         confirm_delete.set(true);
                                     }
-                                }
+                                })
                             >
                                 "Delete…"
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                class=MENU_ITEM_CLS
-                                on:click={
+                            </CtxMenuItem>
+                            <CtxMenuItem
+                                id="sepia-row-menu-item-5"
+                                index=5
+                                active=menu_active
+                                on_click=Box::new({
                                     let href = detail_href.clone();
-                                    move |_| {
+                                    move || {
                                         menu_for.set(None);
                                         navigate.with_value(|n| {
                                             n(&href, NavigateOptions::default());
                                         });
                                     }
-                                }
+                                })
                             >
                                 "Details"
-                            </button>
+                            </CtxMenuItem>
                         }
                     })
                 }}
@@ -1028,17 +1074,27 @@ pub fn SessionListPage() -> impl IntoView {
             }
             // Group-header context menu — collapse/expand the section,
             // or start a session in its cwd. Same fixed-position
-            // always-rendered pattern as the row menu.
+            // always-rendered pattern + `aria-activedescendant`
+            // keyboard nav as the row menu.
             {
                 view! {
             <div
                 node_ref=group_menu_ref
                 role="menu"
+                id="sepia-group-menu"
+                aria-label="Group actions"
+                tabindex="-1"
+                aria-activedescendant=move || {
+                    group_menu
+                        .read()
+                        .is_some()
+                        .then(|| format!("sepia-group-menu-item-{}", group_menu_active.get()))
+                }
                 data-name="GroupMenu"
                 data-open=move || group_menu.read().is_some().then_some("")
                 class=move || {
                     if group_menu.read().is_some() {
-                        "fixed z-50 w-44 rounded-md border bg-popover p-1 shadow-lg"
+                        "fixed z-50 w-44 rounded-md border bg-popover p-1 shadow-lg focus:outline-none"
                     } else {
                         "hidden"
                     }
@@ -1049,6 +1105,12 @@ pub fn SessionListPage() -> impl IntoView {
                             "left:min({x}px, calc(100vw - 12rem)); top:min({y}px, calc(100vh - 10rem))"
                         )
                     })
+                }
+                on:mousedown=move |ev| ev.prevent_default()
+                on:keydown=move |ev| {
+                    menu_keydown(&ev, group_menu_ref, group_menu_active, move || {
+                        group_menu.set(None);
+                    });
                 }
             >
                 {move || {
@@ -1067,37 +1129,37 @@ pub fn SessionListPage() -> impl IntoView {
                         // group don't offer it.
                         let can_spawn = key != PINNED_KEY && !key.is_empty();
                         view! {
-                            <button
-                                type="button"
-                                role="menuitem"
-                                class=MENU_ITEM_CLS
-                                on:click={
+                            <CtxMenuItem
+                                id="sepia-group-menu-item-0"
+                                index=0
+                                active=group_menu_active
+                                on_click=Box::new({
                                     let key = key.clone();
-                                    move |_| {
+                                    move || {
                                         group_menu.set(None);
                                         closed_groups.update(|v| v.toggle(&key));
                                     }
-                                }
+                                })
                             >
                                 {closed_label}
-                            </button>
+                            </CtxMenuItem>
                             {can_spawn.then(|| {
                                 let key = key.clone();
                                 view! {
-                                    <button
-                                        type="button"
-                                        role="menuitem"
-                                        class=MENU_ITEM_CLS
-                                        on:click=move |_| {
+                                    <CtxMenuItem
+                                        id="sepia-group-menu-item-1"
+                                        index=1
+                                        active=group_menu_active
+                                        on_click=Box::new(move || {
                                             group_menu.set(None);
                                             new_cwd.set(key.clone());
                                             if let Some(el) = cwd_input_ref.get() {
                                                 let _ = el.focus();
                                             }
-                                        }
+                                        })
                                     >
                                         "New session here"
-                                    </button>
+                                    </CtxMenuItem>
                                 }
                             })}
                         }
@@ -1165,6 +1227,7 @@ fn SessionRowView(
     let menu_agent = non_empty(&session.agent);
     let dots_id = session.id.clone();
     let dots_agent = menu_agent.clone();
+    let expanded_id = session.id.clone();
     let orig_title = session.title.clone();
     let commit_id = session.id.clone();
     let commit_agent = menu_agent.clone();
@@ -1362,6 +1425,13 @@ fn SessionRowView(
                 type="button"
                 aria-label="Session actions"
                 aria-haspopup="menu"
+                aria-controls="sepia-row-menu"
+                aria-expanded=move || {
+                    menu.read()
+                        .as_ref()
+                        .is_some_and(|(id, _, _, _)| *id == expanded_id)
+                        .to_string()
+                }
                 data-name="RowMenuButton"
                 class="absolute right-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md border bg-popover text-sm leading-none text-muted-foreground opacity-0 shadow-sm transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                 on:click=move |ev| {
@@ -1407,6 +1477,241 @@ fn menu_anchor(ev: &leptos::ev::MouseEvent) -> (f64, f64) {
 #[cfg(not(feature = "hydrate"))]
 fn menu_anchor(ev: &leptos::ev::MouseEvent) -> (f64, f64) {
     (f64::from(ev.client_x()), f64::from(ev.client_y()))
+}
+
+/// Every `[role=menuitem]` inside a menu container, DOM order — the
+/// index space `active` and `aria-activedescendant` count. Disabled
+/// items stay in the list (stable positional ids); `menu_enabled`
+/// marks the slots the pure math may land on.
+#[cfg(feature = "hydrate")]
+fn menu_items(menu: &web_sys::HtmlElement) -> Vec<web_sys::HtmlElement> {
+    use wasm_bindgen::JsCast;
+    let Ok(list) = menu.query_selector_all("[role=menuitem]") else {
+        return Vec::new();
+    };
+    (0..list.length())
+        .filter_map(|i| list.item(i))
+        .filter_map(|n| n.dyn_into::<web_sys::HtmlElement>().ok())
+        .collect()
+}
+
+/// Enabled mask over `items` — `disabled` or `aria-disabled="true"`
+/// opts out of roving, activation, and typeahead.
+#[cfg(feature = "hydrate")]
+fn menu_enabled(items: &[web_sys::HtmlElement]) -> Vec<bool> {
+    items
+        .iter()
+        .map(|el| {
+            !el.has_attribute("disabled")
+                && el.get_attribute("aria-disabled").as_deref() != Some("true")
+        })
+        .collect()
+}
+
+/// Focus bookkeeping for one `role=menu` popup — the menu sibling of
+/// `track_overlay_focus`, minus the Tab trap (menus dismiss on Tab,
+/// they don't cycle). On open: remember the focused element (the
+/// return-focus target), drop `active` on the first enabled item, and
+/// focus the container that owns `aria-activedescendant` — deferred a
+/// tick so the `hidden` class removal lands first. On close: hand
+/// focus back to the opener *only* when it's still inside the menu —
+/// item clicks that grabbed focus elsewhere first (rename input, cwd
+/// field, a dialog) keep it; outside clicks arrive with focus already
+/// gone. `open` reads the menu's target signal — it *tracks* the
+/// signal, so re-anchoring to another row while open re-runs the
+/// effect even though the bool itself holds.
+#[cfg(feature = "hydrate")]
+fn track_menu_focus(
+    open: impl Fn() -> bool + Copy + 'static,
+    menu: NodeRef<leptos::html::Div>,
+    active: RwSignal<usize>,
+) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::Closure;
+    let prev = Rc::new(RefCell::new(None::<web_sys::HtmlElement>));
+    Effect::new(move |_| {
+        if open() {
+            // Capture the opener only on a closed→open transition —
+            // re-anchoring to another target while open mustn't
+            // record the focused menu itself.
+            if prev.borrow().is_none() {
+                *prev.borrow_mut() = document()
+                    .active_element()
+                    .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok());
+            }
+            let cb = Closure::<dyn FnMut()>::once(move || {
+                // Bail if the menu closed again before the tick —
+                // focusing a hidden element strands focus on <body>.
+                if !open() {
+                    return;
+                }
+                if let Some(el) = menu.get() {
+                    let items = menu_items(&el);
+                    let enabled = menu_enabled(&items);
+                    if let Some(first) =
+                        sepia_web_core::menu::edge(&enabled, sepia_web_core::menu::Edge::First)
+                    {
+                        active.set(first);
+                    }
+                    let _ = el.focus();
+                }
+            });
+            let _ = window().set_timeout_with_callback_and_timeout_and_arguments_0(
+                cb.as_ref().unchecked_ref(),
+                0,
+            );
+            cb.forget();
+        } else {
+            let restore = prev.borrow_mut().take();
+            if let (Some(to), Some(el)) = (restore, menu.get()) {
+                let inside = document()
+                    .active_element()
+                    .is_some_and(|a| el.contains(Some(a.unchecked_ref::<web_sys::Node>())));
+                if inside {
+                    let _ = to.focus();
+                }
+            }
+        }
+    });
+}
+
+/// Shared keydown dispatch for the page's `role=menu` popups (row +
+/// group-header): arrows/Home/End move `active` (the
+/// `aria-activedescendant` index, skipping disabled items), Enter/
+/// Space clicks it, Escape closes (the `track_menu_focus` effect
+/// returns focus to the opener), Tab closes without trapping, and a
+/// bare printable char typeaheads. Pure math lives in
+/// `sepia_web_core::menu`.
+#[cfg(feature = "hydrate")]
+fn menu_keydown(
+    ev: &leptos::ev::KeyboardEvent,
+    menu: NodeRef<leptos::html::Div>,
+    active: RwSignal<usize>,
+    close: impl Fn(),
+) {
+    use sepia_web_core::menu::{self, MenuKey};
+    // Modifier chords belong to the page — ⌘K still opens the
+    // palette over a menu rather than feeding typeahead.
+    if ev.ctrl_key() || ev.meta_key() || ev.alt_key() {
+        return;
+    }
+    match menu::classify(&ev.key()) {
+        MenuKey::Ignore => {}
+        // Tab — close and let the press through; menus don't trap.
+        MenuKey::Dismiss => close(),
+        // Escape — close; `track_menu_focus` returns focus.
+        MenuKey::Close => {
+            ev.prevent_default();
+            ev.stop_propagation();
+            close();
+        }
+        MenuKey::Move(dir) => {
+            ev.prevent_default();
+            ev.stop_propagation();
+            let Some(el) = menu.get() else { return };
+            let enabled = menu_enabled(&menu_items(&el));
+            if let Some(i) = menu::move_active(&enabled, Some(active.get_untracked()), dir) {
+                active.set(i);
+            }
+        }
+        MenuKey::Jump(which) => {
+            ev.prevent_default();
+            ev.stop_propagation();
+            let Some(el) = menu.get() else { return };
+            let enabled = menu_enabled(&menu_items(&el));
+            if let Some(i) = menu::edge(&enabled, which) {
+                active.set(i);
+            }
+        }
+        MenuKey::Type(c) => {
+            ev.prevent_default();
+            ev.stop_propagation();
+            let Some(el) = menu.get() else { return };
+            let items = menu_items(&el);
+            let enabled = menu_enabled(&items);
+            let labels: Vec<String> = items
+                .iter()
+                .map(|el| el.text_content().unwrap_or_default())
+                .collect();
+            if let Some(i) = menu::typeahead(&labels, &enabled, c, Some(active.get_untracked())) {
+                active.set(i);
+            }
+        }
+        MenuKey::Activate => {
+            ev.prevent_default();
+            ev.stop_propagation();
+            let Some(el) = menu.get() else { return };
+            let items = menu_items(&el);
+            let enabled = menu_enabled(&items);
+            let cur = active.get_untracked();
+            if enabled.get(cur) == Some(&true) {
+                items[cur].click();
+            }
+        }
+    }
+}
+
+/// SSR stub — menus never open server-side; the signature keeps the
+/// `on:keydown` handlers compiling.
+#[cfg(not(feature = "hydrate"))]
+fn menu_keydown(
+    _ev: &leptos::ev::KeyboardEvent,
+    _menu: NodeRef<leptos::html::Div>,
+    _active: RwSignal<usize>,
+    _close: impl Fn(),
+) {
+}
+
+/// One `role=menuitem` in the page's context menus — a plain button
+/// plus the `aria-activedescendant` bookkeeping: positional `id`
+/// (what the container's attribute points at), `index` inside the
+/// menu (what `active` counts), the `data-active` highlight, and a
+/// `mouseenter` that keeps the two in sync under the pointer.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+fn CtxMenuItem(
+    /// DOM id the menu's `aria-activedescendant` references.
+    #[prop(into)]
+    id: String,
+    /// Position within the menu — compared against `active`.
+    index: usize,
+    /// The menu's active-descendant index.
+    active: RwSignal<usize>,
+    #[prop(optional)] destructive: bool,
+    /// Runs on click — the item's action; closes the menu itself.
+    on_click: Box<dyn Fn() + Send + Sync + 'static>,
+    children: Children,
+) -> impl IntoView {
+    let cls = if destructive {
+        MENU_ITEM_DESTRUCTIVE_CLS
+    } else {
+        MENU_ITEM_CLS
+    };
+    view! {
+        <button
+            type="button"
+            role="menuitem"
+            id=id
+            class=move || {
+                if active.get() == index {
+                    if destructive {
+                        format!("{cls} bg-destructive/10")
+                    } else {
+                        format!("{cls} bg-accent")
+                    }
+                } else {
+                    cls.to_string()
+                }
+            }
+            data-active=move || (active.get() == index).then_some("")
+            on:mouseenter=move |_| active.set(index)
+            on:click=move |_| on_click()
+        >
+            {children()}
+        </button>
+    }
 }
 
 /// Agent multi-select — a `<details>` dropdown of checkboxes over the

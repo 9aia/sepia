@@ -152,3 +152,152 @@ async fn filter_input_narrows_the_session_list() {
     browser.shutdown().await;
     env.shutdown();
 }
+
+/// The row menu's current `aria-activedescendant` value.
+async fn activedescendant(browser: &Browser) -> serde_json::Value {
+    browser
+        .eval(
+            "return document.querySelector('#sepia-row-menu')\
+                   .getAttribute('aria-activedescendant')",
+        )
+        .await
+}
+
+#[ignore = "needs chromedriver + chrome; set SEPIA_BROWSER_E2E=1"]
+#[tokio::test]
+async fn row_menu_navigates_and_restores_focus_by_keyboard() {
+    let Some((env, browser)) = setup().await else {
+        return;
+    };
+    let deadline = Instant::now() + WAIT;
+    wait_elem(&browser.driver, ROW, deadline).await.unwrap();
+    // Hydration beat — menu handlers attach with the bundle.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    // Focus the first row's `⋯` and open — the keyboard path (a
+    // click with no pointer coords anchors on the button's corner).
+    const OPEN: &str = r#"const b =
+        document.querySelector('button[data-name="RowMenuButton"]');
+        b.focus(); b.click();"#;
+    // The menu reports its own state — object → Value::Object.
+    const STATE: &str = r#"const m = document.querySelector('#sepia-row-menu');
+        return {open: m && !m.classList.contains('hidden'),
+                focused: document.activeElement === m,
+                ad: m && m.getAttribute('aria-activedescendant')}"#;
+    let key = |k: &str| {
+        format!(
+            "document.querySelector('#sepia-row-menu').dispatchEvent(\
+                 new KeyboardEvent('keydown', {{key: '{k}', bubbles: true}}))"
+        )
+    };
+
+    // Open is followed by a deferred focus: poll for the menu taking
+    // DOM focus and pointing activedescendant at the first item —
+    // retry the click until hydration has attached the handlers.
+    let mut opened = false;
+    let mut last = serde_json::Value::Null;
+    while Instant::now() < deadline {
+        browser.eval(OPEN).await;
+        tokio::time::sleep(harness::POLL).await;
+        last = browser.eval(STATE).await;
+        if last["focused"].as_bool() == Some(true)
+            && last["ad"].as_str() == Some("sepia-row-menu-item-0")
+        {
+            opened = true;
+            break;
+        }
+    }
+    assert!(
+        opened,
+        "menu never opened with focus on the container; last state: {last}"
+    );
+    let expanded = browser
+        .eval(
+            r#"return document.querySelector('button[data-name="RowMenuButton"]')
+            .getAttribute('aria-expanded')"#,
+        )
+        .await;
+    assert_eq!(
+        expanded.as_str(),
+        Some("true"),
+        "open menu did not set aria-expanded on its trigger"
+    );
+
+    // ↓ moves to item 1, End to the last, 'o' typeaheads back to
+    // "Open".
+    browser.eval(&key("ArrowDown")).await;
+    tokio::time::sleep(harness::POLL).await;
+    assert_eq!(
+        activedescendant(&browser).await.as_str(),
+        Some("sepia-row-menu-item-1"),
+        "ArrowDown did not move the active descendant"
+    );
+    browser.eval(&key("End")).await;
+    tokio::time::sleep(harness::POLL).await;
+    assert_eq!(
+        activedescendant(&browser).await.as_str(),
+        Some("sepia-row-menu-item-5"),
+        "End did not jump to the last item"
+    );
+    browser.eval(&key("o")).await;
+    tokio::time::sleep(harness::POLL).await;
+    assert_eq!(
+        activedescendant(&browser).await.as_str(),
+        Some("sepia-row-menu-item-0"),
+        "typeahead 'o' did not land on Open"
+    );
+
+    // Enter activates "Open" → ?session= navigation.
+    browser.eval(&key("Enter")).await;
+    let mut navigated = false;
+    let nav_deadline = Instant::now() + WAIT;
+    while Instant::now() < nav_deadline {
+        if browser.path().await.contains("?session=") {
+            navigated = true;
+            break;
+        }
+        tokio::time::sleep(harness::POLL).await;
+    }
+    assert!(navigated, "Enter did not activate the Open item");
+
+    // Reopen and Escape — the menu closes and focus returns to the
+    // `⋯` trigger that opened it.
+    browser.eval(OPEN).await;
+    let mut reopened = false;
+    let reopen_deadline = Instant::now() + WAIT;
+    while Instant::now() < reopen_deadline {
+        if browser.eval(STATE).await["focused"].as_bool() == Some(true) {
+            reopened = true;
+            break;
+        }
+        tokio::time::sleep(harness::POLL).await;
+    }
+    assert!(reopened, "menu never reopened");
+    browser.eval(&key("Escape")).await;
+    let mut closed = false;
+    let esc_deadline = Instant::now() + WAIT;
+    while Instant::now() < esc_deadline {
+        if browser.eval(STATE).await["open"].as_bool() == Some(false) {
+            closed = true;
+            break;
+        }
+        tokio::time::sleep(harness::POLL).await;
+    }
+    assert!(closed, "Escape did not close the menu");
+    let back = browser
+        .eval(
+            r#"return document.activeElement ===
+                 document.querySelector('button[data-name="RowMenuButton"]')"#,
+        )
+        .await;
+    assert_eq!(
+        back.as_bool(),
+        Some(true),
+        "Escape did not return focus to the ⋯ trigger"
+    );
+    let severe = browser.severe_logs().await;
+    assert!(severe.is_empty(), "console errors:\n{}", severe.join("\n"));
+
+    browser.shutdown().await;
+    env.shutdown();
+}

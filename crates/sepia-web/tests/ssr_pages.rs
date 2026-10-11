@@ -91,9 +91,15 @@ async fn session_list_renders_titles_badges_and_groups() {
     assert_contains(&html, ">busy<");
     assert_contains(&html, ">locked<");
     // Every row carries the hover-revealed `⋯` actions trigger that
-    // opens the same menu as right-click.
+    // opens the same menu as right-click — with menu-button ARIA and
+    // an always-mounted `role=menu` that takes DOM focus on open
+    // (`tabindex=-1` + `aria-activedescendant`, no roving tabindex).
     assert_contains(&html, "data-name=\"RowMenuButton\"");
     assert_contains(&html, "aria-haspopup=\"menu\"");
+    assert_contains(&html, "aria-expanded=\"false\"");
+    assert_contains(&html, "aria-controls=\"sepia-row-menu\"");
+    assert_contains(&html, "id=\"sepia-row-menu\"");
+    assert_contains(&html, "aria-label=\"Session actions\"");
     // The empty chat pane shows its placeholder on lg+.
     assert_contains(&html, "Select a session");
 }
@@ -129,6 +135,11 @@ async fn session_list_filter_bar_renders_new_controls() {
     assert_contains(&html, "data-name=\"RecencyFilter\"");
     assert_contains(&html, "data-name=\"GroupHeader\"");
     assert_contains(&html, "data-name=\"GroupMenu\"");
+    // The group menu rides the same keyboard-nav wiring as the row
+    // menu; its header button advertises the popup.
+    assert_contains(&html, "id=\"sepia-group-menu\"");
+    assert_contains(&html, "aria-label=\"Group actions\"");
+    assert_contains(&html, "aria-controls=\"sepia-group-menu\"");
 }
 
 #[tokio::test]
