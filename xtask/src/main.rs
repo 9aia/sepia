@@ -103,6 +103,27 @@ fn main() -> anyhow::Result<()> {
             }
             println!("installed {bins:?} to {}", out.display());
 
+            // Driver discovery searches `$SEPIA_DRIVER_DIR` →
+            // `~/.local/share/sepia/drivers` → `/usr/local/lib/sepia/
+            // drivers` → PATH. Under systemd PATH never includes
+            // `~/.local/bin`, so link the drivers into the canonical
+            // dir — without this the node boots with zero drivers and
+            // meta-only sessions 404 every store op.
+            let driver_dir = home.join(".local/share/sepia/drivers");
+            std::fs::create_dir_all(&driver_dir)?;
+            for bin in &bins {
+                if !bin.starts_with("sepia-driver-") {
+                    continue;
+                }
+                let link = driver_dir.join(bin);
+                let _ = std::fs::remove_file(&link);
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(out.join(bin), &link)?;
+                #[cfg(not(unix))]
+                std::fs::copy(out.join(bin), &link)?;
+            }
+            println!("linked drivers into {}", driver_dir.display());
+
             // The hub's wasm bundle + PWA assets — hydration JS lives in
             // $SEPIA_HOME/site (LEPTOS_SITE_ROOT/SEPIA_SITE_ROOT override).
             build_site()?;

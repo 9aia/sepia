@@ -21,3 +21,4 @@ mod sessions;
 mod shell;
 mod ssr_integrity;
 mod user_sim;
+mod user_sim2;
