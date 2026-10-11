@@ -17,6 +17,20 @@
 
 ### Ops / QA
 
+- [ ] **Route-swap wasm traps (contained)** — leaving the session
+      pages (`/`, `/sessions/:id`) via a client-side router swap traps
+      in tachys/leptos-router 0.8: `RuntimeError: unreachable` abort
+      during `NestedRouteViewState` unmount (symbolized through
+      `ScopedFuture<Suspend>` + `AnySubscriber` frames, no panic
+      message). Reproduces on the sandbox e2e stack — `e2e/swap.rs`
+      gates it. Contained for now: cross-section navs are document
+      loads (`rel="external"` on rail/drawer/menu anchors +
+      `nav_external()` for programmatic navs); `?session=` in-page
+      swaps stay client-side. Real fix wants an upstream repro +
+      report — candidates: `Suspend` scoped-future abort racing arena
+      disposal, `AnyView` state teardown of the ~1000-row list, or
+      streamed `SsrMode::OutOfOrder` fragments; routes currently run
+      `InOrder` after a stale-template hydration hazard was found.
 - [ ] **Push E2E on a real device** — subscribe/fan-out paths are unit-
       covered; a real browser push is unverified.
 - [ ] ~~**Browser e2e**~~ — done: `crates/sepia-hub/tests/e2e/` drives
