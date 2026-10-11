@@ -233,46 +233,47 @@ pub fn DesktopMenu(
     // with their resource handles.
     let probe_loaded = RwSignal::new(false);
 
-    // The query handles exist on both targets — resource creation
-    // must stay symmetric so hydrate-side indexing matches the
-    // serialized SSR pool (hydrate-only handles shift every later
-    // resource's id and break Suspense adoption).
-    let client = crate::api::query_client();
-    let status_q = client.resource(crate::api::node_status_scope, || ());
-    let info_q = client.resource(crate::api::node_info_scope, || ());
-    let agents_q = client.resource(crate::api::agents_scope, || ());
-    let sessions_q = client.resource(crate::api::sessions_scope, || ());
-
-    #[cfg(not(feature = "hydrate"))]
-    {
-        let _ = (status_q, info_q, agents_q, sessions_q);
-    }
+    // Menu data lives in plain mirror signals filled by hydrate-only
+    // `spawn_local` fetches. No `client.resource`: an unawaited
+    // resource created during SSR spawns a fetch that can resolve
+    // after the render's QueryClient drops (leptos-fetch "scope not
+    // found" panic), and hydrate-only handles shift the serialized
+    // resource indexes (Suspense adoption). Plain fetches dodge both
+    // — see `palette.rs` for the same pattern.
     #[cfg(feature = "hydrate")]
     {
-        Effect::new(move |_| {
-            let q = status_q.get();
-            let resolved = q.is_some();
-            statuses.set(q.and_then(Result::ok).unwrap_or_default());
-            probe_loaded.set(resolved);
-        });
-        Effect::new(move |_| {
-            if let Some(n) = info_q.get().and_then(Result::ok) {
+        let fetch_status = move || {
+            leptos::task::spawn_local(async move {
+                if let Ok(rows) = crate::api::node_status().await {
+                    statuses.set(rows);
+                }
+                probe_loaded.set(true);
+            });
+        };
+        let fetch_sessions = move || {
+            leptos::task::spawn_local(async move {
+                if let Ok(rows) = crate::api::list_sessions().await {
+                    sessions.set(rows);
+                }
+            });
+        };
+        fetch_status();
+        fetch_sessions();
+        leptos::task::spawn_local(async move {
+            if let Ok(n) = crate::api::node_info().await {
                 info.set(n);
             }
-        });
-        Effect::new(move |_| {
-            agents.set(agents_q.get().and_then(Result::ok).unwrap_or_default());
-        });
-        Effect::new(move |_| {
-            sessions.set(sessions_q.get().and_then(Result::ok).unwrap_or_default());
+            if let Ok(a) = crate::api::list_agents().await {
+                agents.set(a);
+            }
         });
         // Freshness — the node feed + a slow poll for reachability,
         // the same triggers `SessionListPanel` uses for these scopes.
         let _feed = StoredValue::new_local(crate::sse::node_feed(move || {
-            status_q.refetch();
-            sessions_q.refetch();
+            fetch_status();
+            fetch_sessions();
         }));
-        crate::app::every_ms(30_000, move || status_q.refetch());
+        crate::app::every_ms(30_000, fetch_status);
     }
 
     // Query reads — each returns the mirrored rows ([]/None until

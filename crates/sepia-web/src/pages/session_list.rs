@@ -169,15 +169,14 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
     let nodes = client.resource(crate::api::node_status_scope, || ());
     // The agent roster (filter labels + the submenu's empty state)
     // and the primary node's descriptor (bare `node: None` wire
-    // annotations resolve through it). Created unconditionally on
-    // both targets like the rest — hydrate-only Effects mirror them
-    // into signals; the view never touches the handles directly.
-    let agents_q = client.resource(crate::api::agents_scope, || ());
-    let info_q = client.resource(crate::api::node_info_scope, || ());
-    #[cfg(not(feature = "hydrate"))]
-    {
-        let _ = (agents_q, info_q);
-    }
+    // annotations resolve through it) live in plain mirror signals,
+    // filled by hydrate-only `spawn_local` fetches. No
+    // `client.resource`: an unawaited resource created during SSR
+    // spawns a fetch that can resolve after the render's
+    // QueryClient drops (`leptos-fetch` "scope not found" panic),
+    // and a hydrate-only handle shifts the serialized resource
+    // indexes. Plain fetches dodge both.
+    // See `palette.rs` for the same pattern.
     let query = use_query_map();
 
     // Filter/sort state — seeded from the `?…` params so deep links
@@ -365,11 +364,25 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
     // Refresh when the node feed reports a session/meta/project change.
     #[cfg(feature = "hydrate")]
     {
+        let refetch_roster = move || {
+            leptos::task::spawn_local(async move {
+                if let Ok(a) = crate::api::list_agents().await {
+                    agents_roster.set(a);
+                    agents_loaded.set(true);
+                }
+            });
+        };
+        refetch_roster();
+        leptos::task::spawn_local(async move {
+            if let Ok(n) = crate::api::node_info().await {
+                node_primary.set((!n.id.is_empty()).then_some(n.id));
+            }
+        });
         let _feed = StoredValue::new_local(crate::sse::node_feed(move || {
             sessions.refetch();
             pending.refetch();
             nodes.refetch();
-            agents_q.refetch();
+            refetch_roster();
         }));
         crate::app::every_ms(30_000, move || {
             pending.refetch();
@@ -388,16 +401,8 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                     .any(|r| r.status == "up"),
             );
         });
-        Effect::new(move |_| {
-            if let Some(n) = info_q.get().and_then(Result::ok) {
-                node_primary.set((!n.id.is_empty()).then_some(n.id));
-            }
-        });
-        Effect::new(move |_| {
-            let q = agents_q.get();
-            agents_loaded.set(q.is_some());
-            agents_roster.set(q.and_then(Result::ok).unwrap_or_default());
-        });
+        // `agents_loaded`/`agents_roster`/`node_primary` are filled
+        // by the spawn_local fetches above — no Effects needed.
         // Clicking anywhere outside the menus closes them (the
         // right-click that opens one precedes `contextmenu`, not a
         // `click`, so it can't immediately re-close).
