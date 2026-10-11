@@ -781,17 +781,21 @@ fn PushSection() -> impl IntoView {
                                             return;
                                         }
                                         busy.set(true);
-                                        // Used only under `hydrate` —
-                                        // the underscore keeps the ssr
-                                        // build from warning.
-                                        let _key = key.clone();
+                                        // Referenced only under
+                                        // `hydrate` — the ssr build
+                                        // needs the allow.
+                                        #[cfg_attr(
+                                            not(feature = "hydrate"),
+                                            allow(unused_variables)
+                                        )]
+                                        let key = key.clone();
                                         leptos::task::spawn_local(async move {
                                             #[cfg(feature = "hydrate")]
                                             {
                                                 let result = if subscribed.get() == Some(true) {
                                                     push::unsubscribe().await
                                                 } else {
-                                                    push::subscribe(&_key, prefs.get_untracked()).await
+                                                    push::subscribe(&key, prefs.get_untracked()).await
                                                 };
                                                 match result {
                                                     Ok(()) => {

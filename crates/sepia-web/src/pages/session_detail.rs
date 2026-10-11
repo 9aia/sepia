@@ -619,7 +619,7 @@ pub fn SessionPanel(
             let live_now = live_override.get().or(session.map(|s| s.live));
             match (resolved, live_now) {
                 // Attached + agent known → open once.
-                (Some(agent_name), Some(true)) if slot.with_value(|s| s.is_none()) => {
+                (Some(agent_name), Some(true)) if slot.with_value(Option::is_none) => {
                     // `EventStream` isn't `Send` (wasm closures);
                     // `new_local` keeps the slot in the component's
                     // arena and the guard's `Drop` closes the stream.
@@ -2014,13 +2014,13 @@ fn read_attachment_file(
 /// honoring the node's part-count cap.
 #[cfg(feature = "hydrate")]
 fn stage_files(
-    files: web_sys::FileList,
+    files: &web_sys::FileList,
     attachments: RwSignal<Vec<Attachment>>,
     toast: crate::components::toast::ToastStore,
 ) {
     for i in 0..files.length() {
         let Some(file) = files.get(i) else { continue };
-        if attachments.with(|v| v.len()) >= MAX_ATTACHMENTS {
+        if attachments.with(Vec::len) >= MAX_ATTACHMENTS {
             toast.error(format!("attachment limit is {MAX_ATTACHMENTS}"));
             return;
         }
@@ -2042,7 +2042,7 @@ fn stage_picked(
         .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok());
     if let Some(input) = input {
         if let Some(files) = input.files() {
-            stage_files(files, attachments, toast);
+            stage_files(&files, attachments, toast);
         }
         input.set_value("");
     }
@@ -2072,7 +2072,7 @@ fn stage_pasted(
         return;
     }
     ev.prevent_default();
-    stage_files(files, attachments, toast);
+    stage_files(&files, attachments, toast);
 }
 #[cfg(not(feature = "hydrate"))]
 fn stage_pasted(

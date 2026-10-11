@@ -142,7 +142,7 @@ mod imp {
             script.set_src("/vendor/mermaid.min.js");
             let parent = document
                 .head()
-                .map(|h| h.unchecked_into::<web_sys::Element>())
+                .map(JsCast::unchecked_into::<web_sys::Element>)
                 .or_else(|| document.document_element())
                 .ok_or_else(|| JsValue::from_str("no head"))?;
             parent.append_child(&script)?;
@@ -195,7 +195,7 @@ async fn render_inner(
     source: NodeRef<leptos::html::Div>,
     code: &str,
 ) -> Result<(), wasm_bindgen::JsValue> {
-    use imp::*;
+    use imp::{ensure_loaded, init_once, mermaid_global, next_id};
     use wasm_bindgen::JsValue;
     use wasm_bindgen_futures::JsFuture;
 

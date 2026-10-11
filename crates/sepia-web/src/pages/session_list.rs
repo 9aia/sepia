@@ -1465,11 +1465,10 @@ fn menu_anchor(ev: &leptos::ev::MouseEvent) -> (f64, f64) {
     }
     ev.current_target()
         .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
-        .map(|el| {
+        .map_or((x, y), |el| {
             let r = el.get_bounding_client_rect();
             (r.right(), r.bottom())
         })
-        .unwrap_or((x, y))
 }
 
 /// SSR counterpart — menus never open server-side; the signature just
