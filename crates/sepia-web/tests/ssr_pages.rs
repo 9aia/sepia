@@ -59,6 +59,52 @@ fn assert_contains(html: &str, needle: &str) {
     );
 }
 
+// ── shell — the sidebar-09 icon rail + Sessions panel ────────────────
+
+#[tokio::test]
+async fn shell_renders_icon_rail_and_sessions_panel() {
+    let html = page("/", FakeNodeApi::seeded().shared()).await;
+    // The rail is a labelled nav landmark with icon-only entries —
+    // `title` doubles as the tooltip, `aria-label` names the button.
+    assert_contains(&html, "data-name=\"IconRail\"");
+    assert_contains(&html, "aria-label=\"Primary\"");
+    for label in ["Sessions", "Agents", "Projects", "Nodes", "Settings"] {
+        assert_contains(&html, &format!("title=\"{label}\""));
+    }
+    // The Sessions rail button owns the panel — expanded + current on `/`.
+    assert_contains(&html, "data-name=\"RailSessions\"");
+    assert_contains(&html, "aria-controls=\"sessions-panel\"");
+    assert_contains(&html, "aria-expanded=\"true\"");
+    assert_contains(&html, "aria-current=\"page\"");
+    // The panel mounts with its section header + collapse affordance.
+    assert_contains(&html, "id=\"sessions-panel\"");
+    assert_contains(&html, "data-name=\"SessionsPanel\"");
+    assert_contains(&html, "aria-label=\"Collapse the sessions panel\"");
+}
+
+#[tokio::test]
+async fn session_detail_keeps_the_sessions_panel() {
+    // Master-detail on the deep link too: `/sessions/:id` mounts the
+    // list panel beside `SessionPanel`, with the param as the
+    // highlighted row.
+    let html = page("/sessions/s1", FakeNodeApi::seeded().shared()).await;
+    assert_contains(&html, "data-name=\"SessionsPanel\"");
+    assert_contains(&html, "5 sessions");
+    assert_contains(&html, "Message the agent");
+}
+
+#[tokio::test]
+async fn non_session_pages_have_rail_but_no_panel() {
+    for path in ["/agents", "/projects", "/nodes", "/settings"] {
+        let html = page(path, FakeNodeApi::seeded().shared()).await;
+        assert_contains(&html, "data-name=\"IconRail\"");
+        assert!(
+            !html.contains("id=\"sessions-panel\""),
+            "unexpected sessions panel on {path}"
+        );
+    }
+}
+
 // ── `/` — master-detail session list ─────────────────────────────────
 
 #[tokio::test]

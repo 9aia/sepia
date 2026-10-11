@@ -1,16 +1,19 @@
 //! `App` — the shell + router. Compiles for both `ssr` (rendered to
 //! HTML by `sepia-hub`) and `hydrate` (wasm interactivity).
 //!
-//! Layout: a persistent left sidebar (brand + nav) on `lg+`; a slim
-//! topbar with a hamburger opening a left `Sheet` on smaller screens.
+//! Layout: the shadcn sidebar-09 pair on `lg+` — a narrow icon rail
+//! (`IconRail`) plus an expandable content panel the current section
+//! owns (today only Sessions: `SessionListPanel` renders the session
+//! list beside the rail). Below `lg` the rail is gone; a slim topbar
+//! with a hamburger opens the nav in a left `Sheet`.
 
 #[cfg(feature = "ssr")]
 pub use crate::shell::shell;
 use leptos::prelude::*;
 use leptos_meta::{Title, provide_meta_context};
-#[cfg(feature = "hydrate")]
 use leptos_router::NavigateOptions;
 use leptos_router::components::{A, Route, Router, Routes};
+use leptos_router::hooks::use_location;
 #[cfg(feature = "hydrate")]
 use leptos_router::hooks::use_navigate;
 use leptos_router::path;
@@ -34,6 +37,43 @@ use crate::theme::ThemeToggle;
 /// the client; a fixed snapshot during SSR.
 #[derive(Clone, Copy)]
 pub struct Now(pub RwSignal<f64>);
+
+/// The sidebar-09 panel open flag — provided by `App`, toggled by the
+/// rail's Sessions button, the panel's own collapse button, and ⌘B
+/// (`Action::ToggleList`). Only Sessions has panel content today, so
+/// `SessionListPanel` is the sole reader; `true` (open) on SSR and
+/// first hydration — the persisted choice is adopted post-mount
+/// (class-driven collapse, same pattern as the collapsed groups).
+#[derive(Clone, Copy)]
+pub struct PanelOpen(pub RwSignal<bool>);
+
+/// localStorage key for the persisted panel flag (`Option<bool>` so
+/// "never stored" maps to the open default, not `false`).
+pub const PANEL_STORAGE_KEY: &str = "sepia-panel-open";
+
+/// Provide `PanelOpen` + (hydrate only) the seed-then-persist Effect.
+/// The signal starts `true` on both targets so SSR and the first
+/// client render agree.
+fn provide_panel() {
+    let open = RwSignal::new(true);
+    provide_context(PanelOpen(open));
+    #[cfg(feature = "hydrate")]
+    {
+        let (stored, set_stored, _clear) = leptos_use::storage::use_local_storage::<
+            Option<bool>,
+            codee::string::JsonSerdeCodec,
+        >(PANEL_STORAGE_KEY);
+        let mut init = true;
+        Effect::new(move |_| {
+            let cur = open.get();
+            if std::mem::replace(&mut init, false) {
+                open.set(stored.get_untracked().unwrap_or(true));
+            } else {
+                set_stored.set(Some(cur));
+            }
+        });
+    }
+}
 
 /// Page-scoped polling — `leptos_use::use_interval_fn` under the hood;
 /// the interval stops when the calling owner unmounts. The callback is
@@ -120,12 +160,128 @@ fn nav_items(extra: &str, on_nav: Option<std::sync::Arc<dyn Fn() + Send + Sync>>
     }
 }
 
+/// Shared rail-button recipe — `size-9` icon cells, the sidebar token
+/// set, `aria-current`/`data-active` swap on the accent pair.
+const RAIL_ITEM: &str = "inline-flex size-9 items-center justify-center rounded-lg transition-colors \
+                         focus-visible:ring-2 focus-visible:ring-sidebar-ring";
+
+/// One rail entry as an `<A>` — the router sets `aria-current="page"`,
+/// the `aria-[current]:` pair styles it.
+fn rail_link(href: &'static str, label: &'static str, icon: &'static str) -> impl IntoView {
+    view! {
+        <A
+            href=href
+            attr:class=format!(
+                "{RAIL_ITEM} text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-[current]:bg-sidebar-accent aria-[current]:text-sidebar-accent-foreground"
+            )
+            attr:aria-label=label
+            attr:title=label
+        >
+            <Icon name=icon class="size-5"/>
+        </A>
+    }
+}
+
+/// The sidebar-09 icon rail (`lg+` only — mobile keeps the topbar +
+/// drawer). Sections sit in a `nav` landmark; `title` doubles as the
+/// tooltip (no tooltip primitive in the toolkit).
+///
+/// Item behavior, per the sidebar-09 contract: the Sessions button
+/// is the only section with panel content — on `/` or `/sessions/:id`
+/// it collapses/expands `PanelOpen` (`aria-expanded` mirrors it);
+/// from any other page it navigates to `/` and opens the panel. The
+/// remaining items are plain links — their pages render full-width
+/// next to the rail (the panel is page-owned, so it simply isn't
+/// mounted there). The theme toggle moves up from the old sidebar's
+/// footer into the rail's bottom slot.
+#[component]
+fn IconRail() -> impl IntoView {
+    let panel = expect_context::<PanelOpen>();
+    let location = use_location();
+    // `/` and every `/sessions/:id` are the Sessions section.
+    let on_sessions = move || {
+        let p = location.pathname.get();
+        p == "/" || p.starts_with("/sessions/")
+    };
+    // `StoredValue` keeps the navigate fn Copy-able into the click
+    // handler; SSR never navigates (`new_local` would panic on a
+    // foreign worker at cleanup).
+    #[cfg(feature = "hydrate")]
+    let navigate = StoredValue::new_local(use_navigate());
+    #[cfg(not(feature = "hydrate"))]
+    let navigate = StoredValue::new(|_: &str, _: NavigateOptions| {});
+    // Click semantics, per sidebar-09: on a sessions route the rail
+    // item toggles its panel; anywhere else it activates the section
+    // (navigates to `/` and opens the panel).
+    let sessions_click = move |_: leptos::ev::MouseEvent| {
+        if on_sessions() {
+            panel.0.update(|o| *o = !*o);
+        } else {
+            panel.0.set(true);
+            navigate.with_value(|n| n("/", NavigateOptions::default()));
+        }
+    };
+
+    view! {
+        <nav
+            aria-label="Primary"
+            data-name="IconRail"
+            class="hidden w-14 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-3 text-sidebar-foreground lg:flex"
+        >
+            // Brand — compact lettermark, links home like the old
+            // sidebar's wordmark did.
+            <A
+                href="/"
+                exact=true
+                attr:class="mb-3 inline-flex size-9 items-center justify-center rounded-lg text-lg font-bold tracking-tight text-primary"
+                attr:title="sepia — sessions"
+                attr:aria-label="sepia — sessions"
+            >
+                "S"
+            </A>
+            <div class="flex flex-col items-center gap-1">
+                <button
+                    type="button"
+                    data-name="RailSessions"
+                    aria-label="Sessions"
+                    aria-controls="sessions-panel"
+                    aria-expanded=move || panel.0.get().to_string()
+                    attr:aria-current=move || on_sessions().then_some("page")
+                    title="Sessions"
+                    class=move || {
+                        if on_sessions() {
+                            format!("{RAIL_ITEM} bg-sidebar-accent text-sidebar-accent-foreground")
+                        } else {
+                            format!(
+                                "{RAIL_ITEM} text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                            )
+                        }
+                    }
+                    on:click=sessions_click
+                >
+                    <Icon name="message-square" class="size-5"/>
+                </button>
+                {rail_link("/agents", "Agents", "bot")}
+                {rail_link("/projects", "Projects", "folder")}
+                {rail_link("/nodes", "Nodes", "server")}
+                {rail_link("/settings", "Settings", "settings")}
+            </div>
+            <div class="mt-auto pt-2">
+                <ThemeToggle/>
+            </div>
+        </nav>
+    }
+        // Self-erase — `App`'s view type stays shallow.
+        .into_any()
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
     provide_toaster();
     crate::theme::provide_theme();
     crate::keybinds::provide_keybinds();
+    provide_panel();
     // Shared async cache — keyed queries dedupe across components and
     // survive remounts; mutations invalidate by scope fn.
     leptos_fetch::QueryClient::new().provide();
@@ -143,22 +299,10 @@ pub fn App() -> impl IntoView {
         <Title text="sepia"/>
         <Router>
             <div class="flex h-dvh overflow-hidden">
-                // Desktop sidebar — nav only; the sessions list itself
-                // lives inside the `/` page (master-detail).
-                <aside class="hidden w-56 shrink-0 flex-col border-r bg-card lg:flex">
-                    <div class="px-4 pb-3 pt-4">
-                        <A href="/" attr:class="text-lg font-bold tracking-tight text-primary">
-                            "sepia"
-                        </A>
-                    </div>
-                    {nav_items("", None)}
-                    <div class="mt-auto flex items-center justify-between px-4 py-3">
-                        <span class="text-xs text-muted-foreground">
-                            "multi-node agent sessions"
-                        </span>
-                        <ThemeToggle/>
-                    </div>
-                </aside>
+                // Desktop navigation — the sidebar-09 icon rail; the
+                // content panel it opens lives inside the routed page
+                // (`SessionListPanel` owns the Sessions section's).
+                <IconRail/>
                 <div class="flex min-w-0 flex-1 flex-col">
                     // Mobile topbar + drawer
                     <header class="sticky top-0 z-40 flex h-12 items-center gap-2 border-b bg-card/80 px-3 backdrop-blur lg:hidden">
@@ -244,6 +388,9 @@ fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView 
         every_ms(30_000, move || now.set(crate::time::now_ms()));
         let navigate = use_navigate();
         let keybinds = crate::keybinds::use_keybinds();
+        // ⌘B — the sidebar-09 panel toggle; `SessionListPanel` reads
+        // the flag (a no-op where no panel is mounted).
+        let panel = expect_context::<PanelOpen>();
         let _k = leptos_use::use_event_listener(
             document(),
             leptos::ev::keydown,
@@ -272,6 +419,10 @@ fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView 
                     Some(keymap::Action::OpenSettings) => {
                         ev.prevent_default();
                         navigate("/settings", NavigateOptions::default());
+                    }
+                    Some(keymap::Action::ToggleList) => {
+                        ev.prevent_default();
+                        panel.0.update(|o| *o = !*o);
                     }
                     // A stray Escape with the palette open and focus
                     // outside the card still closes it (the card's own

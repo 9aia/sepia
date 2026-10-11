@@ -63,14 +63,13 @@ type MenuTarget = Option<(String, Option<String>, f64, f64)>;
 /// Group-header context-menu state — `(section key, clientX, clientY)`.
 type GroupMenuTarget = Option<(String, f64, f64)>;
 
+/// `/` — the Sessions section of the sidebar-09 shell: the panel
+/// column (`SessionListPanel`) beside the detail pane. Selecting a
+/// row sets `?session=<id>&agent=<agent>` and the chat pane mounts
+/// `SessionPanel` inline; `/sessions/:id` deep links compose the
+/// same pair (see `SessionDetailPage`).
 #[component]
 pub fn SessionListPage() -> impl IntoView {
-    let client = crate::api::query_client();
-    let sessions = client.resource(crate::api::sessions_scope, || ());
-    let pending = client.resource(crate::api::pending_scope, || ());
-    // Node health — the empty list reads "No nodes connected" instead
-    // of "No sessions yet" when nothing is reachable.
-    let nodes = client.resource(crate::api::node_status_scope, || ());
     let query = use_query_map();
     // Selected session — `?session=<id>` (+ optional `?agent=`).
     let selected = move || {
@@ -86,6 +85,85 @@ pub fn SessionListPage() -> impl IntoView {
         }
     };
     let selected_id: Signal<Option<String>> = Signal::derive(move || selected().map(|(id, _)| id));
+
+    view! {
+        <Title text="sessions — sepia"/>
+        <div class="flex h-full min-h-0 w-full">
+            <SessionListPanel selected_id=selected_id/>
+            // Chat pane — fills the rest on lg+; takes over the whole
+            // screen below lg once a session is selected.
+            {
+                // `.into_any()` at each layout joint caps rustc's
+                // view-type depth (the nested Suspense/Form tree
+                // overflowed the query-depth limit in sepia-hub).
+                view! {
+            <div class=move || {
+                let base = "min-w-0 flex-1 flex-col";
+                if selected().is_some() {
+                    format!("flex {base}")
+                } else {
+                    format!("hidden {base} lg:flex")
+                }
+            }>
+                {move || {
+                    match selected() {
+                        // Re-evaluating produces a fresh view tree —
+                        // SessionPanel unmounts/remounts per session, so
+                        // its resources + SSE stream always target the
+                        // current id.
+                        Some((id, agent)) => {
+                            view! { <SessionPanel session_id=id agent=agent/> }.into_any()
+                        }
+                        None => {
+                            view! {
+                                <EmptyState
+                                    class="hidden lg:flex"
+                                    title="Select a session"
+                                    description="Pick a session from the list, or start a new one."
+                                    icon="message-square-dashed"
+                                />
+                            }
+                                .into_any()
+                        }
+                    }
+                }}
+            </div>
+                }
+                .into_any()
+            }
+        </div>
+    }
+}
+
+/// The sidebar-09 Sessions panel — the content column that opens next
+/// to the icon rail: panel header, new-session/import controls, the
+/// filter bar, and the pinned/grouped session list (row + group
+/// context menus and the delete confirm ride inside). Mounted by `/`
+/// (master-detail) and `/sessions/:id` (deep links keep the list
+/// beside the transcript). `selected_id` is the highlighted row +
+/// "a session is open" flag — `?session=` on `/`, the `:id` param on
+/// `/sessions/:id`. Below `lg` it's the full-width list while nothing
+/// is selected; on `lg+` the rail's Sessions button or ⌘B collapses
+/// it via the `PanelOpen` context (class-driven, so SSR and hydrate
+/// share the DOM).
+///
+/// The component self-erases to `AnyView` (every heavy child is an
+/// `AnyView` joint already, so the root type is shallow) — callers
+/// embed `AnyView` instead of a page-sized concrete type. Splitting
+/// the list out of `SessionListPage` added a component level to the
+/// generic-instantiation chain, which is what tipped the wasm build
+/// over rustc's query-depth limit; this keeps the ceiling lower than
+/// the old single-component tree.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> impl IntoView {
+    let client = crate::api::query_client();
+    let sessions = client.resource(crate::api::sessions_scope, || ());
+    let pending = client.resource(crate::api::pending_scope, || ());
+    // Node health — the empty list reads "No nodes connected" instead
+    // of "No sessions yet" when nothing is reachable.
+    let nodes = client.resource(crate::api::node_status_scope, || ());
+    let query = use_query_map();
 
     // Filter/sort state — seeded from the `?…` params so deep links
     // and reloads land on the same list. Both targets read the same
@@ -115,8 +193,10 @@ pub fn SessionListPage() -> impl IntoView {
     // Prefill for the new-session form's cwd field — "New session
     // here" in the group menu writes it.
     let new_cwd = RwSignal::new(String::new());
-    // `⌘B` hides the list column (desktop only — `lg:hidden`).
-    let list_collapsed = RwSignal::new(false);
+    // `⌘B` / the rail's Sessions button collapse this panel — the
+    // open flag lives in the shell (`PanelOpen`) so the rail can
+    // reach it; desktop-only (`lg:hidden` when closed).
+    let panel_open = expect_context::<crate::app::PanelOpen>();
     // Cwds of collapsed project groups. Starts empty (all sections
     // open) on both targets; a post-hydration Effect adopts the set
     // persisted in localStorage, so collapse is purely class-driven.
@@ -235,9 +315,12 @@ pub fn SessionListPage() -> impl IntoView {
     // Filter bar → URL. First run is adoption (the params already
     // seeded the signals); later runs `replace` so typing a query
     // doesn't flood history. `session`/`agent` are preserved — the
-    // selection isn't the filter's to drop.
+    // selection isn't the filter's to drop — and the href keeps the
+    // current pathname: on `/sessions/:id` deep links the filter
+    // syncs onto that URL instead of bouncing back to `/`.
     #[cfg(feature = "hydrate")]
     {
+        let location = leptos_router::hooks::use_location();
         let mut init = true;
         Effect::new(move |_| {
             let f = current_filter();
@@ -253,7 +336,7 @@ pub fn SessionListPage() -> impl IntoView {
                 pairs.push(("agent".to_string(), a));
             }
             pairs.extend(f.query_params());
-            let href = query_href("/", &pairs);
+            let href = query_href(&location.pathname.get_untracked(), &pairs);
             navigate.with_value(|n| {
                 n(
                     &href,
@@ -327,8 +410,6 @@ pub fn SessionListPage() -> impl IntoView {
                     ev.prevent_default();
                 }
                 match action {
-                    // ⌘B / Ctrl-B — toggle the list column.
-                    keymap::Action::ToggleList => list_collapsed.update(|v| *v = !*v),
                     // `n` — jump to the new-session cwd input.
                     keymap::Action::FocusNewSession => {
                         if let Some(el) = cwd_input_ref.get() {
@@ -397,10 +478,12 @@ pub fn SessionListPage() -> impl IntoView {
                         });
                     }
                     // Owned by the shell listener (`app.rs`) — ⌘K/`/`
-                    // open the command palette now, not the filter.
+                    // open the command palette now, not the filter;
+                    // ⌘B toggles this panel through `PanelOpen`.
                     keymap::Action::ToggleHelp
                     | keymap::Action::CloseHelp
                     | keymap::Action::TogglePalette
+                    | keymap::Action::ToggleList
                     | keymap::Action::OpenSettings => {}
                 }
             },
@@ -408,43 +491,66 @@ pub fn SessionListPage() -> impl IntoView {
     }
 
     view! {
-        <Title text="sessions — sepia"/>
-        <div class="flex h-full min-h-0 w-full">
-            // List column — a fixed sidebar on lg+, full page below that
-            // (where it hides once a session is selected).
-            {
-                // `.into_any()` at each layout joint caps rustc's
-                // view-type depth (the nested Suspense/Form tree
-                // overflowed the query-depth limit in sepia-hub).
-                view! {
-            <div class=move || {
-                let base = "min-w-0 flex-col overflow-y-auto lg:flex lg:w-96 lg:shrink-0 lg:border-r";
-                // `⌘B` collapse is desktop-only (`lg:hidden`) — on small
-                // screens the column stays usable.
-                let collapse = if list_collapsed.get() { " lg:hidden" } else { "" };
-                if selected().is_some() {
+        // List column — the sidebar-09 Sessions panel beside the rail
+        // on lg+, full page below that (where it hides once a session
+        // is selected). Menus + the delete confirm are fixed/hidden
+        // overlays; they live inside this root.
+        <div
+            id="sessions-panel"
+            data-name="SessionsPanel"
+            class=move || {
+                let base = "min-w-0 flex-col overflow-y-auto bg-sidebar text-sidebar-foreground lg:flex lg:w-80 lg:shrink-0 lg:border-r lg:border-sidebar-border";
+                // `⌘B` / rail collapse is desktop-only (`lg:hidden`) —
+                // on small screens the column stays usable.
+                let collapse = if panel_open.0.get() { "" } else { " lg:hidden" };
+                if selected_id.get().is_some() {
                     format!("hidden {base}{collapse}")
                 } else {
                     format!("flex {base} flex-1{collapse}")
                 }
-            }>
-                <div class="border-b p-3">
-                    <NewSessionForm
-                        cwd_ref=cwd_input_ref
-                        cwd=new_cwd
-                        on_created=move || sessions.refetch()
-                    />
-                    <ImportCard on_imported=move || sessions.refetch()/>
-                </div>
+            }
+        >
+            // Panel header — the sidebar-09 section title + the same
+            // collapse affordance the rail button and ⌘B drive.
+            <div class="flex h-11 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
+                <span class="text-sm font-semibold">"Sessions"</span>
+                <button
+                    type="button"
+                    aria-label="Collapse the sessions panel"
+                    title="Collapse the sessions panel (⌘B)"
+                    class="hidden size-7 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground lg:inline-flex"
+                    on:click=move |_| panel_open.0.update(|o| *o = !*o)
+                >
+                    <Icon name="panel-left-close" class="size-4"/>
+                </button>
+            </div>
+            {
+                // `.into_any()` at each layout joint caps rustc's
+                // view-type depth — the form/import subtree is the
+                // deepest chain in this file (nested `into_any`
+                // instantiations across a component boundary overflow
+                // the query-depth limit in the wasm build).
+                view! {
+            <div class="border-b p-3">
+                <NewSessionForm
+                    cwd_ref=cwd_input_ref
+                    cwd=new_cwd
+                    on_created=move || sessions.refetch()
+                />
+                <ImportCard on_imported=move || sessions.refetch()/>
+            </div>
+                }
+                .into_any()
+            }
+            {
                 // Filter bar — client-side only. The agent options read
                 // `all_sessions`, which is empty until the Suspend below
                 // resolves, so SSR and first hydration emit the same
                 // empty checkbox list (like the agent select in
                 // NewSessionForm). `.into_any()` caps this joint's
                 // view-type depth like the layout joints above.
-                {
-                    view! {
-                <div class="border-b p-2">
+                view! {
+            <div class="border-b p-2">
                     <div class="flex flex-col gap-1.5">
                         // `{..}` marks everything after it as spread
                         // attrs on the component's root element —
@@ -521,12 +627,14 @@ pub fn SessionListPage() -> impl IntoView {
                     }
                     .into_any()
                 }
-                <div class="flex-1 overflow-y-auto p-2">
-                    {
-                        // View-type erasure — the nested Suspense tree
-                        // overflows rustc's query depth when the page is
-                        // one giant concrete type. `.into_any()` caps it.
-                        view! {
+            // `min-h-0` lets the scroll area shrink inside the column
+            // instead of pushing the header/form off-screen.
+            <div class="flex min-h-0 flex-1 overflow-y-auto p-2">
+                {
+                    // View-type erasure — the nested Suspense tree
+                    // overflows rustc's query depth when the page is
+                    // one giant concrete type. `.into_any()` caps it.
+                    view! {
                     <Suspense fallback=move || {
                         view! {
                             <div class="flex flex-col gap-1.5 p-1">
@@ -843,49 +951,7 @@ pub fn SessionListPage() -> impl IntoView {
                         }
                         .into_any()
                     }
-                </div>
             </div>
-                        }
-                        .into_any()
-                    }
-            // Chat pane — fills the rest on lg+; takes over the whole
-            // screen below lg once a session is selected.
-            {
-                view! {
-            <div class=move || {
-                let base = "min-w-0 flex-1 flex-col";
-                if selected().is_some() {
-                    format!("flex {base}")
-                } else {
-                    format!("hidden {base} lg:flex")
-                }
-            }>
-                {move || {
-                    match selected() {
-                        // Re-evaluating produces a fresh view tree —
-                        // SessionPanel unmounts/remounts per session, so
-                        // its resources + SSE stream always target the
-                        // current id.
-                        Some((id, agent)) => {
-                            view! { <SessionPanel session_id=id agent=agent/> }.into_any()
-                        }
-                        None => {
-                            view! {
-                                <EmptyState
-                                    class="hidden lg:flex"
-                                    title="Select a session"
-                                    description="Pick a session from the list, or start a new one."
-                                    icon="message-square-dashed"
-                                />
-                            }
-                                .into_any()
-                        }
-                    }
-                }}
-            </div>
-                }
-                .into_any()
-            }
             // Row context menu — a single fixed-position instance moved
             // to the pointer on `contextmenu`. Always rendered (`hidden`
             // while closed) so SSR and hydrate emit identical DOM;
@@ -1202,6 +1268,7 @@ pub fn SessionListPage() -> impl IntoView {
             }
         </div>
     }
+        .into_any()
 }
 
 #[component]

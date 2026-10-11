@@ -40,6 +40,7 @@ use crate::components::{
 };
 use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
 use crate::markdown::Markdown;
+use crate::pages::SessionListPanel;
 use tw_merge::IntoTailwindClass;
 
 const PAGE_SIZE: i64 = 100;
@@ -48,21 +49,30 @@ const PAGE_SIZE: i64 = 100;
 const TOOL_PRE: &str = "max-h-80 overflow-auto whitespace-pre-wrap break-words border-t \
                         border-border/60 px-3 py-2 font-mono text-xs text-muted-foreground";
 
-/// `/sessions/:id` — standalone deep link: renders the panel inside
-/// the app shell (the same component `/` embeds next to the list).
+/// `/sessions/:id` — standalone deep link: the same master-detail
+/// pair `/` composes — the rail's Sessions panel (the session list)
+/// beside `SessionPanel`, so a shared link lands inside the shell
+/// with the list still open. The `:id` param is the panel's selected
+/// row; `?agent=` picks the store like on `/`.
 #[component]
 pub fn SessionDetailPage() -> impl IntoView {
     let params = use_params_map();
     let query = use_query_map();
     let session_id = move || params.read().get("id").unwrap_or_default();
     let agent = move || non_empty_str(&query.read().get("agent").unwrap_or_default());
+    let selected_id: Signal<Option<String>> = Signal::derive(move || non_empty_str(&session_id()));
     view! {
-        {move || {
-            view! {
-                <SessionPanel session_id=session_id() agent=agent()/>
-            }
-            .into_any()
-        }}
+        <div class="flex h-full min-h-0 w-full">
+            <SessionListPanel selected_id=selected_id/>
+            <div class="flex min-w-0 flex-1 flex-col">
+                {move || {
+                    view! {
+                        <SessionPanel session_id=session_id() agent=agent()/>
+                    }
+                    .into_any()
+                }}
+            </div>
+        </div>
     }
 }
 

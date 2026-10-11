@@ -13,5 +13,5 @@ pub use login::LoginPage;
 pub use nodes::NodesPage;
 pub use projects::ProjectsPage;
 pub use session_detail::{SessionDetailPage, SessionPanel};
-pub use session_list::{RelativeTime, SessionListPage};
+pub use session_list::{RelativeTime, SessionListPage, SessionListPanel};
 pub use settings::SettingsPage;

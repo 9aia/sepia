@@ -553,7 +553,7 @@ pub mod icons {
 
     /// A stroke icon. `name` is the lucide kebab-case id; known names:
     /// `message-square` (default), `bot`, `folder`, `server`,
-    /// `settings`, `pin`, `plus`, `panel-right`, `triangle-alert`,
+    /// `settings`, `pin`, `plus`, `panel-right`, `panel-left-close`,
     /// `x`, `ellipsis-vertical`, `menu`, `arrow-left`, `arrow-down`,
     /// `chevron-right`, `chevron-down`, `corner-down-right`,
     /// `cloud-off`, `file-question-mark`, `message-square-dashed`,
@@ -579,6 +579,9 @@ pub mod icons {
                     "pin" => view! { <lucide_leptos::Pin/> }.into_any(),
                     "plus" => view! { <lucide_leptos::Plus/> }.into_any(),
                     "panel-right" => view! { <lucide_leptos::PanelRight/> }.into_any(),
+                    "panel-left-close" => {
+                        view! { <lucide_leptos::PanelLeftClose/> }.into_any()
+                    }
                     "triangle-alert" => {
                         view! { <lucide_leptos::TriangleAlert/> }.into_any()
                     }
