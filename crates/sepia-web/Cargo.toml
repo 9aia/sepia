@@ -75,6 +75,9 @@ web-sys = { workspace = true, optional = true, features = [
   "HtmlInputElement",
   "HtmlScriptElement",
   "HtmlTextAreaElement",
+  "IntersectionObserver",
+  "IntersectionObserverEntry",
+  "IntersectionObserverInit",
   "KeyboardEvent",
   "MessageEvent",
   "Navigator",
@@ -112,6 +115,7 @@ lucide-leptos = { version = "=3.48.0", default-features = false, features = [
     "navigation",
     "notifications",
     "security",
+    "shapes",
     "social",
     "text",
 ] }

@@ -142,41 +142,80 @@ clx! {
 }
 
 /// Native `<details>` dropdown — works without wasm, hydrates cleanly,
-/// closes on outside click via a fixed transparent backdrop.
+/// closes on outside click via a fixed transparent backdrop. `label`
+/// renders a labeled pill trigger (the row-actions menu); `icon` swaps
+/// in an icon-only ghost trigger instead (the old app's ⋯ affordance).
 #[component]
+#[allow(clippy::needless_pass_by_value)] // component props are owned
 pub fn Dropdown(
-    #[prop(into)] label: String,
+    #[prop(into, optional)] label: String,
+    /// Lucide name for an icon-only trigger — wins over `label`.
+    #[prop(into, optional)]
+    icon: String,
+    /// Accessible name + tooltip on the icon-only trigger.
+    #[prop(into, optional)]
+    aria_label: String,
+    /// Menu panel width (`w-44` default).
+    #[prop(into, optional)]
+    menu_class: String,
     #[prop(optional)] class: String,
     children: Children,
 ) -> impl IntoView {
     view! {
         <details class=tw_merge::tw_merge!("group relative", class)>
-            <summary class="list-none cursor-pointer select-none [&::-webkit-details-marker]:hidden">
-                <span class=ButtonClass {
-                    variant: ButtonVariant::Secondary,
-                    size: ButtonSize::Sm,
-                }.to_class()>
-                    {label}
-                    <icons::Icon
-                        name="chevron-down"
-                        class="size-3 opacity-60 transition-transform group-open:rotate-180"
-                    />
-                </span>
+            <summary
+                class="list-none cursor-pointer select-none [&::-webkit-details-marker]:hidden"
+                aria-label=(!icon.is_empty()).then(|| aria_label.clone())
+                title=(!icon.is_empty()).then(|| aria_label.clone())
+            >
+                {if icon.is_empty() {
+                    view! {
+                        <span class=ButtonClass {
+                            variant: ButtonVariant::Secondary,
+                            size: ButtonSize::Sm,
+                        }.to_class()>
+                            {label}
+                            <icons::Icon
+                                name="chevron-down"
+                                class="size-3 opacity-60 transition-transform group-open:rotate-180"
+                            />
+                        </span>
+                    }
+                    .into_any()
+                } else {
+                    view! {
+                        <span class=ButtonClass {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Icon,
+                        }.to_class()>
+                            <icons::Icon name=icon.clone()/>
+                        </span>
+                    }
+                    .into_any()
+                }}
             </summary>
             // open: sibling backdrop swallows the outside click
             <span class="fixed inset-0 z-40 hidden cursor-default group-open:block" onclick="this.parentElement.removeAttribute('open')"></span>
-            <div class="absolute right-0 z-50 mt-1 w-44 rounded-3xl bg-popover p-1.5 text-popover-foreground shadow-lg ring-1 ring-border">
+            <div class=tw_merge::tw_merge!("absolute right-0 z-50 mt-1 w-44 rounded-3xl bg-popover p-1.5 text-popover-foreground shadow-lg ring-1 ring-border", menu_class)>
                 {children()}
             </div>
         </details>
     }
 }
 
-/// Menu item inside a `Dropdown`.
+/// Menu item inside a `Dropdown`. `icon` is a lucide name rendered at
+/// the row's start (the old app's items all led with a glyph).
 #[component]
 pub fn MenuItem(
     #[prop(into)] label: String,
+    /// Lucide name for the leading glyph (empty → text-only row).
+    #[prop(into, optional)]
+    icon: String,
     #[prop(optional)] destructive: bool,
+    /// Keeps the menu open after the click (toggles like project
+    /// membership — the old app's `closeOnClick={false}`).
+    #[prop(optional)]
+    keep_open: bool,
     #[prop(optional)] on_click: Option<Box<dyn Fn() + Send + Sync + 'static>>,
 ) -> impl IntoView {
     let cls = if destructive {
@@ -184,8 +223,9 @@ pub fn MenuItem(
     } else {
         "flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 text-sm font-medium hover:bg-accent cursor-pointer"
     };
+    let close = (!keep_open).then_some("this.closest('details').removeAttribute('open')");
     view! {
-        <button type="button" class=cls onclick="this.closest('details').removeAttribute('open')"
+        <button type="button" class=cls onclick=close
             on:click=move |ev| {
                 if let Some(cb) = &on_click {
                     ev.prevent_default();
@@ -193,10 +233,17 @@ pub fn MenuItem(
                 }
             }
         >
+            {(!icon.is_empty()).then(|| {
+                view! { <icons::Icon name=icon class="size-4 text-muted-foreground"/> }
+            })}
             {label}
         </button>
     }
 }
+
+// The thin rule between menu item groups (the old app's
+// `DropdownMenuSeparator`).
+void! { MenuSeparator, hr, "my-1 h-px border-none bg-border" }
 
 /// Confirm dialog — signal-driven modal. The markup is always
 /// rendered (SSR/hydrate agree on the DOM); visibility is a class
@@ -558,7 +605,9 @@ pub mod icons {
     /// `chevron-right`, `chevron-down`, `corner-down-right`,
     /// `cloud-off`, `file-question-mark`, `message-square-dashed`,
     /// `send`, `paperclip`, `lock`, `inbox`, `pencil`, `copy`,
-    /// `check`, `download`, `upload`.
+    /// `check`, `download`, `upload`, `archive`, `info`, `plug`,
+    /// `unplug`, `square`, `loader-circle`, `trash`, `folder-open`,
+    /// `globe`, `octagon-x`, `file`.
     #[component]
     #[allow(clippy::needless_pass_by_value)] // component props are owned
     pub fn Icon(
@@ -617,6 +666,21 @@ pub mod icons {
                     "check" => view! { <lucide_leptos::Check/> }.into_any(),
                     "download" => view! { <lucide_leptos::Download/> }.into_any(),
                     "upload" => view! { <lucide_leptos::Upload/> }.into_any(),
+                    "archive" => view! { <lucide_leptos::Archive/> }.into_any(),
+                    "info" => view! { <lucide_leptos::Info/> }.into_any(),
+                    "plug" => view! { <lucide_leptos::Plug/> }.into_any(),
+                    "unplug" => view! { <lucide_leptos::Unplug/> }.into_any(),
+                    "square" => view! { <lucide_leptos::Square/> }.into_any(),
+                    "loader-circle" => {
+                        view! { <lucide_leptos::LoaderCircle/> }.into_any()
+                    }
+                    "trash" => view! { <lucide_leptos::Trash/> }.into_any(),
+                    "folder-open" => {
+                        view! { <lucide_leptos::FolderOpen/> }.into_any()
+                    }
+                    "globe" => view! { <lucide_leptos::Globe/> }.into_any(),
+                    "octagon-x" => view! { <lucide_leptos::OctagonX/> }.into_any(),
+                    "file" => view! { <lucide_leptos::File/> }.into_any(),
                     _ => view! { <lucide_leptos::MessageSquare/> }.into_any(),
                 }}
             </span>
@@ -722,7 +786,10 @@ pub mod toast {
     }
 }
 
-/// Slide-over panel (shadcn `Sheet`). Signal-driven; markup always
+/// Slide-over panel — the old app's base-ui `Drawer` recipe: the
+/// panel floats `inset-2` off the viewport edge (rounded-4xl), slides
+/// in over 450ms on the drawer's cubic-bezier, and the backdrop fades
+/// on its own 450ms curve with a blur. Signal-driven; markup always
 /// rendered so SSR/hydrate agree — visibility is a class transition.
 ///
 /// a11y: `role="dialog"` + `aria-modal`, `aria-label` when `label` is
@@ -743,10 +810,12 @@ pub fn Sheet(
     label: String,
     children: Children,
 ) -> impl IntoView {
+    // Closed transform = panel width + the 8px inset + 2px of shadow
+    // bleed (the old drawer's `--closed-transform`).
     let side_cls = if side == "left" {
-        "left-0 border-r -translate-x-full data-[open]:translate-x-0"
+        "left-2 -translate-x-[calc(100%+10px)] data-[open]:translate-x-0"
     } else {
-        "right-0 border-l translate-x-full data-[open]:translate-x-0"
+        "right-2 translate-x-[calc(100%+10px)] data-[open]:translate-x-0"
     };
     let panel = NodeRef::<leptos::html::Div>::new();
     track_overlay_focus(open, panel);
@@ -754,9 +823,9 @@ pub fn Sheet(
         <div
             class=move || {
                 if open.get() {
-                    "fixed inset-0 z-50 bg-black/30 transition-opacity opacity-100 supports-backdrop-filter:backdrop-blur-sm"
+                    "fixed inset-0 z-50 bg-black/30 transition-opacity duration-[450ms] ease-[cubic-bezier(0.32,0.72,0,1)] opacity-100 supports-backdrop-filter:backdrop-blur-sm"
                 } else {
-                    "fixed inset-0 z-50 bg-black/30 transition-opacity opacity-0 pointer-events-none"
+                    "fixed inset-0 z-50 bg-black/30 transition-opacity duration-[450ms] ease-[cubic-bezier(0.32,0.72,0,1)] opacity-0 pointer-events-none"
                 }
             }
             on:click=move |_| open.set(false)
@@ -773,7 +842,7 @@ pub fn Sheet(
             aria-hidden=move || (!open.get()).then_some("true")
             inert=move || (!open.get()).then_some("")
             class=format!(
-                "fixed top-0 z-50 flex h-dvh w-80 max-w-[85vw] flex-col bg-popover text-sm text-popover-foreground shadow-xl transition-transform duration-200 focus:outline-none {} {}",
+                "fixed inset-y-2 z-50 flex w-80 max-w-[85vw] flex-col overflow-hidden rounded-4xl border border-border bg-popover text-sm text-popover-foreground shadow-xl transition-transform duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none {} {}",
                 side_cls, class
             )
             on:keydown=move |ev| {
@@ -787,9 +856,9 @@ pub fn Sheet(
     }
 }
 
-clx! { SheetHeader, div, "flex items-center justify-between border-b px-4 py-3" }
-clx! { SheetTitle, h3, "text-sm font-semibold" }
-clx! { SheetBody, div, "flex-1 overflow-y-auto p-4" }
+clx! { SheetHeader, div, "flex shrink-0 items-center justify-between gap-2 p-4 pb-2" }
+clx! { SheetTitle, h3, "font-heading text-base font-medium text-foreground" }
+clx! { SheetBody, div, "flex-1 overflow-y-auto px-4 py-3" }
 
 /// Centered empty state — lucide icon tile (the old app's `EmptyMedia`
 /// recipe), title, description, actions. `icon` is a lucide name (see
