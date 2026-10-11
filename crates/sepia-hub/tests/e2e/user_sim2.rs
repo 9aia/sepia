@@ -238,6 +238,32 @@ async fn user_simulation_part2() {
     );
     gate(&browser, "step 8: reload").await;
 
+    // -- 9. Client-side route swap — leaving a session page must not
+    // trap. Live data surfaced wasm `unreachable` on this path; keep
+    // a regression step on the sandbox stack.
+    browser
+        .eval(
+            "var a=[...document.querySelectorAll('a')].find(x=>x.getAttribute('href')==='/settings');if(a)a.click();'x'",
+        )
+        .await;
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let sev = browser.severe_logs().await;
+    assert!(
+        !sev.iter().any(|l| l.contains("unreachable")),
+        "route swap trapped: {sev:?}"
+    );
+    browser
+        .eval(
+            "var a=[...document.querySelectorAll('a')].find(x=>x.getAttribute('href')==='/');if(a)a.click();'x'",
+        )
+        .await;
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let sev = browser.severe_logs().await;
+    assert!(
+        !sev.iter().any(|l| l.contains("unreachable")),
+        "route swap back trapped: {sev:?}"
+    );
+
     browser.shutdown().await;
     let (hub_err, node_err) = env.shutdown();
     assert!(

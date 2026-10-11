@@ -12,8 +12,7 @@ use crate::dto::{AgentCapabilitiesDto, AgentDto};
 
 #[component]
 pub fn AgentsPage() -> impl IntoView {
-    let client = crate::api::query_client();
-    let agents = client.resource(crate::api::agents_scope, || ());
+    let agents = crate::api::shared().agents;
 
     view! {
         <Title text="agents — sepia"/>

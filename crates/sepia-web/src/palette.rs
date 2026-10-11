@@ -7,6 +7,7 @@
 //! SSR and first hydration emit identical markup (closed).
 
 use leptos::prelude::*;
+#[cfg(not(feature = "hydrate"))]
 use leptos_router::NavigateOptions;
 #[cfg(feature = "hydrate")]
 use leptos_router::hooks::use_navigate;
@@ -69,9 +70,9 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
     // `use_navigate` isn't Send — same StoredValue dance as the
     // session list (SSR never navigates).
     #[cfg(feature = "hydrate")]
-    let navigate = StoredValue::new_local(use_navigate());
+    let _navigate = StoredValue::new_local(use_navigate());
     #[cfg(not(feature = "hydrate"))]
-    let navigate = StoredValue::new(|_: &str, _: NavigateOptions| {});
+    let _navigate = StoredValue::new(|_: &str, _: NavigateOptions| {});
 
     // The `?session=<id>&agent=<agent>` selection — pin/archive
     // actions target it and read the current flags off the row.
@@ -168,11 +169,11 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
     let activate = move |item: &PaletteItem| {
         open.set(false);
         let Some(action) = item.target.strip_prefix("action:") else {
-            navigate.with_value(|n| n(&item.target, NavigateOptions::default()));
+            crate::app::nav_external(&item.target);
             return;
         };
         match action {
-            "new" => navigate.with_value(|n| n("/", NavigateOptions::default())),
+            "new" => crate::app::nav_external("/"),
             "theme" => theme.update(|t| *t = t.next()),
             "help" => help.set(true),
             // Pin/archive act on the `?session=` selection — the item
@@ -190,7 +191,7 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
                             .map(|s| (s.pinned, s.archived))
                             .unwrap_or_default();
                         let flag = if pin { !cur.0 } else { !cur.1 };
-                        leptos::task::spawn_local(async move {
+                        leptos::task::spawn_local_scoped_with_cancellation(async move {
                             let res = if pin {
                                 pin_session(id, agent, flag).await
                             } else {
@@ -221,7 +222,7 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
         if open.get() {
             query.set(String::new());
             active.set(0);
-            leptos::task::spawn_local(async move {
+            leptos::task::spawn_local_scoped_with_cancellation(async move {
                 if let Ok(list) = crate::api::list_sessions().await {
                     session_rows.set(list);
                 }

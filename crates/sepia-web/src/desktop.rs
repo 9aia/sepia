@@ -243,7 +243,7 @@ pub fn DesktopMenu(
     #[cfg(feature = "hydrate")]
     {
         let fetch_status = move || {
-            leptos::task::spawn_local(async move {
+            leptos::task::spawn_local_scoped_with_cancellation(async move {
                 if let Ok(rows) = crate::api::node_status().await {
                     statuses.set(rows);
                 }
@@ -251,7 +251,7 @@ pub fn DesktopMenu(
             });
         };
         let fetch_sessions = move || {
-            leptos::task::spawn_local(async move {
+            leptos::task::spawn_local_scoped_with_cancellation(async move {
                 if let Ok(rows) = crate::api::list_sessions().await {
                     sessions.set(rows);
                 }
@@ -259,7 +259,7 @@ pub fn DesktopMenu(
         };
         fetch_status();
         fetch_sessions();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if let Ok(n) = crate::api::node_info().await {
                 info.set(n);
             }
@@ -614,6 +614,7 @@ pub fn DesktopMenu(
                 <hr class="my-1 h-px border-none bg-border"/>
                 <A
                     href="/settings"
+                    attr:rel="external"
                     attr:data-name="AimSettings"
                     attr:class=ITEM
                     attr:onclick=CLOSE_ALL

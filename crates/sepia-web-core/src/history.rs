@@ -1089,6 +1089,13 @@ pub fn file_diff_view(diff: &ToolCallDiff) -> FileDiffView {
 /// when the agent inlined the terminal's text — an embedded text block
 /// as a `code` block, and an image as a markdown image.
 pub fn tool_content_segments(contents: &[Value]) -> Vec<ToolSegment> {
+    tool_content_segments_inner(contents, 0)
+}
+
+/// `depth` caps the `content` wrapper unwrap — a self-nesting
+/// `{type:"content",content:{type:"content",…}}` payload would
+/// otherwise recurse forever and trap wasm on stack exhaustion.
+fn tool_content_segments_inner(contents: &[Value], depth: usize) -> Vec<ToolSegment> {
     let mut segments = Vec::new();
     for entry in contents {
         let ty = entry.get("type").and_then(Value::as_str).unwrap_or("");
@@ -1118,8 +1125,13 @@ pub fn tool_content_segments(contents: &[Value]) -> Vec<ToolSegment> {
             // `{type:"content", content:{type:"text",text}}` — the ACP
             // wrapper; unwrap one level and re-handle.
             "content" => {
-                if let Some(inner) = entry.get("content") {
-                    segments.extend(tool_content_segments(std::slice::from_ref(inner)));
+                if depth < 16 {
+                    if let Some(inner) = entry.get("content") {
+                        segments.extend(tool_content_segments_inner(
+                            std::slice::from_ref(inner),
+                            depth + 1,
+                        ));
+                    }
                 }
             }
             "image" => {

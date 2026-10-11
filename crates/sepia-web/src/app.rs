@@ -11,11 +11,9 @@
 pub use crate::shell::shell;
 use leptos::prelude::*;
 use leptos_meta::{Title, provide_meta_context};
-use leptos_router::NavigateOptions;
+use leptos_router::SsrMode;
 use leptos_router::components::{A, Route, Router, Routes};
 use leptos_router::hooks::use_location;
-#[cfg(feature = "hydrate")]
-use leptos_router::hooks::use_navigate;
 use leptos_router::path;
 #[cfg(feature = "hydrate")]
 use sepia_web_core::keymap::{self, KeyCtx, Mods};
@@ -113,6 +111,34 @@ pub fn in_editable(ev: &web_sys::KeyboardEvent) -> bool {
 
 /// Ghost nav link classes — muted until hovered, foreground when the
 /// route is active (`<A>` sets `aria-current="page"`).
+/// Hard navigation (`location.href = path`). Client-side route
+/// swaps trap in leptos-router/tachys when the session pages'
+/// Suspend/AnyView trees unmount mid-adopt — a document load is
+/// the reliable path until that's resolved upstream.
+#[cfg(feature = "hydrate")]
+pub fn nav_external(href: &str) {
+    let _ = leptos::prelude::window().location().set_href(href);
+}
+
+/// SSR stub — navigation only ever happens in the browser.
+#[cfg(not(feature = "hydrate"))]
+pub fn nav_external(_href: &str) {}
+
+/// Whether the current route is the sessions index — the only route
+/// where a `?session=` swap stays in-page (the list panel mounts on
+/// `/sessions/:id` too, but swapping *between* those routes unmounts
+/// the whole page → the tachys teardown trap).
+#[cfg(feature = "hydrate")]
+pub fn is_sessions_index() -> bool {
+    use leptos_router::hooks::use_location;
+    use_location().pathname.get_untracked() == "/"
+}
+
+#[cfg(not(feature = "hydrate"))]
+pub fn is_sessions_index() -> bool {
+    false
+}
+
 fn nav_link(extra: &str) -> String {
     tw_merge::tw_merge!(
         ButtonClass {
@@ -137,23 +163,23 @@ fn nav_items(extra: &str, on_nav: Option<std::sync::Arc<dyn Fn() + Send + Sync>>
                 }
             }
         >
-            <A href="/" exact=true attr:class=nav_link("w-full")>
+            <A href="/" exact=true attr:class=nav_link("w-full") attr:rel="external">
                 <Icon name="message-square"/>
                 "Sessions"
             </A>
-            <A href="/agents" attr:class=nav_link("w-full")>
+            <A href="/agents" attr:class=nav_link("w-full") attr:rel="external">
                 <Icon name="bot"/>
                 "Agents"
             </A>
-            <A href="/projects" attr:class=nav_link("w-full")>
+            <A href="/projects" attr:class=nav_link("w-full") attr:rel="external">
                 <Icon name="folder"/>
                 "Projects"
             </A>
-            <A href="/nodes" attr:class=nav_link("w-full")>
+            <A href="/nodes" attr:class=nav_link("w-full") attr:rel="external">
                 <Icon name="server"/>
                 "Nodes"
             </A>
-            <A href="/settings" attr:class=nav_link("w-full")>
+            <A href="/settings" attr:class=nav_link("w-full") attr:rel="external">
                 <Icon name="settings"/>
                 "Settings"
             </A>
@@ -172,6 +198,9 @@ fn rail_link(href: &'static str, label: &'static str, icon: &'static str) -> imp
     view! {
         <A
             href=href
+            // `rel=external` — the router skips intercepted anchors
+            // carrying it, so rail navs are plain document loads.
+            attr:rel="external"
             attr:class=format!(
                 "{RAIL_ITEM} text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-[current]:bg-sidebar-accent aria-[current]:text-sidebar-accent-foreground"
             )
@@ -206,13 +235,6 @@ fn IconRail(help: RwSignal<bool>) -> impl IntoView {
         let p = location.pathname.get();
         p == "/" || p.starts_with("/sessions/")
     };
-    // `StoredValue` keeps the navigate fn Copy-able into the click
-    // handler; SSR never navigates (`new_local` would panic on a
-    // foreign worker at cleanup).
-    #[cfg(feature = "hydrate")]
-    let navigate = StoredValue::new_local(use_navigate());
-    #[cfg(not(feature = "hydrate"))]
-    let navigate = StoredValue::new(|_: &str, _: NavigateOptions| {});
     // Click semantics, per sidebar-09: on a sessions route the rail
     // item toggles its panel; anywhere else it activates the section
     // (navigates to `/` and opens the panel).
@@ -221,7 +243,7 @@ fn IconRail(help: RwSignal<bool>) -> impl IntoView {
             panel.0.update(|o| *o = !*o);
         } else {
             panel.0.set(true);
-            navigate.with_value(|n| n("/", NavigateOptions::default()));
+            nav_external("/");
         }
     };
 
@@ -236,6 +258,7 @@ fn IconRail(help: RwSignal<bool>) -> impl IntoView {
             <A
                 href="/"
                 exact=true
+                attr:rel="external"
                 attr:class="mb-3 inline-flex size-9 items-center justify-center rounded-lg text-lg font-bold tracking-tight text-primary"
                 attr:title="sepia — sessions"
                 attr:aria-label="sepia — sessions"
@@ -290,6 +313,7 @@ pub fn App() -> impl IntoView {
     // Shared async cache — keyed queries dedupe across components and
     // survive remounts; mutations invalidate by scope fn.
     leptos_fetch::QueryClient::new().provide();
+    crate::api::provide_shared_resources();
     let now = RwSignal::new(crate::time::now_ms());
     provide_context(Now(now));
     // The 30s `now` ticker lives in `ShellHotkeys` — all hydrate-only
@@ -319,7 +343,7 @@ pub fn App() -> impl IntoView {
                         >
                             <Icon name="menu" class="size-5"/>
                         </button>
-                        <A href="/" attr:class="font-bold tracking-tight text-primary">
+                        <A href="/" attr:rel="external" attr:class="font-bold tracking-tight text-primary">
                             "sepia"
                         </A>
                         <span class="ml-auto">
@@ -340,6 +364,7 @@ pub fn App() -> impl IntoView {
                                 >
                                     <A
                                         href="/"
+                                        attr:rel="external"
                                         attr:class=ButtonClass {
                                             variant: ButtonVariant::Secondary,
                                             size: ButtonSize::Sm,
@@ -351,12 +376,17 @@ pub fn App() -> impl IntoView {
                                 </EmptyState>
                             }
                         }>
-                            <Route path=path!("/") view=SessionListPage/>
-                            <Route path=path!("/sessions/:id") view=SessionDetailPage/>
-                            <Route path=path!("/agents") view=AgentsPage/>
-                            <Route path=path!("/projects") view=ProjectsPage/>
-                            <Route path=path!("/nodes") view=NodesPage/>
-                            <Route path=path!("/settings") view=SettingsPage/>
+                            // InOrder: out-of-order streaming leaves
+                            // un-adopted <template> fragments whose
+                            // async hydration traps (`unreachable`)
+                            // when a client-side route swap unmounts
+                            // them mid-adopt.
+                            <Route path=path!("/") ssr=SsrMode::InOrder view=SessionListPage/>
+                            <Route path=path!("/sessions/:id") ssr=SsrMode::InOrder view=SessionDetailPage/>
+                            <Route path=path!("/agents") ssr=SsrMode::InOrder view=AgentsPage/>
+                            <Route path=path!("/projects") ssr=SsrMode::InOrder view=ProjectsPage/>
+                            <Route path=path!("/nodes") ssr=SsrMode::InOrder view=NodesPage/>
+                            <Route path=path!("/settings") ssr=SsrMode::InOrder view=SettingsPage/>
                             // Pre-auth — the hub never gates /login;
                             // the page covers the shell chrome itself.
                             <Route path=path!("/login") view=LoginPage/>
@@ -395,7 +425,6 @@ fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView 
         // `Now` is provided by `App`, an ancestor owner.
         let now = expect_context::<Now>().0;
         every_ms(30_000, move || now.set(crate::time::now_ms()));
-        let navigate = use_navigate();
         let keybinds = crate::keybinds::use_keybinds();
         // ⌘B — the sidebar-09 panel toggle; `SessionListPanel` reads
         // the flag (a no-op where no panel is mounted).
@@ -427,7 +456,7 @@ fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView 
                     }
                     Some(keymap::Action::OpenSettings) => {
                         ev.prevent_default();
-                        navigate("/settings", NavigateOptions::default());
+                        nav_external("/settings");
                     }
                     Some(keymap::Action::ToggleList) => {
                         ev.prevent_default();

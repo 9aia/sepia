@@ -3,6 +3,7 @@
 
 use leptos::prelude::*;
 use leptos_meta::Title;
+#[cfg(not(feature = "hydrate"))]
 use leptos_router::NavigateOptions;
 use leptos_router::components::A;
 #[cfg(feature = "hydrate")]
@@ -387,18 +388,18 @@ pub fn SessionPanel(
     // owner cleans up on an arbitrary tokio worker and the guard
     // panics, aborting the response stream. SSR never navigates.
     #[cfg(feature = "hydrate")]
-    let navigate = StoredValue::new_local(use_navigate());
+    let _navigate = StoredValue::new_local(use_navigate());
     #[cfg(not(feature = "hydrate"))]
-    let navigate = StoredValue::new(|_: &str, _: NavigateOptions| {});
+    let _navigate = StoredValue::new(|_: &str, _: NavigateOptions| {});
 
     let client = crate::api::query_client();
     let summary = client.resource(crate::api::session_scope, move || (session_id(), agent()));
     let history = client.resource(crate::api::history_scope, move || (session_id(), agent()));
     // Hub outbox rows — filtered to this session for the queued/failed
     // badges. Not session-scoped server-side; the list is small.
-    let pending = client.resource(crate::api::pending_scope, || ());
+    let pending = crate::api::shared().pending;
     // The projects catalog — the details sheet's membership toggles.
-    let projects = client.resource(crate::api::projects_scope, || ());
+    let projects = crate::api::shared().projects;
 
     let toast = use_toast();
     // Action state lives at page level: a summary refetch re-runs the
@@ -423,7 +424,7 @@ pub fn SessionPanel(
         acting.set(true);
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if let Some(res) = toast.outcome(attach_session(id, agent, takeover).await, "Attached")
             {
                 live_override.set(Some(res.attached));
@@ -440,7 +441,7 @@ pub fn SessionPanel(
         acting.set(true);
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if toast
                 .outcome(detach_session(id, agent).await, "Detached")
                 .is_some()
@@ -459,7 +460,7 @@ pub fn SessionPanel(
         acting.set(true);
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             let _ = toast.outcome(cancel_run(id, agent).await, "Cancel requested");
             acting.set(false);
         });
@@ -472,7 +473,7 @@ pub fn SessionPanel(
         acting.set(true);
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if toast
                 .outcome(rename_session(id, agent, title).await, "Renamed")
                 .is_some()
@@ -490,13 +491,13 @@ pub fn SessionPanel(
         acting.set(true);
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if toast
                 .outcome(delete_session(id, agent).await, "Deleted")
                 .is_some()
             {
                 client.invalidate_query(crate::api::sessions_scope, ());
-                navigate.with_value(|n| n("/", NavigateOptions::default()));
+                crate::app::nav_external("/");
             } else {
                 acting.set(false);
             }
@@ -512,14 +513,12 @@ pub fn SessionPanel(
         acting.set(true);
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             match convert_session(id, agent, target.to_string()).await {
                 Ok(new_id) => {
                     toast.success(format!("Converted to {target}"));
                     client.invalidate_query(crate::api::sessions_scope, ());
-                    navigate.with_value(|n| {
-                        n(&session_href(&new_id, target), NavigateOptions::default());
-                    });
+                    crate::app::nav_external(&session_href(&new_id, target));
                 }
                 Err(e) => toast.error(e.to_string()),
             }
@@ -537,7 +536,7 @@ pub fn SessionPanel(
         let id = session_id();
         let agent = agent();
         let ok = if pinned { "Pinned" } else { "Unpinned" };
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if toast
                 .outcome(pin_session(id, agent, pinned).await, ok)
                 .is_some()
@@ -556,7 +555,7 @@ pub fn SessionPanel(
         let id = session_id();
         let agent = agent();
         let ok = if archived { "Archived" } else { "Unarchived" };
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if toast
                 .outcome(archive_session(id, agent, archived).await, ok)
                 .is_some()
@@ -592,7 +591,7 @@ pub fn SessionPanel(
                 }
             },
         );
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if toast
                 .outcome(
                     set_session_projects(id, agent, ids).await,
@@ -673,7 +672,7 @@ pub fn SessionPanel(
         }
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if let Ok(page) = session_history(
                 id,
                 agent,
@@ -822,7 +821,7 @@ pub fn SessionPanel(
         let echo = prompt_echo(&text, parts.len());
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             match send_prompt(id, agent, text, parts).await {
                 Ok(()) => {
                     draft.set(String::new());
@@ -858,7 +857,7 @@ pub fn SessionPanel(
         acting.set(true);
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             match rewind_session(id, agent, RewindSelector::NodeId(node)).await {
                 Ok(result) => {
                     toast.success(rewind_result_summary(result.removed));
@@ -905,7 +904,7 @@ pub fn SessionPanel(
         let echo = prompt_echo(&text, parts.len());
         let id = session_id();
         let agent = agent();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             match attach_session(id.clone(), agent.clone(), takeover).await {
                 Ok(res) => {
                     live_override.set(Some(res.attached));
@@ -2632,7 +2631,7 @@ fn PromptBox(
         };
         let id = session_id.clone();
         let agent = agent.clone();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if toast
                 .outcome(set_session_model(id, agent, next).await, ok)
                 .is_some()
@@ -2862,7 +2861,7 @@ fn PermissionCard(
         let id = session_id.clone();
         let agent = agent.clone();
         let request_id = request_id.clone();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             match answer_permission(id, agent, request_id, option_id).await {
                 Ok(()) => live.update(|t| t.pending_permission = None),
                 Err(e) => {
@@ -2968,7 +2967,7 @@ fn DetailRow(
                                 crate::components::copy_to_clipboard(&copy);
                                 copied.set(true);
                                 #[cfg(feature = "hydrate")]
-                                leptos::task::spawn_local(async move {
+                                leptos::task::spawn_local_scoped_with_cancellation(async move {
                                     crate::sleep_ms(1200).await;
                                     copied.set(false);
                                 });
@@ -3082,7 +3081,7 @@ fn CheckpointRow(
         let id = session_id.clone();
         let agent = agent.clone();
         let checkpoint = checkpoint_ref.clone();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             let changed = if op == "restore" {
                 toast
                     .outcome(restore_checkpoint(id, agent, checkpoint).await, "Restored.")

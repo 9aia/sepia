@@ -98,6 +98,13 @@ pub fn SettingsPage() -> impl IntoView {
                         observer.observe(&el);
                     }
                 }
+                // Keep observer+callback alive together and disconnect
+                // on unmount — a live observer can still fire after the
+                // page's owner dies (callback → disposed signal → trap).
+                let obs = observer.clone();
+                let _cleanup = leptos::prelude::on_cleanup(move || {
+                    obs.disconnect();
+                });
                 _observer.set_value(Some(observer));
             }
             cb.forget();
@@ -231,9 +238,8 @@ fn AppearanceSection() -> impl IntoView {
 /// talking to and whether the link is up.
 #[component]
 fn NodeSection() -> impl IntoView {
-    let client = crate::api::query_client();
-    let info = client.resource(crate::api::node_info_scope, || ());
-    let status = client.resource(crate::api::node_status_scope, || ());
+    let info = crate::api::shared().info;
+    let status = crate::api::shared().nodes;
 
     view! {
         <Card>
@@ -342,8 +348,7 @@ fn NodeSection() -> impl IntoView {
 /// (label, id, owning node, capability chips).
 #[component]
 fn AgentsSection() -> impl IntoView {
-    let client = crate::api::query_client();
-    let agents = client.resource(crate::api::agents_scope, || ());
+    let agents = crate::api::shared().agents;
 
     view! {
         <Card>
@@ -431,8 +436,7 @@ fn AgentRow(agent: AgentDto) -> impl IntoView {
 /// Empty on a direct (non-sync) connection.
 #[component]
 fn OutboxSection() -> impl IntoView {
-    let client = crate::api::query_client();
-    let pending = client.resource(crate::api::pending_scope, || ());
+    let pending = crate::api::shared().pending;
 
     view! {
         <Card>
@@ -741,7 +745,7 @@ fn ConfigRow(key: String, value: Value) -> impl IntoView {
             };
             let key = key.clone();
             let label = key.clone();
-            leptos::task::spawn_local(async move {
+            leptos::task::spawn_local_scoped_with_cancellation(async move {
                 toast.outcome(
                     set_config(key, value).await.map_err(|e| e.to_string()),
                     format!("Saved {label}"),
@@ -799,7 +803,7 @@ fn set_notify_pref(
     }
     set_prefs.set(next);
     #[cfg(feature = "hydrate")]
-    leptos::task::spawn_local(async move {
+    leptos::task::spawn_local_scoped_with_cancellation(async move {
         toast.outcome(
             push::update_prefs(next).await,
             "Notification preferences saved.",
@@ -836,7 +840,7 @@ fn PushSection() -> impl IntoView {
     #[cfg(feature = "hydrate")]
     {
         // Probe the existing subscription once, on the client only.
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if let Ok(current) = push::current().await {
                 subscribed.set(Some(current.is_some()));
             }
@@ -886,7 +890,7 @@ fn PushSection() -> impl IntoView {
                                             allow(unused_variables)
                                         )]
                                         let key = key.clone();
-                                        leptos::task::spawn_local(async move {
+                                        leptos::task::spawn_local_scoped_with_cancellation(async move {
                                             #[cfg(feature = "hydrate")]
                                             {
                                                 let result = if subscribed.get() == Some(true) {

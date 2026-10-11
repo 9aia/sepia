@@ -20,8 +20,8 @@ use crate::dto::{ProjectDto, SessionSummaryDto};
 #[component]
 pub fn ProjectsPage() -> impl IntoView {
     let client = crate::api::query_client();
-    let projects = client.resource(crate::api::projects_scope, || ());
-    let sessions = client.resource(crate::api::sessions_scope, || ());
+    let projects = crate::api::shared().projects;
+    let sessions = crate::api::shared().sessions;
     let toast = use_toast();
 
     let draft = RwSignal::new(String::new());
@@ -43,7 +43,7 @@ pub fn ProjectsPage() -> impl IntoView {
         }
         busy.set(true);
         form_error.set(None);
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             match create_project(name.clone(), None).await {
                 Ok(p) => {
                     toast.success(format!("Created project \"{}\".", p.name));
@@ -197,7 +197,7 @@ pub fn ProjectsPage() -> impl IntoView {
                     delete_target.set(None);
                     detail_open.set(false);
                     detail.set(None);
-                    leptos::task::spawn_local(async move {
+                    leptos::task::spawn_local_scoped_with_cancellation(async move {
                         if toast
                             .outcome(
                                 delete_project(p.id.clone(), p.node.clone()).await,
@@ -324,7 +324,7 @@ fn ProjectDetails(
                                                                     } else {
                                                                         Some(agent.clone())
                                                                     };
-                                                                    leptos::task::spawn_local(async move {
+                                                                    leptos::task::spawn_local_scoped_with_cancellation(async move {
                                                                         let res = set_session_projects(
                                                                             session_id,
                                                                             agent,

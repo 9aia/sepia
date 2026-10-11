@@ -160,13 +160,12 @@ pub fn SessionListPage() -> impl IntoView {
 #[component]
 #[allow(clippy::needless_pass_by_value)] // component props are owned
 pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> impl IntoView {
-    let client = crate::api::query_client();
-    let sessions = client.resource(crate::api::sessions_scope, || ());
-    let pending = client.resource(crate::api::pending_scope, || ());
+    let sessions = crate::api::shared().sessions;
+    let pending = crate::api::shared().pending;
     // Node health — the empty list reads "No nodes connected" instead
     // of "No sessions yet" when nothing is reachable, and the "New
     // session" button hides.
-    let nodes = client.resource(crate::api::node_status_scope, || ());
+    let nodes = crate::api::shared().nodes;
     // The agent roster (filter labels + the submenu's empty state)
     // and the primary node's descriptor (bare `node: None` wire
     // annotations resolve through it) live in plain mirror signals,
@@ -271,13 +270,17 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
             return;
         };
         pending_delete.set(None);
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if toast
                 .outcome(delete_session(id, agent).await, "Deleted")
                 .is_some()
             {
                 sessions.refetch();
-                navigate.with_value(|n| n("/", NavigateOptions::default()));
+                if crate::app::is_sessions_index() {
+                    navigate.with_value(|n| n("/", NavigateOptions::default()));
+                } else {
+                    crate::app::nav_external("/");
+                }
             }
         });
     };
@@ -319,7 +322,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
         let (node, agent, model) = create_target(&aim_now, explicit_node.as_deref(), &primary);
         creating.set(true);
         create_error.set(None);
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             match create_session(cwd, agent, None, model, node).await {
                 Ok(res) => {
                     creating.set(false);
@@ -329,7 +332,11 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                     } else {
                         format!("/?session={}&agent={}", res.id, res.agent_id)
                     };
-                    navigate.with_value(|n| n(&href, NavigateOptions::default()));
+                    if crate::app::is_sessions_index() {
+                        navigate.with_value(|n| n(&href, NavigateOptions::default()));
+                    } else {
+                        crate::app::nav_external(&href);
+                    }
                 }
                 Err(e) => {
                     create_error.set(Some(e.to_string()));
@@ -365,7 +372,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
     #[cfg(feature = "hydrate")]
     {
         let refetch_roster = move || {
-            leptos::task::spawn_local(async move {
+            leptos::task::spawn_local_scoped_with_cancellation(async move {
                 if let Ok(a) = crate::api::list_agents().await {
                     agents_roster.set(a);
                     agents_loaded.set(true);
@@ -373,7 +380,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
             });
         };
         refetch_roster();
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if let Ok(n) = crate::api::node_info().await {
                 node_primary.set((!n.id.is_empty()).then_some(n.id));
             }
@@ -538,7 +545,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                         }
                     }
                     keymap::Action::CloseSelection => {
-                        navigate("/", NavigateOptions::default());
+                        crate::app::nav_external("/");
                     }
                     // Arrow keys — move `?session=` through the visible
                     // row order (wrapping at the ends).
@@ -555,7 +562,14 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                         };
                         if let Some(next) = keymap::nav_index(idx, order.len(), dir) {
                             let (id, agent) = &order[next];
-                            navigate(&session_href(id, agent), NavigateOptions::default());
+                            // Cross-route navs go through a document
+                            // load (route-swap unmount traps); on `/`
+                            // the `?session=` swap is same-route + fast.
+                            if crate::app::is_sessions_index() {
+                                navigate(&session_href(id, agent), NavigateOptions::default());
+                            } else {
+                                crate::app::nav_external(&session_href(id, agent));
+                            }
                         }
                     }
                     // `←`/`→` — fold/unfold the selected row's
@@ -757,7 +771,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                                     description="Sessions appear here once a node is reachable. Check node health or pair a device."
                                                 >
                                                     <A
-                                                        href="/nodes"
+                                                        href="/nodes" attr:rel="external"
                                                         attr:class=ButtonClass {
                                                             variant: ButtonVariant::Secondary,
                                                             size: ButtonSize::Sm,
@@ -1099,9 +1113,13 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                     let href = open_href.clone();
                                     move || {
                                         menu_for.set(None);
-                                        navigate.with_value(|n| {
-                                            n(&href, NavigateOptions::default());
-                                        });
+                                        if crate::app::is_sessions_index() {
+                                            navigate.with_value(|n| {
+                                                n(&href, NavigateOptions::default());
+                                            });
+                                        } else {
+                                            crate::app::nav_external(&href);
+                                        }
                                     }
                                 })
                             >
@@ -1138,7 +1156,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                         menu_for.set(None);
                                         let id = id.clone();
                                         let agent = agent.clone();
-                                        leptos::task::spawn_local(async move {
+                                        leptos::task::spawn_local_scoped_with_cancellation(async move {
                                             let ok = if pinned_now {
                                                 "Unpinned"
                                             } else {
@@ -1170,7 +1188,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                         menu_for.set(None);
                                         let id = id.clone();
                                         let agent = agent.clone();
-                                        leptos::task::spawn_local(async move {
+                                        leptos::task::spawn_local_scoped_with_cancellation(async move {
                                             let ok = if archived_now {
                                                 "Unarchived"
                                             } else {
@@ -1216,9 +1234,9 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                     let href = detail_href.clone();
                                     move || {
                                         menu_for.set(None);
-                                        navigate.with_value(|n| {
-                                            n(&href, NavigateOptions::default());
-                                        });
+                                        // `/sessions/:id` is always a
+                                        // route swap → document load.
+                                        crate::app::nav_external(&href);
                                     }
                                 })
                             >
@@ -1477,7 +1495,7 @@ fn SessionRowView(
                                                 }
                                                 let id = cid.clone();
                                                 let agent = cagent.clone();
-                                                leptos::task::spawn_local(async move {
+                                                leptos::task::spawn_local_scoped_with_cancellation(async move {
                                                     if toast
                                                         .outcome(
                                                             rename_session(id, agent, new_title)
@@ -2114,7 +2132,7 @@ fn SessionFilterMenu(
                                     </span>
                                 </button>
                                 <A
-                                    href="/nodes"
+                                    href="/nodes" attr:rel="external"
                                     attr:class=MENU_ITEM_CLS
                                     attr:onclick=CLOSE_MENU_ALL
                                 >
@@ -2384,16 +2402,18 @@ fn ImportCard(
             }
         };
         busy.set(true);
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             if let Some(res) = toast.outcome(import_session(body).await, "Session imported") {
                 open.set(false);
                 on_imported();
-                navigate.with_value(|n| {
-                    n(
-                        &sepia_web_core::filter::session_href(&res.id, &res.agent),
-                        NavigateOptions::default(),
-                    );
-                });
+                let href = sepia_web_core::filter::session_href(&res.id, &res.agent);
+                if crate::app::is_sessions_index() {
+                    navigate.with_value(|n| {
+                        n(&href, NavigateOptions::default());
+                    });
+                } else {
+                    crate::app::nav_external(&href);
+                }
             }
             busy.set(false);
         });

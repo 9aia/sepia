@@ -208,6 +208,45 @@ pub fn query_client() -> leptos_fetch::QueryClient {
     leptos::prelude::expect_context::<leptos_fetch::QueryClient>()
 }
 
+/// App-level shared query handles, created once outside `<Routes>`.
+///
+/// Per-page `client.resource()` handles share the scope's subscriber
+/// walk — a route swap disposes the old page's resource while the new
+/// page's attach runs `invalidate_queries_inner`, touching the
+/// disposed signal → wasm trap (no panic message; it unwinds inside a
+/// callback). Handles hoisted here live under `App`'s owner forever,
+/// so the swap races disappear; pages borrow them via
+/// `expect_context::<SharedResources>()`.
+#[derive(Clone, Copy)]
+pub struct SharedResources {
+    pub sessions: Resource<Result<Vec<SessionSummaryDto>, ServerFnError>>,
+    pub pending: Resource<Result<Vec<PendingWriteDto>, ServerFnError>>,
+    pub nodes: Resource<Result<Vec<NodeStatusDto>, ServerFnError>>,
+    pub agents: Resource<Result<Vec<AgentDto>, ServerFnError>>,
+    pub projects: Resource<Result<Vec<ProjectDto>, ServerFnError>>,
+    pub info: Resource<Result<NodeInfoDto, ServerFnError>>,
+}
+
+/// Build + provide the shared handles. `App` calls it right after
+/// `QueryClient::new().provide()` — unconditional on both targets so
+/// SSR resource indexes line up with hydrate's.
+pub fn provide_shared_resources() {
+    let client = query_client();
+    provide_context(SharedResources {
+        sessions: client.resource(sessions_scope, || ()),
+        pending: client.resource(pending_scope, || ()),
+        nodes: client.resource(node_status_scope, || ()),
+        agents: client.resource(agents_scope, || ()),
+        projects: client.resource(projects_scope, || ()),
+        info: client.resource(node_info_scope, || ()),
+    });
+}
+
+/// The shared handles — `expect_context` for the lazy name.
+pub fn shared() -> SharedResources {
+    leptos::prelude::expect_context::<SharedResources>()
+}
+
 #[cfg(feature = "ssr")]
 fn node_api() -> Result<std::sync::Arc<dyn NodeApi>, ServerFnError> {
     use_context::<std::sync::Arc<dyn NodeApi>>()

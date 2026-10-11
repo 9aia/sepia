@@ -18,10 +18,9 @@ use crate::pages::RelativeTime;
 
 #[component]
 pub fn NodesPage() -> impl IntoView {
-    let client = crate::api::query_client();
-    let info = client.resource(crate::api::node_info_scope, || ());
-    let status = client.resource(crate::api::node_status_scope, || ());
-    let pending = client.resource(crate::api::pending_scope, || ());
+    let info = crate::api::shared().info;
+    let status = crate::api::shared().nodes;
+    let pending = crate::api::shared().pending;
 
     #[cfg(feature = "hydrate")]
     {
@@ -238,8 +237,7 @@ pub fn NodesPage() -> impl IntoView {
 /// node-side — the code itself is the credential.
 #[component]
 fn PairCard() -> impl IntoView {
-    let client = crate::api::query_client();
-    let status = client.resource(crate::api::node_status_scope, || ());
+    let status = crate::api::shared().nodes;
     let code = RwSignal::new(String::new());
     let node = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
@@ -258,7 +256,7 @@ fn PairCard() -> impl IntoView {
             let n = node.get_untracked();
             (!n.is_empty()).then_some(n)
         };
-        leptos::task::spawn_local(async move {
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
             let res = redeem_pair_code(c, node_arg)
                 .await
                 .map_err(|e| e.to_string());
@@ -440,7 +438,7 @@ pub(crate) fn NicknameEdit(
                                 }
                                 busy.set(true);
                                 let node_arg = node.clone();
-                                leptos::task::spawn_local(async move {
+                                leptos::task::spawn_local_scoped_with_cancellation(async move {
                                     if toast
                                         .outcome(
                                             rename_node(name_arg, node_arg).await,
