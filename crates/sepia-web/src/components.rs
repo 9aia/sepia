@@ -607,7 +607,8 @@ pub mod icons {
     /// `send`, `paperclip`, `lock`, `inbox`, `pencil`, `copy`,
     /// `check`, `download`, `upload`, `archive`, `info`, `plug`,
     /// `unplug`, `square`, `loader-circle`, `trash`, `folder-open`,
-    /// `globe`, `octagon-x`, `file`.
+    /// `globe`, `octagon-x`, `file`, `monitor`, `rotate-ccw`,
+    /// `keyboard`.
     #[component]
     #[allow(clippy::needless_pass_by_value)] // component props are owned
     pub fn Icon(
@@ -681,6 +682,9 @@ pub mod icons {
                     "globe" => view! { <lucide_leptos::Globe/> }.into_any(),
                     "octagon-x" => view! { <lucide_leptos::OctagonX/> }.into_any(),
                     "file" => view! { <lucide_leptos::File/> }.into_any(),
+                    "monitor" => view! { <lucide_leptos::Monitor/> }.into_any(),
+                    "rotate-ccw" => view! { <lucide_leptos::RotateCcw/> }.into_any(),
+                    "keyboard" => view! { <lucide_leptos::Keyboard/> }.into_any(),
                     _ => view! { <lucide_leptos::MessageSquare/> }.into_any(),
                 }}
             </span>

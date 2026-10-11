@@ -26,6 +26,7 @@ use crate::components::toast::{Toaster, provide_toaster};
 use crate::components::{
     ButtonClass, ButtonSize, ButtonVariant, EmptyState, Sheet, SheetBody, SheetHeader, SheetTitle,
 };
+use crate::desktop::DesktopMenu;
 use crate::pages::{
     AgentsPage, LoginPage, NodesPage, ProjectsPage, SessionDetailPage, SessionListPage,
     SettingsPage,
@@ -193,9 +194,11 @@ fn rail_link(href: &'static str, label: &'static str, icon: &'static str) -> imp
 /// remaining items are plain links — their pages render full-width
 /// next to the rail (the panel is page-owned, so it simply isn't
 /// mounted there). The theme toggle moves up from the old sidebar's
-/// footer into the rail's bottom slot.
+/// footer into the rail's bottom slot, and the old ClientBar's
+/// desktop menu sits under it — the rail's last cell, like the old
+/// footer's bottom-most row.
 #[component]
-fn IconRail() -> impl IntoView {
+fn IconRail(help: RwSignal<bool>) -> impl IntoView {
     let panel = expect_context::<PanelOpen>();
     let location = use_location();
     // `/` and every `/sessions/:id` are the Sessions section.
@@ -266,8 +269,9 @@ fn IconRail() -> impl IntoView {
                 {rail_link("/nodes", "Nodes", "server")}
                 {rail_link("/settings", "Settings", "settings")}
             </div>
-            <div class="mt-auto pt-2">
+            <div class="mt-auto flex flex-col items-center gap-1 pt-2">
                 <ThemeToggle/>
+                <DesktopMenu help=help/>
             </div>
         </nav>
     }
@@ -282,6 +286,7 @@ pub fn App() -> impl IntoView {
     crate::theme::provide_theme();
     crate::keybinds::provide_keybinds();
     provide_panel();
+    crate::desktop::provide_desktop();
     // Shared async cache — keyed queries dedupe across components and
     // survive remounts; mutations invalidate by scope fn.
     leptos_fetch::QueryClient::new().provide();
@@ -302,7 +307,7 @@ pub fn App() -> impl IntoView {
                 // Desktop navigation — the sidebar-09 icon rail; the
                 // content panel it opens lives inside the routed page
                 // (`SessionListPanel` owns the Sessions section's).
-                <IconRail/>
+                <IconRail help=help_open/>
                 <div class="flex min-w-0 flex-1 flex-col">
                     // Mobile topbar + drawer
                     <header class="sticky top-0 z-40 flex h-12 items-center gap-2 border-b bg-card/80 px-3 backdrop-blur lg:hidden">

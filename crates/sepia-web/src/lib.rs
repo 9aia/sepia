@@ -8,6 +8,7 @@
 pub mod api;
 pub mod app;
 pub mod components;
+pub mod desktop;
 pub mod dto;
 pub mod keybinds;
 pub mod markdown;

@@ -83,6 +83,29 @@ async fn shell_renders_icon_rail_and_sessions_panel() {
 }
 
 #[tokio::test]
+async fn shell_rail_renders_desktop_menu() {
+    let html = page("/", FakeNodeApi::seeded().shared()).await;
+    // The rail's bottom cell — the old ClientBar's desktop menu: a
+    // `<details>` trigger with the reachability dot on the icon's
+    // corner, submenus per node + directory, and the
+    // settings/shortcuts tail. Queries don't resolve inside this
+    // render (no Suspense), so the unloaded "Checking" states show.
+    assert_contains(&html, "data-name=\"DesktopMenu\"");
+    assert_contains(&html, "data-aim-menu");
+    assert_contains(&html, "data-name=\"AimDot\"");
+    assert_contains(&html, "role=\"status\"");
+    assert_contains(&html, "Checking nodes");
+    assert_contains(&html, "data-name=\"AimSummary\"");
+    assert_contains(&html, "data-name=\"AimDirSubmenu\"");
+    assert_contains(&html, "Directory");
+    assert_contains(&html, "Most recent");
+    assert_contains(&html, "No known directories");
+    assert_contains(&html, "data-name=\"AimSettings\"");
+    assert_contains(&html, "data-name=\"AimShortcuts\"");
+    assert_contains(&html, "Keyboard shortcuts");
+}
+
+#[tokio::test]
 async fn session_detail_keeps_the_sessions_panel() {
     // Master-detail on the deep link too: `/sessions/:id` mounts the
     // list panel beside `SessionPanel`, with the param as the

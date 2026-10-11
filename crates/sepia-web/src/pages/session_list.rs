@@ -1895,6 +1895,13 @@ fn AgentFilter(
 /// id (or the empty "default") goes to the primary. `cwd_ref` exposes
 /// the working-directory input so the `n` hotkey can focus it; `cwd`
 /// is page-owned so the group menu's "New session here" can prefill.
+///
+/// The fields seed from the desktop aim (`crate::desktop::Desktop` —
+/// the rail footer's menu picks it, `sepia-desktop` persists it):
+/// the Effect below diffs each aim write and copies only the fields
+/// the pick touched, so a half-typed cwd survives an unrelated agent
+/// pick while a node change clears the dir exactly like the old
+/// `pick()` semantics did.
 #[component]
 fn NewSessionForm(
     on_created: impl Fn() + 'static + Send + Sync + Copy,
@@ -1916,6 +1923,30 @@ fn NewSessionForm(
     let agent_sel = RwSignal::new(String::new());
     let creating = RwSignal::new(false);
     let form_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // Adopt the desktop aim — the first run seeds the stored picks
+    // (`sepia-desktop` lands via the provider's own Effect right
+    // before this one); a later menu pick re-seeds only the fields it
+    // changed. `prev` snapshots what was last applied so typing in a
+    // field isn't clobbered by an unrelated aim write.
+    #[cfg(feature = "hydrate")]
+    {
+        let aim = expect_context::<crate::desktop::Desktop>().0;
+        let mut prev = aim.get_untracked();
+        Effect::new(move |_| {
+            let next = aim.get();
+            if next.cwd != prev.cwd {
+                cwd.set(next.cwd.clone().unwrap_or_default());
+            }
+            if next.model != prev.model {
+                model.set(next.model.clone().unwrap_or_default());
+            }
+            if next.node != prev.node || next.agent != prev.agent {
+                agent_sel.set(next.select_value());
+            }
+            prev = next;
+        });
+    }
 
     // Cwd autocomplete. `dir_results` is `(fetched parent, subdirs)` —
     // keyed by parent so a stale response can't feed a newer typed
@@ -2151,6 +2182,17 @@ fn NewSessionForm(
                     on:change=move |ev| agent_sel.set(event_target_value(&ev))
                 >
                     <option value="">"default agent"</option>
+                    // A node-only aim (`"node|"`) has no roster option
+                    // — this synthetic one keeps the pick visible
+                    // until the user picks something else.
+                    {move || {
+                        let sel = agent_sel.get();
+                        sel.strip_suffix('|').map(|node| {
+                            let label = format!("{node} · node default");
+                            let value = sel.clone();
+                            view! { <option value=value>{label}</option> }
+                        })
+                    }}
                     // SSR + hydrate both render empty initially — options
                     // land post-hydration when `agents` fills.
                     {move || {

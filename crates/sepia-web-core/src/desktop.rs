@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn recent_cwds_are_first_seen_distinct_and_node_scoped() {
-        let rows = vec![
+        let rows = [
             ("/w/a", Some("n1".to_string())),
             ("/w/b", Some("n1".to_string())),
             ("/w/a", Some("n1".to_string())),
