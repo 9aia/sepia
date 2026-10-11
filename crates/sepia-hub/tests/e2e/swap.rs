@@ -35,9 +35,8 @@ async fn route_swap() {
         return;
     }
     let env = E2eEnv::spawn().await;
-    let url = env.hub_url.clone();
     let browser = harness::Browser::connect((1280, 900)).await;
-    browser.goto(&format!("{url}/")).await;
+    browser.goto(&env.hub_url).await;
     assert!(
         wait_js(
             &browser,

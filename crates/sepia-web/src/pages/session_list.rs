@@ -270,13 +270,14 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
             return;
         };
         pending_delete.set(None);
+        let on_index = crate::app::is_sessions_index();
         leptos::task::spawn_local_scoped_with_cancellation(async move {
             if toast
                 .outcome(delete_session(id, agent).await, "Deleted")
                 .is_some()
             {
                 sessions.refetch();
-                if crate::app::is_sessions_index() {
+                if on_index {
                     navigate.with_value(|n| n("/", NavigateOptions::default()));
                 } else {
                     crate::app::nav_external("/");
@@ -320,6 +321,9 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
             &primary,
         );
         let (node, agent, model) = create_target(&aim_now, explicit_node.as_deref(), &primary);
+        // Router context resolves against the owner — read it now,
+        // not inside the spawned future.
+        let on_index = crate::app::is_sessions_index();
         creating.set(true);
         create_error.set(None);
         leptos::task::spawn_local_scoped_with_cancellation(async move {
@@ -332,7 +336,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                     } else {
                         format!("/?session={}&agent={}", res.id, res.agent_id)
                     };
-                    if crate::app::is_sessions_index() {
+                    if on_index {
                         navigate.with_value(|n| n(&href, NavigateOptions::default()));
                     } else {
                         crate::app::nav_external(&href);
@@ -2394,6 +2398,7 @@ fn ImportCard(
             return;
         }
         let cwd_opt = non_empty(&cwd.get_untracked());
+        let on_index = crate::app::is_sessions_index();
         let body = match import_body(&json, &target.get_untracked(), cwd_opt.as_deref()) {
             Ok(b) => b,
             Err(e) => {
@@ -2407,7 +2412,7 @@ fn ImportCard(
                 open.set(false);
                 on_imported();
                 let href = sepia_web_core::filter::session_href(&res.id, &res.agent);
-                if crate::app::is_sessions_index() {
+                if on_index {
                     navigate.with_value(|n| {
                         n(&href, NavigateOptions::default());
                     });
