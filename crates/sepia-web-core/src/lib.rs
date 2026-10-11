@@ -6,6 +6,7 @@
 
 pub mod composer;
 pub mod filter;
+pub mod focus;
 pub mod highlight;
 pub mod history;
 pub mod keymap;

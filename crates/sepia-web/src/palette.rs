@@ -57,7 +57,10 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
     let session_rows = RwSignal::new(Vec::<crate::dto::SessionSummaryDto>::new());
     let query = RwSignal::new(String::new());
     let active = RwSignal::new(0usize);
-    let input_ref = NodeRef::<leptos::html::Input>::new();
+    // The dialog card — the shared overlay trap owns initial focus
+    // (`data-autofocus` → the input), Tab-wrapping, and return-focus.
+    let card_ref = NodeRef::<leptos::html::Div>::new();
+    crate::components::track_overlay_focus(open, card_ref);
     let query_map = use_query_map();
     #[cfg(feature = "hydrate")]
     let toast = use_toast();
@@ -210,16 +213,14 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
         }
     };
 
-    // On open: fresh query, focus the input (always mounted — no mount
-    // race), and refresh the session list for jumps + pin/archive.
+    // On open: fresh query (the input takes focus via `data-autofocus`
+    // + the overlay trap — always mounted, no mount race) and refresh
+    // the session list for jumps + pin/archive.
     #[cfg(feature = "hydrate")]
     Effect::new(move |_| {
         if open.get() {
             query.set(String::new());
             active.set(0);
-            if let Some(el) = input_ref.get() {
-                let _ = el.focus();
-            }
             leptos::task::spawn_local(async move {
                 if let Ok(list) = crate::api::list_sessions().await {
                     session_rows.set(list);
@@ -242,9 +243,11 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
             on:click=move |_| open.set(false)
         >
             <div
+                node_ref=card_ref
                 role="dialog"
                 aria-modal="true"
                 aria-label="Command palette"
+                tabindex="-1"
                 // Closed = inert — the hidden card can't take focus.
                 inert=move || (!open.get()).then_some("")
                 aria-hidden=move || (!open.get()).then_some("true")
@@ -291,7 +294,7 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
                 <div class="border-b p-2">
                     <Input
                         {..}
-                        node_ref=input_ref
+                        attr:data-autofocus=""
                         attr:r#type="text"
                         attr:role="combobox"
                         attr:aria-expanded="true"

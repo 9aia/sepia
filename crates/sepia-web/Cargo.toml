@@ -53,6 +53,7 @@ wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 js-sys = { workspace = true, optional = true }
 web-sys = { workspace = true, optional = true, features = [
+  "AddEventListenerOptions",
   "Blob",
   "Clipboard",
   "ClipboardEvent",
@@ -62,7 +63,9 @@ web-sys = { workspace = true, optional = true, features = [
   "DomTokenList",
   "Element",
   "ErrorEvent",
+  "Event",
   "EventSource",
+  "EventTarget",
   "File",
   "FileList",
   "FileReader",
@@ -72,9 +75,11 @@ web-sys = { workspace = true, optional = true, features = [
   "HtmlInputElement",
   "HtmlScriptElement",
   "HtmlTextAreaElement",
+  "KeyboardEvent",
   "MessageEvent",
   "Navigator",
   "Node",
+  "NodeList",
   "ProgressEvent",
   "PushEncryptionKeyName",
   "PushManager",
@@ -82,6 +87,7 @@ web-sys = { workspace = true, optional = true, features = [
   "PushSubscriptionOptionsInit",
   "ServiceWorkerContainer",
   "ServiceWorkerRegistration",
+  "UiEvent",
   "Window",
 ] }
 console_error_panic_hook = { workspace = true, optional = true }

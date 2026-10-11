@@ -319,10 +319,11 @@ const HELP_ORDER: &[Option<sepia_web_core::keymap::Action>] = &[
 /// `?` — the shortcut cheat-sheet. Always rendered, visibility via
 /// class (SSR and hydrate agree on a closed dialog). It's a custom
 /// overlay, not a `Sheet`, but it carries the same dialog semantics:
-/// `role=dialog` + `aria-modal` + `aria-labelledby`, initial focus on
-/// the panel and return-focus on close (`track_overlay_focus`), and
-/// `aria-hidden` while closed so the faded-out copy stays out of the
-/// a11y tree. Escape closes via the shell's `CloseHelp` hotkey.
+/// `role=dialog` + `aria-modal` + `aria-labelledby`, initial focus +
+/// the shared Tab trap + return-focus (`track_overlay_focus`), and
+/// `aria-hidden`/`inert` while closed so the faded-out copy stays out
+/// of the a11y tree and the tab order. Escape closes via the shell's
+/// `CloseHelp` hotkey.
 ///
 /// Rows read the effective keymap (defaults + `sepia-keymap`
 /// overrides) so the sheet always shows what will actually fire —
@@ -352,6 +353,7 @@ fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
                 aria-modal="true"
                 aria-labelledby="shortcuts-help-title"
                 tabindex="-1"
+                inert=move || (!open.get()).then_some("")
                 class="w-full max-w-sm rounded-xl border bg-popover p-5 shadow-xl focus:outline-none"
                 on:click=move |ev| ev.stop_propagation()
             >

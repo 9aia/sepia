@@ -199,9 +199,10 @@ pub fn MenuItem(
 /// a11y: `role="dialog"` + `aria-modal`; `id` anchors
 /// `aria-labelledby` (pass a unique stem per dialog — several
 /// instances share titles like "Delete this session?"); without `id`
-/// the title doubles as `aria-label`. Escape closes, the panel takes
-/// focus on open, and the previously focused element regains it on
-/// close (`track_overlay_focus`).
+/// the title doubles as `aria-label`. Escape closes, the first
+/// focusable takes focus on open, Tab/Shift+Tab wrap inside the
+/// dialog, and the previously focused element regains focus on close
+/// (`track_overlay_focus`).
 #[component]
 #[allow(clippy::needless_pass_by_value)] // component props are owned
 pub fn ConfirmDialog(
@@ -340,16 +341,22 @@ pub(crate) fn copy_to_clipboard(text: &str) {
 #[cfg(not(feature = "hydrate"))]
 pub(crate) fn copy_to_clipboard(_: &str) {}
 
-/// Initial focus + return-focus for signal-driven overlay panels —
-/// the pragmatic half of a focus trap (`leptos-use` 0.19 has no
-/// `use_focus_trap`). `panel` needs `tabindex="-1"`; it takes focus
-/// when `open` flips true, and whatever was focused before regains it
-/// on close. Hydrate-only: SSR never runs effects and has no DOM.
+/// Focus management for signal-driven overlay panels — initial focus,
+/// a full Tab trap, and return-focus (`leptos-use` 0.19 has no
+/// `use_focus_trap`, so the trap is hand-rolled in `overlay` below).
+/// `panel` needs `tabindex="-1"` as the fallback focus target: on
+/// open the first focusable (or a `[data-autofocus]` mark) takes
+/// focus, Tab/Shift+Tab wrap inside the panel while it's the topmost
+/// overlay, and whatever was focused before regains it on close.
+/// Escape stays each overlay's own keydown job. Hydrate-only: SSR
+/// never runs effects and has no DOM.
 #[cfg(feature = "hydrate")]
 pub(crate) fn track_overlay_focus(open: RwSignal<bool>, panel: NodeRef<leptos::html::Div>) {
     use std::cell::RefCell;
     use std::rc::Rc;
     use wasm_bindgen::JsCast;
+    overlay::ensure_tab_listener();
+    let id = overlay::next_id();
     let prev = Rc::new(RefCell::new(None::<web_sys::HtmlElement>));
     Effect::new(move |_| {
         if open.get() {
@@ -360,18 +367,174 @@ pub(crate) fn track_overlay_focus(open: RwSignal<bool>, panel: NodeRef<leptos::h
                 *prev.borrow_mut() = Some(el);
             }
             if let Some(el) = panel.get() {
+                overlay::push(id, el.clone().unchecked_into());
+                overlay::focus_initial(&el);
+            }
+        } else {
+            overlay::pop(id);
+            if let Some(el) = prev.borrow_mut().take() {
                 let _ = el.focus();
             }
-        } else if let Some(el) = prev.borrow_mut().take() {
-            let _ = el.focus();
         }
     });
+    // Unmounted while open — leave the stack clean.
+    on_cleanup(move || overlay::pop(id));
 }
 
 /// SSR/no-DOM counterpart — effects never run, there's nothing to
 /// focus. Keeps the call site unconditional (cfg never gates markup).
 #[cfg(not(feature = "hydrate"))]
 pub(crate) fn track_overlay_focus(_open: RwSignal<bool>, _panel: NodeRef<leptos::html::Div>) {}
+
+/// The DOM half of the overlay Tab trap — a stack of open panels
+/// (push order = open order) plus one capture-phase document keydown
+/// listener that wraps Tab/Shift+Tab inside the TOP entry only, which
+/// is what keeps a `ConfirmDialog` over a `Sheet` sane. Focusables
+/// are re-queried per press so content mounted after open (palette
+/// results, lazy lists) joins the cycle; the wrap math is pure
+/// (`sepia_web_core::focus`).
+#[cfg(feature = "hydrate")]
+mod overlay {
+    use leptos::prelude::*;
+    use sepia_web_core::focus::{self, TabDir};
+    use std::cell::{Cell, RefCell};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::Closure;
+
+    /// One open overlay — `panel` is its `role=dialog` element.
+    struct Entry {
+        id: u64,
+        panel: web_sys::HtmlElement,
+    }
+
+    thread_local! {
+        /// Open overlays, bottom → top. Entries land on open (not
+        /// mount) so stacking order matches what's on screen.
+        static STACK: RefCell<Vec<Entry>> = const { RefCell::new(Vec::new()) };
+        static NEXT_ID: Cell<u64> = const { Cell::new(1) };
+        /// The document listener is installed once and lives for the
+        /// page's lifetime — with an empty stack it's a no-op.
+        static LISTENER_UP: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(super) fn next_id() -> u64 {
+        NEXT_ID.with(|n| {
+            let id = n.get();
+            n.set(id + 1);
+            id
+        })
+    }
+
+    /// Mark `id` open — retain-then-push keeps rapid toggles
+    /// idempotent.
+    pub(super) fn push(id: u64, panel: web_sys::HtmlElement) {
+        STACK.with(|s| {
+            let mut s = s.borrow_mut();
+            s.retain(|e| e.id != id);
+            s.push(Entry { id, panel });
+        });
+    }
+
+    pub(super) fn pop(id: u64) {
+        STACK.with(|s| s.borrow_mut().retain(|e| e.id != id));
+    }
+
+    /// The topmost open overlay's panel — the only one the trap
+    /// wraps Tab inside.
+    fn top() -> Option<web_sys::HtmlElement> {
+        STACK.with(|s| s.borrow().last().map(|e| e.panel.clone()))
+    }
+
+    /// Live focusable elements inside `panel`, in DOM order. The
+    /// `offset_*` box check filters `display:none`/`hidden` subtrees
+    /// the selector can't express.
+    fn focusables(panel: &web_sys::Element) -> Vec<web_sys::HtmlElement> {
+        let Ok(list) = panel.query_selector_all(focus::FOCUSABLE_SELECTOR) else {
+            return Vec::new();
+        };
+        (0..list.length())
+            .filter_map(|i| list.item(i))
+            .filter_map(|n| n.dyn_into::<web_sys::HtmlElement>().ok())
+            .filter(|el| el.offset_width() > 0 || el.offset_height() > 0)
+            .collect()
+    }
+
+    /// Focus on open — a `[data-autofocus]` mark wins, else the first
+    /// focusable, else the panel itself. Deferred a tick so the
+    /// `inert`/`aria-hidden` attribute effects land first: `focus()`
+    /// inside a still-inert subtree is a silent no-op.
+    pub(super) fn focus_initial(panel: &web_sys::HtmlElement) {
+        let panel = panel.clone();
+        let cb = Closure::<dyn FnMut()>::once(move || {
+            let items = focusables(&panel);
+            let auto = panel
+                .query_selector("[data-autofocus]")
+                .ok()
+                .flatten()
+                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+                .and_then(|a| {
+                    items
+                        .iter()
+                        .position(|el| a.is_same_node(Some(el.unchecked_ref())))
+                });
+            let target =
+                focus::initial_target(auto, items.len()).map_or(panel, |i| items[i].clone());
+            let _ = target.focus();
+        });
+        let _ = window()
+            .set_timeout_with_callback_and_timeout_and_arguments_0(cb.as_ref().unchecked_ref(), 0);
+        cb.forget();
+    }
+
+    /// One document-level capture listener shared by every overlay —
+    /// it wraps Tab inside the stack's top entry only. Capture phase
+    /// so the wrap lands before any inner handler moves focus.
+    pub(super) fn ensure_tab_listener() {
+        LISTENER_UP.with(|up| {
+            if up.replace(true) {
+                return;
+            }
+            let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(|ev| on_keydown(&ev));
+            let opts = web_sys::AddEventListenerOptions::new();
+            opts.set_capture(true);
+            let _ = document().add_event_listener_with_callback_and_add_event_listener_options(
+                "keydown",
+                cb.as_ref().unchecked_ref(),
+                &opts,
+            );
+            cb.forget();
+        });
+    }
+
+    fn on_keydown(ev: &web_sys::KeyboardEvent) {
+        if ev.key() != "Tab" {
+            return;
+        }
+        let Some(panel) = top() else {
+            return;
+        };
+        let items = focusables(&panel);
+        let current = document()
+            .active_element()
+            .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+            .and_then(|a| {
+                items
+                    .iter()
+                    .position(|el| a.is_same_node(Some(el.unchecked_ref())))
+            });
+        let dir = if ev.shift_key() {
+            TabDir::Backward
+        } else {
+            TabDir::Forward
+        };
+        // We move focus ourselves every press — deterministic wrap no
+        // matter where focus sat (panel, list edge, page behind).
+        ev.prevent_default();
+        let target =
+            focus::tab_target(current, items.len(), dir).map_or(panel, |i| items[i].clone());
+        let _ = target.focus();
+    }
+}
 
 /// Inline SVG icons — lucide-style 24×24 stroke glyphs, hand-embedded
 /// so no icon crate is needed. Everything inherits `currentColor`.
@@ -558,8 +721,10 @@ pub mod toast {
 /// rendered so SSR/hydrate agree — visibility is a class transition.
 ///
 /// a11y: `role="dialog"` + `aria-modal`, `aria-label` when `label` is
-/// given, Escape closes, focus moves to the panel on open and returns
-/// to the previously focused element on close.
+/// given, Escape closes, the first focusable takes focus on open,
+/// Tab/Shift+Tab wrap inside the sheet while it's open, and focus
+/// returns to the previously focused element on close
+/// (`track_overlay_focus`).
 #[component]
 #[allow(clippy::needless_pass_by_value)] // component props are owned
 pub fn Sheet(
