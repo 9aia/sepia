@@ -248,6 +248,33 @@ body {
   flex-shrink: 0;
 }
 
+/* Shimmering text — the agent "working" indicator (the old app's
+ * `.shimmer-text`): a highlight band sweeps across the glyphs via a
+ * moving background-clip: text gradient. */
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 40%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 60%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-sweep 1.6s linear infinite;
+}
+
+@keyframes shimmer-sweep {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+
 /* Reduced motion — neutralize transitions/animations globally. The
    app animates only layout (sheets slide, toasts fade, skeletons
    pulse), so cutting durations loses nothing functionally. */

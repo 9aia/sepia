@@ -10,8 +10,7 @@ use leptos_router::hooks::use_navigate;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_use::core::ConnectionReadyState;
 use sepia_web_core::composer::{
-    Attachment, attachment_label, attachments_payload, convert_targets, draft_with_quote,
-    export_href,
+    Attachment, attachments_payload, byte_label, convert_targets, draft_with_quote, export_href,
 };
 #[cfg(feature = "hydrate")]
 use sepia_web_core::composer::{MAX_ATTACHMENT_CHARS, MAX_ATTACHMENTS, attachment_chars};
@@ -27,16 +26,16 @@ use sepia_web_core::transcript::{LiveKind, LiveTranscript, PendingPermission};
 use serde_json::Value;
 
 use crate::api::{
-    answer_permission, attach_session, cancel_run, convert_session, delete_session, detach_session,
-    rename_session, restore_checkpoint, rewind_session, send_prompt, session_history,
-    set_session_model,
+    answer_permission, archive_session, attach_session, cancel_run, convert_session,
+    delete_session, detach_session, pin_session, rename_session, restore_checkpoint,
+    rewind_session, send_prompt, session_history, set_session_model, set_session_projects,
 };
 use crate::components::icons::Icon;
 use crate::components::toast::use_toast;
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonClass, ButtonSize, ButtonVariant, Card, CardContent,
     CardDescription, CardHeader, CardTitle, ConfirmDialog, Dropdown, ErrorBanner, Input, MenuItem,
-    Sheet, SheetBody, SheetHeader, SheetTitle, Skeleton, TEXTAREA_CLASS,
+    MenuSeparator, Sheet, SheetBody, SheetHeader, SheetTitle, Skeleton,
 };
 use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
 use crate::markdown::Markdown;
@@ -398,6 +397,8 @@ pub fn SessionPanel(
     // Hub outbox rows — filtered to this session for the queued/failed
     // badges. Not session-scoped server-side; the list is small.
     let pending = client.resource(crate::api::pending_scope, || ());
+    // The projects catalog — the details sheet's membership toggles.
+    let projects = client.resource(crate::api::projects_scope, || ());
 
     let toast = use_toast();
     // Action state lives at page level: a summary refetch re-runs the
@@ -521,6 +522,86 @@ pub fn SessionPanel(
                     });
                 }
                 Err(e) => toast.error(e.to_string()),
+            }
+            acting.set(false);
+        });
+    };
+    // Meta-overlay toggles — `PATCH /api/sessions/{id}` `{pinned}` /
+    // `{archived}` / `{projectIds}`, same write path as the list's
+    // context menu.
+    let do_pin = move |pinned: bool| {
+        if acting.get() {
+            return;
+        }
+        acting.set(true);
+        let id = session_id();
+        let agent = agent();
+        let ok = if pinned { "Pinned" } else { "Unpinned" };
+        leptos::task::spawn_local(async move {
+            if toast
+                .outcome(pin_session(id, agent, pinned).await, ok)
+                .is_some()
+            {
+                client.invalidate_query(crate::api::sessions_scope, ());
+                summary.refetch();
+            }
+            acting.set(false);
+        });
+    };
+    let do_archive = move |archived: bool| {
+        if acting.get() {
+            return;
+        }
+        acting.set(true);
+        let id = session_id();
+        let agent = agent();
+        let ok = if archived { "Archived" } else { "Unarchived" };
+        leptos::task::spawn_local(async move {
+            if toast
+                .outcome(archive_session(id, agent, archived).await, ok)
+                .is_some()
+            {
+                client.invalidate_query(crate::api::sessions_scope, ());
+                summary.refetch();
+            }
+            acting.set(false);
+        });
+    };
+    // `{projectIds}` replaces wholesale — read the freshest summary
+    // for the current set so toggling one project keeps the rest.
+    let toggle_project = move |key: String| {
+        if acting.get() {
+            return;
+        }
+        acting.set(true);
+        let id = session_id();
+        let agent = agent();
+        let ids = summary.get().and_then(Result::ok).map_or_else(
+            || vec![key.clone()],
+            |s| {
+                if s.project_ids.contains(&key) {
+                    s.project_ids
+                        .iter()
+                        .filter(|p| **p != key)
+                        .cloned()
+                        .collect()
+                } else {
+                    let mut ids = s.project_ids.clone();
+                    ids.push(key.clone());
+                    ids
+                }
+            },
+        );
+        leptos::task::spawn_local(async move {
+            if toast
+                .outcome(
+                    set_session_projects(id, agent, ids).await,
+                    "Projects updated",
+                )
+                .is_some()
+            {
+                client.invalidate_query(crate::api::sessions_scope, ());
+                summary.refetch();
             }
             acting.set(false);
         });
@@ -724,6 +805,14 @@ pub fn SessionPanel(
             .and_then(Result::ok)
             .is_some_and(|s| s.locked && !live_override.get().unwrap_or(s.live))
     };
+    // Our side of the attach — `true` while this client holds the live
+    // attach (the composer sends straight through).
+    let is_live = move || {
+        summary
+            .get()
+            .and_then(Result::ok)
+            .is_some_and(|s| live_override.get().unwrap_or(s.live))
+    };
 
     // POST /prompt — the actual send. Shared by `submit` and the
     // takeover-confirm path.
@@ -801,25 +890,11 @@ pub fn SessionPanel(
         }
     });
 
-    // The composer stays editable while the session is held
-    // (draft-while-held is intended); send then detours through the
-    // takeover `ConfirmDialog` instead of dying on a raw error.
-    let submit = move || {
-        let text = draft.get().trim().to_string();
-        let empty = text.is_empty() && attachments.read().is_empty();
-        if empty || sending.get() {
-            return;
-        }
-        if is_held() {
-            confirm_takeover.set(true);
-            return;
-        }
-        do_send(text);
-    };
-
-    // "Take over and send" — attach with `takeover`, then send the
-    // unchanged draft once the lock is ours.
-    let takeover_send = move || {
+    // Send-through-attach — attach (`takeover` when the dialog asked),
+    // then fire the unchanged draft once the lock is ours. A plain
+    // attach that lands read-only means the session is held by
+    // someone else: the takeover dialog takes it from there.
+    let attach_and_send = move |takeover: bool| {
         let text = draft.get().trim().to_string();
         let empty = text.is_empty() && attachments.read().is_empty();
         if empty || sending.get() {
@@ -831,7 +906,7 @@ pub fn SessionPanel(
         let id = session_id();
         let agent = agent();
         leptos::task::spawn_local(async move {
-            match attach_session(id.clone(), agent.clone(), true).await {
+            match attach_session(id.clone(), agent.clone(), takeover).await {
                 Ok(res) => {
                     live_override.set(Some(res.attached));
                     client.invalidate_query(crate::api::sessions_scope, ());
@@ -847,13 +922,36 @@ pub fn SessionPanel(
                             Err(e) => toast.error(e.to_string()),
                         }
                     } else {
-                        toast.error("takeover refused — the session is still held".to_string());
+                        confirm_takeover.set(true);
                     }
                 }
                 Err(e) => toast.error(e.to_string()),
             }
             sending.set(false);
         });
+    };
+
+    // The composer stays editable while the session is held
+    // (draft-while-held is intended); send then detours through the
+    // takeover `ConfirmDialog` instead of dying on a raw error.
+    let submit = move || {
+        let text = draft.get().trim().to_string();
+        let empty = text.is_empty() && attachments.read().is_empty();
+        if empty || sending.get() {
+            return;
+        }
+        if is_held() {
+            confirm_takeover.set(true);
+            return;
+        }
+        // Not attached — attach first, then the draft lands (the old
+        // app attached on open; attach-on-send keeps "type and it
+        // goes" without spawning the agent on browse).
+        if !is_live() {
+            attach_and_send(false);
+            return;
+        }
+        do_send(text);
     };
 
     // The composer textarea — lifted to the page so the transcript's
@@ -916,13 +1014,40 @@ pub fn SessionPanel(
                                 // Cloned up front — the macro's move
                                 // closures can't reach `session` fields
                                 // once the tree above has captured them.
-                                let prompt_cwd = session.cwd.clone();
                                 let prompt_model = session.model.clone();
                                 // Convert/export surfaces — the store
                                 // the session lives in is excluded
                                 // from the convert targets.
                                 let detail_id = session.id.clone();
                                 let detail_agent = session.agent.clone();
+                                // Header + sheet captures.
+                                let head_title = if session.title.trim().is_empty() {
+                                    "Untitled session".to_string()
+                                } else {
+                                    session.title.clone()
+                                };
+                                let head_cwd = session.cwd.clone();
+                                let copy_id = session.id.clone();
+                                let copy_cwd = session.cwd.clone();
+                                // Own clones for the Advanced rows —
+                                // the view! child closures move their
+                                // captures, so `detail_*`/`copy_*`
+                                // can't be shared across sections.
+                                let adv_id = session.id.clone();
+                                let adv_cwd = session.cwd.clone();
+                                let adv_agent = session.agent.clone();
+                                let pinned_flag = session.pinned;
+                                let archived_flag = session.archived;
+                                let sheet_node = session
+                                    .node
+                                    .clone()
+                                    .unwrap_or_else(|| "local".to_string());
+                                let session_node_opt = session.node.clone();
+                                let sheet_updated = session.updated_at.clone();
+                                let sheet_source = session.source.clone();
+                                let sheet_agent_id = session.agent_id.clone();
+                                let sheet_spans = session.spans.clone();
+                                let sheet_lock_pid = session.lock_holder_pid;
                                 // Run-provenance spans → marker rows
                                 // between transcript segments.
                                 let spans: Vec<RunSpan> =
@@ -946,106 +1071,107 @@ pub fn SessionPanel(
                                     }
                                 }
                                 view! {
-                                    <Card>
-                                        <CardHeader class="gap-2">
-                                            <A
-                                                href="/"
-                                                attr:class="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                                    // The old app's ChatHeader — a
+                                    // slim bar: the title block opens
+                                    // the details sheet, status chips
+                                    // and a ⋯ action menu sit right.
+                                    <header
+                                        data-name="ChatHeader"
+                                        class="flex items-center gap-2"
+                                    >
+                                        // Mobile-only back affordance —
+                                        // on lg+ the Sessions panel is
+                                        // already beside the chat.
+                                        <A
+                                            href="/"
+                                            attr:class="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:hidden"
+                                            attr:aria-label="Back to sessions"
+                                            attr:title="Back to sessions"
+                                        >
+                                            <Icon name="arrow-left" class="size-4"/>
+                                        </A>
+                                        <button
+                                            type="button"
+                                            class="min-w-0 flex-1 cursor-pointer rounded-md px-1 py-0.5 text-left transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
+                                            aria-label=format!("Session details: {head_title}")
+                                            title="Session details"
+                                            on:click=move |_| details_open.set(true)
+                                        >
+                                            <h2 class="m-0 truncate text-[15px] font-medium">
+                                                {head_title.clone()}
+                                            </h2>
+                                            <span
+                                                class="block truncate text-xs text-muted-foreground"
+                                                title=head_cwd.clone()
                                             >
-                                                <Icon name="arrow-left" class="size-3.5"/>
-                                                "sessions"
-                                            </A>
-                                            <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                                                <CardTitle class="break-words text-base sm:text-lg">
-                                                    {if session.title.trim().is_empty() {
-                                                        "Untitled session".to_string()
-                                                    } else {
-                                                        session.title.clone()
-                                                    }}
-                                                </CardTitle>
-                                                <div class="flex flex-wrap items-center gap-1.5">
-                                                    {busy
-                                                        .then(|| view! {
-                                                            <Badge variant=BadgeVariant::Info>"busy"</Badge>
-                                                        })}
-                                                    {locked
-                                                        .then(|| view! {
-                                                            <Badge variant=BadgeVariant::Warning>"locked"</Badge>
-                                                        })}
-                                                    {(queued > 0).then(|| {
-                                                        view! {
-                                                            <Badge variant=BadgeVariant::Secondary>
-                                                                "queued"
-                                                            </Badge>
-                                                        }
-                                                    })}
-                                                    {(failed > 0).then(|| {
-                                                        view! {
-                                                            <Badge variant=BadgeVariant::Destructive>
-                                                                "failed"
-                                                            </Badge>
-                                                        }
-                                                    })}
-                                                    {move || {
-                                                        live_override
-                                                            .get()
-                                                            .unwrap_or(live_flag)
-                                                            .then(|| view! {
-                                                                <Badge variant=BadgeVariant::Success>"live"</Badge>
-                                                            })
-                                                    }}
-                                                </div>
-                                            </div>
-                                            <CardDescription class="flex flex-wrap items-center gap-2">
-                                                <Badge variant=BadgeVariant::Outline>
-                                                    {session.agent.clone()}
-                                                </Badge>
-                                                {session
-                                                    .node
-                                                    .clone()
-                                                    .map(|n| view! {
-                                                        <Badge variant=BadgeVariant::Outline>{n}</Badge>
-                                                    })}
-                                                <code class="break-all font-mono text-xs text-muted-foreground">
-                                                    {session.cwd.clone()}
-                                                </code>
-                                            </CardDescription>
-                                        </CardHeader>
-                                        <CardContent class="space-y-3">
-                                            <div class="flex flex-wrap items-center gap-2">
+                                                {head_cwd.clone()}
+                                            </span>
+                                        </button>
+                                        <div class="flex shrink-0 items-center gap-2">
+                                            {move || {
+                                                (busy || running()).then(|| view! {
+                                                    <Badge variant=BadgeVariant::Destructive>
+                                                        "busy"
+                                                    </Badge>
+                                                })
+                                            }}
+                                            {locked
+                                                .then(|| view! {
+                                                    <Badge variant=BadgeVariant::Warning>"locked"</Badge>
+                                                })}
+                                            {(queued > 0).then(|| {
+                                                view! {
+                                                    <Badge variant=BadgeVariant::Secondary>
+                                                        "queued"
+                                                    </Badge>
+                                                }
+                                            })}
+                                            {(failed > 0).then(|| {
+                                                view! {
+                                                    <Badge variant=BadgeVariant::Destructive>
+                                                        "failed"
+                                                    </Badge>
+                                                }
+                                            })}
+                                            {move || {
+                                                live_override
+                                                    .get()
+                                                    .unwrap_or(live_flag)
+                                                    .then(|| view! {
+                                                        <Badge variant=BadgeVariant::Success>"live"</Badge>
+                                                    })
+                                            }}
+                                            <Dropdown
+                                                icon="ellipsis-vertical"
+                                                aria_label="Session actions"
+                                                menu_class="w-52"
+                                            >
                                                 {move || {
                                                     if live_override.get().unwrap_or(live_flag) {
                                                         view! {
-                                                            <Button
-                                                                variant=ButtonVariant::Secondary
-                                                                size=ButtonSize::Sm
-                                                                disabled=acting
+                                                            <MenuItem
+                                                                label="Detach"
+                                                                icon="unplug"
                                                                 on_click=Box::new(do_detach)
-                                                            >
-                                                                "Detach"
-                                                            </Button>
+                                                            />
                                                         }
                                                             .into_any()
                                                     } else if locked {
                                                         view! {
-                                                            <Button
-                                                                size=ButtonSize::Sm
-                                                                disabled=acting
+                                                            <MenuItem
+                                                                label="Attach (takeover)"
+                                                                icon="plug"
                                                                 on_click=Box::new(move || do_attach(true))
-                                                            >
-                                                                "Attach (takeover)"
-                                                            </Button>
+                                                            />
                                                         }
                                                             .into_any()
                                                     } else {
                                                         view! {
-                                                            <Button
-                                                                size=ButtonSize::Sm
-                                                                disabled=acting
+                                                            <MenuItem
+                                                                label="Attach"
+                                                                icon="plug"
                                                                 on_click=Box::new(move || do_attach(false))
-                                                            >
-                                                                "Attach"
-                                                            </Button>
+                                                            />
                                                         }
                                                             .into_any()
                                                     }
@@ -1053,42 +1179,79 @@ pub fn SessionPanel(
                                                 {move || {
                                                     (busy || running()).then(|| {
                                                         view! {
-                                                            <Button
-                                                                variant=ButtonVariant::Outline
-                                                                size=ButtonSize::Sm
-                                                                disabled=acting
+                                                            <MenuItem
+                                                                label="Cancel run"
+                                                                icon="octagon-x"
                                                                 on_click=Box::new(do_cancel)
-                                                            >
-                                                                "Cancel run"
-                                                            </Button>
+                                                            />
                                                         }
                                                     })
                                                 }}
-                                                <Button
-                                                    variant=ButtonVariant::Outline
-                                                    size=ButtonSize::Sm
+                                                <MenuSeparator/>
+                                                {move || {
+                                                    let pinned = summary
+                                                        .get()
+                                                        .and_then(Result::ok)
+                                                        .map_or(pinned_flag, |s| s.pinned);
+                                                    view! {
+                                                        <MenuItem
+                                                            label=if pinned { "Unpin" } else { "Pin" }
+                                                            icon="pin"
+                                                            on_click=Box::new(move || do_pin(!pinned))
+                                                        />
+                                                    }
+                                                }}
+                                                {move || {
+                                                    let archived = summary
+                                                        .get()
+                                                        .and_then(Result::ok)
+                                                        .map_or(archived_flag, |s| s.archived);
+                                                    view! {
+                                                        <MenuItem
+                                                            label=if archived { "Unarchive" } else { "Archive" }
+                                                            icon="archive"
+                                                            on_click=Box::new(move || do_archive(!archived))
+                                                        />
+                                                    }
+                                                }}
+                                                <MenuItem
+                                                    label="Rename…"
+                                                    icon="pencil"
+                                                    on_click=Box::new(move || {
+                                                        rename_draft.set(title_for_rename.clone());
+                                                        details_open.set(true);
+                                                    })
+                                                />
+                                                <MenuItem
+                                                    label="Details"
+                                                    icon="info"
                                                     on_click=Box::new(move || details_open.set(true))
-                                                >
-                                                    <Icon name="panel-right"/>
-                                                    "Details"
-                                                </Button>
-                                                <Dropdown label="Actions">
-                                                    <MenuItem
-                                                        label="Rename…"
-                                                        on_click=Box::new(move || {
-                                                            rename_draft.set(title_for_rename.clone());
-                                                            details_open.set(true);
-                                                        })
-                                                    />
-                                                    <MenuItem
-                                                        label="Delete session"
-                                                        destructive=true
-                                                        on_click=Box::new(move || confirm_delete.set(true))
-                                                    />
-                                                </Dropdown>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
+                                                />
+                                                <MenuSeparator/>
+                                                <MenuItem
+                                                    label="Copy session ID"
+                                                    icon="copy"
+                                                    on_click=Box::new(move || {
+                                                        crate::components::copy_to_clipboard(&copy_id);
+                                                    })
+                                                />
+                                                <MenuItem
+                                                    label="Copy path"
+                                                    icon="copy"
+                                                    on_click=Box::new(move || {
+                                                        crate::components::copy_to_clipboard(&copy_cwd);
+                                                    })
+                                                />
+                                                <MenuSeparator/>
+                                                <MenuItem
+                                                    label="Delete session"
+                                                    icon="trash"
+                                                    destructive=true
+                                                    on_click=Box::new(move || confirm_delete.set(true))
+                                                />
+                                            </Dropdown>
+                                        </div>
+                                    </header>
                                     {view! {
                                     <ConfirmDialog
                                         open=confirm_delete
@@ -1113,6 +1276,141 @@ pub fn SessionPanel(
                                             </Button>
                                         </SheetHeader>
                                         <SheetBody class="space-y-5">
+                                            // The old drawer's info
+                                            // rows — status + owner at
+                                            // a glance.
+                                            <div class="divide-y divide-border/50">
+                                                <DetailRow label="Last active">
+                                                    {crate::time::relative(
+                                                        &sheet_updated,
+                                                        crate::time::now_ms(),
+                                                    )}
+                                                </DetailRow>
+                                                <DetailRow label="Status">
+                                                    {move || {
+                                                        let held = is_held();
+                                                        let live_now =
+                                                            live_override.get().unwrap_or(live_flag);
+                                                        if locked || held {
+                                                            view! {
+                                                                <span title=sheet_lock_pid
+                                                                    .map_or_else(String::new, |p| {
+                                                                        format!("Locked by pid {p:.0}")
+                                                                    })
+                                                                >
+                                                                    <Badge variant=BadgeVariant::Destructive>
+                                                                        "locked"
+                                                                    </Badge>
+                                                                </span>
+                                                            }
+                                                                .into_any()
+                                                        } else if busy || running() {
+                                                            view! {
+                                                                <Badge variant=BadgeVariant::Destructive>
+                                                                    "busy"
+                                                                </Badge>
+                                                            }
+                                                                .into_any()
+                                                        } else {
+                                                            let text = if live_now { "live" } else { "free" };
+                                                            view! {
+                                                                <Badge variant=BadgeVariant::Secondary>
+                                                                    {text}
+                                                                </Badge>
+                                                            }
+                                                                .into_any()
+                                                        }
+                                                    }}
+                                                </DetailRow>
+                                                <DetailRow label="Server">{sheet_node.clone()}</DetailRow>
+                                            </div>
+                                            // The old drawer's
+                                            // "Advanced" fold — ids,
+                                            // paths, provenance.
+                                            <details class="group/details">
+                                                <summary class="flex w-full cursor-pointer select-none items-center justify-between rounded-md px-1 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                                                    "Advanced"
+                                                    <Icon
+                                                        name="chevron-down"
+                                                        class="size-3.5 transition-transform group-open/details:rotate-180"
+                                                    />
+                                                </summary>
+                                                <div class="divide-y divide-border/50">
+                                                    <DetailRow
+                                                        label="ID"
+                                                        copy=adv_id.clone()
+                                                        mono=true
+                                                    >
+                                                        {adv_id.clone()}
+                                                    </DetailRow>
+                                                    <DetailRow
+                                                        label="Working directory"
+                                                        copy=adv_cwd.clone()
+                                                        mono=true
+                                                    >
+                                                        {adv_cwd.clone()}
+                                                    </DetailRow>
+                                                    <DetailRow label="Agent">
+                                                        <Badge variant=BadgeVariant::Secondary>
+                                                            {adv_agent.clone()}
+                                                        </Badge>
+                                                        {sheet_agent_id
+                                                            .clone()
+                                                            .filter(|a| !a.is_empty())
+                                                            .map(|a| view! {
+                                                                <span
+                                                                    class="text-muted-foreground"
+                                                                    title="Sub-agent identity within the parent's team"
+                                                                >
+                                                                    {format!("· {a}")}
+                                                                </span>
+                                                            })}
+                                                    </DetailRow>
+                                                    {(!sheet_source.is_empty()).then(|| {
+                                                        view! {
+                                                            <DetailRow label="Source">
+                                                                {sheet_source.clone()}
+                                                            </DetailRow>
+                                                        }
+                                                    })}
+                                                    {(!sheet_spans.is_empty()).then(|| {
+                                                        view! {
+                                                            <div class="flex flex-col gap-0.5 py-2 text-sm">
+                                                                <span class="text-xs text-muted-foreground">
+                                                                    "Runs"
+                                                                </span>
+                                                                <div class="flex flex-col gap-1.5">
+                                                                    {sheet_spans
+                                                                        .iter()
+                                                                        .map(|span| {
+                                                                            view! {
+                                                                                <span class="flex items-center gap-1.5 text-xs">
+                                                                                    <Badge
+                                                                                        variant=BadgeVariant::Secondary
+                                                                                        class="font-normal"
+                                                                                    >
+                                                                                        {format!(
+                                                                                            "{} @ {}",
+                                                                                            span.agent,
+                                                                                            if span.node.is_empty() { "local" } else { &span.node },
+                                                                                        )}
+                                                                                    </Badge>
+                                                                                    <span class="text-muted-foreground">
+                                                                                        {crate::time::relative_ms(
+                                                                                            span.at,
+                                                                                            crate::time::now_ms(),
+                                                                                        )}
+                                                                                    </span>
+                                                                                </span>
+                                                                            }
+                                                                        })
+                                                                        .collect::<Vec<_>>()}
+                                                                </div>
+                                                            </div>
+                                                        }
+                                                    })}
+                                                </div>
+                                            </details>
                                             <div class="space-y-2">
                                                 <label class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                                                     "Title"
@@ -1142,6 +1440,121 @@ pub fn SessionPanel(
                                                     </Button>
                                                 </div>
                                             </div>
+                                            // The old drawer's footer
+                                            // actions — stacked,
+                                            // left-aligned, icon-led.
+                                            <div class="flex flex-col gap-2">
+                                                {move || {
+                                                    let pinned = summary
+                                                        .get()
+                                                        .and_then(Result::ok)
+                                                        .map_or(pinned_flag, |s| s.pinned);
+                                                    view! {
+                                                        <Button
+                                                            variant=ButtonVariant::Outline
+                                                            size=ButtonSize::Sm
+                                                            class="w-full justify-start"
+                                                            disabled=acting
+                                                            on_click=Box::new(move || do_pin(!pinned))
+                                                        >
+                                                            <Icon name="pin" class="size-4"/>
+                                                            {if pinned { "Unpin" } else { "Pin" }}
+                                                        </Button>
+                                                    }
+                                                }}
+                                                {move || {
+                                                    let archived = summary
+                                                        .get()
+                                                        .and_then(Result::ok)
+                                                        .map_or(archived_flag, |s| s.archived);
+                                                    view! {
+                                                        <Button
+                                                            variant=ButtonVariant::Outline
+                                                            size=ButtonSize::Sm
+                                                            class="w-full justify-start"
+                                                            disabled=acting
+                                                            on_click=Box::new(move || do_archive(!archived))
+                                                        >
+                                                            <Icon name="archive" class="size-4"/>
+                                                            {if archived { "Unarchive" } else { "Archive" }}
+                                                        </Button>
+                                                    }
+                                                }}
+                                            </div>
+                                            // Project membership — the
+                                            // node's catalog filtered to
+                                            // this session's node.
+                                            {move || {
+                                                let list = projects
+                                                    .get()
+                                                    .and_then(Result::ok)
+                                                    .unwrap_or_default();
+                                                let same_node: Vec<_> = list
+                                                    .into_iter()
+                                                    .filter(|p| p.node == session_node_opt)
+                                                    .collect();
+                                                view! {
+                                                    <div data-name="ProjectsSection" class="space-y-2">
+                                                        <label class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                                            "Projects"
+                                                        </label>
+                                                        {if same_node.is_empty() {
+                                                            view! {
+                                                                <p class="text-xs text-muted-foreground">
+                                                                    "No projects yet."
+                                                                </p>
+                                                            }
+                                                                .into_any()
+                                                        } else {
+                                                            view! {
+                                                                <ul class="space-y-1">
+                                                                    {same_node
+                                                                        .into_iter()
+                                                                        .map(|p| {
+                                                                            let key = p.id.clone();
+                                                                            let member = move || {
+                                                                                summary
+                                                                                    .get()
+                                                                                    .and_then(Result::ok)
+                                                                                    .is_some_and(|s| {
+                                                                                        s.project_ids.contains(&key)
+                                                                                    })
+                                                                            };
+                                                                            view! {
+                                                                                <li>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent/60"
+                                                                                        disabled=move || acting.get()
+                                                                                        on:click=move |_| {
+                                                                                            toggle_project(p.id.clone());
+                                                                                        }
+                                                                                    >
+                                                                                        <span class="min-w-0 flex-1 truncate">
+                                                                                            {p.name.clone()}
+                                                                                        </span>
+                                                                                        {move || {
+                                                                                            member().then(|| {
+                                                                                                view! {
+                                                                                                    <Icon
+                                                                                                        name="check"
+                                                                                                        class="size-3.5 shrink-0 text-primary"
+                                                                                                    />
+                                                                                                }
+                                                                                            })
+                                                                                        }}
+                                                                                    </button>
+                                                                                </li>
+                                                                            }
+                                                                        })
+                                                                        .collect::<Vec<_>>()}
+                                                                </ul>
+                                                            }
+                                                                .into_any()
+                                                        }}
+                                                    </div>
+                                                }
+                                            }}
                                             <CheckpointList
                                                 checkpoints=checkpoints
                                                 session_id=session_id()
@@ -1340,9 +1753,9 @@ pub fn SessionPanel(
                                     {move || {
                                         running()
                                             .then(|| view! {
-                                                <p class="flex items-center gap-2 text-sm text-info">
+                                                <p class="flex items-center gap-2 text-sm">
                                                     <span class="size-1.5 animate-pulse rounded-full bg-info"></span>
-                                                    "working…"
+                                                    <span class="shimmer-text">"Thinking…"</span>
                                                 </p>
                                             })
                                     }}
@@ -1363,13 +1776,14 @@ pub fn SessionPanel(
                                         sending=sending
                                         attachments=attachments
                                         area_ref=composer_ref
-                                        cwd=prompt_cwd.clone()
                                         model=prompt_model.clone()
                                         session_id=session_id()
                                         agent=agent()
                                         on_model_changed=move || summary.refetch()
                                         queued=queued
                                         failed=failed
+                                        running=running
+                                        stop=do_cancel
                                         submit=submit
                                     />
                                 }
@@ -1384,7 +1798,7 @@ pub fn SessionPanel(
                 title="Session is held by another client"
                 body="Take over and send? The holding client is detached and the draft is sent from here."
                 confirm_label="Take over and send"
-                on_confirm=takeover_send
+                on_confirm=move || attach_and_send(true)
             />
             // Per-message rewind — the row's nodeId is the cut point.
             <ConfirmDialog
@@ -2091,26 +2505,91 @@ fn stage_pasted(
 ) {
 }
 
-/// The prompt composer — multiline textarea (Enter sends, Shift+Enter
-/// adds a newline) that auto-grows to ~10 lines in the browser;
-/// staged attachment chips above it (paste an image or pick files —
-/// both land as ACP content blocks on `{text, attachments}`); a footer
-/// strip with the session's `cwd` chip, an editable model override
-/// (`patch_meta {model}` — the wire carries no per-agent model list,
-/// so it's a free-text field rather than a select; empty restores the
-/// agent default), an attach button, and send. `queued`/`failed` are
-/// this session's outbox counts, surfaced while writes wait on a down
-/// node.
+/// Composer `dragover` — only file payloads light the drop ring;
+/// anything else is left to the textarea (old `PromptInput` behavior).
+#[cfg(feature = "hydrate")]
+fn on_dragover(ev: &leptos::ev::DragEvent, dragging: RwSignal<bool>) {
+    let Some(dt) = ev.data_transfer() else { return };
+    let files = dt
+        .types()
+        .iter()
+        .any(|t| t.as_string().as_deref() == Some("Files"));
+    if files {
+        ev.prevent_default();
+        dragging.set(true);
+    }
+}
+#[cfg(not(feature = "hydrate"))]
+fn on_dragover(_ev: &leptos::ev::DragEvent, _dragging: RwSignal<bool>) {}
+
+/// `dragleave` — crossing into a child isn't leaving the box, so the
+/// ring only clears when the pointer exits the container.
+#[cfg(feature = "hydrate")]
+fn on_dragleave(ev: &leptos::ev::DragEvent, dragging: RwSignal<bool>) {
+    use wasm_bindgen::JsCast;
+    let inside = ev
+        .current_target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        .zip(
+            ev.related_target()
+                .and_then(|t| t.dyn_into::<web_sys::Node>().ok()),
+        )
+        .is_some_and(|(el, rel)| el.contains(Some(&rel)));
+    if !inside {
+        dragging.set(false);
+    }
+}
+#[cfg(not(feature = "hydrate"))]
+fn on_dragleave(_ev: &leptos::ev::DragEvent, _dragging: RwSignal<bool>) {}
+
+/// `drop` → stage the payload like a picker selection, then clear the
+/// ring.
+#[cfg(feature = "hydrate")]
+fn on_drop(
+    ev: &leptos::ev::DragEvent,
+    attachments: RwSignal<Vec<Attachment>>,
+    dragging: RwSignal<bool>,
+    toast: crate::components::toast::ToastStore,
+) {
+    dragging.set(false);
+    let Some(dt) = ev.data_transfer() else { return };
+    let Some(files) = dt.files() else { return };
+    if files.length() == 0 {
+        return;
+    }
+    ev.prevent_default();
+    stage_files(&files, attachments, toast);
+}
+#[cfg(not(feature = "hydrate"))]
+fn on_drop(
+    _ev: &leptos::ev::DragEvent,
+    _attachments: RwSignal<Vec<Attachment>>,
+    _dragging: RwSignal<bool>,
+    _toast: crate::components::toast::ToastStore,
+) {
+}
+
+/// The prompt composer — the old app's `PromptInput` anatomy: one
+/// bordered input-group box holding the staged-attachment chips, a
+/// borderless auto-growing textarea (Enter sends, Shift+Enter a
+/// newline, IME composition ignored), and a footer strip — paperclip
+/// tool left; editable model override (`patch_meta {model}` — the wire
+/// carries no per-agent model list, so it's a free-text field rather
+/// than the old settings-driven select; empty restores the agent
+/// default) + send right. The send button flips to a spinner while the
+/// prompt POST is in flight and to a stop square while a run streams —
+/// pressing it cancels. `queued`/`failed` are this session's outbox
+/// counts, surfaced while writes wait on a down node. Dragging files
+/// anywhere over the box rings it like the old drop target.
 #[component]
 #[allow(clippy::too_many_arguments)]
 fn PromptBox(
     draft: RwSignal<String>,
     sending: RwSignal<bool>,
     attachments: RwSignal<Vec<Attachment>>,
-    /// Page-owned textarea ref — auto-grow uses it, and the
-    /// transcript's quote action focuses through it.
+    /// Page-owned textarea ref — the transcript's quote action focuses
+    /// through it.
     area_ref: NodeRef<leptos::html::Textarea>,
-    cwd: String,
     /// The session's meta `model` — the input's baseline; a local edit
     /// overrides it until the next refetch.
     model: Option<String>,
@@ -2120,10 +2599,17 @@ fn PromptBox(
     on_model_changed: impl Fn() + 'static + Send + Sync + Copy,
     queued: usize,
     failed: usize,
+    /// A run is streaming on the live feed — the send button becomes
+    /// Stop.
+    running: impl Fn() -> bool + 'static + Send + Sync + Copy,
+    /// `POST /cancel` — the stop button's action.
+    stop: impl Fn() + 'static + Send + Sync + Copy,
     submit: impl Fn() + 'static + Send + Sync + Copy,
 ) -> impl IntoView {
     let toast = use_toast();
     let file_ref = NodeRef::<leptos::html::Input>::new();
+    // File drop ring — hydrate-only signal; SSR renders the base box.
+    let dragging = RwSignal::new(false);
     // `None` = no local edit — the input mirrors the wire's `model`.
     let model_draft: RwSignal<Option<String>> = RwSignal::new(None);
     let wire_model = model.clone().unwrap_or_default();
@@ -2156,41 +2642,14 @@ fn PromptBox(
         });
     };
     let commit_model_enter = commit_model.clone();
-    // Enter sends; Shift+Enter inserts a newline.
+    // Enter sends; Shift+Enter inserts a newline; an active IME
+    // composition owns Enter entirely.
     let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
-        if ev.key() == "Enter" && !ev.shift_key() {
+        if ev.key() == "Enter" && !ev.shift_key() && !ev.is_composing() {
             ev.prevent_default();
             submit();
         }
     };
-    // Auto-grow, browser only: refit the height to the content on every
-    // draft change (keystrokes and the clear-after-send reset), capped
-    // at ~10 `text-sm` lines. SSR keeps the `rows=3` markup untouched —
-    // effects never run there.
-    #[cfg(feature = "hydrate")]
-    {
-        /// 10 lines at `text-sm`'s 20px line-height + `py-2` padding.
-        const MAX_HEIGHT_PX: i32 = 216;
-        Effect::new(move |_| {
-            let _ = draft.read();
-            if let Some(el) = area_ref.get() {
-                // `el` is a tachys `HtmlElement` — `style()` would
-                // resolve to its builder trait; go through web_sys.
-                let style = web_sys::HtmlElement::style(&el);
-                let _ = style.set_property("height", "auto");
-                let full = el.scroll_height();
-                let _ = style.set_property("height", &format!("{}px", full.min(MAX_HEIGHT_PX)));
-                let _ = style.set_property(
-                    "overflow-y",
-                    if full > MAX_HEIGHT_PX {
-                        "auto"
-                    } else {
-                        "hidden"
-                    },
-                );
-            }
-        });
-    }
     view! {
         <div class="space-y-2">
             {(queued > 0).then(|| {
@@ -2214,123 +2673,168 @@ fn PromptBox(
                     </p>
                 }
             })}
-            {move || {
-                let items = attachments.get();
-                (!items.is_empty()).then(|| {
-                    view! {
-                        <div data-name="AttachmentStrip" class="flex flex-wrap items-center gap-1.5">
-                            {items
-                                .iter()
-                                .enumerate()
-                                .map(|(i, a)| {
-                                    let label = attachment_label(a);
-                                    let tip = label.clone();
-                                    view! {
-                                        <span class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                                            <span class="max-w-40 truncate" title=tip>
-                                                {label}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                aria-label="Remove attachment"
-                                                class="hover:text-foreground"
-                                                on:click=move |_| {
-                                                    attachments.update(|v| {
-                                                        v.remove(i);
-                                                    });
-                                                }
+            // The input-group box — chips + textarea + footer strip
+            // share one border; focus rings the group, not the
+            // textarea.
+            <div
+                role="group"
+                data-name="PromptInput"
+                class=move || {
+                    let base = "group/input-group relative flex w-full min-w-0 flex-col overflow-hidden rounded-2xl border border-transparent bg-input/50 transition-[color,box-shadow,background-color] has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring";
+                    if dragging.get() {
+                        format!("{base} border-ring ring-3 ring-ring/30")
+                    } else {
+                        base.to_string()
+                    }
+                }
+                on:dragover=move |ev| on_dragover(&ev, dragging)
+                on:dragleave=move |ev| on_dragleave(&ev, dragging)
+                on:drop=move |ev| on_drop(&ev, attachments, dragging, toast)
+            >
+                {move || {
+                    let items = attachments.get();
+                    (!items.is_empty()).then(|| {
+                        view! {
+                            <div
+                                data-name="AttachmentStrip"
+                                class="flex flex-wrap items-center gap-1.5 px-3 pt-2.5"
+                            >
+                                {items
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, a)| {
+                                        let size = byte_label(a.size);
+                                        let tip = format!("{} · {size}", a.name);
+                                        view! {
+                                            <span
+                                                class="inline-flex max-w-56 items-center gap-2 rounded-lg border border-border/60 bg-muted/40 py-1.5 pr-1.5 pl-1.5 text-xs"
+                                                title=tip
                                             >
-                                                <Icon name="x" class="size-3"/>
-                                            </button>
-                                        </span>
-                                    }
-                                })
-                                .collect::<Vec<_>>()}
-                        </div>
-                    }
-                })
-            }}
-            <textarea
-                class=TEXTAREA_CLASS
-                placeholder="Message the agent…  (Enter to send, Shift+Enter for newline)"
-                prop:value=move || draft.get()
-                on:input=move |ev| draft.set(event_target_value(&ev))
-                on:keydown=on_keydown
-                on:paste=move |ev| stage_pasted(&ev, attachments, toast)
-                rows=3
-                node_ref=area_ref
-            ></textarea>
-            <div class="flex items-center gap-2">
-                {(!cwd.is_empty()).then(|| cwd.clone()).map(|c| {
-                    let tip = c.clone();
-                    view! {
-                        <code
-                            class="min-w-0 max-w-52 shrink truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
-                            title=tip
-                        >
-                            {c}
-                        </code>
-                    }
-                })}
-                <input
-                    type="text"
-                    data-name="ModelInput"
-                    class="w-28 min-w-0 shrink rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground placeholder:text-muted-foreground/50 focus-visible:outline-2 focus-visible:outline-ring"
-                    placeholder="agent default"
-                    title="Model override — clear to restore the agent default"
-                    maxlength="100"
-                    prop:value=move || {
-                        model_draft.get().unwrap_or_else(|| model.clone().unwrap_or_default())
-                    }
-                    on:input=move |ev| model_draft.set(Some(event_target_value(&ev)))
-                    on:change=move |_| commit_model()
-                    on:keydown=move |ev: leptos::ev::KeyboardEvent| {
-                        if ev.key() == "Enter" {
-                            ev.prevent_default();
-                            commit_model_enter();
+                                                <span class="flex size-7 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+                                                    <Icon name="file" class="size-4"/>
+                                                </span>
+                                                <span class="flex min-w-0 flex-col leading-tight">
+                                                    <span class="truncate font-medium text-foreground/90">
+                                                        {a.name.clone()}
+                                                    </span>
+                                                    <span class="truncate text-muted-foreground/70">
+                                                        {size}
+                                                    </span>
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    aria-label=format!("Remove {}", a.name)
+                                                    class="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:bg-muted hover:text-foreground"
+                                                    on:click=move |_| {
+                                                        attachments.update(|v| {
+                                                            v.remove(i);
+                                                        });
+                                                    }
+                                                >
+                                                    <Icon name="x" class="size-3.5"/>
+                                                </button>
+                                            </span>
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()}
+                            </div>
                         }
-                    }
-                />
-                <span data-name="AttachButton">
-                    <Button
-                        variant=ButtonVariant::Ghost
-                        size=ButtonSize::Sm
-                        class="shrink-0 px-2"
-                        on_click=Box::new(move || {
-                            if let Some(el) = file_ref.get() {
-                                el.click();
+                    })
+                }}
+                <textarea
+                    class="field-sizing-content max-h-48 min-h-16 w-full resize-none border-0 bg-transparent px-3 py-2.5 text-base shadow-none outline-none placeholder:text-muted-foreground md:text-sm"
+                    placeholder="Prompt the agent…"
+                    prop:value=move || draft.get()
+                    on:input=move |ev| draft.set(event_target_value(&ev))
+                    on:keydown=on_keydown
+                    on:paste=move |ev| stage_pasted(&ev, attachments, toast)
+                    rows=1
+                    node_ref=area_ref
+                ></textarea>
+                // Footer strip — paperclip tool left, model + send right.
+                <div class="flex w-full items-center justify-between gap-1 px-3 pb-3">
+                    <div class="flex min-w-0 items-center gap-1">
+                        <button
+                            type="button"
+                            aria-label="Attach files"
+                            title="Attach files"
+                            class="inline-flex h-6 items-center gap-1 rounded-xl px-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            on:click=move |_| {
+                                if let Some(el) = file_ref.get() {
+                                    el.click();
+                                }
                             }
-                        })
-                    >
-                        <Icon name="paperclip" class="size-3.5"/>
-                        "Attach"
-                    </Button>
-                </span>
-                // Hidden picker — the visible trigger is the Attach
-                // button; markup identical SSR/hydrate, the handlers
-                // are hydrate-only behavior.
-                <input
-                    node_ref=file_ref
-                    type="file"
-                    multiple=true
-                    class="hidden"
-                    data-name="AttachmentInput"
-                    on:change=move |ev| stage_picked(&ev, attachments, toast)
-                />
-                <span class="ml-auto hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
-                    "Shift+Enter for newline"
-                </span>
-                <Button
-                    size=ButtonSize::Sm
-                    disabled=move || {
-                        sending.get()
-                            || (draft.read().trim().is_empty() && attachments.read().is_empty())
-                    }
-                    on_click=Box::new(submit)
-                >
-                    <Icon name="send" class="size-3.5"/>
-                    {move || if sending.get() { "Sending…" } else { "Send" }}
-                </Button>
+                        >
+                            <Icon name="paperclip" class="size-3.5"/>
+                        </button>
+                        // Hidden picker — markup identical SSR/hydrate,
+                        // the handlers are hydrate-only behavior.
+                        <input
+                            node_ref=file_ref
+                            type="file"
+                            multiple=true
+                            class="hidden"
+                            data-name="AttachmentInput"
+                            on:change=move |ev| stage_picked(&ev, attachments, toast)
+                        />
+                    </div>
+                    <div class="ml-auto flex min-w-0 items-center gap-1">
+                        <input
+                            type="text"
+                            data-name="ModelInput"
+                            class="h-7 w-28 min-w-0 max-w-40 border-0 bg-transparent px-2 font-mono text-xs text-muted-foreground transition-colors placeholder:text-muted-foreground/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                            placeholder="agent default"
+                            title="Model for the next agent spawn — clear to restore the agent default"
+                            maxlength="100"
+                            prop:value=move || {
+                                model_draft.get().unwrap_or_else(|| model.clone().unwrap_or_default())
+                            }
+                            on:input=move |ev| model_draft.set(Some(event_target_value(&ev)))
+                            on:change=move |_| commit_model()
+                            on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                                if ev.key() == "Enter" {
+                                    ev.prevent_default();
+                                    commit_model_enter();
+                                }
+                            }
+                        />
+                        <button
+                            type="button"
+                            data-name="SendButton"
+                            class="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                            aria-label=move || if running() { "Stop" } else { "Send" }
+                            title=move || if running() { "Stop" } else { "Send" }
+                            // The old submit disabled on an empty
+                            // draft; a running session keeps the
+                            // button alive — it's the stop control.
+                            disabled=move || {
+                                sending.get()
+                                    || (!running()
+                                        && draft.read().trim().is_empty()
+                                        && attachments.read().is_empty())
+                            }
+                            on:click=move |_| {
+                                if running() {
+                                    stop();
+                                } else {
+                                    submit();
+                                }
+                            }
+                        >
+                            {move || {
+                                if sending.get() {
+                                    view! {
+                                        <Icon name="loader-circle" class="size-4 animate-spin"/>
+                                    }
+                                } else if running() {
+                                    view! { <Icon name="square" class="size-4"/> }
+                                } else {
+                                    view! { <Icon name="send" class="size-4"/> }
+                                }
+                            }}
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     }
@@ -2425,6 +2929,63 @@ fn PermissionCard(
                 </div>
             </CardContent>
         </Card>
+    }
+}
+
+/// One `label: value` row in the details sheet — the old drawer's
+/// `Detail`. `copy` adds a ghost clipboard button that flashes a ✓.
+#[component]
+fn DetailRow(
+    #[prop(into)] label: String,
+    /// When set, a copy button writes this to the clipboard.
+    #[prop(into, optional)]
+    copy: String,
+    /// Render the value in mono (ids, paths).
+    #[prop(optional)]
+    mono: bool,
+    children: Children,
+) -> impl IntoView {
+    let copied = RwSignal::new(false);
+    let copy_tip = format!("Copy {label}");
+    let value_cls = if mono {
+        "min-w-0 flex-1 truncate font-mono text-xs"
+    } else {
+        "min-w-0 flex-1 truncate"
+    };
+    view! {
+        <div class="flex flex-col gap-0.5 py-2 text-sm">
+            <span class="text-xs text-muted-foreground">{label}</span>
+            <span class="flex min-w-0 items-center gap-1">
+                <span class=value_cls title=copy.clone()>{children()}</span>
+                {(!copy.is_empty()).then(|| {
+                    view! {
+                        <button
+                            type="button"
+                            class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            aria-label=copy_tip.clone()
+                            title=copy_tip
+                            on:click=move |_| {
+                                crate::components::copy_to_clipboard(&copy);
+                                copied.set(true);
+                                #[cfg(feature = "hydrate")]
+                                leptos::task::spawn_local(async move {
+                                    crate::sleep_ms(1200).await;
+                                    copied.set(false);
+                                });
+                            }
+                        >
+                            {move || {
+                                if copied.get() {
+                                    view! { <Icon name="check" class="size-3.5 text-success"/> }
+                                } else {
+                                    view! { <Icon name="copy" class="size-3.5"/> }
+                                }
+                            }}
+                        </button>
+                    }
+                })}
+            </span>
+        </div>
     }
 }
 

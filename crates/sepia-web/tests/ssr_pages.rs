@@ -90,7 +90,7 @@ async fn session_detail_keeps_the_sessions_panel() {
     let html = page("/sessions/s1", FakeNodeApi::seeded().shared()).await;
     assert_contains(&html, "data-name=\"SessionsPanel\"");
     assert_contains(&html, "5 sessions");
-    assert_contains(&html, "Message the agent");
+    assert_contains(&html, "Prompt the agent");
 }
 
 #[tokio::test]
@@ -355,15 +355,17 @@ async fn session_detail_renders_summary_history_and_prompt() {
     // (identical hydrate markup; the SVG renders client-side).
     assert_contains(&html, "data-name=\"MermaidBlock\"");
     assert_contains(&html, "graph TD");
-    // The prompt composer — textarea, editable model input
-    // (`prop:value` doesn't serialize on SSR — the placeholder is the
-    // markup-stable hook), attach affordance + hidden file input.
+    // The prompt composer — the input-group box, textarea, editable
+    // model input (`prop:value` doesn't serialize on SSR — the
+    // placeholder is the markup-stable hook), icon send + hidden file
+    // input.
     assert_contains(&html, "<textarea");
-    assert_contains(&html, "Message the agent");
-    assert_contains(&html, ">Send<");
+    assert_contains(&html, "Prompt the agent");
+    assert_contains(&html, "data-name=\"SendButton\"");
+    assert_contains(&html, "aria-label=\"Send\"");
     assert_contains(&html, "data-name=\"ModelInput\"");
     assert_contains(&html, "placeholder=\"agent default\"");
-    assert_contains(&html, "data-name=\"AttachButton\"");
+    assert_contains(&html, "aria-label=\"Attach files\"");
     assert_contains(&html, "data-name=\"AttachmentInput\"");
 }
 
@@ -427,7 +429,7 @@ async fn list_with_selected_session_embeds_panel() {
     // `?session=` mounts SessionPanel in the master-detail pane.
     let html = page("/?session=s3&agent=devin", FakeNodeApi::seeded().shared()).await;
     assert_contains(&html, "Docs sweep");
-    assert_contains(&html, "Message the agent");
+    assert_contains(&html, "Prompt the agent");
 }
 
 // ── `/agents` ─────────────────────────────────────────────────────────
