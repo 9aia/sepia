@@ -8,20 +8,22 @@ use leptos_ui::{clx, variants, void};
 
 variants! {
     Button {
-        base: "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 cursor-pointer",
+        // The old app's shadcn recipe — pill shape, ring focus, press
+        // dip, translucent destructive.
+        base: "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-4xl border border-transparent bg-clip-padding text-sm font-medium transition-all select-none cursor-pointer focus-visible:ring-2 focus-visible:ring-ring active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50",
         variants: {
             variant: {
-                Default: "bg-primary text-primary-foreground shadow hover:bg-primary/90",
-                Secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-                Ghost: "hover:bg-accent hover:text-accent-foreground",
-                Outline: "border border-input bg-transparent hover:bg-accent hover:text-accent-foreground",
-                Destructive: "bg-destructive text-destructive-foreground shadow hover:bg-destructive/90",
+                Default: "bg-primary text-primary-foreground hover:bg-primary/80",
+                Secondary: "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]",
+                Ghost: "hover:bg-muted hover:text-foreground dark:hover:bg-muted/50",
+                Outline: "border-border bg-background hover:bg-muted hover:text-foreground dark:bg-transparent dark:hover:bg-input/30",
+                Destructive: "bg-destructive/10 text-destructive hover:bg-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30",
                 Link: "text-primary underline-offset-4 hover:underline",
             },
             size: {
-                Default: "h-9 px-4 py-2 text-sm",
-                Sm: "h-8 rounded-md px-3 text-xs",
-                Lg: "h-10 rounded-md px-6 text-base",
+                Default: "h-9 px-3",
+                Sm: "h-8 gap-1 px-3",
+                Lg: "h-10 gap-1.5 px-4",
                 Icon: "size-9",
             }
         }
@@ -59,18 +61,21 @@ pub fn Button(
 void! {
     Input,
     input,
-    "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50"
+    // The old app's field recipe — filled, pill-shaped, ring focus.
+    // `text-base md:text-sm` keeps iOS from zooming on focus.
+    "flex h-9 w-full min-w-0 rounded-3xl border border-transparent bg-input/50 px-3 py-1 text-base transition-[color,box-shadow,background-color] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
 }
 
 /// `<textarea>` / `<select>` need children or multiple attrs — apply
 /// these class strings on the native elements instead of components.
-pub const TEXTAREA_CLASS: &str = "flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50";
+pub const TEXTAREA_CLASS: &str = "flex field-sizing-content min-h-16 w-full resize-none rounded-2xl border border-transparent bg-input/50 px-3 py-3 text-base transition-[color,box-shadow,background-color] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm";
 
-pub const SELECT_CLASS: &str = "flex h-9 w-full appearance-none rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50";
+pub const SELECT_CLASS: &str = "flex h-9 w-full appearance-none items-center justify-between gap-1.5 rounded-3xl border border-transparent bg-input/50 px-3 py-2 text-sm whitespace-nowrap transition-[color,box-shadow,background-color] focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 variants! {
     Badge {
-        base: "inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase whitespace-nowrap",
+        // The old app's shadcn badge — fixed-height pill, plain case.
+        base: "inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 rounded-3xl border px-2 py-0.5 text-xs font-medium whitespace-nowrap",
         variants: {
             variant: {
                 Default: "border-transparent bg-primary/15 text-primary",
@@ -83,8 +88,8 @@ variants! {
                 Outline: "border-border text-muted-foreground",
             },
             size: {
-                Default: "px-2 py-0.5 text-[11px]",
-                Sm: "px-1.5 py-px text-[10px]",
+                Default: "px-2 py-0.5",
+                Sm: "px-1.5 py-px",
             }
         }
     }
@@ -160,7 +165,7 @@ pub fn Dropdown(
             </summary>
             // open: sibling backdrop swallows the outside click
             <span class="fixed inset-0 z-40 hidden cursor-default group-open:block" onclick="this.parentElement.removeAttribute('open')"></span>
-            <div class="absolute right-0 z-50 mt-1 w-44 rounded-md border bg-popover p-1 shadow-lg">
+            <div class="absolute right-0 z-50 mt-1 w-44 rounded-3xl bg-popover p-1.5 text-popover-foreground shadow-lg ring-1 ring-border">
                 {children()}
             </div>
         </details>
@@ -175,9 +180,9 @@ pub fn MenuItem(
     #[prop(optional)] on_click: Option<Box<dyn Fn() + Send + Sync + 'static>>,
 ) -> impl IntoView {
     let cls = if destructive {
-        "flex w-full items-center rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 cursor-pointer"
+        "flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 text-sm font-medium text-destructive hover:bg-destructive/10 cursor-pointer"
     } else {
-        "flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent cursor-pointer"
+        "flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 text-sm font-medium hover:bg-accent cursor-pointer"
     };
     view! {
         <button type="button" class=cls onclick="this.closest('details').removeAttribute('open')"
@@ -237,7 +242,7 @@ pub fn ConfirmDialog(
         <div
             class=move || {
                 if open.get() {
-                    "fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
+                    "fixed inset-0 z-50 grid place-items-center bg-black/30 p-4 supports-backdrop-filter:backdrop-blur-sm"
                 } else {
                     "hidden"
                 }
@@ -246,7 +251,7 @@ pub fn ConfirmDialog(
         >
             <div
                 node_ref=panel
-                class="w-full max-w-md rounded-lg border bg-card p-5 shadow-xl focus:outline-none"
+                class="w-full max-w-md rounded-4xl bg-popover p-6 text-popover-foreground shadow-xl ring-1 ring-border focus:outline-none"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby=move || labelledby.clone()
@@ -746,9 +751,9 @@ pub fn Sheet(
         <div
             class=move || {
                 if open.get() {
-                    "fixed inset-0 z-50 bg-black/60 transition-opacity opacity-100"
+                    "fixed inset-0 z-50 bg-black/30 transition-opacity opacity-100 supports-backdrop-filter:backdrop-blur-sm"
                 } else {
-                    "fixed inset-0 z-50 bg-black/60 transition-opacity opacity-0 pointer-events-none"
+                    "fixed inset-0 z-50 bg-black/30 transition-opacity opacity-0 pointer-events-none"
                 }
             }
             on:click=move |_| open.set(false)
@@ -765,7 +770,7 @@ pub fn Sheet(
             aria-hidden=move || (!open.get()).then_some("true")
             inert=move || (!open.get()).then_some("")
             class=format!(
-                "fixed top-0 z-50 flex h-dvh w-80 max-w-[85vw] flex-col bg-card shadow-xl transition-transform duration-200 focus:outline-none {} {}",
+                "fixed top-0 z-50 flex h-dvh w-80 max-w-[85vw] flex-col bg-popover text-sm text-popover-foreground shadow-xl transition-transform duration-200 focus:outline-none {} {}",
                 side_cls, class
             )
             on:keydown=move |ev| {

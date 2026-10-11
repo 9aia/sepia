@@ -338,9 +338,9 @@ fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
             attr:aria-hidden=move || (!open.get()).then_some("true")
             class=move || {
                 if open.get() {
-                    "fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 opacity-100 transition-opacity"
+                    "fixed inset-0 z-[80] grid place-items-center bg-black/30 p-4 opacity-100 transition-opacity supports-backdrop-filter:backdrop-blur-sm"
                 } else {
-                    "fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 opacity-0 pointer-events-none transition-opacity"
+                    "fixed inset-0 z-[80] grid place-items-center bg-black/30 p-4 opacity-0 pointer-events-none transition-opacity"
                 }
             }
             on:click=move |_| open.set(false)
@@ -352,7 +352,7 @@ fn ShortcutsHelp(open: RwSignal<bool>) -> impl IntoView {
                 aria-labelledby="shortcuts-help-title"
                 tabindex="-1"
                 inert=move || (!open.get()).then_some("")
-                class="w-full max-w-sm rounded-xl border bg-popover p-5 shadow-xl focus:outline-none"
+                class="w-full max-w-sm rounded-3xl bg-popover p-5 shadow-xl ring-1 ring-border focus:outline-none"
                 on:click=move |ev| ev.stop_propagation()
             >
                 <div class="flex items-center justify-between">

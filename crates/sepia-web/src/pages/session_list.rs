@@ -48,12 +48,13 @@ use crate::time::relative;
 use serde_json::Value;
 use tw_merge::IntoTailwindClass;
 
-/// Context-menu item styling — same look as `MenuItem`, minus the
-/// `<details>` close hook (the row menu isn't a `<details>`).
-const MENU_ITEM_CLS: &str =
-    "flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent cursor-pointer";
-const MENU_ITEM_DESTRUCTIVE_CLS: &str = "flex w-full items-center rounded-sm px-2 py-1.5 text-sm \
-                                        text-destructive hover:bg-destructive/10 cursor-pointer";
+/// Context-menu item styling — same look as `MenuItem` (the old app's
+/// `rounded-2xl` menu-item recipe), minus the `<details>` close hook
+/// (the row menu isn't a `<details>`).
+const MENU_ITEM_CLS: &str = "flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 text-sm font-medium hover:bg-accent cursor-pointer";
+const MENU_ITEM_DESTRUCTIVE_CLS: &str = "flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 \
+                                        text-sm font-medium text-destructive \
+                                        hover:bg-destructive/10 cursor-pointer";
 
 /// Context-menu state — `(session id, agent, clientX, clientY)`.
 /// `None` while the menu is closed.
@@ -714,7 +715,7 @@ pub fn SessionListPage() -> impl IntoView {
                                                                             .is_some_and(|(k, _, _)| *k == expanded_key)
                                                                             .to_string()
                                                                     }
-                                                                    class="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                                                                    class="flex w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                                                                     on:click=move |_| {
                                                                         closed_groups.update(|v| {
                                                                             v.toggle(&toggle_key);
@@ -913,7 +914,7 @@ pub fn SessionListPage() -> impl IntoView {
                 }
                 class=move || {
                     if menu_for.read().is_some() {
-                        "fixed z-50 w-44 rounded-md border bg-popover p-1 shadow-lg focus:outline-none"
+                        "fixed z-50 w-44 rounded-3xl bg-popover p-1.5 text-popover-foreground shadow-lg ring-1 ring-border focus:outline-none"
                     } else {
                         "hidden"
                     }
@@ -1111,7 +1112,7 @@ pub fn SessionListPage() -> impl IntoView {
                 data-open=move || group_menu.read().is_some().then_some("")
                 class=move || {
                     if group_menu.read().is_some() {
-                        "fixed z-50 w-44 rounded-md border bg-popover p-1 shadow-lg focus:outline-none"
+                        "fixed z-50 w-44 rounded-3xl bg-popover p-1.5 text-popover-foreground shadow-lg ring-1 ring-border focus:outline-none"
                     } else {
                         "hidden"
                     }
@@ -1234,9 +1235,9 @@ fn SessionRowView(
     let iso = session.updated_at.clone();
     let row_cls = move || {
         if selected.get() {
-            "block rounded-md bg-accent p-2.5 transition-colors"
+            "block rounded-md bg-accent px-2 py-2 transition-colors"
         } else {
-            "block rounded-md p-2.5 transition-colors hover:bg-accent/60"
+            "block rounded-md px-2 py-2 transition-colors hover:bg-accent/60"
         }
     };
     let row_id = session.id.clone();
@@ -1771,7 +1772,7 @@ fn AgentFilter(
                 class="fixed inset-0 z-40 hidden cursor-default group-open:block"
                 onclick="this.parentElement.removeAttribute('open')"
             ></span>
-            <div class="absolute inset-x-0 z-50 mt-1 max-h-56 overflow-auto rounded-md border bg-popover p-1 text-sm text-popover-foreground shadow-lg">
+            <div class="absolute inset-x-0 z-50 mt-1 max-h-56 overflow-auto rounded-3xl bg-popover p-1.5 text-sm text-popover-foreground shadow-lg ring-1 ring-border">
                 <button
                     type="button"
                     class=MENU_ITEM_CLS
@@ -1786,7 +1787,7 @@ fn AgentFilter(
                             let for_check = a.clone();
                             let for_toggle = a.clone();
                             view! {
-                                <label class="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent">
+                                <label class="flex w-full cursor-pointer items-center gap-2 rounded-2xl px-3 py-2 hover:bg-accent">
                                     <input
                                         type="checkbox"
                                         class="size-3.5 shrink-0 accent-primary"

@@ -235,9 +235,9 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
             data-open=move || open.get().then_some("")
             class=move || {
                 if open.get() {
-                    "fixed inset-0 z-[80] flex items-start justify-center bg-black/60 p-4 pt-[15vh] opacity-100 transition-opacity"
+                    "fixed inset-0 z-[80] flex items-start justify-center bg-black/30 p-4 pt-[15vh] opacity-100 transition-opacity supports-backdrop-filter:backdrop-blur-sm"
                 } else {
-                    "fixed inset-0 z-[80] flex items-start justify-center bg-black/60 p-4 pt-[15vh] opacity-0 pointer-events-none transition-opacity"
+                    "fixed inset-0 z-[80] flex items-start justify-center bg-black/30 p-4 pt-[15vh] opacity-0 pointer-events-none transition-opacity"
                 }
             }
             on:click=move |_| open.set(false)
@@ -251,7 +251,7 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
                 // Closed = inert — the hidden card can't take focus.
                 inert=move || (!open.get()).then_some("")
                 aria-hidden=move || (!open.get()).then_some("true")
-                class="flex w-full max-w-lg flex-col overflow-hidden rounded-xl border bg-popover shadow-xl"
+                class="flex w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-popover shadow-xl ring-1 ring-border"
                 on:click=move |ev| ev.stop_propagation()
                 // The keydown cascade: handled here (inside the card)
                 // and stopped, so the document-level listeners in the
@@ -349,9 +349,9 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
                                         data-active=selected_row.then_some("")
                                         class=move || {
                                             if selected_row {
-                                                "flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-sm bg-accent"
+                                                "flex cursor-pointer items-center gap-2.5 rounded-2xl px-3 py-2 text-sm bg-accent"
                                             } else {
-                                                "flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-sm"
+                                                "flex cursor-pointer items-center gap-2.5 rounded-2xl px-3 py-2 text-sm"
                                             }
                                         }
                                         on:mouseenter=move |_| active.set(i)
