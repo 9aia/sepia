@@ -5,6 +5,7 @@
 //! modules for every decision.
 
 pub mod composer;
+pub mod desktop;
 pub mod filter;
 pub mod focus;
 pub mod highlight;
