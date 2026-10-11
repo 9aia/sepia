@@ -294,6 +294,10 @@ async fn session_detail_renders_summary_history_and_prompt() {
     // GFM table in the assistant row.
     assert_contains(&html, "data-name=\"MdTable\"");
     assert_contains(&html, "<table");
+    // Mermaid fence → MermaidBlock: SSR emits the source `<pre>`
+    // (identical hydrate markup; the SVG renders client-side).
+    assert_contains(&html, "data-name=\"MermaidBlock\"");
+    assert_contains(&html, "graph TD");
     // The prompt composer — textarea, editable model input
     // (`prop:value` doesn't serialize on SSR — the placeholder is the
     // markup-stable hook), attach affordance + hidden file input.

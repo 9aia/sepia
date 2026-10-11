@@ -303,7 +303,16 @@ fn render_block(block: MdBlock) -> impl IntoView {
         MdBlock::Paragraph(spans) => {
             view! { <p>{spans.into_iter().map(render_inline).collect::<Vec<_>>()}</p> }.into_any()
         }
-        MdBlock::Code { lang, code } => view! { <CodeBlock lang=lang code=code/> }.into_any(),
+        MdBlock::Code { lang, code } => {
+            if lang
+                .as_deref()
+                .is_some_and(|l| l.eq_ignore_ascii_case("mermaid"))
+            {
+                view! { <MermaidBlock code=code/> }.into_any()
+            } else {
+                view! { <CodeBlock lang=lang code=code/> }.into_any()
+            }
+        }
         MdBlock::List { ordered, items } => {
             let items = items
                 .into_iter()
@@ -416,6 +425,57 @@ fn CodeBlock(#[prop(into)] lang: Option<String>, #[prop(into)] code: String) -> 
                     view! { <span class=t.kind.class()>{t.text}</span> }
                 })
                 .collect::<Vec<_>>()}</code></pre>
+        </div>
+    }
+}
+
+/// ```mermaid fence — SSR/hydrate emit the same markup: the usual
+/// code-block chrome, a `hidden` diagram target, and the diagram
+/// source as a plain code `<pre>`. On mount the hydrate-only
+/// `crate::mermaid::render` lazy-loads `/vendor/mermaid.min.js`,
+/// renders the SVG into the target, and hides the source; any failure
+/// (missing asset, bad syntax) leaves the code block — identical to
+/// what SSR and no-JS clients see.
+#[allow(clippy::needless_pass_by_value)] // component props are owned
+#[component]
+fn MermaidBlock(#[prop(into)] code: String) -> impl IntoView {
+    let copied = RwSignal::new(false);
+    let reset = leptos_use::use_timeout_fn(move |()| copied.set(false), 1_500.0).start;
+    let on_copy = {
+        let code = code.clone();
+        move |_| {
+            crate::components::copy_to_clipboard(&code);
+            copied.set(true);
+            reset(());
+        }
+    };
+    let diagram = NodeRef::<leptos::html::Div>::new();
+    let source = NodeRef::<leptos::html::Div>::new();
+    // Effects never fire server-side; the stub keeps the symbol
+    // feature-agnostic so markup stays identical on both targets.
+    let mermaid_src = code.clone();
+    Effect::new(move |_| {
+        crate::mermaid::render(diagram, source, mermaid_src.clone());
+    });
+    view! {
+        <div class="overflow-hidden rounded-md border bg-secondary/60" data-name="MermaidBlock">
+            <div class="flex items-center justify-end gap-2 border-b border-border/60 px-3 py-1">
+                <span class="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                    "mermaid"
+                </span>
+                <button
+                    type="button"
+                    aria-label="Copy diagram source"
+                    class="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    on:click=on_copy
+                >
+                    {move || if copied.get() { "copied" } else { "copy" }}
+                </button>
+            </div>
+            <div node_ref=diagram hidden class="mermaid-diagram overflow-x-auto p-3 [&_svg]:mx-auto"></div>
+            <div node_ref=source class="mermaid-source">
+                <pre class="overflow-x-auto p-3 font-mono text-xs leading-relaxed"><code>{code}</code></pre>
+            </div>
         </div>
     }
 }

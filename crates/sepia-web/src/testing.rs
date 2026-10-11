@@ -206,7 +206,11 @@ impl FakeNodeApi {
                     HistoryMessageDto {
                         role: "assistant".into(),
                         node_id: Some(3),
-                        content: "On it — the fixture DB needs per-test isolation.".into(),
+                        // Mermaid fence → MermaidBlock (SSR emits the
+                        // source pre; the diagram is client-rendered).
+                        content: "On it — the fixture DB needs per-test isolation.\n\n\
+                                  ```mermaid\ngraph TD\n  A-->B\n```"
+                            .into(),
                         thinking: Some(
                             "The spec flakes because two tests share one database.".into(),
                         ),

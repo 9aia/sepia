@@ -6,8 +6,9 @@
 //! `Authorization: Bearer`, a `?token=` query (EventSource can't set
 //! headers — a valid query token also plants the cookie), or the
 //! httpOnly `sepia_hub` cookie. Static assets — `style.css`,
-//! `manifest.json`, `sw.js`, `icon.svg`, `/pkg/*` — stay open so the
-//! PWA shell and service worker load before any credential exists.
+//! `manifest.json`, `sw.js`, `icon.svg`, `/pkg/*`, `/vendor/*` — stay
+//! open so the PWA shell and service worker load before any credential
+//! exists.
 //!
 //! Browsers get a login flow, not bare 401s:
 //! - HTML page navigations that fail auth redirect to `/login?next=…`.
@@ -30,13 +31,15 @@ use crate::HubState;
 /// Cookie name — the value is the hub token itself (percent-encoded).
 pub const HUB_COOKIE: &str = "sepia_hub";
 
-/// Pre-auth paths: the asset surface (`/pkg/*` is the wasm bundle) plus
-/// `/login`, which is its own credential bootstrap.
+/// Pre-auth paths: the asset surface (`/pkg/*` is the wasm bundle,
+/// `/vendor/*` the lazy-loaded JS libs) plus `/login`, which is its
+/// own credential bootstrap.
 fn is_open_path(path: &str) -> bool {
     matches!(
         path,
         "/login" | "/style.css" | "/manifest.json" | "/sw.js" | "/icon.svg"
     ) || path.starts_with("/pkg/")
+        || path.starts_with("/vendor/")
 }
 
 /// `url.searchParams.get(key)` — form-decoded.

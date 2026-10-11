@@ -260,6 +260,7 @@ pub fn router(state: HubState) -> Router {
     };
     Router::new()
         .route("/style.css", get(serve_css))
+        .route("/vendor/mermaid.min.js", get(serve_mermaid))
         // The browser's SW update check honors HTTP cache — without
         // no-cache a stale sw.js could keep serving old cache rules.
         .route("/sw.js", get(serve_sw))
@@ -431,6 +432,31 @@ async fn serve_css() -> impl axum::response::IntoResponse {
             (axum::http::header::CACHE_CONTROL, "no-cache"),
         ],
         sepia_web::STYLE_CSS,
+    )
+}
+
+/// The vendored mermaid UMD bundle — pinned at mermaid@11.12.0
+/// (`npm i mermaid@11.12.0`, `dist/mermaid.min.js`,
+/// sha256 07e37dfa97b337ccc85365d57eddf99b9706f09db3b59b260d0333b23b343c4b).
+/// ~2.6 MiB of untranspiled third-party code — vendored, not bundled
+/// into the wasm, so markdown ```mermaid blocks lazy-load it on demand
+/// and the offline/PWA story holds. Embedded like `STYLE_CSS` so no
+/// site-root staging is required; content is pinned → immutable.
+const MERMAID_JS: &[u8] = include_bytes!("../vendor/mermaid.min.js");
+
+async fn serve_mermaid() -> impl axum::response::IntoResponse {
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "text/javascript; charset=utf-8",
+            ),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "public, max-age=31536000, immutable",
+            ),
+        ],
+        MERMAID_JS,
     )
 }
 

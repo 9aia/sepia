@@ -10,6 +10,7 @@ pub mod app;
 pub mod components;
 pub mod dto;
 pub mod markdown;
+pub mod mermaid;
 pub mod pages;
 pub mod palette;
 #[cfg(feature = "ssr")]
