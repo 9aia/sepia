@@ -29,7 +29,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <link
                     rel="preload"
                     href="/vendor/fonts/geist-latin-wght-normal.woff2"
-                    attr:as="font"
+                    r#as="font"
                     type="font/woff2"
                     crossorigin="anonymous"
                 />
