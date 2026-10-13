@@ -26,11 +26,20 @@
       gates it. Contained for now: cross-section navs are document
       loads (`rel="external"` on rail/drawer/menu anchors +
       `nav_external()` for programmatic navs); `?session=` in-page
-      swaps stay client-side. Real fix wants an upstream repro +
-      report — candidates: `Suspend` scoped-future abort racing arena
-      disposal, `AnyView` state teardown of the ~1000-row list, or
-      streamed `SsrMode::OutOfOrder` fragments; routes currently run
-      `InOrder` after a stale-template hydration hazard was found.
+      swaps stay client-side. Repro attempt lives at
+      `~/GitHub/leptos-swap-repro` (leptos_axum + Suspend +
+      leptos-fetch `client.resource` + interval refetch +
+      `use_query_map`/`use_location` subscribers + `<Title>` +
+      mirror Effect + 800 `<A>` rows) — it stays CLEAN, so the
+      trigger needs more of our structure; next iteration should add
+      `use_event_source`/SSE, `on_click_outside`/`track_menu_focus`
+      forgotten closures, `leptos_toaster`, and nested `<details>`
+      menus. Also confirmed: `{move||Suspend::new(..)}` +
+      `SsrMode::OutOfOrder` streaming traps at
+      `tachys hydration.rs:163` on LOAD (not swap) — InOrder avoids
+      it. `e2e/swap.rs::client_side_swap` (ignored) reproduces the
+      real trap via an injected non-external anchor — un-ignore once
+      fixed. Real fix wants upstream report once the repro catches it.
 - [ ] **Push E2E on a real device** — subscribe/fan-out paths are unit-
       covered; a real browser push is unverified.
 - [ ] ~~**Browser e2e**~~ — done: `crates/sepia-hub/tests/e2e/` drives
