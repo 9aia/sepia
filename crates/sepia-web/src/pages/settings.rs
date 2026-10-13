@@ -61,7 +61,7 @@ pub fn SettingsPage() -> impl IntoView {
     #[cfg(feature = "hydrate")]
     {
         use wasm_bindgen::JsCast;
-        let _observer = StoredValue::new_local(None::<web_sys::IntersectionObserver>);
+        let observer_cell = StoredValue::new_local(None::<web_sys::IntersectionObserver>);
         Effect::new(move |_| {
             let Some(root) = spy_root.get() else { return };
             let Ok(sections) = root.query_selector_all("[data-spy]") else {
@@ -76,7 +76,7 @@ pub fn SettingsPage() -> impl IntoView {
             >::new(move |entries: Vec<web_sys::IntersectionObserverEntry>| {
                 let ids: Vec<String> = entries
                     .into_iter()
-                    .filter(|e| e.is_intersecting())
+                    .filter(web_sys::IntersectionObserverEntry::is_intersecting)
                     .filter_map(|e| e.target().get_attribute("data-spy"))
                     .collect();
                 let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
@@ -102,10 +102,10 @@ pub fn SettingsPage() -> impl IntoView {
                 // on unmount — a live observer can still fire after the
                 // page's owner dies (callback → disposed signal → trap).
                 let obs = observer.clone();
-                let _cleanup = leptos::prelude::on_cleanup(move || {
+                leptos::prelude::on_cleanup(move || {
                     obs.disconnect();
                 });
-                _observer.set_value(Some(observer));
+                observer_cell.set_value(Some(observer));
             }
             cb.forget();
         });

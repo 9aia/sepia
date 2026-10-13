@@ -2396,10 +2396,11 @@ fn read_attachment_file(
         toast.error(format!("couldn't read {name}"));
         return;
     };
-    // The `once` closure owns a clone of the reader — it frees itself
-    // (and the reader) after firing.
+    // `once_into_js` — the JS function frees its wasm slot after it
+    // fires (loadend is once). A `Closure::once` dropped here instead
+    // leaves the reader calling a freed trampoline (`unreachable`).
     let done_reader = reader.clone();
-    let on_done = wasm_bindgen::closure::Closure::once(move |_: web_sys::ProgressEvent| {
+    let on_done = wasm_bindgen::closure::Closure::once_into_js(move |_: web_sys::ProgressEvent| {
         match done_reader.result() {
             Ok(v) => match v
                 .as_string()
@@ -2428,7 +2429,7 @@ fn read_attachment_file(
             Err(_) => toast.error(format!("couldn't read {name}")),
         }
     });
-    reader.set_onloadend(Some(on_done.as_ref().unchecked_ref()));
+    reader.set_onloadend(Some(on_done.unchecked_ref()));
     let _ = reader.read_as_data_url(file);
 }
 

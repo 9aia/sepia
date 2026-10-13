@@ -1,10 +1,9 @@
 //! Route-swap coverage — load `/`, click a rail link, assert the new
 //! page renders and no `unreachable` trap fired. The session-page
-//! unmount path historically crashed the reactive graph mid-teardown;
-//! cross-section links are `rel="external"` document loads today, so
-//! this exercises the contained path. `client_side_swap` below keeps a
-//! known-failing gate for the underlying SPA-swap bug (see TODO.md —
-//! "route-swap trap containment").
+//! unmount path used to crash the reactive graph mid-teardown
+//! (`use_event_source` internals touched the arena inside the
+//! write-lock); `client_side_swap` gates that fix directly and
+//! `route_swap` covers the full nav flow.
 
 use std::time::{Duration, Instant};
 
@@ -77,12 +76,13 @@ async fn route_swap() {
     assert!(!node_err.contains("panicked"), "node panic:\n{node_err}");
 }
 
-/// Injects a plain `<a href="/settings">` (no `rel=external`) — the
-/// router still intercepts it — and forces the real client-side swap
-/// that today's containment avoids. Currently IGNORED: the trap is a
-/// live framework bug (leptos/tachys route teardown — see TODO.md).
-/// Un-ignore once the upstream/root fix lands.
-#[ignore = "known trap — client-side swap of the session list (contained in prod)"]
+/// Injects a plain `<a href="/settings">` and clicks it — the router
+/// intercepts it → a real client-side swap of the session list — the
+/// path that used to abort inside `use_event_source`'s teardown
+/// (`reconnect_timer` StoredValue read inside `Arena::remove`'s write
+/// lock). Regression gate for that fix; ignores the chromedriver flag
+/// convention like the rest of the suite.
+#[ignore = "needs chromedriver + chrome; set SEPIA_BROWSER_E2E=1"]
 #[tokio::test]
 async fn client_side_swap() {
     if !harness::browser_enabled() {

@@ -111,13 +111,39 @@ pub fn in_editable(ev: &web_sys::KeyboardEvent) -> bool {
 
 /// Ghost nav link classes — muted until hovered, foreground when the
 /// route is active (`<A>` sets `aria-current="page"`).
-/// Hard navigation (`location.href = path`). Client-side route
-/// swaps trap in leptos-router/tachys when the session pages'
-/// Suspend/AnyView trees unmount mid-adopt — a document load is
-/// the reliable path until that's resolved upstream.
+/// The router's navigate fn, stashed outside the reactive system —
+/// `use_navigate` resolves context off the current owner, which event
+/// callbacks and spawned futures can't rely on. `ShellHotkeys` (inside
+/// `<Router>`) sets it once at mount; callers anywhere route through
+/// [`nav_external`].
+#[cfg(feature = "hydrate")]
+mod router_nav {
+    use leptos_router::NavigateOptions;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    type Navigate = Rc<dyn Fn(&str, NavigateOptions)>;
+    thread_local! {
+        static NAV: RefCell<Option<Navigate>> = const { RefCell::new(None) };
+    }
+    pub fn set(f: impl Fn(&str, NavigateOptions) + 'static) {
+        NAV.with(|n| *n.borrow_mut() = Some(Rc::new(f)));
+    }
+    pub fn navigate(href: &str, options: NavigateOptions) {
+        NAV.with(|n| {
+            if let Some(f) = &*n.borrow() {
+                f(href, options);
+            }
+        });
+    }
+}
+
+/// Client-side navigation — the trap that forced full reloads is
+/// fixed (see `sse::connect`), so "external" now means "the router's
+/// navigate, callable from any callback" rather than a document load.
+/// Falls back to `location.href` before mount.
 #[cfg(feature = "hydrate")]
 pub fn nav_external(href: &str) {
-    let _ = leptos::prelude::window().location().set_href(href);
+    router_nav::navigate(href, leptos_router::NavigateOptions::default());
 }
 
 /// SSR stub — navigation only ever happens in the browser.
@@ -138,6 +164,91 @@ pub fn is_sessions_index() -> bool {
 pub fn is_sessions_index() -> bool {
     false
 }
+
+/// Arrow/Home/End roving focus inside an open `<details>` menu — the
+/// details pattern has no native arrow nav (the row/group context
+/// menus cover it via `menu_keydown`; this covers the summary menus:
+/// DesktopMenu + submenus, the header icon menus). Escape stays with
+/// each menu's own inline handler. Events bubble to the outermost
+/// `<details>` — `closest` scopes the walk to the deepest open menu
+/// containing the target, so nested AimSubMenu arrows stay inside.
+#[cfg(feature = "hydrate")]
+pub fn details_menu_keydown(ev: &leptos::ev::KeyboardEvent) {
+    use wasm_bindgen::JsCast;
+    enum Step {
+        Forward,
+        Back,
+        First,
+        Last,
+    }
+    let Some(target) = ev
+        .target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+    else {
+        return;
+    };
+    let in_text = matches!(target.tag_name().as_str(), "INPUT" | "TEXTAREA");
+    let step = match ev.key().as_str() {
+        "ArrowDown" => Step::Forward,
+        "ArrowUp" => Step::Back,
+        // Horizontal arrows are caret keys inside a text field — only
+        // rove when focus is on a non-input item.
+        "ArrowRight" if !in_text => Step::Forward,
+        "ArrowLeft" if !in_text => Step::Back,
+        "Home" => Step::First,
+        "End" => Step::Last,
+        _ => return,
+    };
+    let Ok(Some(det)) = target.closest("details[open]") else {
+        return;
+    };
+    let Ok(list) = det.query_selector_all(
+        "summary, a[href], button:not([disabled]), input:not([disabled]), [role=\"menuitem\"]",
+    ) else {
+        return;
+    };
+    let mut items: Vec<web_sys::HtmlElement> = Vec::new();
+    for i in 0..list.length() {
+        if let Some(el) = list
+            .item(i)
+            .and_then(|n| n.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            // Items inside a deeper open `<details>` belong to that
+            // nested menu — only its own keys may drive them.
+            if let Ok(Some(inner)) = el.closest("details[open]")
+                && inner != det
+            {
+                continue;
+            }
+            if el.get_attribute("aria-disabled").as_deref() == Some("true") {
+                continue;
+            }
+            items.push(el);
+        }
+    }
+    if items.is_empty() {
+        return;
+    }
+    ev.prevent_default();
+    ev.stop_propagation();
+    let focused = leptos::prelude::document().active_element();
+    let cur = focused.as_ref().and_then(|a| {
+        items
+            .iter()
+            .position(|i| i.unchecked_ref::<web_sys::Element>() == a)
+    });
+    let next = match step {
+        Step::Forward => cur.map_or(0, |i| (i + 1) % items.len()),
+        Step::Back => cur.map_or(items.len() - 1, |i| (i + items.len() - 1) % items.len()),
+        Step::First => 0,
+        Step::Last => items.len() - 1,
+    };
+    let _ = items[next].focus();
+}
+
+/// SSR stub — keyboard focus is a client concern.
+#[cfg(not(feature = "hydrate"))]
+pub fn details_menu_keydown(_ev: &leptos::ev::KeyboardEvent) {}
 
 fn nav_link(extra: &str) -> String {
     tw_merge::tw_merge!(
@@ -163,23 +274,23 @@ fn nav_items(extra: &str, on_nav: Option<std::sync::Arc<dyn Fn() + Send + Sync>>
                 }
             }
         >
-            <A href="/" exact=true attr:class=nav_link("w-full") attr:rel="external">
+            <A href="/" exact=true attr:class=nav_link("w-full")>
                 <Icon name="message-square"/>
                 "Sessions"
             </A>
-            <A href="/agents" attr:class=nav_link("w-full") attr:rel="external">
+            <A href="/agents" attr:class=nav_link("w-full")>
                 <Icon name="bot"/>
                 "Agents"
             </A>
-            <A href="/projects" attr:class=nav_link("w-full") attr:rel="external">
+            <A href="/projects" attr:class=nav_link("w-full")>
                 <Icon name="folder"/>
                 "Projects"
             </A>
-            <A href="/nodes" attr:class=nav_link("w-full") attr:rel="external">
+            <A href="/nodes" attr:class=nav_link("w-full")>
                 <Icon name="server"/>
                 "Nodes"
             </A>
-            <A href="/settings" attr:class=nav_link("w-full") attr:rel="external">
+            <A href="/settings" attr:class=nav_link("w-full")>
                 <Icon name="settings"/>
                 "Settings"
             </A>
@@ -198,9 +309,6 @@ fn rail_link(href: &'static str, label: &'static str, icon: &'static str) -> imp
     view! {
         <A
             href=href
-            // `rel=external` — the router skips intercepted anchors
-            // carrying it, so rail navs are plain document loads.
-            attr:rel="external"
             attr:class=format!(
                 "{RAIL_ITEM} text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-[current]:bg-sidebar-accent aria-[current]:text-sidebar-accent-foreground"
             )
@@ -258,7 +366,6 @@ fn IconRail(help: RwSignal<bool>) -> impl IntoView {
             <A
                 href="/"
                 exact=true
-                attr:rel="external"
                 attr:class="mb-3 inline-flex size-9 items-center justify-center rounded-lg text-lg font-bold tracking-tight text-primary"
                 attr:title="sepia — sessions"
                 attr:aria-label="sepia — sessions"
@@ -343,7 +450,7 @@ pub fn App() -> impl IntoView {
                         >
                             <Icon name="menu" class="size-5"/>
                         </button>
-                        <A href="/" attr:rel="external" attr:class="font-bold tracking-tight text-primary">
+                        <A href="/" attr:class="font-bold tracking-tight text-primary">
                             "sepia"
                         </A>
                         <span class="ml-auto">
@@ -364,7 +471,6 @@ pub fn App() -> impl IntoView {
                                 >
                                     <A
                                         href="/"
-                                        attr:rel="external"
                                         attr:class=ButtonClass {
                                             variant: ButtonVariant::Secondary,
                                             size: ButtonSize::Sm,
@@ -421,6 +527,7 @@ pub fn App() -> impl IntoView {
 fn ShellHotkeys(open: RwSignal<bool>, palette: RwSignal<bool>) -> impl IntoView {
     #[cfg(feature = "hydrate")]
     {
+        router_nav::set(leptos_router::hooks::use_navigate());
         // The 30s wall-clock tick behind every relative-time label —
         // `Now` is provided by `App`, an ancestor owner.
         let now = expect_context::<Now>().0;

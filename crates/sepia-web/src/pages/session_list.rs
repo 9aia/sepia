@@ -775,7 +775,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                                     description="Sessions appear here once a node is reachable. Check node health or pair a device."
                                                 >
                                                     <A
-                                                        href="/nodes" attr:rel="external"
+                                                        href="/nodes"
                                                         attr:class=ButtonClass {
                                                             variant: ButtonVariant::Secondary,
                                                             size: ButtonSize::Sm,
@@ -2009,7 +2009,7 @@ fn SessionSearchMenu(
     input_ref: NodeRef<leptos::html::Input>,
 ) -> impl IntoView {
     view! {
-        <details class="group relative" data-name="SearchMenu" data-panel-menu>
+        <details class="group relative" data-name="SearchMenu" data-panel-menu on:keydown=move |ev| crate::app::details_menu_keydown(&ev)>
             <summary
                 class=HDR_MENU_BTN
                 aria-label="Search sessions"
@@ -2081,7 +2081,7 @@ fn SessionFilterMenu(
     status: RwSignal<StatusFilter>,
 ) -> impl IntoView {
     view! {
-        <details class="group relative" data-name="FilterMenu" data-panel-menu>
+        <details class="group relative" data-name="FilterMenu" data-panel-menu on:keydown=move |ev| crate::app::details_menu_keydown(&ev)>
             <summary class=HDR_MENU_BTN aria-label="Filters" title="Filters">
                 <Icon name="sliders-horizontal" class="size-4"/>
                 {move || {
@@ -2136,7 +2136,7 @@ fn SessionFilterMenu(
                                     </span>
                                 </button>
                                 <A
-                                    href="/nodes" attr:rel="external"
+                                    href="/nodes"
                                     attr:class=MENU_ITEM_CLS
                                     attr:onclick=CLOSE_MENU_ALL
                                 >
@@ -2271,7 +2271,7 @@ fn SessionFilterMenu(
 #[allow(clippy::needless_pass_by_value)] // component props are owned
 fn SessionSortMenu(sort: RwSignal<SortMode>) -> impl IntoView {
     view! {
-        <details class="group relative" data-name="SortMenu" data-panel-menu>
+        <details class="group relative" data-name="SortMenu" data-panel-menu on:keydown=move |ev| crate::app::details_menu_keydown(&ev)>
             <summary
                 class=HDR_MENU_BTN
                 aria-label="Sort sessions"
@@ -2333,10 +2333,11 @@ fn read_import_file(
         toast.error(format!("couldn't read {name}"));
         return;
     };
-    // The `once` closure owns a clone of the reader — it frees itself
-    // (and the reader) after firing.
+    // `once_into_js` — the JS function frees its wasm slot after it
+    // fires (loadend is once). A `Closure::once` dropped here instead
+    // leaves the reader calling a freed trampoline (`unreachable`).
     let done_reader = reader.clone();
-    let on_done = wasm_bindgen::closure::Closure::once(move |_: web_sys::ProgressEvent| {
+    let on_done = wasm_bindgen::closure::Closure::once_into_js(move |_: web_sys::ProgressEvent| {
         match done_reader.result() {
             Ok(v) => match v
                 .as_string()
@@ -2348,7 +2349,7 @@ fn read_import_file(
             Err(_) => toast.error(format!("couldn't read {name}")),
         }
     });
-    reader.set_onloadend(Some(on_done.as_ref().unchecked_ref()));
+    reader.set_onloadend(Some(on_done.unchecked_ref()));
     let _ = reader.read_as_text(&file);
     // Reset so picking the same file twice still fires `change`.
     input.set_value("");

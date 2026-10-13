@@ -351,7 +351,7 @@ pub fn DesktopMenu(
     };
 
     view! {
-        <details class="group relative" data-name="DesktopMenu" data-aim-menu>
+        <details class="group relative" data-name="DesktopMenu" data-aim-menu on:keydown=move |ev| crate::app::details_menu_keydown(&ev)>
             <summary
                 class=format!("{RAIL_ITEM} cursor-pointer select-none text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&::-webkit-details-marker]:hidden group-open:bg-sidebar-accent group-open:text-sidebar-accent-foreground")
                 aria-label=move || format!("Desktop — {}", dot_label())
@@ -614,7 +614,7 @@ pub fn DesktopMenu(
                 <hr class="my-1 h-px border-none bg-border"/>
                 <A
                     href="/settings"
-                    attr:rel="external"
+
                     attr:data-name="AimSettings"
                     attr:class=ITEM
                     attr:onclick=CLOSE_ALL

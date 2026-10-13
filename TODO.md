@@ -17,9 +17,23 @@
 
 ### Ops / QA
 
-- [ ] **Route-swap wasm traps (contained)** — leaving the session
-      pages (`/`, `/sessions/:id`) via a client-side router swap traps
-      in tachys/leptos-router 0.8: `RuntimeError: unreachable` abort
+- [x] **Route-swap wasm traps — FIXED** — the trap was
+      `use_event_source` internals (`reconnect_timer`/`set_ready_state`)
+      touching the arena while its write-lock was held during owner
+      teardown: `Arena::try_with` → `no_threads::RwLock::read` →
+      `process::abort` → `unreachable`. Fixed in `sse::connect`:
+      stream internals live under an immortal root owner (signal writes
+      never hit disposed nodes), the caller callback is gated by an
+      `on_cleanup`-cleared `alive` flag (queued events post-unmount
+      no-op), and `close()` runs eagerly via `on_cleanup` (before the
+      arena-removal pass) with a one-task deferred fallback in `Drop`.
+      All `rel="external"`/`nav_external` containment removed — SPA
+      swaps verified live (rail × all routes, `?session=`,
+      `/sessions/:id`, palette). e2e gate: `swap::client_side_swap`.
+
+      Earlier notes for the record: client-side swaps trapped
+      pages (`/`, `/sessions/:id`) via client-side router swap in
+      tachys/leptos-router 0.8: `RuntimeError: unreachable` abort
       during `NestedRouteViewState` unmount (symbolized through
       `ScopedFuture<Suspend>` + `AnySubscriber` frames, no panic
       message). Reproduces on the sandbox e2e stack — `e2e/swap.rs`
