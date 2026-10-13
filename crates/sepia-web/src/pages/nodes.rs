@@ -237,6 +237,7 @@ pub fn NodesPage() -> impl IntoView {
 /// node-side — the code itself is the credential.
 #[component]
 fn PairCard() -> impl IntoView {
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     let status = crate::api::shared().nodes;
     let code = RwSignal::new(String::new());
     let node = RwSignal::new(String::new());
@@ -256,7 +257,7 @@ fn PairCard() -> impl IntoView {
             let n = node.get_untracked();
             (!n.is_empty()).then_some(n)
         };
-        leptos::task::spawn_local_scoped_with_cancellation(async move {
+        crate::app::spawn_under(owner.get_value(), async move {
             let res = redeem_pair_code(c, node_arg)
                 .await
                 .map_err(|e| e.to_string());

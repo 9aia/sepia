@@ -51,6 +51,8 @@ fn row_icon(item: &PaletteItem) -> &'static str {
 
 #[component]
 pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoView {
+    #[allow(unused)]
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     // Sessions land in a plain signal — populated by a lazy fetch on
     // open. No `client.resource`: a resource created during SSR spawns
     // a fetch outside any Suspense boundary (the parallel SSR tests
@@ -191,7 +193,7 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
                             .map(|s| (s.pinned, s.archived))
                             .unwrap_or_default();
                         let flag = if pin { !cur.0 } else { !cur.1 };
-                        leptos::task::spawn_local_scoped_with_cancellation(async move {
+                        crate::app::spawn_under(owner.get_value(), async move {
                             let res = if pin {
                                 pin_session(id, agent, flag).await
                             } else {
@@ -222,7 +224,7 @@ pub fn CommandPalette(open: RwSignal<bool>, help: RwSignal<bool>) -> impl IntoVi
         if open.get() {
             query.set(String::new());
             active.set(0);
-            leptos::task::spawn_local_scoped_with_cancellation(async move {
+            crate::app::spawn_under(owner.get_value(), async move {
                 if let Ok(list) = crate::api::list_sessions().await {
                     session_rows.set(list);
                 }

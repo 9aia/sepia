@@ -250,6 +250,25 @@ pub fn details_menu_keydown(ev: &leptos::ev::KeyboardEvent) {
 #[cfg(not(feature = "hydrate"))]
 pub fn details_menu_keydown(_ev: &leptos::ev::KeyboardEvent) {}
 
+/// Spawn `fut` scoped to `owner` — pass the owner captured at
+/// component setup. `spawn_local_scoped_with_cancellation` binds its
+/// `on_cleanup` to whatever owner is *currently* set, and inside DOM
+/// callbacks/async continuations that's a stale or unrelated owner —
+/// a dead one aborts the task before its first poll (the silent
+/// "click did nothing" the New Session button hit). Re-binding under
+/// the component's own owner keeps the task alive for the component's
+/// life and cancels it on unmount — the intended contract.
+#[cfg(feature = "hydrate")]
+#[allow(clippy::needless_pass_by_value)]
+pub fn spawn_under(owner: Owner, fut: impl std::future::Future<Output = ()> + 'static) {
+    owner.with(move || leptos::task::spawn_local_scoped_with_cancellation(fut));
+}
+
+/// SSR stub — the future never runs server-side (all callers are
+/// hydrate-gated paths); the signature keeps markup code compiling.
+#[cfg(not(feature = "hydrate"))]
+pub fn spawn_under(_owner: Owner, _fut: impl std::future::Future<Output = ()> + 'static) {}
+
 fn nav_link(extra: &str) -> String {
     tw_merge::tw_merge!(
         ButtonClass {

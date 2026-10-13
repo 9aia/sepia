@@ -160,6 +160,7 @@ pub fn SessionListPage() -> impl IntoView {
 #[component]
 #[allow(clippy::needless_pass_by_value)] // component props are owned
 pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> impl IntoView {
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     let sessions = crate::api::shared().sessions;
     let pending = crate::api::shared().pending;
     // Node health — the empty list reads "No nodes connected" instead
@@ -230,6 +231,9 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
     // The header's "New session" button state — in-flight flag plus
     // the inline error line (the old form's `form_error` slot).
     let creating = RwSignal::new(false);
+    // DOM/async callbacks run under whatever owner was last current —
+    // a stale one makes scoped spawns abort before their first poll —
+    // so spawn every callback task under this component's owner.
     let create_error = RwSignal::new(None::<String>);
     // `Escape` while the search popover's input is focused clears it.
     let filter_input_ref = NodeRef::<leptos::html::Input>::new();
@@ -271,7 +275,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
         };
         pending_delete.set(None);
         let on_index = crate::app::is_sessions_index();
-        leptos::task::spawn_local_scoped_with_cancellation(async move {
+        crate::app::spawn_under(owner.get_value(), async move {
             if toast
                 .outcome(delete_session(id, agent).await, "Deleted")
                 .is_some()
@@ -326,7 +330,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
         let on_index = crate::app::is_sessions_index();
         creating.set(true);
         create_error.set(None);
-        leptos::task::spawn_local_scoped_with_cancellation(async move {
+        crate::app::spawn_under(owner.get_value(), async move {
             match create_session(cwd, agent, None, model, node).await {
                 Ok(res) => {
                     creating.set(false);
@@ -376,7 +380,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
     #[cfg(feature = "hydrate")]
     {
         let refetch_roster = move || {
-            leptos::task::spawn_local_scoped_with_cancellation(async move {
+            crate::app::spawn_under(owner.get_value(), async move {
                 if let Ok(a) = crate::api::list_agents().await {
                     agents_roster.set(a);
                     agents_loaded.set(true);
@@ -384,7 +388,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
             });
         };
         refetch_roster();
-        leptos::task::spawn_local_scoped_with_cancellation(async move {
+        crate::app::spawn_under(owner.get_value(), async move {
             if let Ok(n) = crate::api::node_info().await {
                 node_primary.set((!n.id.is_empty()).then_some(n.id));
             }
@@ -685,7 +689,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                 // false through SSR + first hydration — the mirror
                 // Effect flips it post-mount, so markup agrees.
                 {move || {
-                    node_connected.get().then(|| {
+                    node_connected.get().then(move || {
                         view! {
                             <button
                                 type="button"
@@ -1160,7 +1164,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                         menu_for.set(None);
                                         let id = id.clone();
                                         let agent = agent.clone();
-                                        leptos::task::spawn_local_scoped_with_cancellation(async move {
+                                        crate::app::spawn_under(owner.get_value(), async move {
                                             let ok = if pinned_now {
                                                 "Unpinned"
                                             } else {
@@ -1192,7 +1196,7 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                         menu_for.set(None);
                                         let id = id.clone();
                                         let agent = agent.clone();
-                                        leptos::task::spawn_local_scoped_with_cancellation(async move {
+                                        crate::app::spawn_under(owner.get_value(), async move {
                                             let ok = if archived_now {
                                                 "Unarchived"
                                             } else {
@@ -1402,6 +1406,7 @@ fn SessionRowView(
     /// Runs after a mutation lands — `sessions.refetch()`.
     on_changed: impl Fn() + Send + Sync + Copy + 'static,
 ) -> impl IntoView {
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     let title = if session.title.trim().is_empty() {
         "Untitled session".to_string()
     } else {
@@ -1499,7 +1504,7 @@ fn SessionRowView(
                                                 }
                                                 let id = cid.clone();
                                                 let agent = cagent.clone();
-                                                leptos::task::spawn_local_scoped_with_cancellation(async move {
+                                                crate::app::spawn_under(owner.get_value(), async move {
                                                     if toast
                                                         .outcome(
                                                             rename_session(id, agent, new_title)
@@ -2376,6 +2381,7 @@ fn ImportCard(
     /// Runs after an import lands — `sessions.refetch()`.
     on_imported: impl Fn() + 'static + Send + Sync + Copy,
 ) -> impl IntoView {
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     let open = RwSignal::new(false);
     // `(file name, parsed JSON)` — staged by the picker until Import.
     let picked: RwSignal<Option<(String, Value)>> = RwSignal::new(None);
@@ -2408,7 +2414,7 @@ fn ImportCard(
             }
         };
         busy.set(true);
-        leptos::task::spawn_local_scoped_with_cancellation(async move {
+        crate::app::spawn_under(owner.get_value(), async move {
             if let Some(res) = toast.outcome(import_session(body).await, "Session imported") {
                 open.set(false);
                 on_imported();

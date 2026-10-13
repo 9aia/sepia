@@ -19,6 +19,7 @@ use crate::dto::{ProjectDto, SessionSummaryDto};
 
 #[component]
 pub fn ProjectsPage() -> impl IntoView {
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     let client = crate::api::query_client();
     let projects = crate::api::shared().projects;
     let sessions = crate::api::shared().sessions;
@@ -43,7 +44,7 @@ pub fn ProjectsPage() -> impl IntoView {
         }
         busy.set(true);
         form_error.set(None);
-        leptos::task::spawn_local_scoped_with_cancellation(async move {
+        crate::app::spawn_under(owner.get_value(), async move {
             match create_project(name.clone(), None).await {
                 Ok(p) => {
                     toast.success(format!("Created project \"{}\".", p.name));
@@ -197,7 +198,7 @@ pub fn ProjectsPage() -> impl IntoView {
                     delete_target.set(None);
                     detail_open.set(false);
                     detail.set(None);
-                    leptos::task::spawn_local_scoped_with_cancellation(async move {
+                    crate::app::spawn_under(owner.get_value(), async move {
                         if toast
                             .outcome(
                                 delete_project(p.id.clone(), p.node.clone()).await,
@@ -241,6 +242,7 @@ fn ProjectDetails(
     confirm_open: RwSignal<bool>,
     delete_target: RwSignal<Option<ProjectDto>>,
 ) -> impl IntoView {
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     let toast = use_toast();
     let client = crate::api::query_client();
     // Disjoint clones for each `move` closure below — `project` can't
@@ -324,7 +326,7 @@ fn ProjectDetails(
                                                                     } else {
                                                                         Some(agent.clone())
                                                                     };
-                                                                    leptos::task::spawn_local_scoped_with_cancellation(async move {
+                                                                    crate::app::spawn_under(owner.get_value(), async move {
                                                                         let res = set_session_projects(
                                                                             session_id,
                                                                             agent,

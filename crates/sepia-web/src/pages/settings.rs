@@ -719,6 +719,7 @@ fn KeybindRow(action: Action) -> impl IntoView {
 /// as JSON and saves as JSON when the input still parses.
 #[component]
 fn ConfigRow(key: String, value: Value) -> impl IntoView {
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     let is_string = value.is_string();
     let initial = if let Some(s) = value.as_str() {
         s.to_string()
@@ -745,7 +746,7 @@ fn ConfigRow(key: String, value: Value) -> impl IntoView {
             };
             let key = key.clone();
             let label = key.clone();
-            leptos::task::spawn_local_scoped_with_cancellation(async move {
+            crate::app::spawn_under(owner.get_value(), async move {
                 toast.outcome(
                     set_config(key, value).await.map_err(|e| e.to_string()),
                     format!("Saved {label}"),
@@ -820,6 +821,7 @@ fn set_notify_pref(
 /// DOM calls only exist in the `hydrate` build.
 #[component]
 fn PushSection() -> impl IntoView {
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     let vapid = Resource::new(|| (), |()| push_vapid_key());
     let subscribed: RwSignal<Option<bool>> = RwSignal::new(None);
     let busy = RwSignal::new(false);
@@ -840,7 +842,7 @@ fn PushSection() -> impl IntoView {
     #[cfg(feature = "hydrate")]
     {
         // Probe the existing subscription once, on the client only.
-        leptos::task::spawn_local_scoped_with_cancellation(async move {
+        crate::app::spawn_under(owner.get_value(), async move {
             if let Ok(current) = push::current().await {
                 subscribed.set(Some(current.is_some()));
             }
@@ -890,7 +892,7 @@ fn PushSection() -> impl IntoView {
                                             allow(unused_variables)
                                         )]
                                         let key = key.clone();
-                                        leptos::task::spawn_local_scoped_with_cancellation(async move {
+                                        crate::app::spawn_under(owner.get_value(), async move {
                                             #[cfg(feature = "hydrate")]
                                             {
                                                 let result = if subscribed.get() == Some(true) {

@@ -221,6 +221,8 @@ pub fn DesktopMenu(
     /// the rail is `lg+`-only anyway).
     help: RwSignal<bool>,
 ) -> impl IntoView {
+    #[allow(unused)]
+    let owner = StoredValue::new(Owner::current().unwrap_or_default());
     let aim = expect_context::<Desktop>().0;
     // The mirrors — empty on SSR and first hydration; the Effects
     // below fill them from the shared query cache post-mount.
@@ -243,7 +245,7 @@ pub fn DesktopMenu(
     #[cfg(feature = "hydrate")]
     {
         let fetch_status = move || {
-            leptos::task::spawn_local_scoped_with_cancellation(async move {
+            crate::app::spawn_under(owner.get_value(), async move {
                 if let Ok(rows) = crate::api::node_status().await {
                     statuses.set(rows);
                 }
@@ -251,7 +253,7 @@ pub fn DesktopMenu(
             });
         };
         let fetch_sessions = move || {
-            leptos::task::spawn_local_scoped_with_cancellation(async move {
+            crate::app::spawn_under(owner.get_value(), async move {
                 if let Ok(rows) = crate::api::list_sessions().await {
                     sessions.set(rows);
                 }
@@ -259,7 +261,7 @@ pub fn DesktopMenu(
         };
         fetch_status();
         fetch_sessions();
-        leptos::task::spawn_local_scoped_with_cancellation(async move {
+        crate::app::spawn_under(owner.get_value(), async move {
             if let Ok(n) = crate::api::node_info().await {
                 info.set(n);
             }
