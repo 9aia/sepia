@@ -8,14 +8,15 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 use sepia_web_core::project::{is_member, with_membership};
 
-use crate::api::{create_project, delete_project, set_session_projects};
+use crate::api::{create_project, delete_project, set_session_projects, transfer_session};
 use crate::components::toast::use_toast;
 use crate::components::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, CardContent, CardHeader,
     CardTitle, ConfirmDialog, ErrorBanner, Input, PageDescription, PageHead, PageTitle, Sheet,
     SheetBody, SheetHeader, SheetTitle, Skeleton,
 };
-use crate::dto::{ProjectDto, SessionSummaryDto};
+use crate::dto::{NodeStatusDto, ProjectDto, SessionSummaryDto};
+use crate::transfer::TransferSheet;
 
 #[component]
 pub fn ProjectsPage() -> impl IntoView {
@@ -250,6 +251,16 @@ fn ProjectDetails(
     let project_id = project.id.clone();
     let project_node = project.node.clone();
     let project_for_delete = project.clone();
+    // Cross-node transfer — copies every member session to the picked
+    // node (per-session calls; the project group itself stays
+    // node-local). `nodes` is the shared registry resource.
+    let nodes = crate::api::shared().nodes;
+    let transfer_open = RwSignal::new(false);
+    let transfer_busy = RwSignal::new(false);
+    let project_id_t = project.id.clone();
+    let project_node_t = project.node.clone();
+    let project_node_submit = project.node.clone();
+    let project_node_gate = project.node.clone();
     view! {
         <div data-name="ProjectDetails" class="flex flex-col gap-4">
             <p class="font-mono text-xs text-muted-foreground">
@@ -365,6 +376,35 @@ fn ProjectDetails(
                     }
                 }}
             </div>
+            // Cross-node copy of the member sessions — the project
+            // group itself is node-local meta, so only sessions move
+            // (`docs/transfer.md`). Hidden on single-node hubs.
+            {move || {
+                let rows = nodes.get().and_then(Result::ok).unwrap_or_default();
+                let has_target = rows
+                    .iter()
+                    .any(|n| Some(&n.id) != project_node_gate.as_ref());
+                (rows.len() > 1 && has_target)
+                    .then(|| {
+                        view! {
+                            <div class="space-y-1.5">
+                                <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    "Transfer"
+                                </h4>
+                                <p class="text-xs text-muted-foreground">
+                                    "Copy every member session to another node — the project tag doesn't follow."
+                                </p>
+                                <Button
+                                    variant=ButtonVariant::Outline
+                                    size=ButtonSize::Sm
+                                    on_click=Box::new(move || transfer_open.set(true))
+                                >
+                                    "Transfer to node…"
+                                </Button>
+                            </div>
+                        }
+                    })
+            }}
             <div class="mt-auto border-t pt-4">
                 <Button
                     variant=ButtonVariant::Destructive
@@ -377,6 +417,72 @@ fn ProjectDetails(
                     "Delete project…"
                 </Button>
             </div>
+            <TransferSheet
+                open=transfer_open
+                heading="Transfer project"
+                description="Copy every member session to another node — transfers are copies; the originals stay. Leave the directory blank to keep each session's stored cwd."
+                targets=Signal::derive(move || {
+                    nodes
+                        .get()
+                        .and_then(Result::ok)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|n: &NodeStatusDto| Some(&n.id) != project_node_t.as_ref())
+                        .collect()
+                })
+                busy=transfer_busy
+                on_submit=Box::new(move |target: String, remap: Option<String>| {
+                    let members: Vec<(String, Option<String>)> = sessions
+                        .get()
+                        .and_then(Result::ok)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|s| {
+                            is_member(
+                                &s.project_ids,
+                                s.node.as_deref(),
+                                &project_id_t,
+                                project_node_submit.as_deref(),
+                            )
+                        })
+                        .map(|s| {
+                            (
+                                s.id,
+                                sepia_web_core::path::non_empty(&s.agent),
+                            )
+                        })
+                        .collect();
+                    if members.is_empty() {
+                        toast.error("No member sessions to transfer.");
+                        return;
+                    }
+                    transfer_busy.set(true);
+                    crate::app::spawn_under(owner.get_value(), async move {
+                        let mut moved = 0usize;
+                        let mut failed = Vec::new();
+                        for (id, agent) in members {
+                            match transfer_session(id, agent, target.clone(), remap.clone())
+                                .await
+                            {
+                                Ok(_) => moved += 1,
+                                Err(e) => failed.push(e.to_string()),
+                            }
+                        }
+                        transfer_open.set(false);
+                        client.invalidate_query(crate::api::sessions_scope, ());
+                        if failed.is_empty() {
+                            toast.success(format!("Transferred {moved} session(s) to {target}."));
+                        } else {
+                            toast.error(format!(
+                                "Transferred {moved}, {} failed — {}",
+                                failed.len(),
+                                failed.first().cloned().unwrap_or_default()
+                            ));
+                        }
+                        transfer_busy.set(false);
+                    });
+                })
+            />
         </div>
     }
 }

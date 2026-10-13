@@ -628,7 +628,7 @@ pub mod icons {
     /// `unplug`, `square`, `loader-circle`, `trash`, `folder-open`,
     /// `globe`, `octagon-x`, `file`, `monitor`, `rotate-ccw`,
     /// `keyboard`, `search`, `sliders-horizontal`, `arrow-up-down`,
-    /// `clock`, `circle-dot`, `chevron-left`.
+    /// `clock`, `circle-dot`, `chevron-left`, `arrow-right-left`.
     #[component]
     #[allow(clippy::needless_pass_by_value)] // component props are owned
     pub fn Icon(
@@ -679,6 +679,9 @@ pub mod icons {
                         view! { <lucide_leptos::MessageSquareDashed/> }.into_any()
                     }
                     "send" => view! { <lucide_leptos::Send/> }.into_any(),
+                    "arrow-right-left" => {
+                        view! { <lucide_leptos::ArrowRightLeft/> }.into_any()
+                    }
                     "paperclip" => view! { <lucide_leptos::Paperclip/> }.into_any(),
                     "lock" => view! { <lucide_leptos::Lock/> }.into_any(),
                     "inbox" => view! { <lucide_leptos::Inbox/> }.into_any(),

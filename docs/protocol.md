@@ -37,7 +37,10 @@ AG-UI stream — are gone; the notes below describe what exists.
 - `protocol` — integer; bump on breaking changes. Clients negotiate.
 - `agents` — agent ids whose driver resolved at boot (see `GET /api/agents`).
 - `capabilities` — `sessions`, `projects`, `push`, `events`, `export`, plus
-  `pairing` when the pairing store is configured.
+  `pairing` when the pairing store is configured and `import` when the
+  store-write seam (`POST /api/sessions/import`) is wired — the flag a
+  cross-node transfer checks before pulling an export (see
+  `docs/transfer.md`).
 
 `PATCH /api/node` requires a JSON object body `{ "name": "…" }`; anything
 else is a 400 `{error}`.

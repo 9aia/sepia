@@ -33,6 +33,7 @@ use sepia_web_core::path::non_empty;
 
 use crate::api::{
     archive_session, create_session, delete_session, import_session, pin_session, rename_session,
+    transfer_project, transfer_session,
 };
 use crate::app::Now;
 #[cfg(feature = "hydrate")]
@@ -44,9 +45,10 @@ use crate::components::{
     ErrorBanner, Input, SELECT_CLASS, Sheet, SheetBody, SheetHeader, SheetTitle, Skeleton,
 };
 use crate::desktop::Desktop;
-use crate::dto::AgentDto;
+use crate::dto::{AgentDto, NodeStatusDto};
 use crate::pages::SessionPanel;
 use crate::time::relative;
+use crate::transfer::TransferSheet;
 use serde_json::Value;
 use tw_merge::IntoTailwindClass;
 
@@ -258,6 +260,17 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
     let confirm_delete = RwSignal::new(false);
     let delete_confirmed = RwSignal::new(false);
     let pending_delete: RwSignal<Option<(String, Option<String>)>> = RwSignal::new(None);
+    // Transfer flow — `transfer_for` = `(session id, agent)` awaiting a
+    // node pick in the shared sheet; `transfer_project_for` =
+    // `(cwd, source node)` for the whole cwd group. `node_rows` is the
+    // registry mirror feeding the target list (`nodes` stays the
+    // Resource; SSR/hydrate render the same empty list).
+    let transfer_for: RwSignal<Option<(String, Option<String>)>> = RwSignal::new(None);
+    let transfer_open = RwSignal::new(false);
+    let transfer_project_for: RwSignal<Option<(String, Option<String>)>> = RwSignal::new(None);
+    let transfer_project_open = RwSignal::new(false);
+    let transfer_busy = RwSignal::new(false);
+    let node_rows = RwSignal::new(Vec::<NodeStatusDto>::new());
     // `new_local` stores a SendWrapper in the owner arena — on SSR the
     // owner cleans up on an arbitrary tokio worker and the guard
     // panics, aborting the stream. SSR never navigates.
@@ -407,14 +420,9 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
         // button read the signals so SSR and first hydration emit
         // the same (empty) markup; values land post-mount.
         Effect::new(move |_| {
-            node_connected.set(
-                nodes
-                    .get()
-                    .and_then(Result::ok)
-                    .unwrap_or_default()
-                    .iter()
-                    .any(|r| r.status == "up"),
-            );
+            let rows = nodes.get().and_then(Result::ok).unwrap_or_default();
+            node_connected.set(rows.iter().any(|r| r.status == "up"));
+            node_rows.set(rows);
         });
         // `agents_loaded`/`agents_roster`/`node_primary` are filled
         // by the spawn_local fetches above — no Effects needed.
@@ -1112,6 +1120,20 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                             .find(|s| s.id == id)
                             .map(|s| (s.pinned, s.archived))
                             .unwrap_or_default();
+                        // Transfer affordance — only when another node
+                        // could take the copy: >1 registered node and
+                        // at least one that isn't the session's own.
+                        let transferable = {
+                            let row_node = all_sessions
+                                .read()
+                                .iter()
+                                .find(|s| s.id == id)
+                                .and_then(|s| s.node.clone());
+                            let source = effective_node(&row_node, &node_primary.get());
+                            let rows = node_rows.get();
+                            rows.len() > 1
+                                && rows.iter().any(|n| Some(&n.id) != source.as_ref())
+                        };
                         view! {
                             <CtxMenuItem
                                 id="sepia-row-menu-item-0"
@@ -1217,9 +1239,33 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                             >
                                 {if archived_now { "Unarchive" } else { "Archive" }}
                             </CtxMenuItem>
+                            {transferable.then(|| {
+                                let id = id.clone();
+                                let agent = agent.clone();
+                                view! {
+                                    <CtxMenuItem
+                                        id="sepia-row-menu-item-4"
+                                        index=4
+                                        active=menu_active
+                                        on_click=Box::new(move || {
+                                            menu_for.set(None);
+                                            transfer_for.set(Some((id.clone(), agent.clone())));
+                                            transfer_open.set(true);
+                                        })
+                                    >
+                                        "Transfer to node…"
+                                    </CtxMenuItem>
+                                }
+                            })}
+                            // `index`/`id` count DOM items — the
+                            // optional Transfer slot shifts them.
                             <CtxMenuItem
-                                id="sepia-row-menu-item-4"
-                                index=4
+                                id=if transferable {
+                                    "sepia-row-menu-item-5".to_string()
+                                } else {
+                                    "sepia-row-menu-item-4".to_string()
+                                }
+                                index=if transferable { 5 } else { 4 }
                                 active=menu_active
                                 destructive=true
                                 on_click=Box::new({
@@ -1235,8 +1281,12 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                 "Delete…"
                             </CtxMenuItem>
                             <CtxMenuItem
-                                id="sepia-row-menu-item-5"
-                                index=5
+                                id=if transferable {
+                                    "sepia-row-menu-item-6".to_string()
+                                } else {
+                                    "sepia-row-menu-item-5".to_string()
+                                }
+                                index=if transferable { 6 } else { 5 }
                                 active=menu_active
                                 on_click=Box::new({
                                     let href = detail_href.clone();
@@ -1313,6 +1363,12 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                         // pinned pseudo-section and the empty-cwd
                         // group don't offer it.
                         let can_spawn = key != PINNED_KEY && !key.is_empty();
+                        // "Transfer project…" needs a cwd AND another
+                        // node to send to — same gate as the row item.
+                        let transferable = can_spawn && {
+                            let rows = node_rows.get();
+                            rows.len() > 1
+                        };
                         view! {
                             <CtxMenuItem
                                 id="sepia-group-menu-item-0"
@@ -1359,6 +1415,40 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                                     </CtxMenuItem>
                                 }
                             })}
+                            {transferable.then(|| {
+                                let key = key.clone();
+                                view! {
+                                    <CtxMenuItem
+                                        id="sepia-group-menu-item-2"
+                                        index=2
+                                        active=group_menu_active
+                                        on_click=Box::new(move || {
+                                            group_menu.set(None);
+                                            // The group's owner is the
+                                            // first row's node — same
+                                            // resolution "New session
+                                            // here" uses.
+                                            let source = node_for_cwd(
+                                                all_sessions
+                                                    .read_untracked()
+                                                    .iter()
+                                                    .map(|r| {
+                                                        (r.cwd.as_str(), &r.node)
+                                                    }),
+                                                &key,
+                                                &node_primary.get_untracked(),
+                                            );
+                                            transfer_project_for.set(Some((
+                                                key.clone(),
+                                                source,
+                                            )));
+                                            transfer_project_open.set(true);
+                                        })
+                                    >
+                                        "Transfer project to node…"
+                                    </CtxMenuItem>
+                                }
+                            })}
                         }
                     })
                 }}
@@ -1375,6 +1465,143 @@ pub fn SessionListPanel(#[prop(into)] selected_id: Signal<Option<String>>) -> im
                 confirm_label="Delete"
                 destructive=true
                 on_confirm=move || delete_confirmed.set(true)
+            />
+                }
+                .into_any()
+            }
+            // Transfer sheets — one per flow, sharing `transfer_busy`.
+            // `targets` is derived off `node_rows` minus the session's/
+            // group's owning node; an empty list renders the sheet's
+            // own "no other nodes" line.
+            {
+                view! {
+            <TransferSheet
+                open=transfer_open
+                heading="Transfer session"
+                field_id="transfer-session-cwd"
+                description="Copy this session to another node — the copy resumes under that machine's checkout; the original stays on this one."
+                targets=Signal::derive(move || {
+                    let rows = node_rows.get();
+                    match transfer_for.get() {
+                        Some((id, _)) => {
+                            let row_node = all_sessions
+                                .read()
+                                .iter()
+                                .find(|s| s.id == id)
+                                .and_then(|s| s.node.clone());
+                            let source = effective_node(&row_node, &node_primary.get());
+                            rows.into_iter()
+                                .filter(|n| Some(&n.id) != source.as_ref())
+                                .collect()
+                        }
+                        None => rows,
+                    }
+                })
+                cwd_default=Signal::derive(move || {
+                    transfer_for
+                        .get()
+                        .and_then(|(id, _)| {
+                            all_sessions
+                                .read()
+                                .iter()
+                                .find(|s| s.id == id)
+                                .map(|s| s.cwd.clone())
+                        })
+                        .unwrap_or_default()
+                })
+                busy=transfer_busy
+                on_submit=Box::new(move |target: String, remap: Option<String>| {
+                    let Some((id, agent)) = transfer_for.get_untracked() else {
+                        return;
+                    };
+                    transfer_for.set(None);
+                    transfer_busy.set(true);
+                    crate::app::spawn_under(owner.get_value(), async move {
+                        match transfer_session(id, agent, target.clone(), remap).await {
+                            Ok(res) => {
+                                transfer_open.set(false);
+                                sessions.refetch();
+                                if res.warnings.is_empty() {
+                                    toast.success(format!("Transferred to {target}."));
+                                } else {
+                                    toast.info(format!(
+                                        "Transferred to {target} with {} warning(s).",
+                                        res.warnings.len()
+                                    ));
+                                }
+                            }
+                            Err(e) => toast.error(e.to_string()),
+                        }
+                        transfer_busy.set(false);
+                    });
+                })
+            />
+                }
+                .into_any()
+            }
+            {
+                view! {
+            <TransferSheet
+                open=transfer_project_open
+                heading="Transfer project"
+                field_id="transfer-project-cwd"
+                description="Copy every session under this directory to another node — transfers are copies; the originals stay."
+                targets=Signal::derive(move || {
+                    let rows = node_rows.get();
+                    match transfer_project_for.get() {
+                        Some((_, source)) => {
+                            rows.into_iter()
+                                .filter(|n| Some(&n.id) != source.as_ref())
+                                .collect()
+                        }
+                        None => rows,
+                    }
+                })
+                cwd_default=Signal::derive(move || {
+                    transfer_project_for
+                        .get()
+                        .map_or_else(String::new, |(cwd, _)| cwd)
+                })
+                busy=transfer_busy
+                on_submit=Box::new(move |target: String, remap: Option<String>| {
+                    let Some((project_cwd, source)) = transfer_project_for.get_untracked()
+                    else {
+                        return;
+                    };
+                    let Some(source) = source else {
+                        toast.error("Can't tell which node owns this project.");
+                        return;
+                    };
+                    transfer_project_for.set(None);
+                    transfer_busy.set(true);
+                    crate::app::spawn_under(owner.get_value(), async move {
+                        match transfer_project(project_cwd, source, target.clone(), remap)
+                            .await
+                        {
+                            Ok(res) => {
+                                transfer_project_open.set(false);
+                                sessions.refetch();
+                                let moved = res.transferred.len();
+                                if res.failed.is_empty() {
+                                    toast.success(format!(
+                                        "Transferred {moved} session(s) to {target}."
+                                    ));
+                                } else {
+                                    let first = res
+                                        .failed
+                                        .first()
+                                        .map_or_else(String::new, |f| f.error.clone());
+                                    toast.error(format!(
+                                        "Transferred {moved}, {} failed — {first}",
+                                        res.failed.len()
+                                    ));
+                                }
+                            }
+                            Err(e) => toast.error(e.to_string()),
+                        }
+                        transfer_busy.set(false);
+                    });
+                })
             />
                 }
                 .into_any()

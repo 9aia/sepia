@@ -174,6 +174,12 @@ async fn node_descriptor(state: &AppState) -> serde_json::Value {
     if state.pairing.is_some() {
         capabilities.push("pairing");
     }
+    // The store-write seam (`POST /api/sessions/import`) is only wired
+    // when a convertible store exists — the hub's transfer pre-flight
+    // reads this flag instead of eating a 501.
+    if state.convert.is_some() {
+        capabilities.push("import");
+    }
     let identity = state.node_identity();
     json!({
         "id": identity.id,

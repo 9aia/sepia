@@ -61,8 +61,11 @@
       (`SEPIA_CHROMEDRIVER`, `target/webdriver/chromedriver`, or PATH)
       and Chrome (`CHROME_BIN` or PATH).
 - [ ] **Unported surfaces** — managed-server registry, SSH tunnels,
-      gateway proxy (`/api/servers`, `/api/gateway`), project transfer,
-      OTEL. Intentionally out of scope for v0 — nodes must be directly
+      gateway proxy (`/api/servers`, `/api/gateway`). Project transfer
+      done (below); OTEL done (`sepia-telemetry` — OTLP/HTTP spans,
+      `SEPIA_OTEL_ENDPOINT`, W3C propagation hub→node; metrics +
+      NodeClient injection deferred). Remaining out of scope for v0 —
+      nodes must be directly
       reachable (`SEPIA_NODES` URLs); revisit when tailscale-less remote
       nodes matter.
 - [ ] ~~wasm bundle in install~~ — done: `cargo xtask site` (also run
@@ -282,8 +285,18 @@ Intentionally dropped (v0):
 
 - [ ] Managed servers, SSH tunnels, gateway proxy (`/api/servers`,
       `/api/gateway`) — nodes must be directly reachable
-- [ ] Project transfer (push/pull) between nodes
-- [ ] OTEL/telemetry hooks
+- [x] ~~Project transfer (push/pull) between nodes~~ — done:
+      `transfer_session`/`transfer_project` server fns on the hub
+      orchestrate source `export` → target `import` (+ meta copy,
+      verify); copies not moves (import mints a fresh id). UI: row /
+      cwd-group menus, details sheet, project sheet — only when a
+      non-source node exists. Limits in `docs/transfer.md` (cwd
+      contents don't move; devin-store seam only).
+- [x] ~~OTEL/telemetry hooks~~ — done: `sepia-telemetry` crate —
+      opt-in OTLP/HTTP batch export over the existing `tracing` stack;
+      spans on http request middleware (node + hub), hub→node proxy
+      W3C injection, control-plane ops, sync engine, outbox writes.
+      Deferred: metrics, `NodeClient` span injection, browser-side.
 - [ ] Per-browser node credentials (tokens live server-side now —
       this is a security improvement, not a regression)
 

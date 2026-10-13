@@ -17,8 +17,8 @@ use crate::credentials::NodeCredentials;
 use sepia_web::api::NodeApi;
 use sepia_web::dto::{
     AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryMessageDto, HistoryPageDto,
-    ImportResultDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto,
-    RewindResultDto, SessionSummaryDto,
+    ImportResultDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, ProjectTransferDto,
+    PushSubscriptionDto, RewindResultDto, SessionSummaryDto, TransferFailureDto, TransferResultDto,
 };
 use serde_json::Value;
 
@@ -395,6 +395,144 @@ impl SyncNodeApi {
             tracing::warn!(node = %node_id, "engine retarget failed: {e}");
         }
     }
+
+    /// Transfer pre-flight — the target must advertise `"import"` in
+    /// its `/api/node` capabilities (the store-write seam a node only
+    /// wires when a convertible store exists). A descriptor with no
+    /// capability list is lenient (very old nodes predate the flag);
+    /// the import POST still 501s honestly.
+    fn ensure_importable(client: &NodeClient, node_id: &str) -> Result<(), String> {
+        let desc = client.get_json("/api/node").map_err(Self::err_message)?;
+        let Some(caps) = desc.get("capabilities").and_then(Value::as_array) else {
+            return Ok(());
+        };
+        if caps.iter().any(|c| c.as_str() == Some("import")) {
+            return Ok(());
+        }
+        Err(format!(
+            "node {node_id} does not support session import (no store-write backend configured)"
+        ))
+    }
+
+    /// The blocking transfer pipeline for one projected row —
+    /// export → import → overlay copy → verify (`docs/transfer.md`).
+    /// Callers wrap it in `spawn_blocking` (the whole batch loop for
+    /// `transfer_project` rides one worker).
+    fn transfer_one(
+        source_id: &str,
+        source: &NodeClient,
+        target_id: &str,
+        target: &NodeClient,
+        row: &IndexedSession,
+        cwd: Option<&str>,
+    ) -> Result<TransferResultDto, String> {
+        // 1. Pull the complete session IR off the owning node.
+        let agent = (!row.agent.is_empty()).then_some(row.agent.as_str());
+        let export_path = Self::session_path(&row.session_id, "export", agent);
+        let exported = source.get_json(&export_path).map_err(Self::err_message)?;
+        let Some(session) = exported.get("session").filter(|v| v.is_object()) else {
+            return Err(format!(
+                "export from {source_id} returned no session IR for {}",
+                row.session_id
+            ));
+        };
+
+        // 2. Import on the target — the store the session lives in
+        // when it's a store-write target, else the devin store (the
+        // only target today's seam writes).
+        let target_store = if sepia_web_core::composer::is_convert_target(&row.agent) {
+            row.agent.as_str()
+        } else {
+            "devin"
+        };
+        let mut body = serde_json::json!({
+            "agent": target_store,
+            "session": session,
+        });
+        if let Some(c) = cwd {
+            body["cwd"] = serde_json::json!(c);
+        }
+        // Overlay fields the summary carries but the IR may lag behind
+        // (a meta PATCH doesn't rewrite the store row).
+        if !row.title.is_empty() {
+            body["title"] = serde_json::json!(row.title);
+        }
+        if let Some(model) = row.raw.get("model").and_then(Value::as_str) {
+            body["model"] = serde_json::json!(model);
+        }
+        let res = target
+            .send_json("POST", "/api/sessions/import", &body)
+            .map_err(Self::err_message)?;
+        let new_id = res
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "import on target returned no session id".to_string())?
+            .to_string();
+
+        // 3. Overlay copy — pinned/archived flags. `projectIds` is
+        // deliberately skipped: project registries are per-node.
+        // Best-effort — a failed PATCH downgrades to a warning.
+        let mut warnings = Vec::new();
+        let mut patch = serde_json::Map::new();
+        for flag in ["pinned", "archived"] {
+            if row.raw.get(flag).and_then(Value::as_bool) == Some(true) {
+                patch.insert(flag.to_string(), Value::Bool(true));
+            }
+        }
+        if !patch.is_empty() {
+            let patch_path = Self::session_path(&new_id, "", None);
+            if let Err(e) = target.send_json("PATCH", &patch_path, &Value::Object(patch)) {
+                warnings.push(format!(
+                    "meta overlay copy failed: {}",
+                    Self::err_message(e)
+                ));
+            }
+        }
+
+        // 4. Verify — the copy must list on the target. A failed
+        // re-read is a warning, not a failed transfer (the 201 already
+        // vouched for the write).
+        let verify_path = Self::session_path(&new_id, "", None);
+        if let Err(e) = target.get_json(&verify_path) {
+            warnings.push(format!(
+                "imported session did not re-read on {target_id}: {}",
+                Self::err_message(e)
+            ));
+        }
+
+        Ok(TransferResultDto {
+            session_id: row.session_id.clone(),
+            new_session_id: new_id,
+            title: row.title.clone(),
+            cwd: res
+                .get("cwd")
+                .and_then(Value::as_str)
+                .unwrap_or(&row.cwd)
+                .to_string(),
+            agent: res
+                .get("agent")
+                .and_then(Value::as_str)
+                .unwrap_or(target_store)
+                .to_string(),
+            source_node: source_id.to_string(),
+            target_node: target_id.to_string(),
+            warnings,
+        })
+    }
+
+    /// `NodeError` → user-facing text: the node's `{error}` payload
+    /// when the body is JSON, else the raw status line.
+    fn err_message(e: sepia_sync::client::NodeError) -> String {
+        match e {
+            sepia_sync::client::NodeError::Http { status, body } => {
+                serde_json::from_str::<Value>(&body)
+                    .ok()
+                    .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string))
+                    .unwrap_or_else(|| format!("http {status}"))
+            }
+            other => other.to_string(),
+        }
+    }
 }
 
 /// `OutboxEntry` → the UI row — pending and in-flight entries read as
@@ -676,6 +814,105 @@ impl NodeApi for SyncNodeApi {
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
         serde_json::from_value(res).map_err(|e| format!("decode: {e}"))
+    }
+
+    async fn transfer_session(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        target_node: &str,
+        cwd: Option<&str>,
+    ) -> Result<TransferResultDto, String> {
+        // The source is whatever the projection says owns the id —
+        // callers can't name it reliably (a session's `node` annotation
+        // is absent on single-node projections).
+        let (source_id, source) = self.resolve(id, agent)?;
+        if source_id == target_node {
+            return Err(format!(
+                "session {id} already lives on {target_node} — use convert within a node"
+            ));
+        }
+        let target = self.client(target_node)?;
+        // The projected row carries the overlay fields the import body
+        // re-applies (title/model) plus the pinned/archived flags the
+        // follow-up meta PATCH copies.
+        let row = self
+            .projection()
+            .session(&source_id, id)
+            .map_err(|e| format!("projection: {e}"))?
+            .ok_or_else(|| format!("Session not found: {id}"))?;
+        let target_id = target_node.to_string();
+        let cwd = cwd.map(str::to_string);
+        tokio::task::spawn_blocking(move || {
+            Self::ensure_importable(&target, &target_id)?;
+            Self::transfer_one(
+                &source_id,
+                &source,
+                &target_id,
+                &target,
+                &row,
+                cwd.as_deref(),
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn transfer_project(
+        &self,
+        project_cwd: &str,
+        source_node: &str,
+        target_node: &str,
+        cwd: Option<&str>,
+    ) -> Result<ProjectTransferDto, String> {
+        if source_node == target_node {
+            return Err(format!(
+                "project already lives on {target_node} — pick a different target"
+            ));
+        }
+        let source = self.client(source_node)?;
+        let target = self.client(target_node)?;
+        let rows: Vec<IndexedSession> = self
+            .projection()
+            .sessions(Some(source_node))
+            .map_err(|e| format!("projection: {e}"))?
+            .into_iter()
+            .filter(|r| r.cwd == project_cwd)
+            .collect();
+        if rows.is_empty() {
+            return Err(format!("no sessions under {project_cwd} on {source_node}"));
+        }
+        let source_id = source_node.to_string();
+        let target_id = target_node.to_string();
+        let cwd = cwd.map(str::to_string);
+        tokio::task::spawn_blocking(move || {
+            Self::ensure_importable(&target, &target_id)?;
+            let mut out = ProjectTransferDto {
+                source_node: source_id.clone(),
+                target_node: target_id.clone(),
+                ..ProjectTransferDto::default()
+            };
+            for row in rows {
+                match Self::transfer_one(
+                    &source_id,
+                    &source,
+                    &target_id,
+                    &target,
+                    &row,
+                    cwd.as_deref(),
+                ) {
+                    Ok(r) => out.transferred.push(r),
+                    Err(e) => out.failed.push(TransferFailureDto {
+                        session_id: row.session_id.clone(),
+                        title: row.title.clone(),
+                        error: e,
+                    }),
+                }
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     async fn pair(&self, code: &str, node: Option<&str>) -> Result<String, String> {

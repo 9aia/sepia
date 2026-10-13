@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 sepia-web = { workspace = true, features = ["ssr"] }
+sepia-web-core.workspace = true
 leptos = { workspace = true, features = ["ssr"] }
 leptos_router = { workspace = true, features = ["ssr"] }
 leptos_meta = { workspace = true, features = ["ssr"] }

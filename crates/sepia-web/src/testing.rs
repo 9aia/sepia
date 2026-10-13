@@ -524,6 +524,40 @@ impl NodeApi for FakeNodeApi {
         })
     }
 
+    async fn transfer_session(
+        &self,
+        id: &str,
+        _agent: Option<&str>,
+        target_node: &str,
+        _cwd: Option<&str>,
+    ) -> Result<crate::dto::TransferResultDto, String> {
+        self.fail()?;
+        Ok(crate::dto::TransferResultDto {
+            session_id: id.to_string(),
+            new_session_id: "s-transferred".into(),
+            title: "Transferred copy".into(),
+            agent: "devin".into(),
+            source_node: "laptop".into(),
+            target_node: target_node.to_string(),
+            ..crate::dto::TransferResultDto::default()
+        })
+    }
+
+    async fn transfer_project(
+        &self,
+        _project_cwd: &str,
+        source_node: &str,
+        target_node: &str,
+        _cwd: Option<&str>,
+    ) -> Result<crate::dto::ProjectTransferDto, String> {
+        self.fail()?;
+        Ok(crate::dto::ProjectTransferDto {
+            source_node: source_node.to_string(),
+            target_node: target_node.to_string(),
+            ..crate::dto::ProjectTransferDto::default()
+        })
+    }
+
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String> {
         self.fail()?;
         Ok(self.agents.clone())

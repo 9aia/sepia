@@ -4610,6 +4610,7 @@ dependencies = [
  "sepia-telemetry",
  "sepia-testkit",
  "sepia-web",
+ "sepia-web-core",
  "serde",
  "serde_json",
  "tempfile",

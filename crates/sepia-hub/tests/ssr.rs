@@ -14,7 +14,8 @@ use sepia_web::api::NodeApi;
 use sepia_web::dto::{
     AgentCapabilitiesDto, AgentDto, AttachResultDto, CheckpointDto, CreateResultDto,
     HistoryPageDto, ImportResultDto, NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto,
-    PromptCapabilitiesDto, PushSubscriptionDto, SessionCapabilitiesDto, SessionSummaryDto,
+    ProjectTransferDto, PromptCapabilitiesDto, PushSubscriptionDto, SessionCapabilitiesDto,
+    SessionSummaryDto, TransferResultDto,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -184,6 +185,33 @@ impl NodeApi for StubNodeApi {
                 .and_then(Value::as_str)
                 .unwrap_or("devin")
                 .to_string(),
+        })
+    }
+
+    async fn transfer_session(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        target_node: &str,
+        _cwd: Option<&str>,
+    ) -> Result<TransferResultDto, String> {
+        Ok(TransferResultDto {
+            target_node: target_node.to_string(),
+            ..TransferResultDto::default()
+        })
+    }
+
+    async fn transfer_project(
+        &self,
+        _project_cwd: &str,
+        source_node: &str,
+        target_node: &str,
+        _cwd: Option<&str>,
+    ) -> Result<ProjectTransferDto, String> {
+        Ok(ProjectTransferDto {
+            source_node: source_node.to_string(),
+            target_node: target_node.to_string(),
+            ..ProjectTransferDto::default()
         })
     }
 

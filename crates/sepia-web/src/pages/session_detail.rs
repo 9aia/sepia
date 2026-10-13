@@ -30,6 +30,7 @@ use crate::api::{
     answer_permission, archive_session, attach_session, cancel_run, convert_session,
     delete_session, detach_session, pin_session, rename_session, restore_checkpoint,
     rewind_session, send_prompt, session_history, set_session_model, set_session_projects,
+    transfer_session,
 };
 use crate::components::icons::Icon;
 use crate::components::toast::use_toast;
@@ -38,9 +39,10 @@ use crate::components::{
     CardDescription, CardHeader, CardTitle, ConfirmDialog, Dropdown, ErrorBanner, Input, MenuItem,
     MenuSeparator, Sheet, SheetBody, SheetHeader, SheetTitle, Skeleton,
 };
-use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto};
+use crate::dto::{CheckpointDto, HistoryMessageDto, HistoryPageDto, NodeStatusDto};
 use crate::markdown::Markdown;
 use crate::pages::SessionListPanel;
+use crate::transfer::TransferSheet;
 use tw_merge::IntoTailwindClass;
 
 const PAGE_SIZE: i64 = 100;
@@ -401,6 +403,20 @@ pub fn SessionPanel(
     let pending = crate::api::shared().pending;
     // The projects catalog — the details sheet's membership toggles.
     let projects = crate::api::shared().projects;
+    // Node registry — the transfer sheet's target list. Mirror-signal
+    // like the list page's `node_rows` (SSR/hydrate render empty).
+    let node_rows = RwSignal::new(Vec::<NodeStatusDto>::new());
+    #[cfg(feature = "hydrate")]
+    {
+        let nodes = crate::api::shared().nodes;
+        Effect::new(move |_| {
+            node_rows.set(nodes.get().and_then(Result::ok).unwrap_or_default());
+        });
+    }
+    // Cross-node transfer — the details sheet's "Transfer to node…"
+    // opens the shared picker; `transfer_busy` gates the submit.
+    let transfer_open = RwSignal::new(false);
+    let transfer_busy = RwSignal::new(false);
 
     let toast = use_toast();
     // Action state lives at page level: a summary refetch re-runs the
@@ -524,6 +540,36 @@ pub fn SessionPanel(
                 Err(e) => toast.error(e.to_string()),
             }
             acting.set(false);
+        });
+    };
+    // Cross-node transfer — the hub exports the IR off this node and
+    // imports it on the picked target (`docs/transfer.md`). `transfer_*`
+    // flags are page-level like `acting` so a summary refetch can't
+    // drop an in-flight submit's state.
+    let do_transfer = move |target: String, remap: Option<String>| {
+        if transfer_busy.get() {
+            return;
+        }
+        transfer_busy.set(true);
+        let id = session_id();
+        let agent = agent();
+        crate::app::spawn_under(owner.get_value(), async move {
+            match transfer_session(id, agent, target.clone(), remap).await {
+                Ok(res) => {
+                    transfer_open.set(false);
+                    client.invalidate_query(crate::api::sessions_scope, ());
+                    if res.warnings.is_empty() {
+                        toast.success(format!("Transferred to {target}."));
+                    } else {
+                        toast.info(format!(
+                            "Transferred to {target} with {} warning(s).",
+                            res.warnings.len()
+                        ));
+                    }
+                }
+                Err(e) => toast.error(e.to_string()),
+            }
+            transfer_busy.set(false);
         });
     };
     // Meta-overlay toggles — `PATCH /api/sessions/{id}` `{pinned}` /
@@ -1043,6 +1089,11 @@ pub fn SessionPanel(
                                     .clone()
                                     .unwrap_or_else(|| "local".to_string());
                                 let session_node_opt = session.node.clone();
+                                // Transfer affordance — two clones
+                                // (button gate + sheet target derive).
+                                let transfer_source = session.node.clone();
+                                let transfer_source_btn = session.node.clone();
+                                let transfer_cwd = session.cwd.clone();
                                 let sheet_updated = session.updated_at.clone();
                                 let sheet_source = session.source.clone();
                                 let sheet_agent_id = session.agent_id.clone();
@@ -1609,6 +1660,40 @@ pub fn SessionPanel(
                                                     >
                                                         "Export JSON"
                                                     </a>
+                                                    // Cross-node copy —
+                                                    // only when a second
+                                                    // node could take it
+                                                    // (`docs/transfer.md`).
+                                                    {move || {
+                                                        let rows = node_rows.get();
+                                                        let targets: Vec<NodeStatusDto> = rows
+                                                            .iter()
+                                                            .filter(|n| {
+                                                                Some(&n.id)
+                                                                    != transfer_source_btn.as_ref()
+                                                            })
+                                                            .cloned()
+                                                            .collect();
+                                                        (rows.len() > 1 && !targets.is_empty())
+                                                            .then(|| {
+                                                                view! {
+                                                                    <Button
+                                                                        variant=ButtonVariant::Outline
+                                                                        size=ButtonSize::Sm
+                                                                        disabled=acting
+                                                                        on_click=Box::new(move || {
+                                                                            transfer_open.set(true);
+                                                                        })
+                                                                    >
+                                                                        <Icon
+                                                                            name="arrow-right-left"
+                                                                            class="size-3.5"
+                                                                        />
+                                                                        "Transfer to node…"
+                                                                    </Button>
+                                                                }
+                                                            })
+                                                    }}
                                                 </div>
                                             </div>
                                             <div class="rounded-md border border-destructive/40 p-3">
@@ -1630,6 +1715,27 @@ pub fn SessionPanel(
                                             </div>
                                         </SheetBody>
                                     </Sheet>
+                                    // The node picker — targets are the
+                                    // registry minus this session's
+                                    // owning node; `do_transfer` owns
+                                    // the call, toasts, and close.
+                                    <TransferSheet
+                                        open=transfer_open
+                                        heading="Transfer session"
+                                        description="Copy this session to another node — the copy resumes under that machine's checkout; the original stays on this one."
+                                        targets=Signal::derive(move || {
+                                            node_rows
+                                                .get()
+                                                .into_iter()
+                                                .filter(|n| {
+                                                    Some(&n.id) != transfer_source.as_ref()
+                                                })
+                                                .collect()
+                                        })
+                                        cwd_default=Signal::derive(move || transfer_cwd.clone())
+                                        busy=transfer_busy
+                                        on_submit=Box::new(do_transfer)
+                                    />
                                     }.into_any()}
                                     {view! {
                                     <div class="relative flex min-h-40 flex-1 flex-col">

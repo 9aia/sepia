@@ -19,8 +19,8 @@ pub use sepia_web_core::rewind::RewindSelector;
 
 use crate::dto::{
     AgentDto, AttachResultDto, CheckpointDto, CreateResultDto, HistoryPageDto, ImportResultDto,
-    NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, PushSubscriptionDto, RewindResultDto,
-    SessionSummaryDto,
+    NodeInfoDto, NodeStatusDto, PendingWriteDto, ProjectDto, ProjectTransferDto,
+    PushSubscriptionDto, RewindResultDto, SessionSummaryDto, TransferResultDto,
 };
 
 /// Port to the node's `/api/*` surface — implemented by [`HttpNodeApi`]
@@ -114,6 +114,28 @@ pub trait NodeApi: Send + Sync + 'static {
     /// [`sepia_web_core::composer::import_body`] shaped → the created
     /// row.
     async fn import(&self, body: &Value) -> Result<ImportResultDto, String>;
+    /// Cross-node transfer (`docs/transfer.md`): pull `/export` from
+    /// the session's owning node, `/import` on `target_node`, copy the
+    /// pinned/archived overlay, verify the copy lists. `cwd` remaps
+    /// the session's working directory on the target. Requires a
+    /// multi-node registry — single-node implementations `Err`.
+    async fn transfer_session(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+        target_node: &str,
+        cwd: Option<&str>,
+    ) -> Result<TransferResultDto, String>;
+    /// `transfer_session` for every projected session under
+    /// `project_cwd` on `source_node` — per-session failures collect
+    /// in [`ProjectTransferDto::failed`] instead of aborting.
+    async fn transfer_project(
+        &self,
+        project_cwd: &str,
+        source_node: &str,
+        target_node: &str,
+        cwd: Option<&str>,
+    ) -> Result<ProjectTransferDto, String>;
     /// `GET /api/agents`.
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String>;
     /// `GET /api/projects`.
@@ -618,6 +640,63 @@ pub async fn import_session(body: Value) -> Result<ImportResultDto, ServerFnErro
         ));
     }
     node_api()?.import(&body).await.map_err(ServerFnError::new)
+}
+
+/// Cross-node transfer (`docs/transfer.md`): the hub exports the IR
+/// off the session's node and imports it on `target_node`. `cwd`, when
+/// non-empty, remaps the working directory on the target machine.
+#[server(prefix = "/hub")]
+pub async fn transfer_session(
+    session_id: String,
+    agent: Option<String>,
+    target_node: String,
+    cwd: Option<String>,
+) -> Result<TransferResultDto, ServerFnError> {
+    let cwd = cwd.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    if session_id.is_empty() || target_node.trim().is_empty() {
+        return Err(ServerFnError::new(
+            "a session id and a target node are required",
+        ));
+    }
+    node_api()?
+        .transfer_session(
+            &session_id,
+            agent.as_deref(),
+            target_node.trim(),
+            cwd.as_deref(),
+        )
+        .await
+        .map_err(ServerFnError::new)
+}
+
+/// `transfer_session` over every session under `project_cwd` on
+/// `source_node` — the cwd-group move. Per-session failures collect
+/// in the result's `failed` list rather than aborting.
+#[server(prefix = "/hub")]
+pub async fn transfer_project(
+    project_cwd: String,
+    source_node: String,
+    target_node: String,
+    cwd: Option<String>,
+) -> Result<ProjectTransferDto, ServerFnError> {
+    let cwd = cwd.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    if project_cwd.trim().is_empty()
+        || source_node.trim().is_empty()
+        || target_node.trim().is_empty()
+    {
+        return Err(ServerFnError::new(
+            "a project cwd, a source node, and a target node are required",
+        ));
+    }
+    node_api()?
+        .transfer_project(
+            project_cwd.trim(),
+            source_node.trim(),
+            target_node.trim(),
+            cwd.as_deref(),
+        )
+        .await
+        .map_err(ServerFnError::new)
 }
 
 /// `GET /api/agents`.
@@ -1264,6 +1343,28 @@ impl NodeApi for HttpNodeApi {
         })
         .await
         .map_err(|e| e.to_string())?
+    }
+
+    async fn transfer_session(
+        &self,
+        _id: &str,
+        _agent: Option<&str>,
+        _target_node: &str,
+        _cwd: Option<&str>,
+    ) -> Result<TransferResultDto, String> {
+        // A direct connection sees exactly one node — there's nowhere
+        // to send. Transfer is the sync-hub (`SyncNodeApi`) feature.
+        Err("session transfer needs a multi-node hub (SEPIA_NODES)".to_string())
+    }
+
+    async fn transfer_project(
+        &self,
+        _project_cwd: &str,
+        _source_node: &str,
+        _target_node: &str,
+        _cwd: Option<&str>,
+    ) -> Result<ProjectTransferDto, String> {
+        Err("project transfer needs a multi-node hub (SEPIA_NODES)".to_string())
     }
 
     async fn list_agents(&self) -> Result<Vec<AgentDto>, String> {

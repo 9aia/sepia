@@ -22,6 +22,7 @@ pub mod sse;
 #[cfg(feature = "ssr")]
 pub mod testing;
 pub mod time;
+pub mod transfer;
 
 pub use app::App;
 

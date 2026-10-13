@@ -258,6 +258,61 @@ pub struct ImportResultDto {
     pub agent: String,
 }
 
+/// One transferred session — the hub's export→import orchestration
+/// result (`docs/transfer.md`). `new_session_id` is the copy the
+/// target minted; transfers always create new ids.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferResultDto {
+    /// Source session id.
+    pub session_id: String,
+    /// The imported copy's id on the target node.
+    #[serde(default)]
+    pub new_session_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub cwd: String,
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub source_node: String,
+    #[serde(default)]
+    pub target_node: String,
+    /// Non-fatal follow-up failures (meta copy, verify) — the transfer
+    /// itself landed.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+/// A per-session failure inside a `transfer_project` batch — the row
+/// the loop skipped plus why.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferFailureDto {
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub error: String,
+}
+
+/// `transfer_project` result — every session under the cwd was
+/// attempted; failures don't abort the batch.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTransferDto {
+    #[serde(default)]
+    pub transferred: Vec<TransferResultDto>,
+    #[serde(default)]
+    pub failed: Vec<TransferFailureDto>,
+    #[serde(default)]
+    pub source_node: String,
+    #[serde(default)]
+    pub target_node: String,
+}
+
 /// `GET /api/agents` row — `sepia_http::routes::AgentWire`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
