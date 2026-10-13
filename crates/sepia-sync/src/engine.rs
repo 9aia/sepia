@@ -34,10 +34,12 @@ pub struct SyncOptions {
     pub connect_timeout: Duration,
     /// End-to-end budget for REST calls (list, post, refetch).
     pub request_timeout: Duration,
-    /// Max lifetime of one SSE subscription — the stream is reconnected
-    /// (and the index re-listed) when it lapses. Also bounds how long a
-    /// dead-silent SSE read can outlive engine shutdown.
-    pub sse_max_age: Duration,
+    /// Max feed silence before the SSE subscription is declared dropped
+    /// — reconnected (and the index re-listed) when it lapses. The
+    /// node's heartbeats keep a healthy stream open indefinitely; this
+    /// also bounds how long a dead-silent SSE read can outlive engine
+    /// shutdown.
+    pub sse_idle_timeout: Duration,
     /// First reconnect delay.
     pub backoff_min: Duration,
     /// Reconnect-delay cap.
@@ -55,7 +57,7 @@ impl Default for SyncOptions {
         Self {
             connect_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(15),
-            sse_max_age: Duration::from_secs(60),
+            sse_idle_timeout: Duration::from_secs(60),
             backoff_min: Duration::from_secs(1),
             backoff_max: Duration::from_secs(30),
             resync_interval: Duration::from_secs(300),
@@ -70,7 +72,7 @@ impl SyncOptions {
         ClientConfig {
             connect_timeout: self.connect_timeout,
             request_timeout: self.request_timeout,
-            sse_max_age: self.sse_max_age,
+            sse_idle_timeout: self.sse_idle_timeout,
         }
     }
 }
@@ -312,8 +314,8 @@ impl SyncHandle {
     }
 
     /// Stop every loop and await the supervisor. The SSE pump threads
-    /// exit at the next feed frame or the `sse_max_age` read deadline —
-    /// [`Self::active_pumps`] reports stragglers.
+    /// exit at the next feed frame or the `sse_idle_timeout` read
+    /// deadline — [`Self::active_pumps`] reports stragglers.
     pub async fn shutdown(self) {
         self.cancel.cancel();
         let _ = self.supervisor.await;
@@ -360,8 +362,8 @@ async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Cmd>, cancel: Can
                         .insert(target.node.id.clone(), target.clone());
                     // A re-add retargets the node — abort the old loop
                     // (its SSE pump exits at the next frame or the
-                    // `sse_max_age` deadline) and respawn with the new
-                    // url/token. The projection keeps its rows.
+                    // `sse_idle_timeout` deadline) and respawn with the
+                    // new url/token. The projection keeps its rows.
                     if let Some(prev) = tasks.remove(&target.node.id) {
                         prev.abort();
                     }
@@ -557,16 +559,17 @@ async fn connect_once(
     };
 
     stop.store(true, Ordering::Relaxed);
-    // Bounded by `sse_max_age` (the read deadline) — keeps the loop's
-    // task slot clean while the pump wakes on the next heartbeat.
+    // Bounded by `sse_idle_timeout` (the read deadline) — keeps the
+    // loop's task slot clean while the pump wakes on the next
+    // heartbeat.
     let _ = tokio::task::spawn_blocking(move || pump.join()).await;
     end
 }
 
 /// Blocking SSE pump — one std thread per live connection. Reads
 /// frames, forwards them to the async loop, checks `stop` between
-/// frames (the node's heartbeat cadence and the `sse_max_age` body
-/// deadline bound the wakeup latency).
+/// frames (the node's heartbeat cadence and the `sse_idle_timeout`
+/// silence bound cap the wakeup latency).
 fn sse_pump(
     client: &NodeClient,
     tx: &mpsc::Sender<PumpMsg>,

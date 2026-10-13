@@ -7,26 +7,27 @@
 //! `/api/events` node feed as a `data: {json}` SSE line reader.
 
 use std::io::{BufRead, BufReader};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sepia_proto::SessionEvent;
 use serde_json::Value;
 use ureq::http::Response;
 use ureq::{Agent, Body, BodyReader, RequestBuilder};
 
-/// Per-request budgets. `sse_max_age` doubles as the cancellation bound
-/// for the SSE pump thread: ureq's `recv_body` timeout is a total
-/// body-phase deadline, so the stream is cut at most that long after it
-/// opens (heartbeats wake the reader far sooner on a healthy node).
+/// Per-request budgets. `sse_idle_timeout` doubles as the cancellation
+/// bound for the SSE pump thread: it's the maximum feed *silence* the
+/// reader tolerates — the node's heartbeats keep a healthy stream open
+/// indefinitely, while a dead connection is cut within the window.
 #[derive(Clone, Copy, Debug)]
 pub struct ClientConfig {
     /// TCP connect (+ TLS handshake) budget.
     pub connect_timeout: Duration,
     /// End-to-end budget for plain REST calls.
     pub request_timeout: Duration,
-    /// Max lifetime of one SSE stream; the engine reconnects and
-    /// re-syncs when it lapses.
-    pub sse_max_age: Duration,
+    /// Max feed silence before an SSE stream is declared dropped — the
+    /// engine reconnects and re-syncs when it lapses. Must stay well
+    /// above the node's `SEPIA_SSE_KEEPALIVE_MS` heartbeat cadence.
+    pub sse_idle_timeout: Duration,
 }
 
 impl Default for ClientConfig {
@@ -34,7 +35,7 @@ impl Default for ClientConfig {
         Self {
             connect_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(15),
-            sse_max_age: Duration::from_secs(60),
+            sse_idle_timeout: Duration::from_secs(60),
         }
     }
 }
@@ -365,8 +366,9 @@ impl NodeClient {
     }
 
     /// `GET /api/events` — the node-level feed. The returned reader
-    /// yields [`FeedEvent`]s until EOF or the `sse_max_age` body deadline
-    /// trips (then `next_event` errors and the caller reconnects).
+    /// yields [`FeedEvent`]s until EOF or the feed stays silent past
+    /// `sse_idle_timeout` (then `next_event` errors and the caller
+    /// reconnects).
     ///
     /// # Errors
     /// On connect failure or a non-2xx status.
@@ -392,7 +394,10 @@ impl NodeClient {
 
     /// The SSE request gets its own timeout profile: no global deadline
     /// (the stream is open-ended), a bounded header wait, and the
-    /// `sse_max_age` body budget as the read deadline.
+    /// `sse_idle_timeout` body budget. ureq enforces `recv_body` as a
+    /// *total* deadline — once spent, socket reads keep polling on a
+    /// ~1s timeout; [`EventStream::with_stall_timeout`] turns that into
+    /// a real silence bound so a heartbeating stream stays open.
     fn open_stream(
         &self,
         req: RequestBuilder<ureq::typestate::WithoutBody>,
@@ -401,7 +406,7 @@ impl NodeClient {
             .config()
             .timeout_global(None)
             .timeout_recv_response(Some(self.config.request_timeout))
-            .timeout_recv_body(Some(self.config.sse_max_age))
+            .timeout_recv_body(Some(self.config.sse_idle_timeout))
             .timeout_connect(Some(self.config.connect_timeout))
             .build()
             .call()
@@ -416,7 +421,8 @@ impl NodeClient {
                 .unwrap_or_default();
             return Err(NodeError::Http { status, body });
         }
-        Ok(EventStream::from_reader(res.into_body().into_reader()))
+        Ok(EventStream::from_reader(res.into_body().into_reader())
+            .with_stall_timeout(self.config.sse_idle_timeout))
     }
 }
 
@@ -456,6 +462,26 @@ pub struct EventStream<R: std::io::Read> {
     reader: BufReader<R>,
     event: Option<String>,
     data: String,
+    /// Feed-silence bound — `None` (in-memory readers, tests) means any
+    /// read error ends the stream immediately.
+    stall_timeout: Option<Duration>,
+    /// Last time the wire produced bytes — heartbeat frames and comment
+    /// pings count, so a healthy stream never trips the stall bound.
+    last_progress: Instant,
+}
+
+/// ureq maps transport timeouts to `Error::Timeout`, wrapped in an
+/// `io::Error` of kind `Other` once it crosses the `Read` boundary.
+fn is_timeout(e: &std::io::Error) -> bool {
+    if matches!(
+        e.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    ) {
+        return true;
+    }
+    e.get_ref()
+        .and_then(|inner| inner.downcast_ref::<ureq::Error>())
+        .is_some_and(|e| matches!(e, ureq::Error::Timeout(_)))
 }
 
 impl<R: std::io::Read> EventStream<R> {
@@ -466,7 +492,21 @@ impl<R: std::io::Read> EventStream<R> {
             reader: BufReader::new(reader),
             event: None,
             data: String::new(),
+            stall_timeout: None,
+            last_progress: Instant::now(),
         }
+    }
+
+    /// `d` bounds feed silence. ureq's `recv_body` budget is total, not
+    /// per-read — once spent, reads keep failing on a ~1s poll, so a
+    /// timeout while the last received byte is younger than `d` just
+    /// means "nothing new" and the read is retried; the stream ends
+    /// only after `d` of real silence. Server heartbeats keep a healthy
+    /// feed open indefinitely.
+    #[must_use]
+    pub fn with_stall_timeout(mut self, d: Duration) -> Self {
+        self.stall_timeout = (d > Duration::ZERO).then_some(d);
+        self
     }
 
     /// Next frame, blocking. `Ok(None)` on clean EOF; a partial pending
@@ -486,6 +526,7 @@ impl<R: std::io::Read> EventStream<R> {
                     return Ok(Some(self.dispatch()));
                 }
                 Ok(_) => {
+                    self.last_progress = Instant::now();
                     let line = line.trim_end_matches(['\n', '\r']);
                     if line.is_empty() {
                         if self.data.is_empty() && self.event.is_none() {
@@ -506,7 +547,17 @@ impl<R: std::io::Read> EventStream<R> {
                     }
                     // `id:` / `retry:` / unknown fields — ignored.
                 }
-                Err(e) => return Err(NodeError::Io(e)),
+                Err(e) => {
+                    // A timed-out read inside the stall window means a
+                    // quiet feed, not a dead one — keep reading.
+                    let quiet = self
+                        .stall_timeout
+                        .is_some_and(|d| self.last_progress.elapsed() < d);
+                    if quiet && is_timeout(&e) {
+                        continue;
+                    }
+                    return Err(NodeError::Io(e));
+                }
             }
         }
     }
@@ -589,6 +640,55 @@ mod tests {
             }
         }
         out
+    }
+
+    /// Reader that fails the first `timeouts` reads with `TimedOut`,
+    /// then delegates — stands in for ureq's post-deadline ~1s polls.
+    struct TimeoutThen<R: std::io::Read> {
+        inner: R,
+        timeouts: usize,
+    }
+
+    impl<R: std::io::Read> std::io::Read for TimeoutThen<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.timeouts > 0 {
+                self.timeouts -= 1;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "read timed out",
+                ));
+            }
+            self.inner.read(buf)
+        }
+    }
+
+    #[test]
+    fn read_timeouts_inside_the_stall_window_are_retried() {
+        // ureq's recv_body deadline is total: once it lapses reads keep
+        // timing out. While the feed was recently alive those errors
+        // are retried — the stream survives and the next frame lands.
+        let reader = TimeoutThen {
+            inner: "event: heartbeat\ndata: {}\n\n".as_bytes(),
+            timeouts: 3,
+        };
+        let mut stream =
+            EventStream::from_reader(reader).with_stall_timeout(Duration::from_secs(60));
+        assert_eq!(stream.next_event().unwrap(), Some(FeedEvent::Heartbeat));
+    }
+
+    #[test]
+    fn silence_past_the_stall_window_ends_the_stream() {
+        // Nothing has arrived since construction and the window has
+        // lapsed — a timed-out read is a dropped connection, not a
+        // quiet feed.
+        let reader = TimeoutThen {
+            inner: "".as_bytes(),
+            timeouts: usize::MAX,
+        };
+        let mut stream =
+            EventStream::from_reader(reader).with_stall_timeout(Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(stream.next_event().is_err());
     }
 
     #[test]

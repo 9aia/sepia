@@ -247,9 +247,9 @@ fn fast_options() -> SyncOptions {
         on_event: None,
         connect_timeout: Duration::from_millis(300),
         request_timeout: Duration::from_secs(2),
-        // Long enough that no mid-test reconnect gap drops emitted
+        // Long enough that no mid-test stall reconnect drops emitted
         // events — pump teardown is still bounded by the 40ms heartbeat.
-        sse_max_age: Duration::from_secs(30),
+        sse_idle_timeout: Duration::from_secs(30),
         backoff_min: Duration::from_millis(30),
         backoff_max: Duration::from_millis(200),
         resync_interval: Duration::from_secs(3600),
