@@ -152,6 +152,11 @@ impl Outbox {
     /// # Errors
     /// On sqlite/serde failure.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        name = "outbox_enqueue",
+        skip_all,
+        fields(node.id = %node_id, session = %session_id, op = %op)
+    )]
     pub fn enqueue(
         &self,
         node_id: &str,
@@ -277,6 +282,7 @@ impl Outbox {
     ///
     /// # Errors
     /// On sqlite failure.
+    #[tracing::instrument(name = "outbox_mark_failed", skip_all, fields(entry = %id))]
     pub fn mark_failed(&self, id: &str, error: &str) -> Result<Status, OutboxError> {
         let conn = self
             .conn

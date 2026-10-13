@@ -1085,6 +1085,7 @@ impl ControlPlane {
     ///
     /// # Errors
     /// `not_found`/`unknown_agent`/`invalid`/`locked`/`internal`/`conflict`.
+    #[tracing::instrument(name = "control_attach", skip_all, fields(session = %id, takeover, agent = ?agent_id))]
     pub async fn attach(
         self: &Arc<Self>,
         id: &str,
@@ -1152,6 +1153,7 @@ impl ControlPlane {
     ///
     /// # Errors
     /// `invalid`/`unknown_agent`/`internal`.
+    #[tracing::instrument(name = "control_create_session", skip_all, fields(cwd = %cwd, agent = ?agent_id))]
     pub async fn create_session(
         self: &Arc<Self>,
         cwd: &str,
@@ -1213,6 +1215,7 @@ impl ControlPlane {
     }
 
     /// Detach a live session (no-op when not attached).
+    #[tracing::instrument(name = "control_detach", skip_all, fields(session = %id))]
     pub async fn detach(&self, id: &str) {
         let live = self.state.lock().await.live.remove(id);
         if let Some(live) = live {
@@ -1238,6 +1241,7 @@ impl ControlPlane {
     ///
     /// # Errors
     /// `invalid`/`busy`/`internal`.
+    #[tracing::instrument(name = "control_prompt", skip_all, fields(session = %id, agent = ?agent_id))]
     pub async fn prompt(
         &self,
         id: &str,
@@ -1302,6 +1306,7 @@ impl ControlPlane {
     ///
     /// # Errors
     /// `invalid`/`internal`.
+    #[tracing::instrument(name = "control_cancel", skip_all, fields(session = %id, agent = ?agent_id))]
     pub async fn cancel(&self, id: &str, agent_id: Option<&str>) -> Result<(), ControlError> {
         let conn = {
             let state = self.state.lock().await;
@@ -1319,6 +1324,7 @@ impl ControlPlane {
     ///
     /// # Errors
     /// `not_found`/`unknown_agent`/`invalid`/`internal`.
+    #[tracing::instrument(name = "control_delete_session", skip_all, fields(session = %id, agent = ?agent_id))]
     pub async fn delete_session(
         self: &Arc<Self>,
         id: &str,
@@ -1399,6 +1405,7 @@ impl ControlPlane {
     ///
     /// # Errors
     /// `invalid` when not attached, `not_found` on unknown request id.
+    #[tracing::instrument(name = "control_permission", skip_all, fields(session = %id, request = %request_id, agent = ?agent_id))]
     pub async fn respond_to_permission(
         &self,
         id: &str,
@@ -1953,6 +1960,7 @@ impl ControlPlane {
     ///
     /// # Errors
     /// `invalid`/`not_found`/`busy`/`locked`/`conflict`/`internal`.
+    #[tracing::instrument(name = "control_restore", skip_all, fields(session = %id, agent = ?agent_id))]
     pub async fn restore(
         &self,
         id: &str,
@@ -2007,6 +2015,7 @@ impl ControlPlane {
     ///
     /// # Errors
     /// `invalid`/`not_found`/`busy`/`locked`/`conflict`/`internal`.
+    #[tracing::instrument(name = "control_rewind", skip_all, fields(session = %id, agent = ?agent_id))]
     pub async fn rewind(
         self: &Arc<Self>,
         id: &str,

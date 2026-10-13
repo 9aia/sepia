@@ -1124,12 +1124,10 @@ fn run_service(cmd: &ServiceCommands) -> Result<(), CliError> {
 }
 
 fn serve() -> Result<(), CliError> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    // fmt + RUST_LOG as always; OTLP span export layered on when
+    // SEPIA_OTEL_ENDPOINT / OTEL_EXPORTER_OTLP_* is set. The guard's
+    // Drop flushes the provider when `block_on` returns.
+    let _telemetry = sepia_telemetry::init();
     let env = sepia_http::Env::parse().map_err(|e| CliError(e.to_string()))?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()

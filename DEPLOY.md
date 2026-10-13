@@ -113,6 +113,32 @@ in the hub's credential store (OS keyring or
 `hub/credentials.json`), or as explicit config via `SEPIA_NODES`
 `@token` / `SEPIA_NODE_TOKEN`. The browser never stores them.
 
+## Telemetry
+
+Both daemons export OpenTelemetry traces (OTLP/HTTP) when an endpoint
+is configured — tracing-only otherwise, no flag required:
+
+- `SEPIA_OTEL_ENDPOINT` — OTLP/HTTP base URL, e.g.
+  `http://localhost:4318` (`/v1/traces` is appended when absent).
+  `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+  are honored too, along with the rest of the standard
+  `OTEL_EXPORTER_OTLP_*` config (headers, timeout, compression).
+- `SEPIA_OTEL_SERVICE_NAME` — the `service.name` resource
+  (default `sepia`; `OTEL_SERVICE_NAME` also honored).
+
+```bash
+# Any OTLP/HTTP collector works — e.g. the all-in-one distro:
+docker run --rm -p 4318:4318 -p 16686:16686 jaegertracing/jaeger:latest
+SEPIA_OTEL_ENDPOINT=http://localhost:4318 SEPIA_OTEL_SERVICE_NAME=sepia-node sepia serve
+```
+
+Traces cover `http_request` server spans (hub and node `/api/*`, with
+W3C `traceparent` propagated hub→node), control-plane ops
+(`control_prompt`/`attach`/`cancel`/…), the sync engine
+(`sync_node_loop`/`sync_connect`/`sync_outbox_drain`), and outbox
+writes. Metrics and browser-side telemetry aren't wired yet —
+tracing-only for now.
+
 ## PWA + push
 
 `sepia-hub` serves `manifest.json`, `sw.js`, `icon.svg` — installing

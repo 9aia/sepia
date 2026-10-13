@@ -1,9 +1,12 @@
 //! Boot-time configuration — port of `apps/server/src/env.ts` minus the
-//! surfaces this crate doesn't serve (UI assets, OTEL, the servers
-//! registry, the Devin DB — the driver binary opens that itself via
+//! surfaces this crate doesn't serve (UI assets, the servers registry,
+//! the Devin DB — the driver binary opens that itself via
 //! `SEPIA_DEVIN_DB`). Plane tunables `sepia-control`/`sepia-acp` read
 //! directly (`SEPIA_LOCK_TTL_MS`, `SEPIA_HISTORY_LIMIT`,
-//! `SEPIA_INHERIT_ENV`, `SEPIA_DEBUG`) deliberately don't ride `Env`.
+//! `SEPIA_INHERIT_ENV`, `SEPIA_DEBUG`) deliberately don't ride `Env`;
+//! neither do the OTEL knobs `sepia-telemetry` reads at boot
+//! (`SEPIA_OTEL_ENDPOINT`, `SEPIA_OTEL_SERVICE_NAME`, and the standard
+//! `OTEL_EXPORTER_OTLP_*` vars — see `DEPLOY.md` "Telemetry").
 //! `Env::parse` fails fast on bad values, like the TS schema.
 
 use std::collections::HashMap;

@@ -25,6 +25,7 @@ use axum::routing::any;
 use axum::{Router, serve as axum_serve};
 use sepia_control::ControlPlane;
 use sepia_meta::MetaStore;
+use tracing::Instrument;
 
 pub use env::{Env, EnvError};
 pub use feed::{EventFeed, HeldWatches, InstrumentedMeta, LiveListeners};
@@ -271,6 +272,22 @@ async fn cors_layer(State(state): State<AppState>, req: Request<Body>, next: Nex
     res
 }
 
+/// OTEL server span — the outermost layer. Extracts the W3C remote
+/// parent (`traceparent`/`tracestate`) so proxied hub→node calls join
+/// the hub's trace; requests without context get a local-root
+/// `http_request` span. Inert (plain span) when export is off.
+async fn trace_layer(req: Request<Body>, next: Next) -> Response {
+    let span = sepia_telemetry::server_span(req.method(), req.uri().path(), req.headers());
+    let for_status = span.clone();
+    async move {
+        let res = next.run(req).await;
+        sepia_telemetry::record_response(&for_status, res.status().as_u16());
+        res
+    }
+    .instrument(span)
+    .await
+}
+
 /// One line per request — `/api/health` excluded, like the TS logger.
 async fn log_layer(req: Request<Body>, next: Next) -> Response {
     let method = req.method().clone();
@@ -356,13 +373,14 @@ pub fn app(state: AppState) -> Router {
         // 2MiB `DefaultBodyLimit` stays on as the backstop for any
         // future extractor-based read (Json/Bytes/String/Multipart
         // all honor it).
-        // Innermost → outermost: auth gate, request log, CORS.
+        // Innermost → outermost: auth gate, request log, CORS, trace.
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_gate,
         ))
         .layer(middleware::from_fn(log_layer))
         .layer(middleware::from_fn_with_state(state.clone(), cors_layer))
+        .layer(middleware::from_fn(trace_layer))
         .with_state(state)
 }
 

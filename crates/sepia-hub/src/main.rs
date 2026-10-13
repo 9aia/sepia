@@ -13,12 +13,10 @@ use sepia_hub::{HubConfig, hub_state, router};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    // fmt + RUST_LOG as always; OTLP span export layered on when
+    // SEPIA_OTEL_ENDPOINT / OTEL_EXPORTER_OTLP_* is set. The guard's
+    // Drop flushes the provider on exit.
+    let _telemetry = sepia_telemetry::init();
 
     let config = HubConfig::from_env().map_err(std::io::Error::other)?;
     let addr = config.socket_addr().map_err(std::io::Error::other)?;

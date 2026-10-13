@@ -80,6 +80,12 @@ fn sse_bridge(
     if let Some(auth) = auth {
         req = req.header(header::AUTHORIZATION.as_str(), auth);
     }
+    // W3C trace-context propagation — carries this request's
+    // `http_request` span downstream so hub→node hops join one trace.
+    // Empty when export is off.
+    for (k, v) in sepia_telemetry::trace_headers() {
+        req = req.header(&k, v);
+    }
     let upstream = match req.call() {
         Ok(res) => res,
         Err(e) => {
@@ -207,12 +213,18 @@ pub async fn passthrough(State(state): State<HubState>, req: Request<Body>) -> R
     };
 
     let agent = state.json_agent();
+    // Inject before `spawn_blocking` — the current span's context is
+    // only visible on this task (blocking workers don't inherit it).
+    let trace = sepia_telemetry::trace_headers();
     let result = tokio::task::spawn_blocking(move || {
         let mut builder = ureq::http::Request::builder()
             .method(method.as_str())
             .uri(&url);
         if let Some(auth) = &auth {
             builder = builder.header(header::AUTHORIZATION.as_str(), auth.as_str());
+        }
+        for (k, v) in &trace {
+            builder = builder.header(k.as_str(), v.as_str());
         }
         if let Some(ct) = &content_type {
             builder = builder.header(header::CONTENT_TYPE.as_str(), ct.as_str());

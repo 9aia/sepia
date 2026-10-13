@@ -22,14 +22,17 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::FromRef;
-use axum::middleware;
+use axum::body::Body;
+use axum::extract::{FromRef, Request};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::{any, get, post};
 use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
 use leptos_axum::{LeptosRoutes, file_and_error_handler_with_context, generate_route_list};
 use sepia_web::api::NodeApi;
 use sepia_web::app::{App, shell};
+use tracing::Instrument;
 
 /// Everything the router needs — the leptos render options plus the
 /// node-API port (`NodeApi` is a trait so tests can stub it) and the
@@ -297,7 +300,25 @@ pub fn router(state: HubState) -> Router {
             state.clone(),
             auth::auth_gate,
         ))
+        // OTEL server span — outermost: browser→hub requests get an
+        // `http_request` span the proxy's `traceparent` injection links
+        // hub→node calls into. Inert when export is off.
+        .layer(middleware::from_fn(trace_layer))
         .with_state(state)
+}
+
+/// OTEL server span — extracts any inbound `traceparent` (federated
+/// callers), records the response status onto the span.
+async fn trace_layer(req: Request<Body>, next: Next) -> Response {
+    let span = sepia_telemetry::server_span(req.method(), req.uri().path(), req.headers());
+    let for_status = span.clone();
+    async move {
+        let res = next.run(req).await;
+        sepia_telemetry::record_response(&for_status, res.status().as_u16());
+        res
+    }
+    .instrument(span)
+    .await
 }
 
 /// HubState for a running hub: the sync engine + [`SyncNodeApi`].

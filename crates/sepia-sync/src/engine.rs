@@ -253,6 +253,11 @@ impl SyncHandle {
     /// [`SyncError::UnknownNode`] for unregistered ids,
     /// [`SyncError::Node`] when the node rejects the write, and
     /// outbox/sqlite failures.
+    #[tracing::instrument(
+        name = "sync_submit_op",
+        skip_all,
+        fields(node.id = %write.node_id, session = %write.session_id, op = %write.op)
+    )]
     pub async fn submit_op(&self, write: NodeWrite) -> Result<SubmitOutcome, SyncError> {
         let target = {
             self.shared
@@ -411,6 +416,11 @@ enum CycleEnd {
     Disconnected(NodeError),
 }
 
+#[tracing::instrument(
+    name = "sync_node_loop",
+    skip_all,
+    fields(node.id = %target.node.id, node.url = %target.node.url)
+)]
 async fn node_loop(target: NodeTarget, shared: Arc<Shared>, cancel: CancellationToken) {
     let node_id = target.node.id.clone();
     let client = match NodeClient::with_config(
@@ -464,6 +474,7 @@ async fn node_loop(target: NodeTarget, shared: Arc<Shared>, cancel: Cancellation
 /// emitted while the list is in flight lands on the stream — anything
 /// earlier is covered by the listing itself. The outbox drains last so
 /// the feed events a replayed write triggers are observed.
+#[tracing::instrument(name = "sync_connect", skip_all, fields(node.id = %node.id))]
 async fn connect_once(
     node: &NodeRef,
     client: &NodeClient,
@@ -619,6 +630,7 @@ fn sse_pump(
 /// Drain queued writes oldest-first. Per-session FIFO is preserved by
 /// skipping the rest of a session's entries once one fails back to
 /// `pending` (it stays head-of-queue for the next drain).
+#[tracing::instrument(name = "sync_outbox_drain", skip_all, fields(node.id = %node.id))]
 async fn drain_outbox(node: &NodeRef, client: &NodeClient, shared: &Arc<Shared>) {
     let pending = match shared.outbox.pending_for_node(&node.id) {
         Ok(p) => p,
@@ -677,6 +689,7 @@ async fn drain_outbox(node: &NodeRef, client: &NodeClient, shared: &Arc<Shared>)
 }
 
 /// Apply one feed frame to the projection.
+#[tracing::instrument(name = "sync_apply_event", skip_all, fields(node.id = %node.id))]
 async fn apply_event(
     node: &NodeRef,
     client: &NodeClient,

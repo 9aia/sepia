@@ -17,6 +17,7 @@ sepia-core.workspace = true
 sepia-meta.workspace = true
 sepia-proto.workspace = true
 sepia-push.workspace = true
+sepia-telemetry.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

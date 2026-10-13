@@ -19,6 +19,7 @@ depend on it; `sepia-node`/`sepia-cli`/`sepia-hub` compose ports.
 | `crates/sepia-acp` | tolerant ACP client over ndjson stdio |
 | `crates/sepia-control` | control plane: merged lists, attach/takeover/locks, prompt/cancel/permission, restore/rewind |
 | `crates/sepia-{meta,convert,outbox,push,sync}` | overlay store, conversion, durable write queue, web-push, node→hub projection |
+| `crates/sepia-telemetry` | opt-in OTEL layer: OTLP/HTTP span export + W3C propagation on top of `tracing` |
 | `crates/sepia-http` | axum REST + SSE (`env.rs` documents every `SEPIA_*` var) |
 | `crates/sepia-node` | headless daemon binary |
 | `crates/sepia-cli` | `sepia` binary — store/node/config verbs, serve, pair, service |
