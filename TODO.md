@@ -29,31 +29,22 @@
       arena-removal pass) with a one-task deferred fallback in `Drop`.
       All `rel="external"`/`nav_external` containment removed — SPA
       swaps verified live (rail × all routes, `?session=`,
-      `/sessions/:id`, palette). e2e gate: `swap::client_side_swap`.
+      `/sessions/:id`, palette). e2e gate: `swap::client_side_swap`
+      (un-ignored).
 
-      Earlier notes for the record: client-side swaps trapped
-      pages (`/`, `/sessions/:id`) via client-side router swap in
-      tachys/leptos-router 0.8: `RuntimeError: unreachable` abort
-      during `NestedRouteViewState` unmount (symbolized through
-      `ScopedFuture<Suspend>` + `AnySubscriber` frames, no panic
-      message). Reproduces on the sandbox e2e stack — `e2e/swap.rs`
-      gates it. Contained for now: cross-section navs are document
-      loads (`rel="external"` on rail/drawer/menu anchors +
-      `nav_external()` for programmatic navs); `?session=` in-page
-      swaps stay client-side. Repro attempt lives at
-      `~/GitHub/leptos-swap-repro` (leptos_axum + Suspend +
-      leptos-fetch `client.resource` + interval refetch +
-      `use_query_map`/`use_location` subscribers + `<Title>` +
-      mirror Effect + 800 `<A>` rows) — it stays CLEAN, so the
-      trigger needs more of our structure; next iteration should add
-      `use_event_source`/SSE, `on_click_outside`/`track_menu_focus`
-      forgotten closures, `leptos_toaster`, and nested `<details>`
-      menus. Also confirmed: `{move||Suspend::new(..)}` +
-      `SsrMode::OutOfOrder` streaming traps at
-      `tachys hydration.rs:163` on LOAD (not swap) — InOrder avoids
-      it. `e2e/swap.rs::client_side_swap` (ignored) reproduces the
-      real trap via an injected non-external anchor — un-ignore once
-      fixed. Real fix wants upstream report once the repro catches it.
+      For the record: leaving session pages via a client-side router
+      swap aborted inside `NestedRouteViewState` unmount (symbolized
+      through `ScopedFuture<Suspend>` + `AnySubscriber` frames, no
+      panic message). Two latent upstream bugs remain reportable —
+      (a) `leptos-use::use_event_source` writes its internal
+      `StoredValue<TimeoutHandle>` during cleanup/drop even when the
+      arena write-lock is held, and (b) `{move||Suspend::new(..)}` +
+      `SsrMode::OutOfOrder` streaming traps at `tachys
+      hydration.rs:163` on LOAD (InOrder avoids it). Minimal repro
+      lives at `~/GitHub/leptos-swap-repro`; the standalone version
+      stayed clean on every ingredient except (b), so an upstream
+      report should cite the symbolized live stack rather than the
+      repro.
 - [ ] **Push E2E on a real device** — subscribe/fan-out paths are unit-
       covered; a real browser push is unverified.
 - [ ] ~~**Browser e2e**~~ — done: `crates/sepia-hub/tests/e2e/` drives
