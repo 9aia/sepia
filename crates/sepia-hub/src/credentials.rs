@@ -1,7 +1,11 @@
 //! Where the hub keeps node bearer tokens between restarts.
 //!
 //! `SEPIA_NODES` `@token` / `SEPIA_NODE_TOKEN` are explicit config and
-//! always win. Nodes listed without a token — and credentials minted by
+//! always win; an env token also seeds an empty store slot at boot —
+//! the migration path off plaintext env (drop `@token` after one boot,
+//! the token keeps working from the store). A stored credential is
+//! never overwritten by env config; rotation goes through re-pairing.
+//! Nodes listed without a token — and credentials minted by
 //! the pair flow — resolve and persist through a [`NodeCredentials`]
 //! store: the OS keyring (Secret Service on Linux/*BSD, Keychain on
 //! macOS, Credential Manager on Windows) when reachable, else

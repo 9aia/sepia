@@ -304,9 +304,10 @@ pub fn router(state: HubState) -> Router {
 /// `SEPIA_NODES` (`id=url[@token];…`) wins; `SEPIA_NODE_URL`/`SEPIA_NODE_TOKEN`
 /// is the single-node shorthand. Nodes listed without a token resolve
 /// one from the [`credentials`] store (OS keyring → file fallback —
-/// that store is also where the pair flow persists minted tokens).
-/// The projection + outbox live under `$SEPIA_HOME/hub/` so they
-/// survive restarts.
+/// that store is also where the pair flow persists minted tokens), and
+/// an env-provided token seeds an empty store slot so the plaintext
+/// can leave the env. The projection + outbox live under
+/// `$SEPIA_HOME/hub/` so they survive restarts.
 ///
 /// # Errors
 /// `String` on a missing/empty node list or a projection/outbox open failure.
@@ -332,25 +333,16 @@ pub fn hub_state(config: &HubConfig) -> Result<HubState, String> {
                 token: config.node_token.clone(),
             }]
         });
-    // Env tokens are explicit config — they win. Only tokenless nodes
-    // consult the store.
-    let mut stored = 0usize;
-    for node in &mut nodes {
-        if node.token.is_some() {
-            continue;
-        }
-        match creds.get(&node.id) {
-            Ok(Some(token)) => {
-                node.token = Some(token);
-                stored += 1;
-            }
-            Ok(None) => {}
-            Err(e) => {
-                tracing::warn!(node = %node.id, "credential store lookup failed: {e}");
-            }
-        }
-    }
-    tracing::info!(backend = creds.backend(), stored, "node credential store");
+    // Env tokens are explicit config — they win, and seed an empty
+    // store slot so the plaintext can leave the env. Tokenless nodes
+    // resolve a stored credential.
+    let (stored, seeded) = sync_api::resolve_node_tokens(&mut nodes, creds.as_ref());
+    tracing::info!(
+        backend = creds.backend(),
+        stored,
+        seeded,
+        "node credential store"
+    );
     let projection = sepia_sync::ProjectionStore::open(&home.join("projection.db"))
         .map_err(|e| format!("projection open: {e}"))?;
     // Rows from node ids no longer configured (renamed, removed, or the

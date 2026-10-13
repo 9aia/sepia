@@ -513,21 +513,20 @@ async fn session_detail_ssr_renders_action_row() {
 }
 
 #[tokio::test]
-async fn session_list_ssr_renders_create_form() {
+async fn session_list_ssr_renders_create_affordances() {
     let (app, _render_lock) = locked_app(test_state()).await;
     let (status, html) = get(app, "/").await;
     assert_eq!(status, StatusCode::OK);
+    // The "New session" button is hydrate-gated behind `node_connected`
+    // (false through SSR) — the always-SSR'd create affordance is the
+    // Import card under it.
     assert!(
-        html.contains("<form"),
-        "SSR'd list should contain the create form; got:\n{html}"
+        html.contains("Import session"),
+        "SSR'd list should contain the Import-session affordance; got:\n{html}"
     );
     assert!(
-        html.contains("Working directory"),
-        "create form should carry the cwd input; got:\n{html}"
-    );
-    assert!(
-        html.contains("default agent"),
-        "agent select should render its fallback option; got:\n{html}"
+        html.contains(r#"data-name="ImportCard""#),
+        "ImportCard marker missing; got:\n{html}"
     );
 }
 

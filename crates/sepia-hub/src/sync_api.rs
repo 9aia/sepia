@@ -53,6 +53,50 @@ pub fn parse_nodes(raw: &str) -> Vec<HubNode> {
         .collect()
 }
 
+/// Boot-time token resolution — the [`crate::credentials`] doc has the
+/// model. An env `@token`/`SEPIA_NODE_TOKEN` is explicit config: it
+/// wins for this boot and seeds the store when the node has no stored
+/// credential yet — the migration path that lets the plaintext leave
+/// the env (drop `@token` after one boot; the token keeps working from
+/// the store). A stored credential is never overwritten by env —
+/// rotation goes through re-pairing (`adopt_credential` writes the
+/// minted token through). Tokenless nodes resolve a stored credential
+/// into `node.token`.
+///
+/// Returns `(resolved, seeded)` for the boot log. Store errors warn
+/// and degrade — a broken backend must not keep the hub from booting.
+pub fn resolve_node_tokens(nodes: &mut [HubNode], creds: &dyn NodeCredentials) -> (usize, usize) {
+    let (mut resolved, mut seeded) = (0usize, 0usize);
+    for node in nodes {
+        match (node.token.as_deref(), creds.get(&node.id)) {
+            (None, Ok(Some(token))) => {
+                node.token = Some(token);
+                resolved += 1;
+            }
+            (Some(env_token), Ok(None)) => {
+                // Seed an empty slot once — once stored, later boots
+                // read Some and skip the write entirely.
+                match creds.set(&node.id, env_token) {
+                    Ok(()) => seeded += 1,
+                    Err(e) => {
+                        tracing::warn!(node = %node.id, "credential store write failed: {e}");
+                    }
+                }
+            }
+            // env token + stored credential: env wins at runtime, the
+            // stored credential (a pair-minted token) stays untouched.
+            (Some(_), Ok(Some(_))) | (None, Ok(None)) => {}
+            // A failed read can't tell empty from populated — never
+            // write blind: an env token must not clobber an unseen
+            // stored credential.
+            (_, Err(e)) => {
+                tracing::warn!(node = %node.id, "credential store lookup failed: {e}");
+            }
+        }
+    }
+    (resolved, seeded)
+}
+
 /// The node a session belongs to — projection lookup; session ids are
 /// unique per node but may collide across nodes.
 fn owner<'a>(

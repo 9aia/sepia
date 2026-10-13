@@ -63,7 +63,18 @@ pub fn env_template() -> String {
      # Overlay session stores.\n\
      # SEPIA_CLINE_DIR=$HOME/.cline/data\n\
      # SEPIA_CLAUDE_DIR=$HOME/.claude\n\
-     # SEPIA_CURSOR_DIR=$HOME/.cursor\n"
+     # SEPIA_CURSOR_DIR=$HOME/.cursor\n\
+     # --- sepia-hub only (hub-env) ---\n\
+     # Nodes the hub follows: id=url[@token];… — omit @token and the\n\
+     # credential store supplies it (OS keyring, else\n\
+     # $SEPIA_HOME/hub/credentials.json); the UI pair flow mints tokens\n\
+     # there. An @token set here seeds the store once, so the plaintext\n\
+     # can leave this file.\n\
+     # SEPIA_NODES=laptop=http://127.0.0.1:8787\n\
+     # Credential backend: auto|keyring|file (default auto).\n\
+     # SEPIA_CREDENTIAL_STORE=auto\n\
+     # Browser→hub auth — required for non-loopback SEPIA_HUB_HOST.\n\
+     # SEPIA_HUB_TOKEN=\n"
         .to_string()
 }
 

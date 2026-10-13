@@ -4,7 +4,7 @@
 //! queued writes when the node is down.
 
 use sepia_hub::credentials::{FileCredentials, NodeCredentials};
-use sepia_hub::sync_api::{HubNode, SyncNodeApi, parse_nodes};
+use sepia_hub::sync_api::{HubNode, SyncNodeApi, parse_nodes, resolve_node_tokens};
 use sepia_sync::{NodeTarget, SyncEngine, SyncHandle};
 use sepia_web::api::NodeApi;
 use serde_json::json;
@@ -76,6 +76,50 @@ fn parses_node_lists() {
     assert_eq!(nodes[0].token, None);
     assert_eq!(nodes[1].token.as_deref(), Some("secret"));
     assert_eq!(nodes[1].url, "http://laptop:8787");
+}
+
+/// Boot resolution: an env `@token` seeds an empty store slot (the
+/// migration off plaintext env), a tokenless entry resolves a stored
+/// credential, and env never overwrites a stored credential.
+#[test]
+fn resolve_node_tokens_resolves_seeds_and_never_clobbers() {
+    let (_dir, creds) = file_creds();
+    creds.set("tower", "minted").unwrap();
+    creds.set("desk", "paired").unwrap();
+    let mut nodes = vec![
+        // env token + empty store → seeds.
+        HubNode {
+            id: "laptop".into(),
+            url: "http://a".into(),
+            token: Some("env-tok".into()),
+        },
+        // tokenless + stored → resolves.
+        HubNode {
+            id: "tower".into(),
+            url: "http://b".into(),
+            token: None,
+        },
+        // env token + stored credential → env wins at runtime, the
+        // stored credential stays untouched.
+        HubNode {
+            id: "desk".into(),
+            url: "http://c".into(),
+            token: Some("env-wins".into()),
+        },
+    ];
+    let (resolved, seeded) = resolve_node_tokens(&mut nodes, creds.as_ref());
+    assert_eq!((resolved, seeded), (1, 1));
+    assert_eq!(creds.get("laptop").unwrap().as_deref(), Some("env-tok"));
+    assert_eq!(nodes[1].token.as_deref(), Some("minted"));
+    assert_eq!(nodes[2].token.as_deref(), Some("env-wins"));
+    assert_eq!(creds.get("desk").unwrap().as_deref(), Some("paired"));
+
+    // The migration: drop the env token — the seeded credential takes
+    // over on the next boot.
+    nodes[0].token = None;
+    let (resolved, seeded) = resolve_node_tokens(&mut nodes, creds.as_ref());
+    assert_eq!((resolved, seeded), (1, 0));
+    assert_eq!(nodes[0].token.as_deref(), Some("env-tok"));
 }
 
 #[tokio::test]

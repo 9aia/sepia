@@ -74,6 +74,16 @@ SEPIA_HUB_PORT=3000 \
 
 - `SEPIA_NODES` — `id=url[@token];…` for every node the hub follows.
   `SEPIA_NODE_URL` / `SEPIA_NODE_TOKEN` is the single-node shorthand.
+  `@token` is optional: a tokenless entry resolves its credential from
+  the hub's credential store (where the pair flow persists minted
+  tokens — see Pairing). An env token is explicit config: it wins
+  while set and seeds an empty store slot at boot, so the plaintext
+  can leave the env after one boot. It never overwrites a stored
+  credential — re-pair to rotate.
+- `SEPIA_CREDENTIAL_STORE` — `auto` (default) | `keyring` | `file`.
+  `auto` uses the OS keyring (Secret Service / Keychain / Credential
+  Manager) when reachable, else `$SEPIA_HOME/hub/credentials.json`
+  (0600) — the headless path.
 - `SEPIA_HUB_HOST`/`SEPIA_HUB_PORT` (defaults `127.0.0.1:3000`;
   `SEPIA_PORT` also accepted). A non-loopback `SEPIA_HUB_HOST`
   (`0.0.0.0`, `::`, a LAN IP) refuses to boot without `SEPIA_HUB_TOKEN`.
@@ -85,7 +95,8 @@ SEPIA_HUB_PORT=3000 \
   Static assets (`/style.css`, `/manifest.json`, `/sw.js`, `/icon.svg`,
   `/pkg/*`) stay open so the service worker works pre-auth.
 - `SEPIA_HOME` — the hub's `hub/` dir holds `projection.db`,
-  `outbox.db`, `push.json`. State survives restarts.
+  `outbox.db`, `push.json`, `credentials.json` (file-backend credential
+  store). State survives restarts.
 - `LEPTOS_SITE_ROOT`/`SEPIA_SITE_ROOT`, `LEPTOS_ENV` (`prod`).
 
 The hub owns the browser's push subscription store (one VAPID pair
@@ -97,9 +108,10 @@ and works read-only while nodes are down.
 **Auth.** Browser → hub auth is the hub's own token surface:
 `SEPIA_HUB_TOKEN` (above) gates everything except static assets — one
 `?token=` visit or `GET /login?token=…` plants an httpOnly cookie and
-the browser stores nothing else. Node bearer tokens stay server-side
-(`SEPIA_NODES` `@token` or `SEPIA_NODE_TOKEN`) — the browser never
-stores them.
+the browser stores nothing else. Node bearer tokens stay server-side —
+in the hub's credential store (OS keyring or
+`hub/credentials.json`), or as explicit config via `SEPIA_NODES`
+`@token` / `SEPIA_NODE_TOKEN`. The browser never stores them.
 
 ## PWA + push
 
@@ -137,8 +149,9 @@ sepia pair        # on the node — mints a one-time code
 ```
 
 The code + node URL redeem through the hub's pair flow (or
-`POST /api/pair` directly) for a bearer token, then the token goes in
-`SEPIA_NODES` as `id=url@token`. Redeem is per-IP rate limited
+`POST /api/pair` directly) for a bearer token, which the hub persists
+in its credential store — `SEPIA_NODES` then needs only `id=url`, no
+`@token`. Redeem is per-IP rate limited
 (`SEPIA_PAIR_LIMIT_*` above); minting stays local — only the machine
 owner can write `$SEPIA_HOME/pair-code`, there's no HTTP mint.
 

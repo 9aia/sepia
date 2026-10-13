@@ -106,14 +106,18 @@ SEPIA_NODES='laptop=http://127.0.0.1:8787@TOKEN' \
 ```
 
 `SEPIA_NODES` takes `id=url[@token];…` for every node the hub follows;
-`SEPIA_NODE_URL`/`SEPIA_NODE_TOKEN` is the single-node shorthand. The
-projection + outbox live under `$SEPIA_HOME/hub/`. `SEPIA_HUB_TOKEN`
+`SEPIA_NODE_URL`/`SEPIA_NODE_TOKEN` is the single-node shorthand.
+`@token` may be omitted — tokenless entries resolve credentials from
+the hub's store (OS keyring, else `$SEPIA_HOME/hub/credentials.json`;
+`SEPIA_CREDENTIAL_STORE` selects), and an env token seeds an empty
+slot so it can leave the env. The projection + outbox live under
+`$SEPIA_HOME/hub/`. `SEPIA_HUB_TOKEN`
 gates the browser surface — required for non-loopback `SEPIA_HUB_HOST`
 binds; open `/?token=…` once to plant the cookie.
 
 Pair a device: `sepia pair` on the node mints a code; the UI's pair
-flow redeems it for a bearer token (server-side — the browser never
-stores node credentials).
+flow redeems it for a bearer token persisted in that same credential
+store (server-side — the browser never stores node credentials).
 
 ## Develop
 

@@ -11,9 +11,15 @@
       socket IP (X-Forwarded-For deliberately untrusted); the IP table
       is capped (4096 keys, idle-then-LRU eviction). Mint needs no
       limit — `sepia pair` writes a local file, no HTTP mint exists.
-- [ ] **Hub `SEPIA_NODES` token storage** — node tokens live in
-      `$SEPIA_HOME/hub/` config env today; keyring-backed storage is the
-      upgrade path.
+- [x] ~~**Hub `SEPIA_NODES` token storage**~~ — done:
+      `sepia-hub::credentials` stores node tokens in the OS keyring
+      (Secret Service / Keychain / Credential Manager) with a
+      `credentials.json` (0600) fallback under `$SEPIA_HOME/hub/`;
+      `SEPIA_CREDENTIAL_STORE=auto|keyring|file` selects. Tokenless
+      `SEPIA_NODES` `id=url` entries resolve stored credentials; an
+      env `@token`/`SEPIA_NODE_TOKEN` still wins and seeds an empty
+      slot (migration off plaintext env, never clobbers a stored
+      credential); pair-minted tokens persist through the same store.
 
 ### Ops / QA
 
