@@ -93,9 +93,9 @@ crates/
                             # ZERO I/O deps — no tokio, no fs. Compiles to wasm32.
   sepia-proto/              # wire types: protocol v2 REST + event stream + ACP-facing models.
                             # THE contract crate — shared by node, hub, web, testkit.
-  sepia-driver-sdk/         # plugin SDK: Driver trait, capability traits, manifest types,
+  sepia-driver/         # plugin SDK: Driver trait, capability traits, manifest types,
                             # ndjson JSON-RPC server loop for driver binaries
-  sepia-driver-host/        # daemon side: discovery, spawn, supervise, RPC client,
+  sepia-host/        # daemon side: discovery, spawn, supervise, RPC client,
                             # capability registry
   sepia-driver-devin/       # driver binary: sessions.db via rusqlite (read-only)
   sepia-driver-cline/       # driver binary: fs dirs
@@ -103,7 +103,7 @@ crates/
   sepia-driver-cursor/      # driver binary: store.db + transcripts
   sepia-convert/            # cross-store conversion, composes drivers via ports
   sepia-acp/                # ACP client on agent-client-protocol v3 (process feature)
-  sepia-control/            # control plane: live-session ownership, locks, idle TTL,
+  sepia-session/            # control plane: live-session ownership, locks, idle TTL,
                             # attach/takeover, prompt/cancel/permission
   sepia-sync/               # node→hub projection sync (cursors, deltas, tombstones)
   sepia-outbox/             # durable mutation queue: per-session FIFO, idempotency
@@ -342,11 +342,11 @@ fixtures go stale while TS evolves — feature-freeze the protocol surface
 or make regen an `xtask` command._
 
 **Phase 0.5 — workspace scaffolding.** Members, workspace lints, xtask,
-`sepia-core` skeleton, `sepia-driver-sdk`, `sepia-testkit` shell, CI
+`sepia-core` skeleton, `sepia-driver`, `sepia-testkit` shell, CI
 matrix. All later work lands inside enforced structure.
 
-**Phase 1 — driver mechanism + first driver.** `sepia-driver-sdk` (trait,
-manifest, ndjson JSON-RPC loop) + `sepia-driver-host` (discovery, spawn,
+**Phase 1 — driver mechanism + first driver.** `sepia-driver` (trait,
+manifest, ndjson JSON-RPC loop) + `sepia-host` (discovery, spawn,
 supervise, registry) + `sepia-driver-devin` validated against golden
 fixtures. The plugin mechanism is load-bearing — prove it first.
 
@@ -355,7 +355,7 @@ ports, Restore/Rewind; `sepia-driver-{cline,claude,cursor}`;
 `sepia-convert`. Parallelizable per driver.
 
 **Phase 3 — ACP + control plane.** `sepia-acp` (SDK transport + tolerant
-normalizer) + `sepia-control`. `ControlPlane.ts` is the riskiest backend
+normalizer) + `sepia-session`. `ControlPlane.ts` is the riskiest backend
 port — ~1700 lines of lock/idle/takeover state machine, Effect
 interruption ≠ tokio cancellation. Port with its 8 test files open
 side-by-side.

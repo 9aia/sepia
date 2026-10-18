@@ -682,7 +682,7 @@ impl SessionRepository for ClineStore {
 /// transcript the plan's nodes came from. The truncated IR is already
 /// implied by the slice, so only `plan` is needed.
 #[async_trait]
-impl sepia_driver_sdk::SessionTruncator for ClineStore {
+impl sepia_driver::SessionTruncator for ClineStore {
     async fn truncate(
         &self,
         session: &Session,

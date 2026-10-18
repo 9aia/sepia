@@ -411,7 +411,7 @@ impl SessionRepository for ClaudeStore {
 }
 
 #[async_trait]
-impl sepia_driver_sdk::SessionTruncator for ClaudeStore {
+impl sepia_driver::SessionTruncator for ClaudeStore {
     /// `session.rewind` — the prefix rewrite drops trailing entries; the
     /// `truncated` IR is informational only (the file itself is the state).
     async fn truncate(

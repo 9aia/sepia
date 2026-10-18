@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// One run span: which agent on which Sepia node continued a session.
-/// Duplicated from `sepia_control::RunSpan` deliberately — the overlay is
+/// Duplicated from `sepia_session::RunSpan` deliberately — the overlay is
 /// node-local and must not pull the control crate in.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunSpan {

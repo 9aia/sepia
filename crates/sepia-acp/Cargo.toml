@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 sepia-core.workspace = true
-sepia-driver-sdk.workspace = true
+sepia-driver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true

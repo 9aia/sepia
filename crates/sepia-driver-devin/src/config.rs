@@ -26,7 +26,7 @@ use sepia_core::agent_config::{
 };
 use sepia_core::domain::StorageError;
 use sepia_core::frontmatter;
-use sepia_driver_sdk::fs as sdk_fs;
+use sepia_driver::fs as sdk_fs;
 use serde_json::{Map, Value, json};
 
 fn doc_to_rule(doc: &sdk_fs::MarkdownDoc) -> ConfigRule {

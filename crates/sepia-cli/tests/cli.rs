@@ -36,9 +36,8 @@ fn help_lists_the_verb_surface() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     for verb in [
-        "sessions", "projects", "config", "driver", "push", "store", "list", "export", "import",
-        "install", "delete", "pair", "serve", "service", "version", "prompt", "health", "node",
-        "agents", "user", "fs", "events", "redeem",
+        "config", "driver", "store", "list", "export", "import", "install", "delete", "serve",
+        "version",
     ] {
         assert!(stdout.contains(verb), "missing {verb} in --help:\n{stdout}");
     }
@@ -49,43 +48,6 @@ fn invalid_store_choice_is_a_usage_error() {
     let out = sepia(&["list", "--from", "bogus"]);
     assert_eq!(out.status.code(), Some(2)); // clap usage error
     assert!(String::from_utf8_lossy(&out.stderr).contains("bogus"));
-}
-
-#[test]
-fn node_verb_without_a_node_fails_cleanly() {
-    // Nothing listens on this port — the verb must error + exit 1, not hang.
-    let out = sepia(&["health", "--node", "http://127.0.0.1:1"]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("Cannot reach"));
-}
-
-#[test]
-fn sessions_subgroup_lists_verbs() {
-    let out = sepia(&["sessions", "--help"]);
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    for verb in [
-        "list",
-        "create",
-        "attach",
-        "prompt",
-        "cancel",
-        "permission",
-        "history",
-        "checkpoints",
-        "export",
-        "stream",
-        "meta",
-        "rename",
-        "delete",
-        "convert",
-        "import",
-        "resume",
-        "restore",
-        "rewind",
-    ] {
-        assert!(stdout.contains(verb), "missing sessions {verb}:\n{stdout}");
-    }
 }
 
 /// A discovered driver binary is probed via `--manifest` — a fake

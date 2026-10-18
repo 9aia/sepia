@@ -1,49 +1,34 @@
 # Sepia
 
-One UI for every coding-agent session you own — Devin, Cline, Claude
-Code, Cursor — across every machine you own. Written in Rust.
+Coding-agent sessions, agnostically — one canonical IR, store drivers,
+and an ACP client for every agent. Rust crates plus a `sepia` CLI.
+Devin, Cline, Claude Code, Cursor — more agents are one driver binary
+away.
 
-**Day-to-day.** Open the hub URL from any device — phone, laptop,
-anything with a browser. One token, one UI, sessions from every node
-merged into a single list. List and chat load instantly — the hub
-serves its local SQLite projection; live updates stream over SSE.
+Sepia is the session *abstraction*: it understands every agent's store
+format and can manage sessions on a machine — list, load, attach,
+prompt, cancel, permissions, restore, rewind — without knowing which
+agent produced them. Orchestration across machines (locks, routing,
+merged views, the app) is [peregrin](https://github.com/9aia/peregrin)'s
+job; peregrin spawns `sepia serve` and drives it over the wire.
 
-**Everywhere works.** Prompt, attach, take over, cancel, restore,
-rewind — routed to the owning node automatically.
+## The CLI
 
-**Offline is real.** A node goes down → its sessions show as offline,
-your writes **queue** (`queued`/`failed` states are visible) and drain
-in order when the node returns. The hub itself keeps serving its last
-projection read-only.
-
-**Phone.** Install the PWA — offline app shell + push notifications
-(agent finished, permission requested, session held).
-
-**Per machine.** One `sepia-node` daemon; it discovers `sepia-driver-*`
-binaries and agent CLIs on PATH at boot — an agent you don't have
-simply doesn't appear. Add an integration = drop a driver binary into
-`~/.local/share/sepia/drivers/`. Your main machine also runs
-`sepia-hub`; daemon-only machines skip it.
-
-**Ops.** `sepia pair` authorizes a device, `sepia serve` runs the
-daemon, `sepia driver list` shows what's discovered.
-
+```sh
+sepia driver list            # sepia-driver-* binaries discovery finds
+sepia list                   # sessions in a store
+sepia export <id>            # session IR JSON out
+sepia install <id> --to claude   # copy a session, ready to resume elsewhere
+sepia config list --from claude  # rules/skills/commands/hooks/MCP as IR
+sepia serve                  # the session plane, ndjson JSON-RPC on stdio
 ```
-┌─ sepia-hub (Leptos SSR + sync engine) ────────────────┐
-│ browser/PWA on any device — one token, one UI          │
-│ SQLite projection (indexes only) + durable outbox      │
-└───────┬───────────────┬───────────────┬───────────────┘
-        │ HTTP+SSE      │ HTTP+SSE      │ HTTP+SSE
-        ▼               ▼               ▼
-   sepia-node      sepia-node      sepia-node
-   (headless)      (headless)      (+ hub on main machine)
-        │               │               │
-        ▼               ▼               ▼
-  sepia-driver-* binaries (discovered, not bundled)
-        │
-        ▼
-  agent CLIs over ACP (devin acp, cline --acp, claude-agent-acp)
-```
+
+`sepia serve` is the embeddable surface: one process per machine,
+spawned and driven like a `sepia-driver-*` binary. Speak ndjson
+JSON-RPC on stdin — `manifest`, `agents.list`, `sessions.list`,
+`sessions.attach`, `sessions.prompt`, `sessions.subscribe`,
+`sessions.restore`, `sessions.rewind`, … — and get events back as
+notifications. That's the whole contract an orchestrator needs.
 
 ## Concepts
 
@@ -51,82 +36,55 @@ daemon, `sepia driver list` shows what's discovered.
 writes (`sepia-core`): messages with roles and content blocks (text,
 thinking + signature, tool calls, images, file attachments), tool calls
 with args/results/status/diffs, token usage, sub-agent lineage,
-checkpoints, and a meta overlay (title/pin/projects/spans). Run spans
-record which agent on which machine produced each stretch — agent and
-machine are provenance, not identity.
+checkpoints, and a meta overlay (title/pin/projects/spans).
 
 **Drivers** — store adapters as separate binaries
 (`sepia-driver-devin`, `sepia-driver-cline`, `sepia-driver-claude`,
 `sepia-driver-cursor`). Discovered at runtime from
-`$SEPIA_DRIVER_DIR` → `~/.local/share/sepia/drivers/` → PATH, probed
-for a manifest + capabilities (SessionStore, SessionWrite, Checkpoints,
-Restore, Rewind, Convert), and driven over ndjson JSON-RPC stdio. A
-dead driver respawns on next use.
+`$SEPIA_DRIVER_DIR` → the platform data dir → PATH, probed for a
+manifest + capabilities (SessionStore, SessionWrite, Checkpoints,
+Restore, Rewind, Convert), and driven over ndjson JSON-RPC stdio.
 
 **ACP** — agents attach through the Agent Client Protocol
 (`sepia-acp`): spawn, initialize/capabilities, session
 list/load/prompt/cancel, normalized update streams, permission
-round-trips. The wire boundary is tolerant `serde_json::Value` — real
-agent output is messier than any schema.
+round-trips. The wire boundary is tolerant `serde_json::Value`.
 
-**Node authority** — each node owns its sessions' locks; a session
-locked by a live process attaches read-only until a takeover. The hub
-never writes a node store directly — it routes ops (or queues them
-offline in `sepia-outbox`, per-session FIFO with idempotency keys).
+**Session plane** — `sepia-session`: live-session ownership, lock
+probing, attach/takeover mechanics, prompt/cancel/permission routing,
+restore/rewind execution, plus `local::build` — the composition that
+assembles it all from this machine's drivers and agent CLIs.
 
 ## Layout
 
-| Crate                                      | Role                                                                                         |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `sepia-core`                               | Session IR, `SessionRepository` port, restore/rewind planners (pure)                         |
-| `sepia-proto`                              | `SessionEvent` enum + node wire types                                                        |
-| `sepia-driver-{sdk,host}`                  | driver serve loop / discovery + spawn + respawn                                              |
-| `sepia-driver-{devin,cline,claude,cursor}` | store adapter binaries                                                                       |
-| `sepia-acp`                                | tolerant ACP client over ndjson stdio                                                        |
-| `sepia-control`                            | control plane: merged lists, attach/takeover/locks, prompt/cancel/permission, restore/rewind |
-| `sepia-{meta,convert,outbox,push,sync}`    | overlay store, conversion, durable write queue, web-push, node→hub projection                |
-| `sepia-http`                               | axum REST + SSE                                                                              |
-| `sepia-node`                               | headless daemon (`sepia_node::serve`)                                                        |
-| `sepia-cli`                                | `sepia` binary — store/node/config verbs, pair, service                                      |
-| `sepia-{web,hub}`                          | Leptos UI + SSR host                                                                         |
-| `sepia-testkit`                            | conformance suite, golden fixtures, mock ACP agent                                           |
-
-## Build + run
-
-```bash
-cargo xtask install            # release-build sepia, sepia-node, all drivers → ~/.local/bin
-
-# each laptop
-sepia serve                    # the node daemon (API on 127.0.0.1:8787)
-
-# main machine (also runs a node)
-SEPIA_NODE_URL=http://127.0.0.1:8787 \
-SEPIA_NODES='laptop=http://127.0.0.1:8787@TOKEN' \
-  cargo run -p sepia-hub       # UI on 127.0.0.1:3000
-```
-
-`SEPIA_NODES` takes `id=url[@token];…` for every node the hub follows;
-`SEPIA_NODE_URL`/`SEPIA_NODE_TOKEN` is the single-node shorthand.
-`@token` may be omitted — tokenless entries resolve credentials from
-the hub's store (OS keyring, else `$SEPIA_HOME/hub/credentials.json`;
-`SEPIA_CREDENTIAL_STORE` selects), and an env token seeds an empty
-slot so it can leave the env. The projection + outbox live under
-`$SEPIA_HOME/hub/`. `SEPIA_HUB_TOKEN`
-gates the browser surface — required for non-loopback `SEPIA_HUB_HOST`
-binds; open `/?token=…` once to plant the cookie.
-
-Pair a device: `sepia pair` on the node mints a code; the UI's pair
-flow redeems it for a bearer token persisted in that same credential
-store (server-side — the browser never stores node credentials).
+| Crate | Role |
+| --- | --- |
+| `crates/sepia-core` | Session IR, `SessionRepository` port, agent-config IR, restore/rewind planners (pure) |
+| `crates/sepia-proto` | `SessionEvent` enum + wire types |
+| `crates/sepia-acp` | tolerant ACP client over ndjson stdio |
+| `crates/sepia-driver` | driver manifest + ndjson JSON-RPC serve loop |
+| `crates/sepia-host` | driver discovery + spawn + respawn |
+| `crates/sepia-driver-{devin,cline,claude,cursor}` | store adapter binaries |
+| `crates/sepia-session` | the local session plane: attach/takeover mechanics, prompt/cancel/permission, restore/rewind, `local::build` composition |
+| `crates/sepia-meta` | overlay store (title/pin/projects/run spans) |
+| `crates/sepia-convert` | store format conversion |
+| `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
+| `crates/sepia-cli` | the `sepia` binary |
+| `crates/sepia-testkit` | conformance suites + golden fixtures |
 
 ## Develop
 
 ```bash
-cargo xtask check              # fmt + clippy -D warnings (workspace lints are strict)
-cargo xtask test               # the whole suite
-cargo test -p sepia-node       # daemon e2e (real driver + mock agent + HTTP)
-cargo leptos watch             # hub dev loop (wasm bundle → target/site)
+cargo xtask check    # fmt + clippy -D warnings
+cargo xtask test     # whole suite (nextest if present)
+cargo xtask install  # release-build sepia + drivers → ~/.local
 ```
 
-The TypeScript implementation this replaces lives in `apps/` +
-`packages/` until Phase 6 teardown (`project/plans/rust-rewrite.md`).
+## Docs
+
+`docs/session-formats.md`, `docs/protocol.md`, `docs/agent-configs.md`
+— domain references for the IR, the driver wire, and the agent config
+IR.
+
+[CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) ·
+[LICENSE](LICENSE) (MIT) · [project](project/index.md) — TODO, backlog

@@ -39,7 +39,8 @@ pub struct AcpSessionCapabilities {
 }
 
 /// The agent's capability advertisement, captured at `initialize`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AcpCapabilities {
     pub load_session: bool,
     /// `sessionCapabilities.list` flattened — kept for existing callers.

@@ -2,16 +2,13 @@
 //! front-end; every verb implementation lives here so integration tests
 //! can drive the same code the binary runs.
 
-pub mod api;
 pub mod config_ops;
 pub mod driver;
-pub mod node_ops;
-pub mod pair;
-pub mod service;
+pub mod serve;
 pub mod store;
 
-/// The version stamp — same value `/api/node` reports (`sepia-http`'s
-/// `SEPIA_VERSION` is the same `CARGO_PKG_VERSION`).
+/// The version stamp reported by `sepia version` and the service's
+/// `manifest` response.
 pub const SEPIA_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A command failure — printed to stderr, exits 1.

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use rusqlite::Connection;
 use sepia_core::Session;
 use sepia_core::rewind::RewindPlan;
-use sepia_driver_sdk::SessionTruncator;
+use sepia_driver::SessionTruncator;
 
 pub struct DevinTruncator {
     db_path: PathBuf,

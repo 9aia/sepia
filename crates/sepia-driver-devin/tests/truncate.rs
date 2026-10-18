@@ -4,9 +4,9 @@
 
 use sepia_core::rewind::{self, RewindTarget};
 use sepia_core::storage::SessionRepository;
+use sepia_driver::SessionTruncator;
 use sepia_driver_devin::store::DevinStore;
 use sepia_driver_devin::truncate::DevinTruncator;
-use sepia_driver_sdk::SessionTruncator;
 use sepia_testkit::contract;
 
 #[tokio::test]

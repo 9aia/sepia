@@ -12,23 +12,15 @@ repository = "https://github.com/9aia/sepia"
 sepia-core = { path = "crates/sepia-core" }
 sepia-proto = { path = "crates/sepia-proto" }
 sepia-acp = { path = "crates/sepia-acp" }
-sepia-control = { path = "crates/sepia-control" }
+sepia-session = { path = "crates/sepia-session" }
 sepia-convert = { path = "crates/sepia-convert" }
 sepia-driver-cline = { path = "crates/sepia-driver-cline" }
 sepia-driver-claude = { path = "crates/sepia-driver-claude" }
 sepia-driver-cursor = { path = "crates/sepia-driver-cursor" }
 sepia-driver-devin = { path = "crates/sepia-driver-devin" }
 sepia-meta = { path = "crates/sepia-meta" }
-sepia-node = { path = "crates/sepia-node" }
-sepia-http = { path = "crates/sepia-http" }
-sepia-outbox = { path = "crates/sepia-outbox" }
-sepia-push = { path = "crates/sepia-push" }
-sepia-sync = { path = "crates/sepia-sync" }
-sepia-web = { path = "crates/sepia-web" }
-sepia-web-core = { path = "crates/sepia-web-core" }
-sepia-hub = { path = "crates/sepia-hub" }
-sepia-driver-sdk = { path = "crates/sepia-driver-sdk" }
-sepia-driver-host = { path = "crates/sepia-driver-host" }
+sepia-driver = { path = "crates/sepia-driver" }
+sepia-host = { path = "crates/sepia-host" }
 sepia-testkit = { path = "crates/sepia-testkit" }
 sepia-telemetry = { path = "crates/sepia-telemetry" }
 
@@ -57,34 +49,11 @@ toml = "0.8"
 rusqlite = { version = "0.32" }
 camino = { version = "1", features = ["serde1"] }
 ureq = { version = "3", features = ["json"] }
-axum = "0.8"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "limit"] }
-leptos = { version = "0.8.21", default-features = false }
-leptos_router = { version = "0.8.17", default-features = false }
-leptos_meta = { version = "0.8.7", default-features = false }
-leptos_axum = "0.8.10"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-web-sys = "0.3"
-console_error_panic_hook = "0.1"
 time = { version = "0.3", features = ["formatting"] }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 proptest = "1"
-# OS keyring for hub node credentials: Secret Service (dbus, sync API —
-# the zbus/async feature would triple the tree), Keychain, Credential
-# Manager. Platform deps are target-gated inside the crate.
-keyring = { version = "3.6", default-features = false, features = [
-  "sync-secret-service",
-  "crypto-rust",
-  "apple-native",
-  "windows-native",
-] }
 insta = { version = "1", features = ["json", "redactions"] }
-# Browser e2e (sepia-hub tests). Pinned exact: 0.37.6+ shipped <7 days ago.
-thirtyfour = "=0.37.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -131,8 +100,8 @@ debug = "line-tables-only"
 debug = false
 
 [profile.release]
-# Thin LTO for local `cargo xtask install` + the wasm site build —
-# shipped binaries go through `cargo build --profile dist` (release.yml).
+# Thin LTO for local `cargo xtask install` — shipped binaries go
+# through `cargo build --profile dist` (release.yml).
 lto = "thin"
 strip = true
 panic = "unwind" # keep unwind: tests + tokio supervise panics

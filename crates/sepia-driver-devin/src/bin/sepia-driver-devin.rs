@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use sepia_driver::{Capability, DRIVER_PROTOCOL, DriverManifest, SessionTruncator, serve};
 use sepia_driver_devin::DevinStore;
-use sepia_driver_sdk::{Capability, DRIVER_PROTOCOL, DriverManifest, SessionTruncator, serve};
 
 fn db_path() -> PathBuf {
     if let Ok(path) = std::env::var("SEPIA_DEVIN_DB") {
@@ -65,7 +65,7 @@ fn main() -> std::io::Result<()> {
         )) as Arc<dyn SessionTruncator>)
     };
     let rt = tokio::runtime::Runtime::new()?;
-    let mut driver = sepia_driver_sdk::StoreDriver::new(manifest(), Arc::new(store));
+    let mut driver = sepia_driver::StoreDriver::new(manifest(), Arc::new(store));
     if let Some(truncator) = truncator {
         driver = driver.with_truncator(truncator);
     }

@@ -1,11 +1,11 @@
 //! `sepia driver list` — the local discovery view: every
-//! `sepia-driver-*` binary [`sepia_driver_host::DriverRegistry`] finds
+//! `sepia-driver-*` binary [`sepia_host::DriverRegistry`] finds
 //! (`$SEPIA_DRIVER_DIR` → `~/.local/share/sepia/drivers` →
 //! `/usr/local/lib/sepia/drivers` → PATH), probed via `--manifest`.
 //! No running node involved — this is what the node would load at boot.
 
-use sepia_driver_host::{DriverRegistry, command_resolves};
-use sepia_driver_sdk::manifest::Capability;
+use sepia_driver::manifest::Capability;
+use sepia_host::{DriverRegistry, command_resolves};
 use serde_json::{Value, json};
 
 use crate::CliError;
@@ -24,7 +24,7 @@ fn capability_label(capability: &Capability) -> String {
 
 /// The agent-command column: `-` when the driver advertises none, the
 /// command itself when it resolves, `{cmd} (missing)` when it doesn't.
-fn agent_label(manifest: &sepia_driver_sdk::manifest::DriverManifest) -> String {
+fn agent_label(manifest: &sepia_driver::manifest::DriverManifest) -> String {
     match &manifest.agent_command {
         None => "-".to_string(),
         Some(cmd) if command_resolves(cmd) => cmd.clone(),
@@ -41,7 +41,7 @@ pub fn list(rt: &tokio::runtime::Runtime, json_out: bool) -> Result<(), CliError
     for problem in &problems {
         eprintln!("warning: {problem}");
     }
-    let drivers: Vec<(String, &sepia_driver_sdk::manifest::DriverManifest)> = registry
+    let drivers: Vec<(String, &sepia_driver::manifest::DriverManifest)> = registry
         .manifests()
         .map(|m| {
             (

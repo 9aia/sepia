@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use sepia_driver::{Capability, DRIVER_PROTOCOL, DriverManifest, serve_store};
 use sepia_driver_cursor::CursorStore;
-use sepia_driver_sdk::{Capability, DRIVER_PROTOCOL, DriverManifest, serve_store};
 
 fn cursor_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("SEPIA_CURSOR_DIR") {

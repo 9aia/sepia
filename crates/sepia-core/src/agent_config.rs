@@ -1,6 +1,6 @@
 //! Agent-config IR — the portable layer over the four agents' on-disk
 //! configuration: skills, rules, commands, hooks and subagent definitions.
-//! Pure domain only — filesystem walkers live in `sepia-driver-sdk`.
+//! Pure domain only — filesystem walkers live in `sepia-driver`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
