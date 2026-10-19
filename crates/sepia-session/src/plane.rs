@@ -16,6 +16,7 @@ use sepia_core::rewind::{self, RewindTarget};
 use sepia_core::storage::{NodesWindowOptions, SessionRepository};
 use sepia_core::{Role, Session, StorageError, ToolCall};
 use sepia_proto::SessionEvent;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinSet;
 
@@ -2173,7 +2174,8 @@ impl ControlPlane {
 }
 
 /// The spawn result of `create_session`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateResult {
     pub id: String,
     pub agent_id: String,

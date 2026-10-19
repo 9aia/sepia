@@ -17,7 +17,7 @@ pub struct RunSpan {
     pub node: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
     pub id: String,
@@ -51,7 +51,7 @@ pub struct SessionSummary {
     pub can_rewind: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryMessage {
     pub role: sepia_core::Role,
@@ -100,7 +100,7 @@ pub struct HistoryMessage {
     pub tool_call_id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AttachResult {
     pub attached: bool,
     pub read_only: bool,
@@ -113,7 +113,7 @@ pub struct AttachResult {
 /// A file-level restore — `path` (+ optional `tool_call_id`) reverts
 /// through recorded diffs; `checkpoint` materializes a snapshot ref.
 /// `confirm` is mandatory.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RestoreRequest {
     pub confirm: bool,
@@ -127,7 +127,7 @@ pub struct RestoreRequest {
     pub paths: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RestoredFile {
     /// Absolute path the restore touched.
@@ -145,20 +145,20 @@ pub enum RestoreAction {
     Unchanged,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SkippedFile {
     pub path: String,
     pub reason: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RestoreResult {
     pub restored: Vec<RestoredFile>,
     pub skipped: Vec<SkippedFile>,
 }
 
 /// A conversation rewind — exactly one selector; `confirm` mandatory.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RewindRequest {
     pub confirm: bool,
@@ -170,7 +170,7 @@ pub struct RewindRequest {
     pub checkpoint: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RewindResult {
     /// Nodes that survived the cut.
     pub kept: usize,
@@ -178,7 +178,7 @@ pub struct RewindResult {
     pub removed: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HistoryPage {
     pub messages: Vec<HistoryMessage>,
     pub total: usize,
@@ -186,7 +186,7 @@ pub struct HistoryPage {
     pub start: usize,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HistoryOptions {
     /// Trailing message count; defaults to `SEPIA_HISTORY_LIMIT`.
     pub limit: Option<usize>,
@@ -196,7 +196,7 @@ pub struct HistoryOptions {
     pub agent_id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentInfo {
     pub id: String,
     pub label: String,
@@ -231,7 +231,7 @@ pub trait SessionRewinder: Send + Sync {
 
 /// A `git` subprocess result — a non-zero exit is a valid answer, not an
 /// error (the error path is for spawn failures).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GitResult {
     pub code: i32,
     pub stdout: Vec<u8>,
@@ -251,7 +251,7 @@ pub trait RestoreExec: Send + Sync {
 }
 
 /// Errors the control plane produces — `code` is the wire taxonomy.
-#[derive(Clone, Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
 #[error("{message}")]
 pub struct ControlError {
     pub code: ControlErrorCode,
