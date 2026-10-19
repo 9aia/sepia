@@ -21,7 +21,10 @@ fn target_debug() -> PathBuf {
 /// `TESTKIT_BIN_DIRS` — `:`-separated dirs searched before the default
 /// target dir. Cross-repo consumers (peregrin) point it at both their
 /// own `target/debug` and sepia's, so testkit binaries resolve no
-/// matter which workspace built them.
+/// matter which workspace built them. The global cargo `target-dir`
+/// (`$HOME/.cargo/shared-target`) is searched too — config-file
+/// `target-dir` never reaches test processes as `CARGO_TARGET_DIR`,
+/// so binaries land there invisibly otherwise.
 fn find_bin(name: &str) -> Option<PathBuf> {
     if let Some(dirs) = std::env::var_os("TESTKIT_BIN_DIRS") {
         for dir in std::env::split_paths(&dirs) {
@@ -31,12 +34,20 @@ fn find_bin(name: &str) -> Option<PathBuf> {
             }
         }
     }
+    if let Some(home) = std::env::var_os("HOME") {
+        let candidate = PathBuf::from(home)
+            .join(".cargo/shared-target/debug")
+            .join(name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
     let candidate = target_debug().join(name);
     candidate.exists().then_some(candidate)
 }
 
 fn build_bin(name: &str) -> PathBuf {
-    if let Some(found) = std::env::var_os("TESTKIT_BIN_DIRS").and_then(|_| find_bin(name)) {
+    if let Some(found) = find_bin(name) {
         return found;
     }
     let root = workspace_root();
