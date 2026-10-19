@@ -18,12 +18,16 @@ export default defineConfig({
       },
       {
         text: 'How-to',
-        items: [{ text: 'Write a store driver', link: '/how-to/write-a-driver' }],
+        items: [
+          { text: 'Write a store driver', link: '/how-to/write-a-driver' },
+          { text: 'Drive sepia serve', link: '/how-to/drive-serve' },
+        ],
       },
       {
         text: 'Reference',
         items: [
           { text: 'Driver protocol', link: '/reference/protocol' },
+          { text: 'Serve wire', link: '/reference/serve-wire' },
           { text: 'Session formats', link: '/reference/session-formats' },
           { text: 'Agent configs', link: '/reference/agent-configs' },
         ],
