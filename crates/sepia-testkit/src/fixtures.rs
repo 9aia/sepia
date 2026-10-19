@@ -43,6 +43,7 @@ pub fn materialize_store(case_dir: &Path, scratch: &Path) -> std::io::Result<Pat
     if files_dir.is_dir() {
         let target = scratch.join("store");
         copy_dir(&files_dir, &target)?;
+        apply_mtimes(&case_dir.join("mtimes.txt"), &target)?;
         return Ok(target);
     }
     let sql_path = case_dir.join("store.sql");
@@ -67,6 +68,33 @@ fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
         } else {
             std::fs::copy(entry.path(), &target)?;
         }
+    }
+    Ok(())
+}
+
+/// Stamp copied files with the mtimes a `mtimes.txt` manifest lists —
+/// `relpath<TAB>epoch_secs` per line, relative to the store root.
+/// Readers that fall back to file mtime for missing timestamps (cursor's
+/// degraded stores) stay deterministic across checkouts, which git
+/// can't preserve.
+fn apply_mtimes(manifest: &Path, root: &Path) -> std::io::Result<()> {
+    let Ok(text) = std::fs::read_to_string(manifest) else {
+        return Ok(());
+    };
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let (rel, epoch) = line.split_once('\t').ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("bad mtimes line: {line}"),
+            )
+        })?;
+        let secs: f64 = epoch.parse().map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{line}: {e}"))
+        })?;
+        std::fs::File::options()
+            .write(true)
+            .open(root.join(rel))?
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(secs))?;
     }
     Ok(())
 }
