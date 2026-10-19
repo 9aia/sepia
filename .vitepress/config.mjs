@@ -26,7 +26,6 @@ export default defineConfig({
           { text: 'Driver protocol', link: '/reference/protocol' },
           { text: 'Session formats', link: '/reference/session-formats' },
           { text: 'Agent configs', link: '/reference/agent-configs' },
-          { text: 'Crate API docs', link: '/api/' },
         ],
       },
       {
