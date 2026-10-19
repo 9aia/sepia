@@ -34,7 +34,9 @@ struct Inner {
     closed: std::sync::atomic::AtomicBool,
 }
 
-/// A live driver subprocess. Dropping it kills the child.
+/// A live driver subprocess. Dropping it kills the child; clones share
+/// the same child handle (the last drop still kills it).
+#[derive(Clone)]
 pub struct DriverClient {
     inner: Arc<Inner>,
 }

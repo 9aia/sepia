@@ -18,7 +18,27 @@ fn target_debug() -> PathBuf {
         .join("debug")
 }
 
+/// `TESTKIT_BIN_DIRS` — `:`-separated dirs searched before the default
+/// target dir. Cross-repo consumers (peregrin) point it at both their
+/// own `target/debug` and sepia's, so testkit binaries resolve no
+/// matter which workspace built them.
+fn find_bin(name: &str) -> Option<PathBuf> {
+    if let Some(dirs) = std::env::var_os("TESTKIT_BIN_DIRS") {
+        for dir in std::env::split_paths(&dirs) {
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    let candidate = target_debug().join(name);
+    candidate.exists().then_some(candidate)
+}
+
 fn build_bin(name: &str) -> PathBuf {
+    if let Some(found) = std::env::var_os("TESTKIT_BIN_DIRS").and_then(|_| find_bin(name)) {
+        return found;
+    }
     let root = workspace_root();
     let binary = target_debug().join(name);
     // Prebuilt mode: `cargo xtask test`/`e2e` build the binaries once
