@@ -214,7 +214,12 @@ impl Inner {
 
 impl Drop for DriverClient {
     fn drop(&mut self) {
-        self.inner.reader.try_lock().map(|r| r.abort()).ok();
-        self.inner.stderr_reader.try_lock().map(|r| r.abort()).ok();
+        // Only the last handle may abort the shared reader tasks — an
+        // early clone dropping must not silence the channel its
+        // siblings still use.
+        if Arc::strong_count(&self.inner) == 1 {
+            self.inner.reader.try_lock().map(|r| r.abort()).ok();
+            self.inner.stderr_reader.try_lock().map(|r| r.abort()).ok();
+        }
     }
 }

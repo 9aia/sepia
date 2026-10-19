@@ -7,8 +7,12 @@ use sepia_driver::manifest::DriverManifest;
 use tokio::process::Command;
 
 /// Directory search order — first hit wins on name collision.
-/// `$SEPIA_DRIVER_DIR` → `~/.local/share/sepia/drivers` →
+/// `$SEPIA_DRIVER_DIR` → `<platform data dir>/sepia/drivers` →
 /// `/usr/local/lib/sepia/drivers` → PATH scan.
+///
+/// The platform data dir honors `XDG_DATA_HOME` on unix-likes
+/// (`$HOME/.local/share` fallback) — no hardcoded XDG paths so
+/// win/mac can land their own resolution later.
 pub fn search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Ok(dir) = std::env::var("SEPIA_DRIVER_DIR") {
@@ -16,11 +20,20 @@ pub fn search_dirs() -> Vec<PathBuf> {
             dirs.push(PathBuf::from(dir));
         }
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(Path::new(&home).join(".local/share/sepia/drivers"));
+    if let Some(data) = data_dir() {
+        dirs.push(data.join("sepia/drivers"));
     }
     dirs.push(PathBuf::from("/usr/local/lib/sepia/drivers"));
     dirs
+}
+
+fn data_dir() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg));
+        }
+    }
+    std::env::var_os("HOME").map(|home| Path::new(&home).join(".local/share"))
 }
 
 fn is_driver_binary(path: &Path) -> bool {
