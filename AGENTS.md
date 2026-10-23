@@ -38,6 +38,8 @@ actors, it belongs to peregrin, not here.
 cargo xtask check          # fmt + clippy -D warnings
 cargo xtask test           # whole suite (nextest if present)
 cargo xtask install        # release-build sepia + drivers → ~/.local
+cargo xtask coverage       # llvm-cov report (HTML → target/llvm-cov/html);
+                           # extra args pass through, e.g. --fail-under-lines 100
 ```
 
 Git hooks live in `.hooks/` (`core.hooksPath` = `.hooks`):

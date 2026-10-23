@@ -27,6 +27,8 @@ in sepia.
   change. New session op = a method on the `sepia serve` wire, not a
   crate-link.
 - `cargo xtask check` and `cargo xtask test` must stay green.
+- Coverage: `cargo xtask coverage` — cargo-llvm-cov HTML report in
+  `target/llvm-cov/html`; pass `--fail-under-lines 100` to gate.
 - Drivers are binaries discovered at runtime — never link a driver
   into the plane.
 - Commits: conventional prefixes (`feat:`/`fix:`/`refactor:`/`docs:`/`chore:`).

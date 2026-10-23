@@ -21,6 +21,31 @@ fn nextest_available() -> bool {
     }
 }
 
+/// True when the `cargo-llvm-cov` subcommand is installed.
+fn llvm_cov_available() -> bool {
+    Command::new("cargo")
+        .args(["llvm-cov", "--version"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Binaries tests shell out to (driver, mock ACP agent, the sepia CLI
+/// itself) — one `cargo build` beats N in-test builds serializing on
+/// package/build-dir locks. Tests see SEPIA_TESTKIT_PREBUILT and
+/// resolve the paths directly.
+const TEST_BINS: &[&str] = &["sepia", "sepia-driver-devin", "sepia-mock-acp-agent"];
+
+fn prebuild() -> anyhow::Result<()> {
+    let mut args = vec!["build"];
+    for bin in TEST_BINS {
+        args.push("--bin");
+        args.push(bin);
+    }
+    run("cargo", &args)
+}
+
 fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("check") => {
@@ -43,23 +68,7 @@ fn main() -> anyhow::Result<()> {
         // `cargo test` when the subcommand is *missing* — a failing
         // nextest run must not re-run the whole suite a second way.
         Some("test") => {
-            // Prebuild the binaries tests shell out to (driver, mock
-            // ACP agent, the sepia CLI itself) — one cargo invocation
-            // here beats N in-test `cargo build`s serializing on
-            // package/build-dir locks. Tests see SEPIA_TESTKIT_PREBUILT
-            // and resolve the paths directly.
-            run(
-                "cargo",
-                &[
-                    "build",
-                    "--bin",
-                    "sepia",
-                    "--bin",
-                    "sepia-driver-devin",
-                    "--bin",
-                    "sepia-mock-acp-agent",
-                ],
-            )?;
+            prebuild()?;
             let cmd = if nextest_available() {
                 &["nextest", "run", "--workspace"][..]
             } else {
@@ -119,9 +128,63 @@ fn main() -> anyhow::Result<()> {
             }
             println!("linked drivers into {}", driver_dir.display());
         }
+        // `cargo xtask coverage [llvm-cov args…]` — HTML report under
+        // target/llvm-cov/html plus a printed summary. Extra args pass
+        // through to cargo-llvm-cov (e.g. `--fail-under-lines 100`,
+        // `--lcov --output-path lcov.info` for CI upload); passing any
+        // report flag replaces the default --html.
+        Some("coverage") => {
+            anyhow::ensure!(
+                llvm_cov_available(),
+                "cargo-llvm-cov not installed — `cargo install cargo-llvm-cov` \
+                 (needs the llvm-tools rustup component)"
+            );
+            // Prebuild the spawned binaries *inside* the coverage env:
+            // llvm-cov's rustc wrapper instruments only the workspace
+            // crates named at show-env time, so bins built outside it
+            // run uninstrumented and e2e coverage stays invisible.
+            let mut bins = String::new();
+            for bin in TEST_BINS {
+                bins.push_str(" --bin ");
+                bins.push_str(bin);
+            }
+            let pre = format!(
+                "eval \"$(cargo llvm-cov show-env --export-prefix)\" \
+                 && cargo build{bins}"
+            );
+            run("sh", &["-c", &pre])?;
+            // --no-tests=pass matches `xtask test`: an empty suite is
+            // a pass, not nextest's exit-4 "no tests to run".
+            let runner = if nextest_available() {
+                "cargo llvm-cov nextest --workspace --exclude xtask --no-tests=pass"
+            } else {
+                "cargo llvm-cov --workspace --exclude xtask"
+            };
+            let extra: Vec<String> = std::env::args().skip(2).collect();
+            let wants_report = extra.iter().any(|a| {
+                matches!(
+                    a.as_str(),
+                    "--text"
+                        | "--summary-only"
+                        | "--json"
+                        | "--lcov"
+                        | "--cobertura"
+                        | "--codecov"
+                        | "--open"
+                )
+            });
+            let html = if wants_report { "" } else { " --html" };
+            let cov = format!("{runner}{html} \"$@\"");
+            let status = Command::new("sh")
+                .args(["-c", &cov, "xtask-coverage"])
+                .args(&extra)
+                .env("SEPIA_TESTKIT_PREBUILT", "1")
+                .status()?;
+            anyhow::ensure!(status.success(), "coverage run failed");
+        }
         Some(other) => anyhow::bail!("unknown task {other}"),
         None => {
-            anyhow::bail!("usage: cargo xtask <check|test|install>")
+            anyhow::bail!("usage: cargo xtask <check|test|install|coverage>")
         }
     }
     Ok(())

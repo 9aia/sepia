@@ -40,3 +40,24 @@ jobs:
       - run: cargo nextest run --workspace --locked
       # nextest does not run doctests.
       - run: cargo test --doc --workspace --locked
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: llvm-tools
+      - uses: taiki-e/install-action@v2
+        with:
+          # .cargo/config.toml sets rustc-wrapper = sccache.
+          tool: cargo-llvm-cov, cargo-nextest, sccache
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+          cache-on-failure: true
+      - run: cargo xtask coverage --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: lcov.info
