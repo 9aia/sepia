@@ -3,9 +3,12 @@
 - Windows + macOS support — driver/config dir resolution is already
   platform-agnostic; remaining work is per-OS testing, service
   adapters, and CI targets.
-- `sepia serve` expansion — full method surface + lifecycle (idle
-  sweep tuning, multi-client policy hooks), see `crates/sepia-cli/src/serve.rs`.
 - crates.io publishing — adopt the bupha release model when the wire
   stabilizes.
-- Agent config IR write coverage — more per-agent surfaces as drivers
-  grow them.
+- `sessions.unsubscribe` + subscription dedup — repeated
+  `sessions.subscribe` on one session spawns duplicate forwarders
+  (correct but redundant); per-client bookkeeping is peregrin's call
+  today. Revisit if the redundancy ever costs.
+- Meta run-spans on import — imports don't record provenance spans
+  (attach does); decide whether a transferred copy should trace its
+  origin.

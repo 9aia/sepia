@@ -44,9 +44,12 @@ tracked it before the split.
       adapters, CI targets.
 - [ ] **crates.io publishing** — adopt the bupha release model when the
       wire stabilizes (`VERSION` is `0.0.0`).
-- [ ] **Agent config IR write coverage** — more per-agent surfaces as
-      drivers grow them (BACKLOG).
-- [ ] **`docs/reference/protocol.md` is stale** — it documents the v1
-      node REST API (`/api/*`, SSE, pairing, push) that moved to
-      peregrin. Rewrite as the v2 wire reference or replace with a
-      pointer + the parts that still apply (resource keys, identity).
+- [x] ~~**Agent config IR write coverage**~~ — done: writes preserve
+      provenance across all four drivers (memory-file ownership, .mdc
+      extension, cline file-form, claude settings.local partition),
+      previously-silent field drops are reported, shared helpers in
+      sepia-core.
+- [x] ~~**`docs/reference/protocol.md` is stale**~~ — done: rewritten
+      as the driver-wire reference (framing, manifest + capabilities,
+      session.*/file.restore/config.* methods, -320xx error codes,
+      discovery).
