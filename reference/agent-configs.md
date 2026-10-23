@@ -58,14 +58,18 @@ Events: `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`,
 `PostToolUse`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`.
 
 **Write mapping**: skills/commands/agents one-to-one; hooks merge into
-`settings.json` under matcher groups, deduped; rules collapse into a managed
+`settings.json`/`settings.local.json` under matcher groups, deduped — each
+hook's `metadata.source` routes it back to the file it was read from. An
+instructions rule sourced from a managed memory file (`<dir>/CLAUDE.md`, or
+the project-root `CLAUDE.md` for `.claude` dirs) writes back as that file's
+content; every other rule collapses into the managed
 `<!-- sepia:rules -->…<!-- /sepia:rules -->` block inside `CLAUDE.md` (Claude
 has no rules directory — glob scoping is rendered as a `> Applies to:` line);
 `mcpServers` merge into `~/.claude.json` (user) or `.mcp.json` (project).
 
-**Lossy**: rule glob scoping (inert inside CLAUDE.md); `settings.local.json`
-vs `settings.json` provenance collapses on write; hook entries' extra fields
-beyond type/command/prompt/timeout.
+**Lossy**: rule glob scoping (inert inside CLAUDE.md); hook entries' extra
+fields beyond type/command/prompt/timeout — dropped `failClosed`/`loop_limit`
+are reported in the write action's `detail`.
 
 ## Cursor — `~/.cursor` (user), `<repo>/.cursor` (project)
 
@@ -105,8 +109,9 @@ counterpart and drops to `command`-only on write there — recorded lossy).
 Cursor-only surfaces not in the IR: `cli-config.json` (model, permissions,
 display), `plans/`, `extensions/`, `projects/` (transcripts), Tab rules.
 
-**Lossy**: `.mdc` files write back as `.md` (both are read); the user-level
-`~/.cursor` dir has no project-root side-channel.
+**Lossy**: the user-level `~/.cursor` dir has no project-root side-channel.
+(`.mdc` rules keep their `.mdc` extension on write via `metadata.sourcePath`;
+only rules with no `.mdc` provenance land as `.md`.)
 
 ## Cline — workspace root (`dir` = where the session runs)
 
@@ -122,8 +127,16 @@ No skills/subagents/hooks concept — writes report those items `skipped`.
 Global (`~/.cline`) rules dirs were not observed on this machine; the
 adapter is workspace-scoped.
 
-**Lossy**: none beyond the skipped kinds — `.clinerules` file writes back
-as the equivalent directory form.
+**Write mapping**: normally the directory form — `.clinerules/<name>.md`
+rules and `.clinerules/workflows/<name>.md` commands. When `.clinerules`
+already exists *as a file*, the instructions rule read from it writes back
+verbatim, other rules merge into a managed `sepia:rules` block inside the
+file, and commands report `skipped` (no place for `workflows/` under a
+file).
+
+**Lossy**: rule scoping (`globs`, `alwaysApply: false`) and command fields
+(`argumentHint`, `allowedTools`, `model`) have no `.clinerules` meaning —
+dropped, and reported in the write action's `detail`.
 
 ## Devin — `~/.config/devin` (user), `<repo>/.devin` (project)
 
@@ -137,6 +150,13 @@ as the equivalent directory form.
 
 `config.json` (model/org prefs), `cli/`, extension state — agent-side, not
 in the IR. No subagent or MCP file conventions — writes report `skipped`.
+
+**Write mapping**: skills/rules/commands one-to-one; the instructions rule
+read from `AGENTS.md` owns that file and writes back verbatim, while other
+`kind: "instructions"` rules merge into its managed `sepia:rules` block;
+hooks merge into `hooks.v1.json`. Dropped fields — rule `globs`/`alwaysApply`,
+command `argumentHint`/`allowedTools`/`model`, hook `failClosed`/`loop_limit` —
+are reported in the write action's `detail`.
 
 **Lossy**: hook _scripts_ (`hooks/*.py`/`*.sh`) are referenced by `command`
 strings — installing hooks to another agent carries the string, not the
