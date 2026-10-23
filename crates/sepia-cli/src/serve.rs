@@ -11,6 +11,9 @@
 //! | `agents.list` | `ControlPlane::list_agents` |
 //! | `sessions.list` | `list_sessions(with_locks?)` |
 //! | `sessions.get` / `sessions.summary` | `get_session` / `get_summary` |
+//! | `sessions.export` | `get_session` wrapped as `{session}` — the transfer bundle |
+//! | `sessions.import` | `Local::import_session` — write IR into an agent's store |
+//! | `sessions.convert` | `Local::convert_session` — node-local store→store copy |
 //! | `sessions.history` | `get_history` |
 //! | `sessions.attach` / `sessions.detach` | `attach` / `detach` |
 //! | `sessions.create` | `create_session` |
@@ -29,7 +32,8 @@ use std::sync::{Arc, Mutex};
 
 use sepia_driver::rpc::{Inbound, Request, RpcError, decode_line, encode_line};
 use sepia_session::{
-    HistoryOptions, Local, Paths, RestoreRequest, RewindRequest, base_options, build, sepia_home,
+    ControlError, ControlErrorCode, HistoryOptions, ImportOverrides, Local, Paths, RestoreRequest,
+    RewindRequest, base_options, build, sepia_home,
 };
 use serde_json::{Value, json};
 
@@ -73,6 +77,10 @@ fn agent_of(params: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+fn str_param(params: &Value, key: &str) -> Option<String> {
+    params.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
 fn manifest(identity: &sepia_session::NodeIdentity) -> Value {
     json!({
         "name": "sepia",
@@ -82,6 +90,7 @@ fn manifest(identity: &sepia_session::NodeIdentity) -> Value {
         "methods": [
             "manifest", "agents.list",
             "sessions.list", "sessions.get", "sessions.summary",
+            "sessions.export", "sessions.import", "sessions.convert",
             "sessions.history", "sessions.attach", "sessions.detach",
             "sessions.create", "sessions.prompt", "sessions.cancel",
             "sessions.permission", "sessions.delete", "sessions.patch_meta",
@@ -136,6 +145,50 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
             .map_err(|e| control_err(&e))?;
             sepia_core::wire::session_to_json(&session)
                 .map_err(|e| RpcError::internal(e.to_string()))
+        }
+        "sessions.export" => {
+            let id = id_of(&req.params)?;
+            let session = plane
+                .get_session(id, agent.as_deref())
+                .await
+                .map_err(|e| control_err(&e))?;
+            let session = sepia_core::wire::session_to_json(&session)
+                .map_err(|e| RpcError::internal(e.to_string()))?;
+            Ok(json!({ "session": session }))
+        }
+        "sessions.import" => {
+            let agent = agent.ok_or_else(|| RpcError::invalid_params("missing agent"))?;
+            let session = sepia_core::wire::session_from_json(
+                req.params.get("session").unwrap_or(&Value::Null),
+            )
+            .map_err(|e| {
+                control_err(&ControlError::caused(
+                    ControlErrorCode::Invalid,
+                    "session is not a session IR object",
+                    e,
+                ))
+            })?;
+            let overrides = ImportOverrides {
+                id: str_param(&req.params, "id").filter(|id| !id.is_empty()),
+                cwd: str_param(&req.params, "cwd"),
+                title: str_param(&req.params, "title"),
+                model: str_param(&req.params, "model"),
+            };
+            let id = local
+                .import_session(&agent, &session, &overrides)
+                .await
+                .map_err(|e| control_err(&e))?;
+            Ok(json!({ "id": id, "agentId": agent }))
+        }
+        "sessions.convert" => {
+            let id = id_of(&req.params)?;
+            let agent = agent.ok_or_else(|| RpcError::invalid_params("missing agent"))?;
+            let from = str_param(&req.params, "from");
+            let session_id = local
+                .convert_session(id, &agent, from.as_deref())
+                .await
+                .map_err(|e| control_err(&e))?;
+            Ok(json!({ "sessionId": session_id, "agentId": agent }))
         }
         "sessions.history" => {
             let id = id_of(&req.params)?;

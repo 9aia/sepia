@@ -18,6 +18,7 @@ use sepia_acp::registry::builtin_agents;
 use sepia_acp::{AcpConnection, AgentSpec, SpawnOptions, spawn_agent};
 use sepia_core::Session;
 use sepia_core::rewind::RewindPlan;
+use sepia_core::storage::SessionRepository;
 use sepia_driver::Capability;
 use sepia_host::DriverRegistry;
 use sepia_host::store::RemoteStore;
@@ -181,6 +182,34 @@ impl SessionRewinder for DriverRewinder {
     }
 }
 
+/// Caller overrides for [`Local::import_session`] — `id` re-keys the
+/// copy (absent → a fresh id is minted); `cwd`/`title`/`model` patch the
+/// IR before it lands in the target store.
+#[derive(Clone, Debug, Default)]
+pub struct ImportOverrides {
+    pub id: Option<String>,
+    pub cwd: Option<String>,
+    pub title: Option<String>,
+    pub model: Option<String>,
+}
+
+/// The fresh id an imported copy lands under. Cline ids double as the
+/// session-dir name — `<epoch-ms>_<5 lowercase alnum>` (mirrors
+/// `sepia_driver_cline::cline::cline_session_id`; the plane cannot link
+/// a driver crate). Every other store takes a uuid, like v1 imports.
+fn mint_import_id(agent: &str, created_at: f64) -> String {
+    if agent == "cline" {
+        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+        let mut suffix = String::with_capacity(5);
+        for byte in &uuid::Uuid::new_v4().into_bytes()[..5] {
+            suffix.push(ALPHABET[usize::from(byte % ALPHABET.len() as u8)] as char);
+        }
+        format!("{}_{suffix}", (created_at * 1000.0) as i64)
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    }
+}
+
 /// What [`build`] wires together — the session plane plus everything a
 /// service surface mounts.
 pub struct Local {
@@ -287,4 +316,95 @@ pub async fn build(paths: &Paths, mut options: ControlPlaneOptions) -> std::io::
         repo,
         paths: paths.clone(),
     })
+}
+
+impl Local {
+    /// The `session.save` endpoint for `agent` — `unknown_agent` when no
+    /// driver claims the id or it lacks `SessionWrite`.
+    async fn write_store(&self, agent: &str) -> Result<RemoteStore, ControlError> {
+        let Some(entry) = self.registry.entry(agent) else {
+            return Err(ControlError::new(
+                ControlErrorCode::UnknownAgent,
+                format!("unknown agent: {agent}"),
+            ));
+        };
+        if !entry
+            .manifest
+            .capabilities
+            .contains(&Capability::SessionWrite)
+        {
+            return Err(ControlError::new(
+                ControlErrorCode::UnknownAgent,
+                format!("agent {agent} has no write-capable session store"),
+            ));
+        }
+        let client = entry.client().await.map_err(|e| {
+            ControlError::caused(
+                ControlErrorCode::Internal,
+                format!("driver {agent} unavailable"),
+                e,
+            )
+        })?;
+        Ok(RemoteStore::new(client, agent.to_string()))
+    }
+
+    /// Write `session` into `agent`'s store via `session.save` over the
+    /// driver wire — the drivers' save is the install path (cline writes
+    /// manifest + transcript + index row, claude its canonical layout).
+    /// Imports are copies, not moves: a fresh id is minted per the
+    /// target's convention unless `overrides.id` re-keys it.
+    ///
+    /// # Errors
+    /// `unknown_agent` without a SessionWrite driver for `agent`;
+    /// `internal` on driver spawn or store-write failure.
+    pub async fn import_session(
+        &self,
+        agent: &str,
+        session: &Session,
+        overrides: &ImportOverrides,
+    ) -> Result<String, ControlError> {
+        let store = self.write_store(agent).await?;
+        let mut copy = session.clone();
+        copy.id = overrides
+            .id
+            .clone()
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| mint_import_id(agent, session.created_at));
+        if let Some(cwd) = &overrides.cwd {
+            copy.working_directory = cwd.clone();
+        }
+        if let Some(title) = &overrides.title {
+            copy.title = title.clone();
+        }
+        if let Some(model) = &overrides.model {
+            copy.model = model.clone();
+        }
+        store.save(&copy).await.map_err(|e| {
+            ControlError::caused(
+                ControlErrorCode::Internal,
+                format!("import into {agent} failed"),
+                e.message,
+            )
+        })?;
+        Ok(copy.id)
+    }
+
+    /// The node-local shortcut over [`Local::import_session`]: read `id`
+    /// from the merged store (`from` disambiguates cross-store id
+    /// collisions) and copy it into `agent`'s store — saves the
+    /// orchestrator an export/import IR round-trip.
+    ///
+    /// # Errors
+    /// `not_found` on unknown `id`; the [`Local::import_session`] errors
+    /// otherwise.
+    pub async fn convert_session(
+        &self,
+        id: &str,
+        agent: &str,
+        from: Option<&str>,
+    ) -> Result<String, ControlError> {
+        let session = self.plane.get_session(id, from).await?;
+        self.import_session(agent, &session, &ImportOverrides::default())
+            .await
+    }
 }
