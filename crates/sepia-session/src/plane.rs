@@ -170,6 +170,10 @@ pub struct ControlPlane {
     restore_exec: Arc<dyn RestoreExec>,
     file_history_dir: PathBuf,
     rewinders: HashMap<String, Arc<dyn SessionRewinder>>,
+    /// The session-meta overlay — see `ControlPlaneOptions::meta`.
+    meta: Option<sepia_meta::MetaStore>,
+    /// Display name recorded as `RunSpan.node`; `None` skips span writes.
+    node_name: Option<String>,
     state: Mutex<State>,
     me: Weak<Self>,
     stop_sweep: AtomicBool,
@@ -208,6 +212,8 @@ impl ControlPlane {
                     .join(".claude/file-history")
             }),
             rewinders: options.rewinders,
+            meta: options.meta,
+            node_name: options.node_name,
             state: Mutex::new(State::default()),
             me: me.clone(),
             stop_sweep: AtomicBool::new(false),
@@ -499,7 +505,7 @@ impl ControlPlane {
 
     fn to_summary(&self, session: &Session) -> SessionSummary {
         let agent = agent_for_backend(&session.backend_type).to_string();
-        SessionSummary {
+        let mut summary = SessionSummary {
             id: session.id.clone(),
             title: session.title.clone(),
             cwd: session.working_directory.clone(),
@@ -516,7 +522,48 @@ impl ControlPlane {
             parent_session_id: session.parent_session_id.clone(),
             agent_id: session.agent_id.clone(),
             can_rewind: self.can_rewind(&session.backend_type),
+        };
+        self.overlay(&mut summary);
+        summary
+    }
+
+    /// Merge the meta overlay into a row — the title override wins over
+    /// the store title; the rest fills fields the store cannot carry.
+    fn overlay(&self, summary: &mut SessionSummary) {
+        let Some(meta) = &self.meta else { return };
+        let Some(m) = meta.of(&summary.id) else {
+            return;
+        };
+        Self::apply_meta(summary, &m);
+    }
+
+    fn apply_meta(summary: &mut SessionSummary, m: &sepia_meta::SessionMeta) {
+        if let Some(title) = &m.title {
+            summary.title.clone_from(title);
         }
+        summary.pinned = m.pinned;
+        summary.archived = m.archived;
+        summary.project_ids.clone_from(&m.project_ids);
+        summary.spans = m
+            .spans
+            .as_ref()
+            .map(|spans| spans.iter().cloned().map(Into::into).collect());
+    }
+
+    /// Record an attach as a run span — the same agent+node continuing
+    /// is a no-op (`append_span` dedups), so re-attaches stay one run.
+    fn record_span(&self, id: &str, agent: &str) {
+        let (Some(meta), Some(node)) = (&self.meta, &self.node_name) else {
+            return;
+        };
+        meta.add_span(
+            id,
+            sepia_meta::RunSpan {
+                at: now_ms(),
+                agent: agent.to_string(),
+                node: node.clone(),
+            },
+        );
     }
 
     /// Whether a `SessionRewinder` is registered for the backend (or
@@ -551,7 +598,7 @@ impl ControlPlane {
                 if !stored.contains(id) {
                     // Pinned to attach time — now() would churn on every
                     // fetch and ride the session to the top.
-                    summaries.push(SessionSummary {
+                    let mut row = SessionSummary {
                         id: id.clone(),
                         title: live.title.clone(),
                         cwd: live.cwd.clone(),
@@ -568,8 +615,44 @@ impl ControlPlane {
                         parent_session_id: None,
                         agent_id: None,
                         can_rewind: self.rewinders.contains_key(&live.agent_id),
-                    });
+                    };
+                    self.overlay(&mut row);
+                    summaries.push(row);
                 }
+            }
+        }
+        // Pending rows — sessions the overlay recorded (created here via
+        // `sessions.create`) that the agent's store never flushed and no
+        // live handle covers: `agent`+`cwd` is what identifies them.
+        if let Some(meta) = &self.meta {
+            let listed: HashSet<String> = summaries.iter().map(|s| s.id.clone()).collect();
+            for (id, m) in meta.sessions() {
+                if listed.contains(&id) {
+                    continue;
+                }
+                let (Some(agent), Some(cwd)) = (&m.agent, &m.cwd) else {
+                    continue;
+                };
+                let mut row = SessionSummary {
+                    id: id.clone(),
+                    title: m.title.clone().unwrap_or_else(|| "New session".into()),
+                    cwd: cwd.clone(),
+                    agent: agent.clone(),
+                    updated_at: m.created_at.clone().unwrap_or_default(),
+                    locked: false,
+                    lock_holder_pid: None,
+                    source: "sepia".into(),
+                    busy: false,
+                    pinned: None,
+                    archived: None,
+                    project_ids: None,
+                    spans: None,
+                    parent_session_id: None,
+                    agent_id: None,
+                    can_rewind: self.rewinders.contains_key(agent),
+                };
+                Self::apply_meta(&mut row, &m);
+                summaries.push(row);
             }
         }
         if !with_locks {
@@ -961,6 +1044,15 @@ impl ControlPlane {
             ));
         };
 
+        // The overlay's stored preference applies only when the caller
+        // didn't pick a model for this attach.
+        let model = model.or_else(|| {
+            self.meta
+                .as_ref()
+                .and_then(|meta| meta.of(id))
+                .and_then(|m| m.model.flatten())
+        });
+
         let conn = self
             .spawn_agent(
                 &agent,
@@ -1071,6 +1163,7 @@ impl ControlPlane {
         let mut live = live;
         Self::touch_idle(&mut live);
         self.state.lock().await.live.insert(id.to_string(), live);
+        self.record_span(id, agent.id());
         Ok(AttachResult {
             attached: true,
             read_only: false,
@@ -1099,12 +1192,14 @@ impl ControlPlane {
             let state = self.state.lock().await;
             if let Some(existing) = state.live.get(id) {
                 if agent_id.is_none() || Some(existing.agent_id.as_str()) == agent_id.as_deref() {
-                    return Ok(AttachResult {
+                    let result = AttachResult {
                         attached: true,
                         read_only: false,
                         agent_id: existing.agent_id.clone(),
                         capabilities: existing.conn.capabilities().await,
-                    });
+                    };
+                    self.record_span(id, &result.agent_id);
+                    return Ok(result);
                 }
                 // The id is held by another agent's live session; the map
                 // is keyed by bare id and cannot host both copies.
@@ -1199,6 +1294,22 @@ impl ControlPlane {
                 return Err(acp_error("Failed to create session")(e));
             }
         };
+        // The overlay keeps a pending row alive even if the agent's
+        // store never flushes — `agent`+`cwd` is the pending identity.
+        // Only an explicit title is recorded: the default "New session"
+        // would shadow whatever title the agent generates on flush.
+        if let Some(meta) = &self.meta {
+            meta.patch(
+                &id,
+                &sepia_meta::SessionMeta {
+                    title: title.clone(),
+                    agent: Some(agent.id().to_string()),
+                    cwd: Some(cwd.to_string()),
+                    created_at: Some(iso_of(now_ms() / 1000.0)),
+                    ..sepia_meta::SessionMeta::default()
+                },
+            );
+        }
         let mut live = Self::wire_live(Self::new_live(
             &conn,
             cwd.to_string(),
@@ -1208,6 +1319,7 @@ impl ControlPlane {
         ));
         Self::touch_idle(&mut live);
         self.state.lock().await.live.insert(id.clone(), live);
+        self.record_span(&id, agent.id());
         Ok(CreateResult {
             id,
             agent_id: agent.id().to_string(),
@@ -1399,7 +1511,114 @@ impl ControlPlane {
             .await
             .map_err(acp_error("Failed to delete session"));
         Self::close_agent(conn).await;
+        if result.is_ok() {
+            if let Some(meta) = &self.meta {
+                meta.remove(id);
+            }
+        }
         result
+    }
+
+    /// The meta store or `invalid` — meta verbs on a plane built
+    /// without one have nothing to act on.
+    fn require_meta(&self) -> Result<&sepia_meta::MetaStore, ControlError> {
+        self.meta.as_ref().ok_or_else(|| {
+            control_error(
+                ControlErrorCode::Invalid,
+                "no meta store configured for this plane",
+            )
+        })
+    }
+
+    /// Merge a meta-overlay patch into one session — `title`, `pinned`,
+    /// `archived`, `projectIds`, `model` (the stored spawn preference).
+    /// The id must resolve: patching an unknown id would orphan the row.
+    ///
+    /// # Errors
+    /// `invalid` without a meta store or on a bad title (empty/>200),
+    /// `not_found` on an id neither store, live, nor overlay knows.
+    pub async fn patch_meta(
+        &self,
+        id: &str,
+        patch: &sepia_meta::SessionMeta,
+    ) -> Result<(), ControlError> {
+        let meta = self.require_meta()?;
+        if let Some(title) = &patch.title {
+            if title.trim().is_empty() || title.chars().count() > 200 {
+                return Err(control_error(
+                    ControlErrorCode::Invalid,
+                    "title must be a non-empty string of at most 200 characters",
+                ));
+            }
+        }
+        let known = {
+            let state = self.state.lock().await;
+            state.live.contains_key(id)
+        } || meta.of(id).is_some()
+            || self
+                .repo
+                .has_session(id)
+                .await
+                .map_err(storage_error("Failed to read session"))?;
+        if !known {
+            return Err(control_error(
+                ControlErrorCode::NotFound,
+                format!("Unknown session: {id}"),
+            ));
+        }
+        meta.patch(id, patch);
+        Ok(())
+    }
+
+    /// Node-local projects, from the meta overlay (`[]` without one).
+    #[must_use]
+    pub fn list_projects(&self) -> Vec<sepia_meta::Project> {
+        self.meta
+            .as_ref()
+            .map_or_else(Vec::new, sepia_meta::MetaStore::list_projects)
+    }
+
+    /// Create a project — `name` must be non-empty.
+    ///
+    /// # Errors
+    /// `invalid` without a meta store or on an empty name.
+    pub fn create_project(&self, name: &str) -> Result<sepia_meta::Project, ControlError> {
+        if name.trim().is_empty() {
+            return Err(control_error(
+                ControlErrorCode::Invalid,
+                "project name must be non-empty",
+            ));
+        }
+        Ok(self.require_meta()?.create_project(name))
+    }
+
+    /// Rename a project.
+    ///
+    /// # Errors
+    /// `invalid` without a meta store or on an empty name, `not_found`
+    /// on an unknown project id.
+    pub fn rename_project(&self, id: &str, name: &str) -> Result<(), ControlError> {
+        if name.trim().is_empty() {
+            return Err(control_error(
+                ControlErrorCode::Invalid,
+                "project name must be non-empty",
+            ));
+        }
+        self.require_meta()?
+            .rename_project(id, name)
+            .then_some(())
+            .ok_or_else(|| {
+                control_error(ControlErrorCode::NotFound, format!("Unknown project: {id}"))
+            })
+    }
+
+    /// Delete a project, dropping it from every session's `projectIds`.
+    ///
+    /// # Errors
+    /// `invalid` without a meta store.
+    pub fn delete_project(&self, id: &str) -> Result<(), ControlError> {
+        self.require_meta()?.delete_project(id);
+        Ok(())
     }
 
     /// Settles a pending permission request.

@@ -75,6 +75,9 @@ pub struct MockRuntime {
     id: String,
     env: Vec<(String, String)>,
     pub spawns: AtomicUsize,
+    /// The `model` each spawn was asked for — attach's stored-meta
+    /// preference is observable only here.
+    pub models: Mutex<Vec<Option<String>>>,
 }
 
 impl MockRuntime {
@@ -86,6 +89,7 @@ impl MockRuntime {
                 .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
                 .collect(),
             spawns: AtomicUsize::new(0),
+            models: Mutex::new(Vec::new()),
         })
     }
 }
@@ -103,10 +107,11 @@ impl AgentRuntime for MockRuntime {
     async fn spawn(
         &self,
         cwd: &str,
-        _model: Option<&str>,
+        model: Option<&str>,
         _fallbacks: Option<&[String]>,
     ) -> Result<AcpConnection, sepia_acp::rpc::RpcError> {
         self.spawns.fetch_add(1, Ordering::SeqCst);
+        self.models.lock().unwrap().push(model.map(str::to_string));
         let spec = AgentSpec {
             id: self.id.clone(),
             label: "Mock".into(),

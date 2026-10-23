@@ -104,6 +104,230 @@ async fn cline_backend_maps_to_cline_agent() {
     assert_eq!(agent_for_backend("windsurf"), "devin");
 }
 
+// ---------- meta overlay ----------------------------------------------
+
+fn meta_store(dir: &tempfile::TempDir) -> sepia_meta::MetaStore {
+    sepia_meta::MetaStore::open(&dir.path().join("meta.json"))
+}
+
+fn meta_options(meta: sepia_meta::MetaStore) -> ControlPlaneOptions {
+    ControlPlaneOptions {
+        meta: Some(meta),
+        node_name: Some("test-node".into()),
+        ..ControlPlaneOptions::default()
+    }
+}
+
+#[tokio::test]
+async fn list_overlays_meta_onto_store_rows() {
+    let dir = tempdir();
+    let meta = meta_store(&dir);
+    meta.patch(
+        "a",
+        &sepia_session::SessionMeta {
+            title: Some("Renamed".into()),
+            pinned: Some(true),
+            project_ids: Some(vec!["p1".into()]),
+            ..sepia_session::SessionMeta::default()
+        },
+    );
+    let (plane, _) = mk_plane(
+        vec![contract::session("a", "Alpha", 100.0)],
+        vec![],
+        meta_options(meta),
+    );
+    let list = plane.list_sessions(false).await.unwrap();
+    assert_eq!(list[0].title, "Renamed");
+    assert_eq!(list[0].pinned, Some(true));
+    assert_eq!(list[0].project_ids, Some(vec!["p1".to_string()]));
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn list_shows_pending_meta_only_rows() {
+    let dir = tempdir();
+    let meta = meta_store(&dir);
+    meta.patch(
+        "pending-1",
+        &sepia_session::SessionMeta {
+            agent: Some("devin".into()),
+            cwd: Some("/tmp".into()),
+            created_at: Some("2026-01-01T00:00:00Z".into()),
+            pinned: Some(true),
+            ..sepia_session::SessionMeta::default()
+        },
+    );
+    let (plane, _) = mk_plane(vec![], vec![], meta_options(meta));
+    let list = plane.list_sessions(false).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, "pending-1");
+    assert_eq!(list[0].title, "New session");
+    assert_eq!(list[0].source, "sepia");
+    assert_eq!(list[0].pinned, Some(true));
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn patch_meta_validates_and_persists() {
+    let dir = tempdir();
+    let meta = meta_store(&dir);
+    let (plane, _) = mk_plane(
+        vec![session_with("devin", vec![])],
+        vec![],
+        meta_options(meta),
+    );
+    let bad = plane
+        .patch_meta(
+            "s1",
+            &sepia_session::SessionMeta {
+                title: Some("   ".into()),
+                ..sepia_session::SessionMeta::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(bad.code, ControlErrorCode::Invalid);
+    let ghost = plane
+        .patch_meta(
+            "nope",
+            &sepia_session::SessionMeta {
+                pinned: Some(true),
+                ..sepia_session::SessionMeta::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(ghost.code, ControlErrorCode::NotFound);
+    plane
+        .patch_meta(
+            "s1",
+            &sepia_session::SessionMeta {
+                pinned: Some(true),
+                title: Some("Fixed".into()),
+                ..sepia_session::SessionMeta::default()
+            },
+        )
+        .await
+        .unwrap();
+    let list = plane.list_sessions(false).await.unwrap();
+    assert_eq!(list[0].title, "Fixed");
+    assert_eq!(list[0].pinned, Some(true));
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn meta_verbs_fail_invalid_without_a_store() {
+    let (plane, _) = mk_plane(
+        vec![session_with("devin", vec![])],
+        vec![],
+        ControlPlaneOptions::default(),
+    );
+    let e = plane
+        .patch_meta("s1", &sepia_session::SessionMeta::default())
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ControlErrorCode::Invalid);
+    assert!(plane.list_projects().is_empty());
+    assert_eq!(
+        plane.create_project("x").unwrap_err().code,
+        ControlErrorCode::Invalid
+    );
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn project_crud_round_trips() {
+    let dir = tempdir();
+    let meta = meta_store(&dir);
+    let (plane, _) = mk_plane(
+        vec![session_with("devin", vec![])],
+        vec![],
+        meta_options(meta.clone()),
+    );
+    assert!(plane.list_projects().is_empty());
+    assert_eq!(
+        plane.create_project("  ").unwrap_err().code,
+        ControlErrorCode::Invalid
+    );
+    let project = plane.create_project("work").unwrap();
+    assert_eq!(project.name, "work");
+    assert_eq!(plane.list_projects().len(), 1);
+    plane.rename_project(&project.id, "renamed").unwrap();
+    assert_eq!(plane.list_projects()[0].name, "renamed");
+    assert_eq!(
+        plane.rename_project("ghost", "x").unwrap_err().code,
+        ControlErrorCode::NotFound
+    );
+    // Deleting drops the id from session memberships too.
+    plane
+        .patch_meta(
+            "s1",
+            &sepia_session::SessionMeta {
+                project_ids: Some(vec![project.id.clone()]),
+                ..sepia_session::SessionMeta::default()
+            },
+        )
+        .await
+        .unwrap();
+    plane.delete_project(&project.id).unwrap();
+    assert!(plane.list_projects().is_empty());
+    assert_eq!(meta.of("s1").unwrap().project_ids, Some(vec![]));
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn attach_records_a_run_span() {
+    let dir = tempdir();
+    let meta = meta_store(&dir);
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        meta_options(meta.clone()),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let spans = meta.of("s1").unwrap().spans.unwrap();
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].agent, "devin");
+    assert_eq!(spans[0].node, "test-node");
+    // Re-attaching the same agent+node is one run, not two.
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    assert_eq!(meta.of("s1").unwrap().spans.unwrap().len(), 1);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn attach_applies_the_stored_model_preference() {
+    let dir = tempdir();
+    let meta = meta_store(&dir);
+    meta.patch(
+        "s1",
+        &sepia_session::SessionMeta {
+            model: Some(Some("preferred".into())),
+            ..sepia_session::SessionMeta::default()
+        },
+    );
+    let runtime = MockRuntime::new("devin", &[("MOCK_SESSIONS", "s1|/work|S1|now")]);
+    let models = Arc::clone(&runtime);
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(vec![session], vec![runtime], meta_options(meta));
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    // An explicit model wins over the stored preference.
+    plane.detach("s1").await;
+    plane
+        .attach("s1", false, Some("explicit".into()), None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        *models.models.lock().unwrap(),
+        vec![Some("preferred".to_string()), Some("explicit".to_string())]
+    );
+    plane.close_all().await;
+}
+
 #[tokio::test]
 async fn history_in_node_order_with_ms_timestamps() {
     let session = session_with(

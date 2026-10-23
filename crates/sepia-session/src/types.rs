@@ -17,6 +17,16 @@ pub struct RunSpan {
     pub node: String,
 }
 
+impl From<sepia_meta::RunSpan> for RunSpan {
+    fn from(span: sepia_meta::RunSpan) -> Self {
+        Self {
+            at: span.at,
+            agent: span.agent,
+            node: span.node,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
@@ -329,4 +339,12 @@ pub struct ControlPlaneOptions {
     pub file_history_dir: Option<PathBuf>,
     /// Per-backend transcript writers for `rewind`.
     pub rewinders: std::collections::HashMap<String, std::sync::Arc<dyn SessionRewinder>>,
+    /// The session-meta overlay (title/pin/archive/projects/spans). Set
+    /// and reads carry it, attach records spans, and the meta verbs
+    /// answer; `None` serves store data only and meta calls fail
+    /// `invalid`.
+    pub meta: Option<sepia_meta::MetaStore>,
+    /// This node's display name — recorded as `RunSpan.node` on attach.
+    /// Spans are skipped when unset.
+    pub node_name: Option<String>,
 }

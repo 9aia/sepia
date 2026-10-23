@@ -44,10 +44,49 @@ impl Paths {
     pub fn new(home: PathBuf) -> Self {
         Self {
             meta_path: home.join("meta.json"),
-            node_path: home.join("node.json"),
+            node_path: std::env::var_os("SEPIA_NODE")
+                .map_or_else(|| home.join("node.json"), PathBuf::from),
             home,
         }
     }
+}
+
+/// Machine identity persisted at `Paths::node_path` — `id` is minted
+/// once and stable, `name` defaults to the hostname (`SEPIA_NAME`
+/// overrides) and doubles as `RunSpan.node` provenance.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct NodeIdentity {
+    pub id: String,
+    pub name: String,
+}
+
+/// Read the node identity, minting + persisting `node_<hex16>` when the
+/// file is absent or unreadable.
+pub fn node_identity(paths: &Paths) -> NodeIdentity {
+    if let Ok(raw) = std::fs::read_to_string(&paths.node_path) {
+        if let Ok(id) = serde_json::from_str::<NodeIdentity>(&raw) {
+            return id;
+        }
+    }
+    let identity = NodeIdentity {
+        id: format!("node_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
+        name: std::env::var("SEPIA_NAME")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                nix::unistd::gethostname()
+                    .ok()
+                    .map(|h| h.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "node".into()),
+    };
+    if let Ok(json) = serde_json::to_vec(&identity) {
+        if let Some(dir) = paths.node_path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&paths.node_path, json);
+    }
+    identity
 }
 
 /// Default `SEPIA_HOME`: `SEPIA_HOME` env or `~/.local/share/sepia`.
@@ -147,6 +186,7 @@ impl SessionRewinder for DriverRewinder {
 pub struct Local {
     pub plane: Arc<ControlPlane>,
     pub meta: MetaStore,
+    pub identity: NodeIdentity,
     pub registry: DriverRegistry,
     pub repo: Arc<dyn sepia_core::storage::SessionRepository>,
     pub paths: Paths,
@@ -227,13 +267,22 @@ pub async fn build(paths: &Paths, mut options: ControlPlaneOptions) -> std::io::
     options.rewinders = rewinders;
     options.agents = agents;
 
+    let meta = MetaStore::open(&paths.meta_path);
+    if options.meta.is_none() {
+        options.meta = Some(meta.clone());
+    }
+    let identity = node_identity(paths);
+    if options.node_name.is_none() {
+        options.node_name = Some(identity.name.clone());
+    }
+
     let repo: Arc<dyn sepia_core::storage::SessionRepository> = Arc::new(merged);
     let plane = ControlPlane::new(Arc::clone(&repo), options);
-    let meta = MetaStore::open(&paths.meta_path);
 
     Ok(Local {
         plane,
         meta,
+        identity,
         registry,
         repo,
         paths: paths.clone(),

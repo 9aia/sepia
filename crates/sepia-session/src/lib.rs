@@ -14,8 +14,9 @@ pub mod translate;
 pub mod types;
 
 pub use exec::DefaultRestoreExec;
-pub use local::{Local, Paths, base_options, build, sepia_home};
+pub use local::{Local, NodeIdentity, Paths, base_options, build, sepia_home};
 pub use merged::{MergedRepository, agent_for_backend};
 pub use plane::{ControlPlane, CreateResult};
+pub use sepia_meta::{MetaStore, Project, SessionMeta};
 pub use translate::Translator;
 pub use types::*;

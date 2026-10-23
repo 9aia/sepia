@@ -17,6 +17,9 @@
 //! | `sessions.prompt` / `sessions.cancel` | `prompt` / `cancel` |
 //! | `sessions.permission` | `respond_to_permission` |
 //! | `sessions.delete` | `delete_session` |
+//! | `sessions.patch_meta` | `patch_meta` — the overlay (title/pin/archive/projects/model) |
+//! | `projects.list` / `projects.create` | `list_projects` / `create_project` |
+//! | `projects.rename` / `projects.delete` | `rename_project` / `delete_project` |
 //! | `sessions.restore` / `sessions.rewind` | `restore` / `rewind` |
 //! | `sessions.subscribe` | `subscribe` → `session.event` notifications |
 //! | `shutdown` | close the plane, exit 0 |
@@ -70,18 +73,21 @@ fn agent_of(params: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-fn manifest() -> Value {
+fn manifest(identity: &sepia_session::NodeIdentity) -> Value {
     json!({
         "name": "sepia",
         "version": crate::SEPIA_VERSION,
         "protocol": PROTOCOL,
+        "node": { "id": identity.id, "name": identity.name },
         "methods": [
             "manifest", "agents.list",
             "sessions.list", "sessions.get", "sessions.summary",
             "sessions.history", "sessions.attach", "sessions.detach",
             "sessions.create", "sessions.prompt", "sessions.cancel",
-            "sessions.permission", "sessions.delete", "sessions.restore",
-            "sessions.rewind", "sessions.subscribe", "shutdown",
+            "sessions.permission", "sessions.delete", "sessions.patch_meta",
+            "sessions.restore", "sessions.rewind", "sessions.subscribe",
+            "projects.list", "projects.create", "projects.rename",
+            "projects.delete", "shutdown",
         ],
     })
 }
@@ -90,7 +96,7 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
     let plane = &local.plane;
     let agent = agent_of(&req.params);
     match req.method.as_str() {
-        "manifest" => Ok(manifest()),
+        "manifest" => Ok(manifest(&local.identity)),
         "agents.list" => {
             let agents: Vec<Value> = plane
                 .list_agents()
@@ -264,6 +270,61 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
                 .delete_session(id_of(&req.params)?, agent.as_deref())
                 .await
                 .map_err(|e| control_err(&e))?;
+            Ok(Value::Null)
+        }
+        "sessions.patch_meta" => {
+            let id = id_of(&req.params)?;
+            let raw = req.params.get("patch").cloned().unwrap_or_default();
+            let mut patch: sepia_session::SessionMeta = serde_json::from_value(raw.clone())
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+            // `Option<Option<String>>` flattens `"model": null` into
+            // "keep" — restore the documented explicit clear.
+            if raw.get("model").is_some() {
+                patch.model = match raw["model"].as_str() {
+                    Some(s) => Some(Some(s.to_string())),
+                    None => Some(None),
+                };
+            }
+            plane
+                .patch_meta(id, &patch)
+                .await
+                .map_err(|e| control_err(&e))?;
+            Ok(Value::Null)
+        }
+        "projects.list" => serde_json::to_value(plane.list_projects())
+            .map_err(|e| RpcError::internal(e.to_string())),
+        "projects.create" => {
+            let name = req
+                .params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RpcError::invalid_params("missing project name"))?;
+            serde_json::to_value(plane.create_project(name).map_err(|e| control_err(&e))?)
+                .map_err(|e| RpcError::internal(e.to_string()))
+        }
+        "projects.rename" => {
+            let id = req
+                .params
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RpcError::invalid_params("missing project id"))?;
+            let name = req
+                .params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RpcError::invalid_params("missing project name"))?;
+            plane
+                .rename_project(id, name)
+                .map_err(|e| control_err(&e))?;
+            Ok(Value::Null)
+        }
+        "projects.delete" => {
+            let id = req
+                .params
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RpcError::invalid_params("missing project id"))?;
+            plane.delete_project(id).map_err(|e| control_err(&e))?;
             Ok(Value::Null)
         }
         "sessions.restore" | "sessions.rewind" => {
