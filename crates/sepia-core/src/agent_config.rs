@@ -251,15 +251,19 @@ pub fn config_from_json(input: &Value) -> Result<AgentConfig, serde_json::Error>
 // Shared adapter plumbing — pure parts only.
 // ---------------------------------------------------------------------------
 
-/// What a writer did to one file — the CLI prints these.
-#[derive(Clone, Debug, PartialEq)]
+/// What a writer did to one file — the CLI prints these; `config.write`
+/// returns them over the driver wire.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigWriteAction {
     pub path: String,
     pub action: WriteActionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum WriteActionKind {
     Wrote,
     Updated,

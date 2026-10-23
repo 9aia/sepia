@@ -13,9 +13,11 @@ pub const SESSION_DELETE: &str = "session.delete";
 pub const SESSION_CHECKPOINTS: &str = "session.checkpoints";
 pub const SESSION_REWIND: &str = "session.rewind";
 pub const FILE_RESTORE: &str = "file.restore";
+pub const CONFIG_READ: &str = "config.read";
+pub const CONFIG_WRITE: &str = "config.write";
 
 /// Every method name v1 defines — the host validates requests against it.
-pub const ALL: [&str; 11] = [
+pub const ALL: [&str; 13] = [
     DRIVER_MANIFEST,
     SESSION_LIST,
     SESSION_GET,
@@ -27,6 +29,8 @@ pub const ALL: [&str; 11] = [
     SESSION_CHECKPOINTS,
     SESSION_REWIND,
     FILE_RESTORE,
+    CONFIG_READ,
+    CONFIG_WRITE,
 ];
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -76,6 +80,35 @@ pub struct RestoreParams {
     pub tool_call_id: Option<String>,
     /// Required confirmation gate — mirrors the destructive-op rule.
     pub confirm: bool,
+}
+
+/// `config.read` — `dir` is the config root the driver's adapter
+/// expects (a `.claude`/`.cursor`/`devin` dir, or a Cline workspace
+/// root); absent, the driver resolves its own default (env override or
+/// user dir / process cwd).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigReadParams {
+    #[serde(default)]
+    pub dir: Option<std::path::PathBuf>,
+}
+
+/// `config.write` — `config` is a config IR JSON payload (the
+/// `config export` shape or a full serialized `AgentConfig`; the driver
+/// decodes it with `config_from_json`).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigWriteParams {
+    #[serde(default)]
+    pub dir: Option<std::path::PathBuf>,
+    pub config: serde_json::Value,
+}
+
+/// `config.write` result — the per-file write report.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigWriteResult {
+    pub actions: Vec<sepia_core::agent_config::ConfigWriteAction>,
 }
 
 /// Per-file outcome of a restore execution.

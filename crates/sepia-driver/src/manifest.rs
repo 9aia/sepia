@@ -26,6 +26,8 @@ pub enum Capability {
     Rewind,
     /// Cross-store conversion between two backends.
     Convert { from: String, to: String },
+    /// Agent-config IR access (`config.read`/`config.write`).
+    AgentConfig,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

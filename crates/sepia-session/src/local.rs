@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use sepia_acp::registry::builtin_agents;
 use sepia_acp::{AcpConnection, AgentSpec, SpawnOptions, spawn_agent};
 use sepia_core::Session;
+use sepia_core::agent_config::{AgentConfig, ConfigWriteAction};
 use sepia_core::rewind::RewindPlan;
 use sepia_core::storage::SessionRepository;
 use sepia_driver::Capability;
@@ -182,6 +183,46 @@ impl SessionRewinder for DriverRewinder {
     }
 }
 
+/// Per-kind item counts in an [`AgentConfig`] — the `config.list` row
+/// shape.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConfigCounts {
+    pub skills: usize,
+    pub rules: usize,
+    pub commands: usize,
+    pub hooks: usize,
+    pub agents: usize,
+    pub mcp_servers: usize,
+}
+
+impl AgentConfigCounts {
+    /// Count each kind in `config`.
+    pub fn of(config: &AgentConfig) -> Self {
+        Self {
+            skills: config.skills.len(),
+            rules: config.rules.len(),
+            commands: config.commands.len(),
+            hooks: config.hooks.len(),
+            agents: config.agents.len(),
+            mcp_servers: config.mcp_servers.len(),
+        }
+    }
+}
+
+/// One `config.list` row — the agent id plus item counts, or `error`
+/// when that driver's read failed (an inventory degrades per agent
+/// rather than failing wholesale).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConfigSummary {
+    pub agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub counts: Option<AgentConfigCounts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Caller overrides for [`Local::import_session`] — `id` re-keys the
 /// copy (absent → a fresh id is minted); `cwd`/`title`/`model` patch the
 /// IR before it lands in the target store.
@@ -319,23 +360,25 @@ pub async fn build(paths: &Paths, mut options: ControlPlaneOptions) -> std::io::
 }
 
 impl Local {
-    /// The `session.save` endpoint for `agent` — `unknown_agent` when no
-    /// driver claims the id or it lacks `SessionWrite`.
-    async fn write_store(&self, agent: &str) -> Result<RemoteStore, ControlError> {
+    /// The `RemoteStore` for `agent`, gated on `capability` —
+    /// `unknown_agent` when no driver claims the id or it lacks the
+    /// capability, `internal` when the driver won't spawn.
+    async fn capable_store(
+        &self,
+        agent: &str,
+        capability: &Capability,
+        missing: impl FnOnce(&str) -> String,
+    ) -> Result<RemoteStore, ControlError> {
         let Some(entry) = self.registry.entry(agent) else {
             return Err(ControlError::new(
                 ControlErrorCode::UnknownAgent,
                 format!("unknown agent: {agent}"),
             ));
         };
-        if !entry
-            .manifest
-            .capabilities
-            .contains(&Capability::SessionWrite)
-        {
+        if !entry.manifest.capabilities.contains(capability) {
             return Err(ControlError::new(
                 ControlErrorCode::UnknownAgent,
-                format!("agent {agent} has no write-capable session store"),
+                missing(agent),
             ));
         }
         let client = entry.client().await.map_err(|e| {
@@ -346,6 +389,141 @@ impl Local {
             )
         })?;
         Ok(RemoteStore::new(client, agent.to_string()))
+    }
+
+    /// The `session.save` endpoint for `agent` — `unknown_agent` when no
+    /// driver claims the id or it lacks `SessionWrite`.
+    async fn write_store(&self, agent: &str) -> Result<RemoteStore, ControlError> {
+        self.capable_store(agent, &Capability::SessionWrite, |agent| {
+            format!("agent {agent} has no write-capable session store")
+        })
+        .await
+    }
+
+    /// The `config.*` endpoint for `agent` — `unknown_agent` when no
+    /// driver claims the id or it lacks `AgentConfig`.
+    async fn config_store(&self, agent: &str) -> Result<RemoteStore, ControlError> {
+        self.capable_store(agent, &Capability::AgentConfig, |agent| {
+            format!("agent {agent} has no config-capable driver")
+        })
+        .await
+    }
+
+    /// `config.read` over the driver wire — the agent's config IR under
+    /// `dir` (the driver resolves its own default when absent).
+    ///
+    /// # Errors
+    /// `unknown_agent` without an `AgentConfig` driver for `agent`;
+    /// `internal` on driver spawn, wire, or store-read failure.
+    pub async fn agent_config(
+        &self,
+        agent: &str,
+        dir: Option<&str>,
+    ) -> Result<AgentConfig, ControlError> {
+        let store = self.config_store(agent).await?;
+        store
+            .read_config(dir.map(PathBuf::from).as_deref())
+            .await
+            .map_err(|e| {
+                ControlError::caused(
+                    ControlErrorCode::Internal,
+                    format!("config read from {agent} failed"),
+                    e.message,
+                )
+            })
+    }
+
+    /// `config.write` over the driver wire — install `config` into
+    /// `agent`'s config store; returns the per-file write report.
+    ///
+    /// # Errors
+    /// `unknown_agent` without an `AgentConfig` driver for `agent`;
+    /// `internal` on driver or store-write failure.
+    pub async fn write_agent_config(
+        &self,
+        agent: &str,
+        dir: Option<&str>,
+        config: &AgentConfig,
+    ) -> Result<Vec<ConfigWriteAction>, ControlError> {
+        let store = self.config_store(agent).await?;
+        let payload = serde_json::to_value(config)
+            .map_err(|e| ControlError::new(ControlErrorCode::Internal, e.to_string()))?;
+        store
+            .write_config(dir.map(PathBuf::from).as_deref(), &payload)
+            .await
+            .map_err(|e| {
+                ControlError::caused(
+                    ControlErrorCode::Internal,
+                    format!("config write into {agent} failed"),
+                    e.message,
+                )
+            })
+    }
+
+    /// One `config.list` row per config-capable driver (or just `agent`
+    /// when named): item counts on success, `error` when the driver
+    /// call failed — an inventory degrades, it doesn't fail wholesale.
+    ///
+    /// # Errors
+    /// `unknown_agent` when `agent` names an absent or
+    /// non-config-capable driver.
+    pub async fn agent_config_summaries(
+        &self,
+        agent: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<Vec<AgentConfigSummary>, ControlError> {
+        let entries: Vec<&sepia_host::DriverEntry> = match agent {
+            Some(agent) => {
+                let Some(entry) = self.registry.entry(agent) else {
+                    return Err(ControlError::new(
+                        ControlErrorCode::UnknownAgent,
+                        format!("unknown agent: {agent}"),
+                    ));
+                };
+                if !entry
+                    .manifest
+                    .capabilities
+                    .contains(&Capability::AgentConfig)
+                {
+                    return Err(ControlError::new(
+                        ControlErrorCode::UnknownAgent,
+                        format!("agent {agent} has no config-capable driver"),
+                    ));
+                }
+                vec![entry]
+            }
+            None => self.registry.with(&Capability::AgentConfig),
+        };
+        let mut rows = Vec::new();
+        for entry in entries {
+            let agent = entry.manifest.id.clone();
+            let row = match entry.client().await {
+                Ok(client) => {
+                    match RemoteStore::new(client, agent.clone())
+                        .read_config(dir.map(PathBuf::from).as_deref())
+                        .await
+                    {
+                        Ok(config) => AgentConfigSummary {
+                            agent,
+                            counts: Some(AgentConfigCounts::of(&config)),
+                            error: None,
+                        },
+                        Err(e) => AgentConfigSummary {
+                            agent,
+                            counts: None,
+                            error: Some(e.message),
+                        },
+                    }
+                }
+                Err(e) => AgentConfigSummary {
+                    agent,
+                    counts: None,
+                    error: Some(e),
+                },
+            };
+            rows.push(row);
+        }
+        Ok(rows)
     }
 
     /// Write `session` into `agent`'s store via `session.save` over the

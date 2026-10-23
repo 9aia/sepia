@@ -23,6 +23,8 @@
 //! | `sessions.patch_meta` | `patch_meta` — the overlay (title/pin/archive/projects/model) |
 //! | `projects.list` / `projects.create` | `list_projects` / `create_project` |
 //! | `projects.rename` / `projects.delete` | `rename_project` / `delete_project` |
+//! | `config.list` | `agent_config_summaries` — per-agent config item counts |
+//! | `config.get` / `config.import` | `agent_config` / `write_agent_config` — the config IR over `config.read`/`config.write` |
 //! | `sessions.restore` / `sessions.rewind` | `restore` / `rewind` |
 //! | `sessions.subscribe` | `subscribe` → `session.event` notifications |
 //! | `shutdown` | close the plane, exit 0 |
@@ -96,7 +98,9 @@ fn manifest(identity: &sepia_session::NodeIdentity) -> Value {
             "sessions.permission", "sessions.delete", "sessions.patch_meta",
             "sessions.restore", "sessions.rewind", "sessions.subscribe",
             "projects.list", "projects.create", "projects.rename",
-            "projects.delete", "shutdown",
+            "projects.delete",
+            "config.list", "config.get", "config.import",
+            "shutdown",
         ],
     })
 }
@@ -379,6 +383,44 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
                 .ok_or_else(|| RpcError::invalid_params("missing project id"))?;
             plane.delete_project(id).map_err(|e| control_err(&e))?;
             Ok(Value::Null)
+        }
+        "config.list" => {
+            let dir = str_param(&req.params, "dir");
+            serde_json::to_value(
+                local
+                    .agent_config_summaries(agent.as_deref(), dir.as_deref())
+                    .await
+                    .map_err(|e| control_err(&e))?,
+            )
+            .map_err(|e| RpcError::internal(e.to_string()))
+        }
+        "config.get" => {
+            let agent = agent.ok_or_else(|| RpcError::invalid_params("missing agent"))?;
+            let dir = str_param(&req.params, "dir");
+            let config = local
+                .agent_config(&agent, dir.as_deref())
+                .await
+                .map_err(|e| control_err(&e))?;
+            serde_json::to_value(config).map_err(|e| RpcError::internal(e.to_string()))
+        }
+        "config.import" => {
+            let agent = agent.ok_or_else(|| RpcError::invalid_params("missing agent"))?;
+            let dir = str_param(&req.params, "dir");
+            let config = sepia_core::agent_config::config_from_json(
+                req.params.get("config").unwrap_or(&Value::Null),
+            )
+            .map_err(|e| {
+                control_err(&ControlError::caused(
+                    ControlErrorCode::Invalid,
+                    "config is not a config IR object",
+                    e,
+                ))
+            })?;
+            let actions = local
+                .write_agent_config(&agent, dir.as_deref(), &config)
+                .await
+                .map_err(|e| control_err(&e))?;
+            Ok(json!({ "actions": actions }))
         }
         "sessions.restore" | "sessions.rewind" => {
             let id = id_of(&req.params)?;

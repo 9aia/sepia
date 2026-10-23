@@ -3,12 +3,16 @@
 //! `--manifest` prints the manifest; with no flags it serves the
 //! driver-wire protocol on stdio. The store path comes from
 //! `SEPIA_DEVIN_DB` (default `~/.local/share/devin/cli/sessions.db`) and
-//! `SEPIA_DEVIN_READONLY=1` opens read-only.
+//! `SEPIA_DEVIN_READONLY=1` opens read-only. `config.*` calls read/write
+//! a Devin config dir — `dir` param, else `SEPIA_DEVIN_DIR` →
+//! `~/.config/devin` (a `<repo>/.devin` path reads project scope).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use sepia_driver::{Capability, DRIVER_PROTOCOL, DriverManifest, SessionTruncator, serve};
+use sepia_driver::{
+    AgentConfigStore, Capability, DRIVER_PROTOCOL, DriverManifest, SessionTruncator, serve,
+};
 use sepia_driver_devin::DevinStore;
 
 fn db_path() -> PathBuf {
@@ -19,6 +23,38 @@ fn db_path() -> PathBuf {
     }
     let home = std::env::var_os("HOME").unwrap_or_default();
     PathBuf::from(home).join(".local/share/devin/cli/sessions.db")
+}
+
+fn devin_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("SEPIA_DEVIN_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".config/devin")
+}
+
+/// `config.*` — `dir` is the Devin config root (`~/.config/devin` user
+/// scope, `<repo>/.devin` project scope); the store's `SEPIA_DEVIN_DB`
+/// is unrelated, so the config default gets its own `SEPIA_DEVIN_DIR`.
+struct DevinConfig;
+
+impl AgentConfigStore for DevinConfig {
+    fn read_config(
+        &self,
+        dir: Option<PathBuf>,
+    ) -> Result<sepia_core::agent_config::AgentConfig, sepia_core::StorageError> {
+        sepia_driver_devin::config::read(&dir.unwrap_or_else(devin_dir))
+    }
+
+    fn write_config(
+        &self,
+        dir: Option<PathBuf>,
+        config: &sepia_core::agent_config::AgentConfig,
+    ) -> Result<Vec<sepia_core::agent_config::ConfigWriteAction>, sepia_core::StorageError> {
+        sepia_driver_devin::config::write(config, &dir.unwrap_or_else(devin_dir))
+    }
 }
 
 fn manifest() -> DriverManifest {
@@ -32,6 +68,7 @@ fn manifest() -> DriverManifest {
             Capability::SessionWrite,
             Capability::Checkpoints,
             Capability::Rewind,
+            Capability::AgentConfig,
         ]
         .into_iter()
         .collect(),
@@ -65,7 +102,8 @@ fn main() -> std::io::Result<()> {
         )) as Arc<dyn SessionTruncator>)
     };
     let rt = tokio::runtime::Runtime::new()?;
-    let mut driver = sepia_driver::StoreDriver::new(manifest(), Arc::new(store));
+    let mut driver = sepia_driver::StoreDriver::new(manifest(), Arc::new(store))
+        .with_config(Arc::new(DevinConfig));
     if let Some(truncator) = truncator {
         driver = driver.with_truncator(truncator);
     }

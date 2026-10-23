@@ -29,6 +29,45 @@ impl RemoteStore {
         &self.client
     }
 
+    /// `config.read` — the agent's config IR under `dir` (`None` → the
+    /// driver resolves its own default).
+    ///
+    /// # Errors
+    /// `CAPABILITY_UNSUPPORTED` when the driver lacks `AgentConfig`.
+    pub async fn read_config(
+        &self,
+        dir: Option<&std::path::Path>,
+    ) -> Result<sepia_core::agent_config::AgentConfig, sepia_driver::rpc::RpcError> {
+        let value = self
+            .client
+            .call(methods::CONFIG_READ, json!({ "dir": dir }))
+            .await?;
+        serde_json::from_value(value).map_err(|e| rpc::RpcError::internal(e.to_string()))
+    }
+
+    /// `config.write` — install a config IR payload under `dir` (`None`
+    /// → the driver's default); returns the per-file write report.
+    ///
+    /// # Errors
+    /// `CAPABILITY_UNSUPPORTED` when the driver lacks `AgentConfig`;
+    /// `INVALID_PARAMS` on a malformed `config` payload.
+    pub async fn write_config(
+        &self,
+        dir: Option<&std::path::Path>,
+        config: &serde_json::Value,
+    ) -> Result<Vec<sepia_core::agent_config::ConfigWriteAction>, sepia_driver::rpc::RpcError> {
+        let value = self
+            .client
+            .call(
+                methods::CONFIG_WRITE,
+                json!({ "dir": dir, "config": config }),
+            )
+            .await?;
+        let result: methods::ConfigWriteResult =
+            serde_json::from_value(value).map_err(|e| rpc::RpcError::internal(e.to_string()))?;
+        Ok(result.actions)
+    }
+
     /// `session.rewind` — the control plane ships the pre-rewind IR, the
     /// computed cut, and the truncated IR; the driver picks its store
     /// mechanism (row delete, transcript slice, checkpoint re-root).

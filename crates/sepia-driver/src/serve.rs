@@ -9,12 +9,14 @@
 //! Requests are dispatched sequentially — store reads are cheap and
 //! ordering keeps per-session state sane.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use sepia_core::agent_config::{AgentConfig, ConfigWriteAction, config_from_json};
 use sepia_core::storage::{NodesWindowOptions, SessionRepository};
 use sepia_core::{Session, StorageError};
 
@@ -45,12 +47,33 @@ pub trait SessionTruncator: Send + Sync {
     ) -> Result<(), String>;
 }
 
+/// The agent-config backend behind `config.read`/`config.write`. These
+/// are blocking filesystem adapters — the serve loop runs them on
+/// `spawn_blocking`.
+///
+/// `dir` is the config root the driver's adapter expects — the caller's
+/// `dir` param verbatim, or `None` when the driver should resolve its
+/// own default (its `SEPIA_*` env convention, user dir, or process cwd
+/// for workspace-rooted stores like Cline's).
+pub trait AgentConfigStore: Send + Sync {
+    /// Read the config under `dir` into the config IR.
+    fn read_config(&self, dir: Option<PathBuf>) -> Result<AgentConfig, StorageError>;
+
+    /// Write `config` under `dir`; returns the per-file write report.
+    fn write_config(
+        &self,
+        dir: Option<PathBuf>,
+        config: &AgentConfig,
+    ) -> Result<Vec<ConfigWriteAction>, StorageError>;
+}
+
 /// A driver wrapping a [`SessionRepository`]: session reads/writes map
 /// onto the port; capabilities gate optional methods.
 pub struct StoreDriver {
     manifest: DriverManifest,
     store: Arc<dyn SessionRepository>,
     truncator: Option<Arc<dyn SessionTruncator>>,
+    config: Option<Arc<dyn AgentConfigStore>>,
 }
 
 impl StoreDriver {
@@ -59,6 +82,7 @@ impl StoreDriver {
             manifest,
             store,
             truncator: None,
+            config: None,
         }
     }
 
@@ -66,6 +90,14 @@ impl StoreDriver {
     #[must_use]
     pub fn with_truncator(mut self, truncator: Arc<dyn SessionTruncator>) -> Self {
         self.truncator = Some(truncator);
+        self
+    }
+
+    /// Attach the backend's config adapter — enables
+    /// `config.read`/`config.write`.
+    #[must_use]
+    pub fn with_config(mut self, config: Arc<dyn AgentConfigStore>) -> Self {
+        self.config = Some(config);
         self
     }
 
@@ -90,6 +122,18 @@ impl StoreDriver {
             .await
             .map_err(Self::store_err)?
             .ok_or_else(|| RpcError::new(rpc::SESSION_NOT_FOUND, params.id))
+    }
+
+    /// The config adapter, gated like `session.rewind`'s truncator:
+    /// capability first, then presence.
+    fn config_backend(&self) -> Result<Arc<dyn AgentConfigStore>, RpcError> {
+        self.require(&Capability::AgentConfig)?;
+        self.config.clone().ok_or_else(|| {
+            RpcError::new(
+                rpc::CAPABILITY_UNSUPPORTED,
+                format!("driver {} has no config adapter", self.manifest.id),
+            )
+        })
     }
 }
 
@@ -192,6 +236,40 @@ impl Driver for StoreDriver {
                     .await
                     .map_err(|e| RpcError::new(rpc::STORE_ERROR, e))?;
                 Ok(Value::Null)
+            }
+            methods::CONFIG_READ => {
+                let config = self.config_backend()?;
+                // Absent `params` decodes as `params:{}` — `dir` is
+                // optional, so a bare `config.read` is valid.
+                let p: methods::ConfigReadParams = serde_json::from_value(if params.is_null() {
+                    serde_json::json!({})
+                } else {
+                    params
+                })
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+                let result = tokio::task::spawn_blocking(move || config.read_config(p.dir))
+                    .await
+                    .map_err(|e| RpcError::internal(e.to_string()))?
+                    .map_err(Self::store_err)?;
+                serde_json::to_value(result).map_err(|e| RpcError::internal(e.to_string()))
+            }
+            methods::CONFIG_WRITE => {
+                let config = self.config_backend()?;
+                let p: methods::ConfigWriteParams = serde_json::from_value(if params.is_null() {
+                    serde_json::json!({})
+                } else {
+                    params
+                })
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+                let parsed = config_from_json(&p.config)
+                    .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+                let actions =
+                    tokio::task::spawn_blocking(move || config.write_config(p.dir, &parsed))
+                        .await
+                        .map_err(|e| RpcError::internal(e.to_string()))?
+                        .map_err(Self::store_err)?;
+                serde_json::to_value(methods::ConfigWriteResult { actions })
+                    .map_err(|e| RpcError::internal(e.to_string()))
             }
             methods::FILE_RESTORE => Err(RpcError::new(
                 rpc::CAPABILITY_UNSUPPORTED,
