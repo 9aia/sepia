@@ -37,6 +37,20 @@ fn llvm_cov_available() -> bool {
 /// resolve the paths directly.
 const TEST_BINS: &[&str] = &["sepia", "sepia-driver-devin", "sepia-mock-acp-agent"];
 
+/// The effective target dir — `cargo metadata` reports it, which keeps
+/// `install` correct under a shared CARGO_TARGET_DIR (`target/release`
+/// relative to the workspace is stale).
+fn target_dir() -> anyhow::Result<std::path::PathBuf> {
+    let out = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .output()?;
+    let meta: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    meta.get("target_directory")
+        .and_then(|v| v.as_str())
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("cargo metadata: no target_directory"))
+}
+
 fn prebuild() -> anyhow::Result<()> {
     let mut args = vec!["build"];
     for bin in TEST_BINS {
@@ -98,12 +112,20 @@ fn main() -> anyhow::Result<()> {
                 build.push(*bin);
             }
             run("cargo", &build)?;
+            let target = target_dir()?;
             let home = std::env::var_os("HOME")
                 .map_or_else(|| std::path::PathBuf::from("/"), std::path::PathBuf::from);
             let out = home.join(".local/bin");
             std::fs::create_dir_all(&out)?;
             for bin in &bins {
-                std::fs::copy(format!("target/release/{bin}"), out.join(bin))?;
+                let dst = out.join(bin);
+                // Atomic replace — a running driver holds the old inode
+                // busy ("text file busy" on plain copy).
+                std::fs::copy(
+                    target.join("release").join(bin),
+                    out.join(format!(".{bin}.new")),
+                )?;
+                std::fs::rename(out.join(format!(".{bin}.new")), &dst)?;
             }
             println!("installed {bins:?} to {}", out.display());
 
