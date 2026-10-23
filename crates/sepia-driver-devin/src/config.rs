@@ -14,15 +14,18 @@
 //!   stay the user's responsibility.
 //! - `config.json` (model/org preferences) is not prompt config — skipped.
 //!
-//! Write: skills/rules/commands symmetric; `kind: "instructions"` rules
-//! merge into `AGENTS.md` under a managed `sepia:rules` block; hooks merge
-//! into `hooks.v1.json`; subagent and MCP items report `skipped`.
+//! Write: skills/rules/commands symmetric; the instructions rule read from
+//! `AGENTS.md` owns that file and writes back verbatim, while other
+//! `kind: "instructions"` rules merge under a managed `sepia:rules` block;
+//! hooks merge into `hooks.v1.json`; subagent and MCP items report
+//! `skipped`.
 
 use std::path::Path;
 
 use sepia_core::agent_config::{
     AgentConfig, ConfigCommand, ConfigRule, ConfigWriteAction, RuleKind, WriteActionKind,
-    hooks_from_claude_json, merge_hook_events, rules_to_memory_file, safe_file_stem,
+    dropped_hook_fields, extra_frontmatter, hooks_from_claude_json, merge_hook_events,
+    merge_memory_file, safe_file_stem, source_path,
 };
 use sepia_core::domain::StorageError;
 use sepia_core::frontmatter;
@@ -112,7 +115,26 @@ fn rule_doc(rule: &ConfigRule) -> String {
     if let Some(description) = &rule.description {
         attrs.insert("description".into(), json!(description));
     }
+    attrs.extend(extra_frontmatter(&rule.metadata));
     frontmatter::render(&attrs, &rule.body)
+}
+
+/// Scoping fields Devin's rules can't express — `rules/*.md` files apply
+/// unconditionally, so `globs`/`alwaysApply: false` are dropped (and noted).
+fn rule_note(rule: &ConfigRule) -> Option<String> {
+    let mut dropped = Vec::new();
+    if !rule.globs.is_empty() {
+        dropped.push("globs");
+    }
+    if !rule.always_apply {
+        dropped.push("alwaysApply");
+    }
+    (!dropped.is_empty()).then(|| {
+        format!(
+            "{} not written — devin rules apply unconditionally",
+            dropped.join("/")
+        )
+    })
 }
 
 fn command_doc(command: &ConfigCommand) -> String {
@@ -120,13 +142,36 @@ fn command_doc(command: &ConfigCommand) -> String {
     if let Some(description) = &command.description {
         attrs.insert("description".into(), json!(description));
     }
+    attrs.extend(extra_frontmatter(&command.metadata));
     frontmatter::render(&attrs, &command.body)
+}
+
+/// Command fields Devin workflows don't read — only `description`
+/// frontmatter is documented, so the rest is dropped (and noted).
+fn command_note(command: &ConfigCommand) -> Option<String> {
+    let mut dropped = Vec::new();
+    if command.argument_hint.is_some() {
+        dropped.push("argumentHint");
+    }
+    if !command.allowed_tools.is_empty() {
+        dropped.push("allowedTools");
+    }
+    if command.model.is_some() {
+        dropped.push("model");
+    }
+    (!dropped.is_empty()).then(|| {
+        format!(
+            "{} not written — workflows carry description only",
+            dropped.join("/")
+        )
+    })
 }
 
 fn write_docs<A: HasName>(
     dir: &Path,
     items: &[A],
     render: impl Fn(&A) -> String,
+    note: impl Fn(&A) -> Option<String>,
 ) -> Result<Vec<ConfigWriteAction>, StorageError> {
     let mut actions = Vec::new();
     for item in items {
@@ -141,10 +186,9 @@ fn write_docs<A: HasName>(
             });
             continue;
         };
-        actions.push(sdk_fs::write_file_action(
-            &dir.join(format!("{stem}.md")),
-            &render(item),
-        )?);
+        let mut action = sdk_fs::write_file_action(&dir.join(format!("{stem}.md")), &render(item))?;
+        action.detail = note(item);
+        actions.push(action);
     }
     Ok(actions)
 }
@@ -184,24 +228,33 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
         &config.skills,
     )?);
 
-    let file_rules: Vec<ConfigRule> = config
-        .rules
-        .iter()
-        .filter(|r| r.kind != RuleKind::Instructions)
-        .cloned()
-        .collect();
-    let memory_rules: Vec<ConfigRule> = config
-        .rules
-        .iter()
-        .filter(|r| r.kind == RuleKind::Instructions)
-        .cloned()
-        .collect();
-    actions.extend(write_docs(&dir.join("rules"), &file_rules, rule_doc)?);
-    if !memory_rules.is_empty() {
-        let path = dir.join("AGENTS.md");
-        let existing = sdk_fs::read_file_if_exists(&path)?;
-        if let Some(merged) = rules_to_memory_file(existing.as_deref(), &memory_rules) {
-            actions.push(sdk_fs::write_file_action(&path, &merged)?);
+    // `rules/*.md` gets plain rules; `AGENTS.md` is owned by the
+    // instructions rule read from it — other instructions rules merge into
+    // its managed `sepia:rules` block.
+    let agents_path = dir.join("AGENTS.md");
+    let agents_source = agents_path.display().to_string();
+    let mut file_rules: Vec<ConfigRule> = Vec::new();
+    let mut owners: Vec<ConfigRule> = Vec::new();
+    let mut block_rules: Vec<ConfigRule> = Vec::new();
+    for rule in &config.rules {
+        if rule.kind != RuleKind::Instructions {
+            file_rules.push(rule.clone());
+        } else if source_path(&rule.metadata) == Some(agents_source.as_str()) {
+            owners.push(rule.clone());
+        } else {
+            block_rules.push(rule.clone());
+        }
+    }
+    actions.extend(write_docs(
+        &dir.join("rules"),
+        &file_rules,
+        rule_doc,
+        rule_note,
+    )?);
+    if !owners.is_empty() || !block_rules.is_empty() {
+        let existing = sdk_fs::read_file_if_exists(&agents_path)?;
+        if let Some(merged) = merge_memory_file(existing.as_deref(), &owners, &block_rules) {
+            actions.push(sdk_fs::write_file_action(&agents_path, &merged)?);
         }
     }
 
@@ -209,19 +262,22 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
         &dir.join("workflows"),
         &config.commands,
         command_doc,
+        command_note,
     )?);
 
     if !config.hooks.is_empty() {
         let path = dir.join("hooks.v1.json");
         let raw = sdk_fs::read_json_if_exists(&path)?.unwrap_or_default();
         let merged = merge_hook_events(&raw, &config.hooks);
-        actions.push(sdk_fs::write_file_action(
+        let mut action = sdk_fs::write_file_action(
             &path,
             &format!(
                 "{}\n",
                 serde_json::to_string_pretty(&Value::Object(merged)).unwrap_or_default()
             ),
-        )?);
+        )?;
+        action.detail = dropped_hook_fields(&config.hooks);
+        actions.push(action);
     }
 
     if !config.agents.is_empty() {

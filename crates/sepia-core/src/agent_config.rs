@@ -387,6 +387,16 @@ pub fn hooks_from_claude_json(settings: &Map<String, Value>, source: &str) -> Ve
     out
 }
 
+/// A JS `JSON.stringify` number — integral floats render without `.0`, so
+/// a `30` read from disk dedups against a `30.0` from the IR.
+fn js_number(value: f64) -> Value {
+    if value.fract() == 0.0 && value.abs() <= 9.0e15 {
+        Value::from(value as i64)
+    } else {
+        Value::from(value)
+    }
+}
+
 fn claude_hook_entry(hook: &ConfigHook) -> Map<String, Value> {
     let mut entry = Map::new();
     entry.insert("type".into(), json!(hook.kind));
@@ -397,7 +407,7 @@ fn claude_hook_entry(hook: &ConfigHook) -> Map<String, Value> {
         entry.insert("prompt".into(), json!(prompt));
     }
     if let Some(timeout) = hook.timeout_sec {
-        entry.insert("timeout".into(), json!(timeout));
+        entry.insert("timeout".into(), js_number(timeout));
     }
     entry
 }
@@ -481,6 +491,25 @@ pub fn merge_claude_hooks(
     out
 }
 
+/// Provenance keys the read side stamps into `metadata` — stripped before
+/// leftovers are rendered back into frontmatter on write.
+pub const PROVENANCE_KEYS: &[&str] = &["sourcePath", "source", "sourceEvent"];
+
+/// Item `metadata` minus the provenance keys — the leftover frontmatter a
+/// write puts back verbatim.
+pub fn extra_frontmatter(meta: &Value) -> Map<String, Value> {
+    let mut rest = meta.as_object().cloned().unwrap_or_default();
+    for key in PROVENANCE_KEYS {
+        rest.shift_remove(*key);
+    }
+    rest
+}
+
+/// `metadata.sourcePath` of a config item, when the read side recorded one.
+pub fn source_path(metadata: &Value) -> Option<&str> {
+    metadata.get("sourcePath").and_then(Value::as_str)
+}
+
 /// Marker pair wrapping the rules block sepia manages inside a memory file.
 pub const RULES_BLOCK_BEGIN: &str = "<!-- sepia:rules -->";
 pub const RULES_BLOCK_END: &str = "<!-- /sepia:rules -->";
@@ -527,6 +556,50 @@ pub fn rules_to_memory_file(existing: Option<&str>, rules: &[ConfigRule]) -> Opt
     Some(format!("{}{block}{}", &text[..begin], &text[after..]))
 }
 
+/// Render a memory file (`CLAUDE.md`, `AGENTS.md`, a file-form `.clinerules`)
+/// for write. `instructions` are the rules that *own* the file — the ones
+/// the read side lifted out of it — so their bodies are the file's content
+/// verbatim (an embedded `sepia:rules` block rides along untouched).
+/// `block_rules` are everything else: they collapse into the managed block,
+/// preserving whatever the file holds outside it. `None` when there is
+/// nothing to write.
+pub fn merge_memory_file(
+    existing: Option<&str>,
+    instructions: &[ConfigRule],
+    block_rules: &[ConfigRule],
+) -> Option<String> {
+    if instructions.is_empty() {
+        return rules_to_memory_file(existing, block_rules);
+    }
+    let base = instructions
+        .iter()
+        .map(|rule| rule.body.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if block_rules.is_empty() {
+        return Some(if base.is_empty() {
+            String::new()
+        } else {
+            format!("{base}\n")
+        });
+    }
+    rules_to_memory_file(Some(&base), block_rules)
+}
+
+/// Note for cursor-only hook fields the Claude/Devin hook schema drops on
+/// write (`failClosed`, `loop_limit`), or `None` when nothing is lost.
+pub fn dropped_hook_fields(hooks: &[ConfigHook]) -> Option<String> {
+    let dropped = hooks
+        .iter()
+        .filter(|h| h.fail_closed.is_some() || h.loop_limit.is_some())
+        .count();
+    (dropped > 0).then(|| {
+        format!(
+            "failClosed/loop_limit are not in the Claude hook schema — dropped on {dropped} hook(s)"
+        )
+    })
+}
+
 /// Merge `mcpServers` into an MCP JSON object, preserving other keys.
 pub fn merge_mcp_servers(
     existing: Option<&Map<String, Value>>,
@@ -551,17 +624,11 @@ pub fn merge_mcp_servers(
 
 /// Frontmatter attributes a skill write emits: name/description + leftovers.
 pub fn skill_attributes(skill: &ConfigSkill) -> Map<String, Value> {
-    let meta = skill.metadata.as_object().cloned().unwrap_or_default();
     let mut out = Map::new();
     out.insert("name".into(), json!(skill.name));
     if let Some(description) = &skill.description {
         out.insert("description".into(), json!(description));
     }
-    for (key, value) in meta {
-        if key == "sourcePath" || key == "source" {
-            continue;
-        }
-        out.insert(key, value);
-    }
+    out.extend(extra_frontmatter(&skill.metadata));
     out
 }

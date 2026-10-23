@@ -146,6 +146,16 @@ fn set_mtime(path: &Path, ms: f64) {
 /// file with its source mtime so goldens are reproducible.
 fn materialize_cursor_root(case_dir: &Path, scratch: &Path) -> PathBuf {
     let root = materialize_store(case_dir, scratch).unwrap();
+    // `materialize_store` already stamped the files `mtimes.txt` lists —
+    // re-stamping them from the checkout mtime would defeat the manifest.
+    let manifest_stamped: std::collections::HashSet<PathBuf> =
+        std::fs::read_to_string(case_dir.join("mtimes.txt"))
+            .map(|text| {
+                text.lines()
+                    .filter_map(|line| line.split_once('\t').map(|(rel, _)| root.join(rel.trim())))
+                    .collect()
+            })
+            .unwrap_or_default();
     let mut dirs = vec![root.clone()];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).unwrap().flatten() {
@@ -160,7 +170,9 @@ fn materialize_cursor_root(case_dir: &Path, scratch: &Path) -> PathBuf {
             let source = case_dir
                 .join("store")
                 .join(path.strip_prefix(&root).unwrap());
-            if let Ok(m) = source.metadata().and_then(|m| m.modified()) {
+            if !manifest_stamped.contains(&path)
+                && let Ok(m) = source.metadata().and_then(|m| m.modified())
+            {
                 if let Ok(ms) = m
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_secs_f64() * 1000.0)

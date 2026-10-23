@@ -14,17 +14,20 @@
 //!   `.mcp.json` (project dir).
 //!
 //! Write: skills/commands/agents map one-to-one; hooks merge into
-//! `settings.json` preserving other keys; rules collapse into a managed
-//! `sepia:rules` block inside `CLAUDE.md` (Claude has no rules
-//! directory); `mcpServers` merge into `~/.claude.json` or the sibling
-//! `.mcp.json`.
+//! `settings.json`/`settings.local.json` preserving other keys (each hook's
+//! `metadata.source` picks the file it came from); an instructions rule
+//! whose `sourcePath` is a managed memory file writes back as that file's
+//! content, and every other rule collapses into the managed `sepia:rules`
+//! block inside `CLAUDE.md` (Claude has no rules directory); `mcpServers`
+//! merge into `~/.claude.json` or the sibling `.mcp.json`.
 
 use std::path::{Path, PathBuf};
 
 use sepia_core::agent_config::{
-    AgentConfig, ConfigAgent, ConfigCommand, ConfigRule, ConfigWriteAction, RuleKind,
-    WriteActionKind, hooks_from_claude_json, merge_claude_hooks, merge_mcp_servers,
-    rules_to_memory_file, safe_file_stem, string_list,
+    AgentConfig, ConfigAgent, ConfigCommand, ConfigHook, ConfigRule, ConfigWriteAction, RuleKind,
+    WriteActionKind, dropped_hook_fields, extra_frontmatter, hooks_from_claude_json,
+    merge_claude_hooks, merge_mcp_servers, merge_memory_file, safe_file_stem, source_path,
+    string_list,
 };
 use sepia_core::domain::StorageError;
 use sepia_core::frontmatter;
@@ -48,14 +51,6 @@ fn is_project_dir(dir: &Path) -> bool {
 fn project_root(dir: &Path) -> PathBuf {
     dir.parent()
         .map_or_else(|| dir.to_path_buf(), Path::to_path_buf)
-}
-
-/// Leftover frontmatter rides in `metadata`, minus the provenance keys.
-fn extra_frontmatter(meta: &Value) -> Map<String, Value> {
-    let mut rest = meta.as_object().cloned().unwrap_or_default();
-    rest.remove("sourcePath");
-    rest.remove("source");
-    rest
 }
 
 fn doc_to_command(doc: &sdk_fs::MarkdownDoc) -> ConfigCommand {
@@ -285,25 +280,71 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
     )?);
     actions.extend(write_docs(&dir.join("agents"), &config.agents, agent_doc)?);
 
-    if !config.rules.is_empty() {
-        let path = dir.join("CLAUDE.md");
-        let existing = sdk_fs::read_file_if_exists(&path)?;
-        if let Some(merged) = rules_to_memory_file(existing.as_deref(), &config.rules) {
-            actions.push(sdk_fs::write_file_action(&path, &merged)?);
+    // Memory files this dir manages: `<dir>/CLAUDE.md`, plus the
+    // project-root `CLAUDE.md` for a project `.claude` dir. An instructions
+    // rule sourced from one of them owns the file; every other rule
+    // collapses into the managed block of `<dir>/CLAUDE.md`.
+    let mut memories = vec![(dir.join("CLAUDE.md"), Vec::new())];
+    if is_project_dir(dir) {
+        memories.push((project_root(dir).join("CLAUDE.md"), Vec::new()));
+    }
+    let mut block_rules: Vec<ConfigRule> = Vec::new();
+    for rule in &config.rules {
+        let target = if rule.kind == RuleKind::Instructions {
+            source_path(&rule.metadata).and_then(|source| {
+                memories
+                    .iter()
+                    .position(|(path, _)| path.display().to_string() == source)
+            })
+        } else {
+            None
+        };
+        match target {
+            Some(i) => memories[i].1.push(rule.clone()),
+            None => block_rules.push(rule.clone()),
+        }
+    }
+    for (i, (path, owners)) in memories.iter().enumerate() {
+        let blocks: &[ConfigRule] = if i == 0 { &block_rules } else { &[] };
+        if owners.is_empty() && blocks.is_empty() {
+            continue;
+        }
+        let existing = sdk_fs::read_file_if_exists(path)?;
+        if let Some(merged) = merge_memory_file(existing.as_deref(), owners, blocks) {
+            actions.push(sdk_fs::write_file_action(path, &merged)?);
         }
     }
 
-    if !config.hooks.is_empty() {
-        let path = dir.join("settings.json");
+    // `metadata.source` routes each hook back to the file it was read from;
+    // foreign hooks land in `settings.json`.
+    let mut settings_hooks: Vec<ConfigHook> = Vec::new();
+    let mut local_hooks: Vec<ConfigHook> = Vec::new();
+    for hook in &config.hooks {
+        if hook.metadata.get("source").and_then(Value::as_str) == Some("settings.local.json") {
+            local_hooks.push(hook.clone());
+        } else {
+            settings_hooks.push(hook.clone());
+        }
+    }
+    for (file, hooks) in [
+        ("settings.json", settings_hooks),
+        ("settings.local.json", local_hooks),
+    ] {
+        if hooks.is_empty() {
+            continue;
+        }
+        let path = dir.join(file);
         let settings = sdk_fs::read_json_if_exists(&path)?.unwrap_or_default();
-        let merged = merge_claude_hooks(&settings, &config.hooks);
+        let merged = merge_claude_hooks(&settings, &hooks);
         let text = format!(
             "{}\n",
             serde_json::to_string_pretty(&Value::Object(merged)).unwrap_or_default()
         );
         // `write_file_action` already resolves an identical file to
         // `unchanged`.
-        actions.push(sdk_fs::write_file_action(&path, &text)?);
+        let mut action = sdk_fs::write_file_action(&path, &text)?;
+        action.detail = dropped_hook_fields(&hooks);
+        actions.push(action);
     }
 
     let mcp_path = mcp_path(dir);

@@ -177,3 +177,44 @@ fn write_round_trips_rules_hooks_and_mcp() {
     assert_eq!(back.hooks[0].event, "UserPromptSubmit");
     assert_eq!(back.hooks[0].timeout_sec, Some(10.0));
 }
+
+#[test]
+fn write_keeps_the_mdc_extension_for_mdc_sourced_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        &dir.path().join("rules/rust.mdc"),
+        "---\ndescription: Rust\nalwaysApply: true\n---\n\nUse cargo.\n",
+    );
+    let config = config::read(dir.path()).unwrap();
+    assert_eq!(config.rules.len(), 1);
+
+    let actions = config::write(&config, dir.path()).unwrap();
+    let rule_action = actions
+        .iter()
+        .find(|a| a.path.contains("rules/rust"))
+        .unwrap();
+    assert!(rule_action.path.ends_with("rules/rust.mdc"));
+    assert_eq!(rule_action.action, WriteActionKind::Unchanged);
+    // No `.md` twin that would re-read as a duplicate rule.
+    assert!(!dir.path().join("rules/rust.md").exists());
+    let back = config::read(dir.path()).unwrap();
+    assert_eq!(back.rules.len(), 1);
+    assert_eq!(back.rules[0].name, "rust");
+
+    // Rules with no `.mdc` provenance still land as `.md`.
+    let foreign = AgentConfig {
+        rules: vec![ConfigRule {
+            name: "fresh".into(),
+            description: None,
+            body: "new".into(),
+            globs: Vec::new(),
+            always_apply: false,
+            kind: sepia_core::agent_config::RuleKind::Rule,
+            metadata: Value::Null,
+        }],
+        ..AgentConfig::default()
+    };
+    config::write(&foreign, dir.path()).unwrap();
+    assert!(dir.path().join("rules/fresh.md").exists());
+    assert!(!dir.path().join("rules/fresh.mdc").exists());
+}

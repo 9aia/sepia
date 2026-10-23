@@ -340,6 +340,92 @@ fn rules_to_memory_file_empties_stale_block() {
     assert!(out.contains(RULES_BLOCK_BEGIN));
 }
 
+fn instructions_rule(name: &str, body: &str, source_path: &str) -> ConfigRule {
+    ConfigRule {
+        name: name.into(),
+        description: None,
+        body: body.into(),
+        globs: vec![],
+        always_apply: true,
+        kind: RuleKind::Instructions,
+        metadata: json!({ "sourcePath": source_path }),
+    }
+}
+
+#[test]
+fn merge_memory_file_writes_owner_body_verbatim() {
+    // The instructions rule read from the file owns it — no `## name`
+    // section, no doubling.
+    let out = merge_memory_file(
+        Some("Be nice.\n"),
+        &[instructions_rule("claude", "Be nice.", "/d/CLAUDE.md")],
+        &[],
+    )
+    .unwrap();
+    assert_eq!(out, "Be nice.\n");
+
+    // A body that embeds a managed block keeps it as-is.
+    let with_block = format!("top\n\n{RULES_BLOCK_BEGIN}\n\n## x\n\nb\n{RULES_BLOCK_END}\n");
+    let out = merge_memory_file(
+        Some(&with_block),
+        &[instructions_rule(
+            "claude",
+            with_block.trim_end(),
+            "/d/CLAUDE.md",
+        )],
+        &[],
+    )
+    .unwrap();
+    assert!(out.contains("## x"));
+    assert_eq!(out, format!("{}\n", with_block.trim_end()));
+}
+
+#[test]
+fn merge_memory_file_merges_block_rules_into_owner_body() {
+    let out = merge_memory_file(
+        Some("old text\n"),
+        &[instructions_rule("claude", "Be nice.", "/d/CLAUDE.md")],
+        &[rule("style", "use bun")],
+    )
+    .unwrap();
+    // The owner body replaces the file's free text; block rules render
+    // inside the managed block.
+    assert!(out.starts_with("Be nice.\n"));
+    assert!(!out.contains("old text"));
+    assert!(out.contains(RULES_BLOCK_BEGIN));
+    assert!(out.contains("## style"));
+}
+
+#[test]
+fn merge_memory_file_without_owners_defers_to_block_merge() {
+    assert!(merge_memory_file(Some("# hi\n"), &[], &[]).is_none());
+    let out = merge_memory_file(Some("# hi\n"), &[], &[rule("x", "b")]).unwrap();
+    assert!(out.contains("# hi"));
+    assert!(out.contains("## x"));
+}
+
+#[test]
+fn dropped_hook_fields_counts_cursor_only_fields() {
+    assert!(dropped_hook_fields(&[]).is_none());
+    assert!(dropped_hook_fields(&[hook("Stop", Some("x"))]).is_none());
+    let mut cursor_hook = hook("AfterFileEdit", Some("fmt"));
+    cursor_hook.fail_closed = Some(true);
+    cursor_hook.loop_limit = Some(3.0);
+    let note = dropped_hook_fields(&[cursor_hook]).unwrap();
+    assert!(note.contains("failClosed"));
+    assert!(note.contains("1 hook(s)"));
+}
+
+#[test]
+fn extra_frontmatter_strips_provenance_keeps_leftovers() {
+    let meta = json!({ "sourcePath": "/s", "source": "x", "sourceEvent": "y", "keep": 1 });
+    let rest = extra_frontmatter(&meta);
+    assert_eq!(rest.len(), 1);
+    assert_eq!(rest["keep"], json!(1));
+    assert_eq!(source_path(&meta), Some("/s"));
+    assert!(extra_frontmatter(&Value::Null).is_empty());
+}
+
 #[test]
 fn merge_mcp_servers_merges_and_preserves() {
     assert!(merge_mcp_servers(None, &Map::new()).is_none());

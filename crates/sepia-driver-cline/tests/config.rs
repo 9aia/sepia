@@ -165,3 +165,110 @@ fn write_round_trips_through_read() {
     let command_names: Vec<&str> = back.commands.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(command_names, ["go"]);
 }
+
+#[test]
+fn write_preserves_leftover_frontmatter_and_notes_dropped_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".clinerules")).unwrap();
+    std::fs::write(
+        dir.path().join(".clinerules/style.md"),
+        "---\ndescription: Style\nteam: platform\n---\nNo comments.\n",
+    )
+    .unwrap();
+    let config = config::read(dir.path()).unwrap();
+    let target = dir.path().join("out");
+    config::write(&config, &target).unwrap();
+    let style = std::fs::read_to_string(target.join(".clinerules/style.md")).unwrap();
+    assert!(style.contains("team: platform"));
+
+    // Fields .clinerules can't express are reported on the action, not
+    // invented in the file.
+    let mut scoped = config.rules[0].clone();
+    scoped.globs = vec!["*.rs".into()];
+    scoped.always_apply = false;
+    let cmd = ConfigCommand {
+        name: "go".into(),
+        description: None,
+        body: "run".into(),
+        argument_hint: Some("[x]".into()),
+        allowed_tools: vec!["Bash".into()],
+        model: Some("opus".into()),
+        metadata: Value::Null,
+    };
+    let actions = config::write(
+        &AgentConfig {
+            rules: vec![scoped],
+            commands: vec![cmd],
+            ..AgentConfig::default()
+        },
+        &target,
+    )
+    .unwrap();
+    let rule_action = actions
+        .iter()
+        .find(|a| a.path.ends_with("style.md"))
+        .unwrap();
+    let detail = rule_action.detail.as_deref().unwrap_or("");
+    assert!(detail.contains("globs") && detail.contains("alwaysApply"));
+    let cmd_action = actions.iter().find(|a| a.path.ends_with("go.md")).unwrap();
+    let detail = cmd_action.detail.as_deref().unwrap_or("");
+    assert!(detail.contains("argumentHint") && detail.contains("model"));
+}
+
+#[test]
+fn write_into_a_clinerules_file_merges_rules_and_skips_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".clinerules"), "Always use bun.\n").unwrap();
+
+    // Round-trip: the instructions rule owns the file — verbatim.
+    let config = config::read(dir.path()).unwrap();
+    let actions = config::write(&config, dir.path()).unwrap();
+    let action = actions
+        .iter()
+        .find(|a| a.path == dir.path().join(".clinerules").display().to_string())
+        .unwrap();
+    assert_eq!(action.action, WriteActionKind::Unchanged);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".clinerules")).unwrap(),
+        "Always use bun.\n"
+    );
+
+    // Foreign rules merge into a managed block inside the file; commands
+    // need the directory form and report skipped.
+    let mut imported = AgentConfig::default();
+    imported.rules.push(ConfigRule {
+        name: "extra".into(),
+        description: None,
+        body: "Extra.".into(),
+        globs: Vec::new(),
+        always_apply: true,
+        kind: RuleKind::Rule,
+        metadata: Value::Null,
+    });
+    imported.commands.push(ConfigCommand {
+        name: "go".into(),
+        description: None,
+        body: "run".into(),
+        argument_hint: None,
+        allowed_tools: Vec::new(),
+        model: None,
+        metadata: Value::Null,
+    });
+    let actions = config::write(&imported, dir.path()).unwrap();
+    let file = std::fs::read_to_string(dir.path().join(".clinerules")).unwrap();
+    assert!(file.contains("Always use bun."));
+    assert!(file.contains("<!-- sepia:rules -->"));
+    assert!(file.contains("## extra"));
+    let skipped: Vec<_> = actions
+        .iter()
+        .filter(|a| a.action == WriteActionKind::Skipped)
+        .collect();
+    assert_eq!(skipped.len(), 1);
+    assert!(
+        skipped[0]
+            .detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("directory form")
+    );
+}

@@ -12,14 +12,18 @@
 //! Write: rules land as `.clinerules/<name>.md` files (the directory form —
 //! always valid, unlike the single `.clinerules` file), commands as
 //! `.clinerules/workflows/<name>.md`, MCP merged into
-//! `cline_mcp_settings.json`. Cline has no skills/subagents/hooks concept —
-//! those items are reported `skipped`.
+//! `cline_mcp_settings.json`. When `.clinerules` already exists *as a file*,
+//! the instructions rule read from it owns the file and writes back
+//! verbatim; other rules merge into a managed `sepia:rules` block there,
+//! and commands report `skipped` (the workflows dir can't exist under a
+//! file). Cline has no skills/subagents/hooks concept — those items are
+//! reported `skipped`.
 
 use std::path::Path;
 
 use sepia_core::agent_config::{
     AgentConfig, ConfigCommand, ConfigRule, ConfigWriteAction, RuleKind, WriteActionKind,
-    merge_mcp_servers, safe_file_stem,
+    extra_frontmatter, merge_mcp_servers, merge_memory_file, safe_file_stem, source_path,
 };
 use sepia_core::domain::StorageError;
 use sepia_core::frontmatter;
@@ -117,7 +121,26 @@ fn rule_doc(rule: &ConfigRule) -> String {
     if let Some(description) = &rule.description {
         attrs.insert("description".into(), json!(description));
     }
+    attrs.extend(extra_frontmatter(&rule.metadata));
     frontmatter::render(&attrs, &rule.body)
+}
+
+/// Scoping fields `.clinerules` can't express — every rule file applies to
+/// every task, so `globs`/`alwaysApply: false` are dropped (and noted).
+fn rule_note(rule: &ConfigRule) -> Option<String> {
+    let mut dropped = Vec::new();
+    if !rule.globs.is_empty() {
+        dropped.push("globs");
+    }
+    if !rule.always_apply {
+        dropped.push("alwaysApply");
+    }
+    (!dropped.is_empty()).then(|| {
+        format!(
+            "{} not written — .clinerules rules apply unconditionally",
+            dropped.join("/")
+        )
+    })
 }
 
 fn command_doc(command: &ConfigCommand) -> String {
@@ -125,7 +148,29 @@ fn command_doc(command: &ConfigCommand) -> String {
     if let Some(description) = &command.description {
         attrs.insert("description".into(), json!(description));
     }
+    attrs.extend(extra_frontmatter(&command.metadata));
     frontmatter::render(&attrs, &command.body)
+}
+
+/// Command fields Cline's workflows don't read — the files are plain prompt
+/// markdown, so `argumentHint`/`allowedTools`/`model` are dropped (and noted).
+fn command_note(command: &ConfigCommand) -> Option<String> {
+    let mut dropped = Vec::new();
+    if command.argument_hint.is_some() {
+        dropped.push("argumentHint");
+    }
+    if !command.allowed_tools.is_empty() {
+        dropped.push("allowedTools");
+    }
+    if command.model.is_some() {
+        dropped.push("model");
+    }
+    (!dropped.is_empty()).then(|| {
+        format!(
+            "{} not written — workflows are plain prompts",
+            dropped.join("/")
+        )
+    })
 }
 
 fn write_docs<A>(
@@ -133,6 +178,7 @@ fn write_docs<A>(
     items: &[A],
     render: impl Fn(&A) -> String,
     name_of: impl Fn(&A) -> &str,
+    note: impl Fn(&A) -> Option<String>,
 ) -> Result<Vec<ConfigWriteAction>, StorageError> {
     let mut actions = Vec::new();
     for item in items {
@@ -147,10 +193,9 @@ fn write_docs<A>(
             });
             continue;
         };
-        actions.push(sdk_fs::write_file_action(
-            &dir.join(format!("{stem}.md")),
-            &render(item),
-        )?);
+        let mut action = sdk_fs::write_file_action(&dir.join(format!("{stem}.md")), &render(item))?;
+        action.detail = note(item);
+        actions.push(action);
     }
     Ok(actions)
 }
@@ -175,18 +220,55 @@ fn skipped(kind: &str, count: usize) -> Option<ConfigWriteAction> {
 pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>, StorageError> {
     let mut actions: Vec<ConfigWriteAction> = Vec::new();
 
-    actions.extend(write_docs(
-        &dir.join(".clinerules"),
-        &config.rules,
-        rule_doc,
-        |r| &r.name,
-    )?);
-    actions.extend(write_docs(
-        &dir.join(".clinerules").join("workflows"),
-        &config.commands,
-        command_doc,
-        |c| &c.name,
-    )?);
+    let rules_path = dir.join(".clinerules");
+    if std::fs::metadata(&rules_path).is_ok_and(|m| m.is_file()) {
+        // File form: the instructions rule read from it owns the file;
+        // other rules merge into its managed block. Commands need the
+        // directory form — honestly skipped.
+        let source = rules_path.display().to_string();
+        let mut owners: Vec<ConfigRule> = Vec::new();
+        let mut block_rules: Vec<ConfigRule> = Vec::new();
+        for rule in &config.rules {
+            if rule.kind == RuleKind::Instructions
+                && source_path(&rule.metadata) == Some(source.as_str())
+            {
+                owners.push(rule.clone());
+            } else {
+                block_rules.push(rule.clone());
+            }
+        }
+        if !owners.is_empty() || !block_rules.is_empty() {
+            let existing = sdk_fs::read_file_if_exists(&rules_path)?;
+            if let Some(merged) = merge_memory_file(existing.as_deref(), &owners, &block_rules) {
+                actions.push(sdk_fs::write_file_action(&rules_path, &merged)?);
+            }
+        }
+        if !config.commands.is_empty() {
+            actions.push(ConfigWriteAction {
+                path: rules_path.join("workflows").display().to_string(),
+                action: WriteActionKind::Skipped,
+                detail: Some(format!(
+                    ".clinerules is a file — {} command(s) need the directory form",
+                    config.commands.len()
+                )),
+            });
+        }
+    } else {
+        actions.extend(write_docs(
+            &rules_path,
+            &config.rules,
+            rule_doc,
+            |r| &r.name,
+            rule_note,
+        )?);
+        actions.extend(write_docs(
+            &rules_path.join("workflows"),
+            &config.commands,
+            command_doc,
+            |c| &c.name,
+            command_note,
+        )?);
+    }
 
     let mcp_path = dir.join("cline_mcp_settings.json");
     let mcp = merge_mcp_servers(

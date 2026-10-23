@@ -13,29 +13,21 @@
 //! - `mcp.json` `mcpServers`.
 //!
 //! Write is symmetric: rules land as `rules/<name>.md` (the modern `.md`
-//! form — `.mdc` files still round-trip as `.md`), hooks merge into
-//! `hooks.json` deduped per entry, MCP servers merge into `mcp.json`.
+//! form — a rule sourced from a `.mdc` file keeps its `.mdc` extension),
+//! hooks merge into `hooks.json` deduped per entry, MCP servers merge into
+//! `mcp.json`.
 
 use std::path::Path;
 
 use sepia_core::agent_config::{
     AgentConfig, ConfigAgent, ConfigCommand, ConfigHook, ConfigRule, ConfigWriteAction, HookKind,
-    RuleKind, canonical_hook_event, cursor_hook_event, merge_mcp_servers, safe_file_stem,
-    string_list,
+    RuleKind, canonical_hook_event, cursor_hook_event, extra_frontmatter, merge_mcp_servers,
+    safe_file_stem, source_path, string_list,
 };
 use sepia_core::domain::StorageError;
 use sepia_core::frontmatter;
 use sepia_driver::fs as sdk_fs;
 use serde_json::{Map, Value, json};
-
-/// `metadata` minus the provenance keys read-side stamping adds.
-fn extra_frontmatter(meta: &Value) -> Map<String, Value> {
-    let mut rest = meta.as_object().cloned().unwrap_or_default();
-    rest.shift_remove("sourcePath");
-    rest.shift_remove("source");
-    rest.shift_remove("sourceEvent");
-    rest
-}
 
 fn doc_to_rule(doc: &sdk_fs::MarkdownDoc) -> ConfigRule {
     let mut rest = doc.attributes.clone();
@@ -303,11 +295,14 @@ fn agent_doc(agent: &ConfigAgent) -> String {
     frontmatter::render(&attrs, &agent.body)
 }
 
-/// Write each item as `<dir>/<stem>.md`; unusable stems report `skipped`.
+/// Write each item as `<dir>/<stem><ext>`; unusable stems report `skipped`.
+/// `ext` picks the per-item extension — rules sourced from a `.mdc` file
+/// keep `.mdc` so they round-trip in place.
 fn write_docs<T, F>(
     dir: &Path,
     items: &[T],
     render: F,
+    ext: impl Fn(&T) -> &'static str,
 ) -> Result<Vec<ConfigWriteAction>, StorageError>
 where
     T: HasName,
@@ -327,7 +322,7 @@ where
             continue;
         };
         actions.push(sdk_fs::write_file_action(
-            &dir.join(format!("{stem}.md")),
+            &dir.join(format!("{stem}{}", ext(item))),
             &render(item),
         )?);
     }
@@ -361,7 +356,18 @@ impl HasName for ConfigAgent {
 pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>, StorageError> {
     let mut actions: Vec<ConfigWriteAction> = Vec::new();
 
-    actions.extend(write_docs(&dir.join("rules"), &config.rules, rule_doc)?);
+    actions.extend(write_docs(
+        &dir.join("rules"),
+        &config.rules,
+        rule_doc,
+        |rule| {
+            if source_path(&rule.metadata).is_some_and(|p| p.to_lowercase().ends_with(".mdc")) {
+                ".mdc"
+            } else {
+                ".md"
+            }
+        },
+    )?);
     actions.extend(sdk_fs::write_skills_dir(
         &dir.join("skills"),
         &config.skills,
@@ -370,8 +376,14 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
         &dir.join("commands"),
         &config.commands,
         command_doc,
+        |_| ".md",
     )?);
-    actions.extend(write_docs(&dir.join("agents"), &config.agents, agent_doc)?);
+    actions.extend(write_docs(
+        &dir.join("agents"),
+        &config.agents,
+        agent_doc,
+        |_| ".md",
+    )?);
 
     if !config.hooks.is_empty() {
         let path = dir.join("hooks.json");
