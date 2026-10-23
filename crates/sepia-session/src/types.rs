@@ -317,6 +317,90 @@ impl ControlErrorCode {
     }
 }
 
+/// Why a live session left the live map — carried by
+/// [`NodeEvent::Detached`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetachReason {
+    /// API-level release (`sessions.detach`).
+    Explicit,
+    /// The idle sweep retired it — no listeners, no in-flight turn,
+    /// TTL elapsed.
+    Idle,
+    /// The session's store row was deleted.
+    Deleted,
+    /// A rewind released the live handle before truncating history.
+    Rewind,
+    /// `close_all` — the plane is shutting down.
+    Shutdown,
+}
+
+/// One item on the node-wide event feed (`ControlPlane::subscribe_events`
+/// → `events.subscribe` on the wire). Lifecycle markers mirror live-map
+/// membership exactly — attach/create insert, detach/delete/sweep/
+/// shutdown remove; sessions that never landed (read-only attach, load
+/// failure) emit nothing. `SessionEvents` batches carry the same
+/// `SessionEvent`s a per-session `subscribe` sees, tagged with their
+/// session.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum NodeEvent {
+    /// An existing store session went live (`attach`).
+    Attached {
+        session_id: String,
+        agent_id: String,
+    },
+    /// A fresh session was created live (`create_session`).
+    Created {
+        session_id: String,
+        agent_id: String,
+        cwd: String,
+    },
+    /// A live session left the live map.
+    Detached {
+        session_id: String,
+        agent_id: String,
+        reason: DetachReason,
+    },
+    /// The session's store row was deleted through its agent.
+    Deleted {
+        session_id: String,
+        agent_id: String,
+    },
+    /// A batch of `SessionEvent`s from a live session — the same frames
+    /// `sessions.subscribe` forwards, tagged by origin. Run boundaries
+    /// (`runStarted`/`runFinished`) are the busy transitions.
+    SessionEvents {
+        session_id: String,
+        events: Vec<sepia_proto::SessionEvent>,
+    },
+    /// The feed dropped `count` items — `session_id` names the
+    /// per-session channel that lagged; `None` means the node feed
+    /// itself overflowed for this receiver.
+    Lagged {
+        session_id: Option<String>,
+        count: u64,
+    },
+}
+
+/// The lifecycle tuning a `ControlPlane` resolved — env defaults and
+/// option overrides applied. `ControlPlane::config` reports it; the
+/// `sepia serve` manifest exposes it so a spawner can verify its env
+/// took effect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaneConfig {
+    /// Idle-detach TTL in ms — `null` when the sweep is disabled.
+    pub idle_ttl_ms: Option<u64>,
+    /// Idle-sweep period in ms.
+    pub sweep_ms: u64,
+    /// Default `sessions.history` page size (`SEPIA_HISTORY_LIMIT`).
+    pub history_limit: usize,
+    /// Resolved lock-probe pool TTL in ms — the `probe_idle` override,
+    /// or 10 lock TTLs floored at 60s.
+    pub probe_idle_ms: u64,
+}
+
 #[derive(Default)]
 pub struct ControlPlaneOptions {
     pub agents: Vec<std::sync::Arc<dyn AgentRuntime>>,

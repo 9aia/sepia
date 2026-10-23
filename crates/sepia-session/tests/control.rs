@@ -1083,3 +1083,193 @@ async fn subscribe_fails_when_not_attached() {
     assert_eq!(err.code, ControlErrorCode::Invalid);
     plane.close_all().await;
 }
+
+// ---------- node event feed ---------------------------------------------
+
+use sepia_session::{DetachReason, NodeEvent};
+use tokio::sync::broadcast::Receiver;
+
+async fn next(feed: &mut Receiver<NodeEvent>) -> NodeEvent {
+    tokio::time::timeout(Duration::from_secs(5), feed.recv())
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn node_feed_marks_lifecycle_and_carries_session_events() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    let (mut feed, live) = plane.subscribe_events().await;
+    assert!(live.is_empty());
+
+    // Attach: the load's run-boundary frames land on the feed as
+    // sessionEvents ahead of the `attached` marker.
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let (mut saw_attached, mut saw_frames) = (false, false);
+    for _ in 0..8 {
+        match next(&mut feed).await {
+            NodeEvent::Attached {
+                session_id,
+                agent_id,
+            } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(agent_id, "devin");
+                saw_attached = true;
+                break;
+            }
+            NodeEvent::SessionEvents { session_id, .. } => {
+                assert_eq!(session_id, "s1");
+                saw_frames = true;
+            }
+            other => panic!("unexpected node event: {other:?}"),
+        }
+    }
+    assert!(saw_attached && saw_frames);
+
+    // A turn's events ride the feed tagged with the session — the busy
+    // transitions are runStarted/runFinished.
+    plane
+        .prompt("s1", &[PromptPart::Text { text: "hi".into() }], None)
+        .await
+        .unwrap();
+    let finished = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let NodeEvent::SessionEvents { events, .. } = next(&mut feed).await {
+                if events
+                    .iter()
+                    .any(|e| matches!(e, sepia_proto::SessionEvent::RunFinished { .. }))
+                {
+                    return;
+                }
+            }
+        }
+    })
+    .await;
+    assert!(finished.is_ok(), "no runFinished on the node feed");
+
+    plane.detach("s1").await;
+    loop {
+        match next(&mut feed).await {
+            NodeEvent::Detached {
+                session_id,
+                agent_id,
+                reason,
+            } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(agent_id, "devin");
+                assert_eq!(reason, DetachReason::Explicit);
+                break;
+            }
+            // Late echo frames may still be in flight past the detach.
+            NodeEvent::SessionEvents { session_id, .. } => assert_eq!(session_id, "s1"),
+            other => panic!("unexpected node event: {other:?}"),
+        }
+    }
+
+    // Create marks `created`; delete marks detached(deleted) + deleted.
+    let created = plane
+        .create_session("/tmp", None, None, None, None)
+        .await
+        .unwrap();
+    match next(&mut feed).await {
+        NodeEvent::Created {
+            session_id,
+            agent_id,
+            cwd,
+        } => {
+            assert_eq!(session_id, created.id);
+            assert_eq!(agent_id, "devin");
+            assert_eq!(cwd, "/tmp");
+        }
+        other => panic!("unexpected node event: {other:?}"),
+    }
+    plane.delete_session(&created.id, None).await.unwrap();
+    match next(&mut feed).await {
+        NodeEvent::Detached {
+            session_id, reason, ..
+        } => {
+            assert_eq!(session_id, created.id);
+            assert_eq!(reason, DetachReason::Deleted);
+        }
+        other => panic!("unexpected node event: {other:?}"),
+    }
+    match next(&mut feed).await {
+        NodeEvent::Deleted {
+            session_id,
+            agent_id,
+        } => {
+            assert_eq!(session_id, created.id);
+            assert_eq!(agent_id, "devin");
+        }
+        other => panic!("unexpected node event: {other:?}"),
+    }
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn node_feed_snapshot_reports_live_sessions() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    // A subscriber arriving after the attach gets the live snapshot;
+    // the first streamed item is the next real event — no replay.
+    let (mut feed, live) = plane.subscribe_events().await;
+    assert_eq!(live, vec!["s1".to_string()]);
+    plane.detach("s1").await;
+    match next(&mut feed).await {
+        NodeEvent::Detached {
+            session_id,
+            reason: DetachReason::Explicit,
+            ..
+        } => assert_eq!(session_id, "s1"),
+        other => panic!("unexpected node event: {other:?}"),
+    }
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn config_reports_the_resolved_tuning() {
+    let (plane, _) = mk_plane(
+        vec![],
+        vec![],
+        ControlPlaneOptions {
+            idle_ttl: Some(Duration::from_secs(42)),
+            sweep_interval: Some(Duration::from_secs(7)),
+            probe_idle: Some(Duration::from_secs(9)),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let config = plane.config();
+    assert_eq!(config.idle_ttl_ms, Some(42_000));
+    assert_eq!(config.sweep_ms, 7_000);
+    assert_eq!(config.probe_idle_ms, 9_000);
+    assert!(config.history_limit > 0);
+    plane.close_all().await;
+
+    // A zero TTL disables the sweep — reported as null on the wire.
+    let (plane, _) = mk_plane(
+        vec![],
+        vec![],
+        ControlPlaneOptions {
+            idle_ttl: Some(Duration::ZERO),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    assert_eq!(plane.config().idle_ttl_ms, None);
+    plane.close_all().await;
+}

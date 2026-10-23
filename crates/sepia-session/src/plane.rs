@@ -24,9 +24,9 @@ use crate::merged::agent_for_backend;
 use crate::translate::Translator;
 use crate::types::{
     AgentInfo, AgentRuntime, AttachResult, ControlError, ControlErrorCode, ControlPlaneOptions,
-    HistoryMessage, HistoryOptions, HistoryPage, RestoreAction, RestoreExec, RestoreRequest,
-    RestoreResult, RestoredFile, RewindRequest, RewindResult, SessionRewinder, SessionSummary,
-    SkippedFile,
+    DetachReason, HistoryMessage, HistoryOptions, HistoryPage, NodeEvent, PlaneConfig,
+    RestoreAction, RestoreExec, RestoreRequest, RestoreResult, RestoredFile, RewindRequest,
+    RewindResult, SessionRewinder, SessionSummary, SkippedFile,
 };
 
 const DEFAULT_HISTORY_LIMIT: usize = 500;
@@ -88,6 +88,8 @@ struct CoveredFile {
 /// One live (attached) session: the ACP connection plus the event fan-out
 /// its listeners subscribe to.
 struct LiveSession {
+    /// The live-map key — the fan-in task tags node-feed batches with it.
+    id: String,
     conn: Arc<AcpConnection>,
     events: broadcast::Sender<Vec<SessionEvent>>,
     /// update/permission → event translation tasks.
@@ -174,6 +176,11 @@ pub struct ControlPlane {
     meta: Option<sepia_meta::MetaStore>,
     /// Display name recorded as `RunSpan.node`; `None` skips span writes.
     node_name: Option<String>,
+    /// The node-wide feed — lifecycle markers emitted at live-map
+    /// insert/remove plus every live session's events, fanned in by a
+    /// per-session task `wire_live` spawns. Sends with no receivers are
+    /// dropped by `broadcast`, so an unwatched feed costs nothing.
+    node_events: broadcast::Sender<NodeEvent>,
     state: Mutex<State>,
     me: Weak<Self>,
     stop_sweep: AtomicBool,
@@ -214,6 +221,7 @@ impl ControlPlane {
             rewinders: options.rewinders,
             meta: options.meta,
             node_name: options.node_name,
+            node_events: broadcast::channel(EVENT_BUFFER).0,
             state: Mutex::new(State::default()),
             me: me.clone(),
             stop_sweep: AtomicBool::new(false),
@@ -248,10 +256,28 @@ impl ControlPlane {
             .unwrap_or_else(|| unreachable!("ControlPlane outlives its own methods"))
     }
 
-    fn emit(live: &LiveSession, events: Vec<SessionEvent>) {
-        if !events.is_empty() {
-            let _ = live.events.send(events);
+    /// One translated batch goes to the session's own channel AND the
+    /// node feed — a per-session `broadcast` receiver would count as a
+    /// listener for idle tracking, so the feed is written directly, not
+    /// fanned in by a task subscribed on `live.events`.
+    fn fan_out(
+        events: &broadcast::Sender<Vec<SessionEvent>>,
+        feed: &broadcast::Sender<NodeEvent>,
+        session_id: &str,
+        batch: Vec<SessionEvent>,
+    ) {
+        if batch.is_empty() {
+            return;
         }
+        let _ = feed.send(NodeEvent::SessionEvents {
+            session_id: session_id.to_string(),
+            events: batch.clone(),
+        });
+        let _ = events.send(batch);
+    }
+
+    fn emit(&self, live: &LiveSession, events: Vec<SessionEvent>) {
+        Self::fan_out(&live.events, &self.node_events, &live.id, events);
     }
 
     /// `idle_since` tracks "no listeners and no in-flight turn".
@@ -261,6 +287,48 @@ impl ControlPlane {
         } else {
             Some(Instant::now())
         };
+    }
+
+    /// A lifecycle marker onto the node-wide feed — best-effort, like
+    /// `emit`: no receivers just drops it.
+    fn emit_node(&self, event: NodeEvent) {
+        let _ = self.node_events.send(event);
+    }
+
+    /// The pooled lock-probe connection TTL — the `probe_idle` override,
+    /// else 10 lock TTLs floored so a 0 TTL doesn't churn spawns.
+    fn effective_probe_idle(&self, lock_ttl: Duration) -> Duration {
+        self.probe_idle
+            .unwrap_or_else(|| (lock_ttl * PROBE_IDLE_FACTOR).max(MIN_PROBE_IDLE))
+    }
+
+    /// The resolved lifecycle tuning — env defaults and option overrides
+    /// applied. The service manifest reports it so a spawner can verify
+    /// its env took effect.
+    #[must_use]
+    pub fn config(&self) -> PlaneConfig {
+        let lock_ttl = env_duration("SEPIA_LOCK_TTL_MS", DEFAULT_LOCK_TTL);
+        PlaneConfig {
+            idle_ttl_ms: self
+                .idle_ttl
+                .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+            sweep_ms: u64::try_from(self.sweep_interval.as_millis()).unwrap_or(u64::MAX),
+            history_limit: Self::history_limit(&HistoryOptions::default()),
+            probe_idle_ms: u64::try_from(self.effective_probe_idle(lock_ttl).as_millis())
+                .unwrap_or(u64::MAX),
+        }
+    }
+
+    /// Subscribe to the node-wide event feed — lifecycle markers plus a
+    /// fan-in of every live session's `SessionEvent` stream. Returns the
+    /// receiver and the ids live at subscribe time; a session that
+    /// attaches between the snapshot read and the caller's first `recv`
+    /// appears in both, so dedup by `sessionId`. Receivers that fall
+    /// behind get a [`NodeEvent::Lagged`] marker, never silent loss.
+    pub async fn subscribe_events(&self) -> (broadcast::Receiver<NodeEvent>, Vec<String>) {
+        let rx = self.node_events.subscribe();
+        let live = self.state.lock().await.live.keys().cloned().collect();
+        (rx, live)
     }
 
     /// Can this agent answer a lock probe at all? `session_list` is the
@@ -326,9 +394,7 @@ impl ControlPlane {
         borrowed: Option<(&str, Arc<AcpConnection>)>,
     ) -> LockProbe {
         let now = Instant::now();
-        let probe_idle = self
-            .probe_idle
-            .unwrap_or_else(|| (lock_ttl * PROBE_IDLE_FACTOR).max(MIN_PROBE_IDLE));
+        let probe_idle = self.effective_probe_idle(lock_ttl);
         let plane = self.shared();
 
         // Reusable conns (live + borrowed) and pool/capability snapshots
@@ -954,12 +1020,15 @@ impl ControlPlane {
         None
     }
 
-    /// Wire a fresh `LiveSession`'s forward tasks (updates + permissions
-    /// → event fan-out through the shared translator).
-    fn wire_live(mut live: LiveSession) -> LiveSession {
+    /// Wire a fresh `LiveSession`'s forward tasks: updates + permissions
+    /// → event fan-out through the shared translator, dual-published to
+    /// the session's own channel and the node feed (see `fan_out`).
+    fn wire_live(&self, mut live: LiveSession) -> LiveSession {
         {
             let mut updates = live.conn.updates();
             let events = live.events.clone();
+            let feed = self.node_events.clone();
+            let session_id = live.id.clone();
             let translator = Arc::clone(&live.translator);
             live.forward_tasks.push(tokio::spawn(async move {
                 while let Ok(update) = updates.recv().await {
@@ -967,16 +1036,23 @@ impl ControlPlane {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .translate(&update);
-                    let _ = events.send(translated);
+                    Self::fan_out(&events, &feed, &session_id, translated);
                 }
             }));
         }
         {
             let mut permissions = live.conn.permissions();
             let events = live.events.clone();
+            let feed = self.node_events.clone();
+            let session_id = live.id.clone();
             live.forward_tasks.push(tokio::spawn(async move {
                 while let Ok(request) = permissions.recv().await {
-                    let _ = events.send(Translator::permission_request(&request));
+                    Self::fan_out(
+                        &events,
+                        &feed,
+                        &session_id,
+                        Translator::permission_request(&request),
+                    );
                 }
             }));
         }
@@ -1005,6 +1081,7 @@ impl ControlPlane {
         thread_id: &str,
     ) -> LiveSession {
         LiveSession {
+            id: thread_id.to_string(),
             conn: Arc::clone(conn),
             events: broadcast::channel(EVENT_BUFFER).0,
             forward_tasks: Vec::new(),
@@ -1062,7 +1139,7 @@ impl ControlPlane {
                 fallbacks.as_deref(),
             )
             .await?;
-        let live = Self::wire_live(Self::new_live(
+        let live = self.wire_live(Self::new_live(
             &conn,
             session.working_directory.clone(),
             session.title.clone(),
@@ -1109,7 +1186,7 @@ impl ControlPlane {
             ));
         }
 
-        Self::emit(&live, Self::translator_of(&live).start_run());
+        self.emit(&live, Self::translator_of(&live).start_run());
         let do_load = || {
             let conn = Arc::clone(&conn);
             let cwd = session.working_directory.clone();
@@ -1122,7 +1199,7 @@ impl ControlPlane {
             loaded = do_load().await;
         }
         if let Err(load_err) = loaded {
-            Self::emit(&live, Self::translator_of(&live).end_turn());
+            self.emit(&live, Self::translator_of(&live).end_turn());
             Self::unwire_and_close(live).await;
             // A load failure is authoritative: re-probe once, treating a
             // lock as read-only.
@@ -1159,10 +1236,14 @@ impl ControlPlane {
             }
             return Err(acp_error("Failed to load session")(load_err));
         }
-        Self::emit(&live, Self::translator_of(&live).end_turn());
+        self.emit(&live, Self::translator_of(&live).end_turn());
         let mut live = live;
         Self::touch_idle(&mut live);
         self.state.lock().await.live.insert(id.to_string(), live);
+        self.emit_node(NodeEvent::Attached {
+            session_id: id.to_string(),
+            agent_id: agent.id().to_string(),
+        });
         self.record_span(id, agent.id());
         Ok(AttachResult {
             attached: true,
@@ -1310,7 +1391,7 @@ impl ControlPlane {
                 },
             );
         }
-        let mut live = Self::wire_live(Self::new_live(
+        let mut live = self.wire_live(Self::new_live(
             &conn,
             cwd.to_string(),
             title.unwrap_or_else(|| "New session".into()),
@@ -1319,6 +1400,11 @@ impl ControlPlane {
         ));
         Self::touch_idle(&mut live);
         self.state.lock().await.live.insert(id.clone(), live);
+        self.emit_node(NodeEvent::Created {
+            session_id: id.clone(),
+            agent_id: agent.id().to_string(),
+            cwd: cwd.to_string(),
+        });
         self.record_span(&id, agent.id());
         Ok(CreateResult {
             id,
@@ -1327,13 +1413,27 @@ impl ControlPlane {
         })
     }
 
+    /// Remove a live entry, close its agent, and mark the node feed —
+    /// `reason` is who asked (explicit call, idle sweep, delete, rewind,
+    /// shutdown). The marker is emitted after the forward tasks are
+    /// aborted so a session's `detached` is strictly its last event.
+    async fn detach_inner(&self, id: &str, reason: DetachReason) {
+        let live = self.state.lock().await.live.remove(id);
+        if let Some(live) = live {
+            let marker = NodeEvent::Detached {
+                session_id: live.id.clone(),
+                agent_id: live.agent_id.clone(),
+                reason,
+            };
+            Self::unwire_and_close(live).await;
+            self.emit_node(marker);
+        }
+    }
+
     /// Detach a live session (no-op when not attached).
     #[tracing::instrument(name = "control_detach", skip_all, fields(session = %id))]
     pub async fn detach(&self, id: &str) {
-        let live = self.state.lock().await.live.remove(id);
-        if let Some(live) = live {
-            Self::unwire_and_close(live).await;
-        }
+        self.detach_inner(id, DetachReason::Explicit).await;
     }
 
     fn require_live<'a>(
@@ -1397,7 +1497,7 @@ impl ControlPlane {
             live.busy = true;
             live.idle_since = None;
             let start = Self::translator_of(live).start_run();
-            Self::emit(live, start);
+            self.emit(live, start);
         }
         let result = conn
             .prompt(id, parts)
@@ -1409,7 +1509,7 @@ impl ControlPlane {
                 live.busy = false;
                 Self::touch_idle(live);
                 let end = Self::translator_of(live).end_turn();
-                Self::emit(live, end);
+                self.emit(live, end);
             }
         }
         result
@@ -1457,7 +1557,13 @@ impl ControlPlane {
         let (live_cwd, live_agent) = match live {
             Some(live) => {
                 let pair = (live.cwd.clone(), live.agent_id.clone());
+                let marker = NodeEvent::Detached {
+                    session_id: live.id.clone(),
+                    agent_id: pair.1.clone(),
+                    reason: DetachReason::Deleted,
+                };
                 Self::unwire_and_close(live).await;
+                self.emit_node(marker);
                 (Some(pair.0), Some(pair.1))
             }
             None => (None, None),
@@ -1515,6 +1621,10 @@ impl ControlPlane {
             if let Some(meta) = &self.meta {
                 meta.remove(id);
             }
+            self.emit_node(NodeEvent::Deleted {
+                session_id: id.to_string(),
+                agent_id: agent.id().to_string(),
+            });
         }
         result
     }
@@ -2296,7 +2406,7 @@ impl ControlPlane {
         // flushes it back on the next turn — drop the attach before
         // writing.
         if was_live {
-            self.detach(id).await;
+            self.detach_inner(id, DetachReason::Rewind).await;
         }
         let truncated = rewind::rewind_session(&session, &plan);
         rewinder.truncate(&session, &plan, &truncated).await?;
@@ -2364,7 +2474,7 @@ impl ControlPlane {
                 .collect()
         };
         for id in expired {
-            self.detach(&id).await;
+            self.detach_inner(&id, DetachReason::Idle).await;
         }
     }
 
@@ -2384,7 +2494,13 @@ impl ControlPlane {
             )
         };
         for live in lives {
+            let marker = NodeEvent::Detached {
+                session_id: live.id.clone(),
+                agent_id: live.agent_id.clone(),
+                reason: DetachReason::Shutdown,
+            };
             Self::unwire_and_close(live).await;
+            self.emit_node(marker);
         }
         for probe in probes {
             Self::close_agent(probe.conn).await;

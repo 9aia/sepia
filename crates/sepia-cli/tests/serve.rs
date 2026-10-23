@@ -67,8 +67,9 @@ mod serve {
     }
 
     impl Serve {
-        fn start(home: &Path, drivers: &Path) -> Self {
-            let mut child = Command::new(env!("CARGO_BIN_EXE_sepia"))
+        fn start(home: &Path, drivers: &Path, envs: &[(&str, &str)]) -> Self {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_sepia"));
+            command
                 .arg("serve")
                 .env("SEPIA_HOME", home)
                 .env("SEPIA_DRIVER_DIR", drivers)
@@ -76,9 +77,11 @@ mod serve {
                 .env("PATH", "/usr/bin:/bin")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap();
+                .stderr(Stdio::null());
+            for (key, value) in envs {
+                command.env(key, value);
+            }
+            let mut child = command.spawn().unwrap();
             Self {
                 stdin: child.stdin.take().unwrap(),
                 stdout: BufReader::new(child.stdout.take().unwrap()),
@@ -128,7 +131,7 @@ mod serve {
         let drivers = tmp.path().join("drivers");
         std::fs::create_dir_all(&drivers).unwrap();
         let (_, log, _) = fake_driver(&drivers);
-        let mut serve = Serve::start(&home, &drivers);
+        let mut serve = Serve::start(&home, &drivers, &[]);
 
         // manifest advertises the transfer surface.
         let res = serve.call(1, "manifest", json!({}));
@@ -195,7 +198,7 @@ mod serve {
         let drivers = tmp.path().join("drivers");
         std::fs::create_dir_all(&drivers).unwrap();
         fake_driver(&drivers);
-        let mut serve = Serve::start(&home, &drivers);
+        let mut serve = Serve::start(&home, &drivers, &[]);
 
         // No SessionWrite driver for the agent → unknown_agent.
         let res = serve.call(
@@ -247,7 +250,7 @@ mod serve {
         let drivers = tmp.path().join("drivers");
         std::fs::create_dir_all(&drivers).unwrap();
         let (_, _, config_log) = fake_driver(&drivers);
-        let mut serve = Serve::start(&home, &drivers);
+        let mut serve = Serve::start(&home, &drivers, &[]);
 
         // manifest advertises the config surface.
         let res = serve.call(1, "manifest", json!({}));
@@ -314,7 +317,7 @@ mod serve {
         let drivers = tmp.path().join("drivers");
         std::fs::create_dir_all(&drivers).unwrap();
         fake_driver(&drivers);
-        let mut serve = Serve::start(&home, &drivers);
+        let mut serve = Serve::start(&home, &drivers, &[]);
 
         // No driver claims the agent → unknown_agent.
         for (id, method, params) in [
@@ -339,5 +342,49 @@ mod serve {
         assert_eq!(res["error"]["code"], -32602, "{res}");
 
         serve.call(6, "shutdown", json!({}));
+    }
+
+    #[test]
+    fn manifest_reports_config_and_events_feed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let drivers = tmp.path().join("drivers");
+        std::fs::create_dir_all(&drivers).unwrap();
+        fake_driver(&drivers);
+        let mut serve = Serve::start(
+            &home,
+            &drivers,
+            &[
+                ("SEPIA_IDLE_TTL_MS", "4242"),
+                ("SEPIA_SWEEP_MS", "777"),
+                ("SEPIA_HISTORY_LIMIT", "99"),
+                ("SEPIA_LOCK_TTL_MS", "5000"),
+            ],
+        );
+
+        // The config block reports what the env actually resolved to —
+        // a spawner can verify its env took effect. probeIdleMs is the
+        // computed fallback: 10 lock TTLs (50s) floored at 60s.
+        let res = serve.call(1, "manifest", json!({}));
+        let config = &res["result"]["config"];
+        assert_eq!(config["idleTtlMs"], 4242, "{res}");
+        assert_eq!(config["sweepMs"], 777, "{res}");
+        assert_eq!(config["historyLimit"], 99, "{res}");
+        assert_eq!(config["probeIdleMs"], 60_000, "{res}");
+        assert!(
+            res["result"]["methods"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("events.subscribe")),
+            "manifest missing events.subscribe: {res}"
+        );
+
+        // The node feed subscribes cleanly — nothing live on a plane
+        // with no agent runtimes, so the snapshot is empty.
+        let res = serve.call(2, "events.subscribe", json!({}));
+        assert_eq!(res["result"]["subscribed"], true, "{res}");
+        assert_eq!(res["result"]["live"], json!([]), "{res}");
+
+        serve.call(3, "shutdown", json!({}));
     }
 }

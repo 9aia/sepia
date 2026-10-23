@@ -19,17 +19,23 @@ tracked it before the split.
       `projects.list|create|rename|delete`; `manifest` reports
       `node: {id, name}` (minted `node_<hex16>` at
       `$SEPIA_HOME/node.json`; `$SEPIA_NODE`/`$SEPIA_NAME` override).
-- [ ] **`config.*` methods** — `sepia config list/diff/…` reads the
-      agent-config IR locally (`config_ops.rs`); orchestrators can't
-      reach it. Needs a config-capable driver wire call + serve
-      methods.
-- [ ] **`sessions.export` / `sessions.import` / `sessions.convert`** —
-      CLI `export` + `install --to` exist and `Convert` is a driver
-      capability, but serve lacks all three. Blocks peregrin-side
-      cross-node transfer (was `transfer_session`/`transfer_project`
-      server fns in v1).
-- [ ] **Serve lifecycle** — idle-sweep tuning + multi-client policy
-      hooks, per `crates/sepia-cli/src/serve.rs` and BACKLOG.
+- [x] ~~**`config.*` methods**~~ — done: `config.read`/`config.write`
+      on the driver wire (`AgentConfigStore` trait +
+      `Capability::AgentConfig`, all four drivers) behind
+      `config.list`/`config.get`/`config.import` on serve. `dir`
+      resolves driver-side (cline = workspace root, `SEPIA_*_DIR`
+      envs otherwise). CLI config verbs unchanged.
+- [x] ~~**`sessions.export` / `sessions.import` / `sessions.convert`**~~
+      — done: export = `{session}` bundle; import writes IR via
+      `session.save` over the driver wire (fresh id per store
+      convention); convert is the node-local read+save shortcut.
+- [x] ~~**Serve lifecycle**~~ — done (mechanism half): `manifest`
+      reports resolved `config` (idleTtl/sweep/historyLimit/probeIdle);
+      `events.subscribe` is a node-wide `node.event` feed — lifecycle
+      markers (attached/created/detached{reason}/deleted), per-session
+      event batches, honest `lagged` counts. Also fixed the silent
+      lag-death in `sessions.subscribe` forwards. Multi-client
+      *arbitration* stays peregrin's by the boundary.
 
 ### Ops / QA
 

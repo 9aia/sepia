@@ -27,6 +27,8 @@
 //! | `config.get` / `config.import` | `agent_config` / `write_agent_config` — the config IR over `config.read`/`config.write` |
 //! | `sessions.restore` / `sessions.rewind` | `restore` / `rewind` |
 //! | `sessions.subscribe` | `subscribe` → `session.event` notifications |
+//! | `events.subscribe` | `subscribe_events` → `node.event` notifications: |
+//! | | lifecycle markers + every live session's events |
 //! | `shutdown` | close the plane, exit 0 |
 
 use std::io::{BufRead, Write};
@@ -34,10 +36,11 @@ use std::sync::{Arc, Mutex};
 
 use sepia_driver::rpc::{Inbound, Request, RpcError, decode_line, encode_line};
 use sepia_session::{
-    ControlError, ControlErrorCode, HistoryOptions, ImportOverrides, Local, Paths, RestoreRequest,
-    RewindRequest, base_options, build, sepia_home,
+    ControlError, ControlErrorCode, HistoryOptions, ImportOverrides, Local, NodeEvent, Paths,
+    RestoreRequest, RewindRequest, base_options, build, sepia_home,
 };
 use serde_json::{Value, json};
+use tokio::sync::broadcast;
 
 use crate::CliError;
 
@@ -83,12 +86,15 @@ fn str_param(params: &Value, key: &str) -> Option<String> {
     params.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
-fn manifest(identity: &sepia_session::NodeIdentity) -> Value {
+fn manifest(local: &Local) -> Value {
     json!({
         "name": "sepia",
         "version": crate::SEPIA_VERSION,
         "protocol": PROTOCOL,
-        "node": { "id": identity.id, "name": identity.name },
+        "node": { "id": local.identity.id, "name": local.identity.name },
+        // The plane's resolved lifecycle tuning — lets a spawner verify
+        // the SEPIA_* env it set on this process took effect.
+        "config": local.plane.config(),
         "methods": [
             "manifest", "agents.list",
             "sessions.list", "sessions.get", "sessions.summary",
@@ -97,6 +103,7 @@ fn manifest(identity: &sepia_session::NodeIdentity) -> Value {
             "sessions.create", "sessions.prompt", "sessions.cancel",
             "sessions.permission", "sessions.delete", "sessions.patch_meta",
             "sessions.restore", "sessions.rewind", "sessions.subscribe",
+            "events.subscribe",
             "projects.list", "projects.create", "projects.rename",
             "projects.delete",
             "config.list", "config.get", "config.import",
@@ -109,7 +116,7 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
     let plane = &local.plane;
     let agent = agent_of(&req.params);
     match req.method.as_str() {
-        "manifest" => Ok(manifest(&local.identity)),
+        "manifest" => Ok(manifest(local)),
         "agents.list" => {
             let agents: Vec<Value> = plane
                 .list_agents()
@@ -455,18 +462,55 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
                 .map_err(|e| control_err(&e))?;
             let out = Arc::clone(out);
             let session_id = id.clone();
+            // Note: repeat subscribes on one session each spawn a
+            // forwarder — the stream multiplexes but notifications
+            // duplicate. `events.subscribe` (one feed for the whole
+            // node) is the manageable shape for that.
             tokio::spawn(async move {
-                while let Ok(events) = rx.recv().await {
+                loop {
+                    let params = match rx.recv().await {
+                        Ok(events) => json!({ "sessionId": session_id, "events": events }),
+                        // Honest loss: report the dropped-batch count
+                        // instead of silently ending the stream.
+                        Err(broadcast::error::RecvError::Lagged(count)) => {
+                            json!({ "sessionId": session_id, "events": [], "lagged": count })
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    };
                     write_line(
                         &out,
-                        &sepia_driver::rpc::Notification::new(
-                            "session.event",
-                            json!({ "sessionId": session_id, "events": events }),
-                        ),
+                        &sepia_driver::rpc::Notification::new("session.event", params),
                     );
                 }
             });
             Ok(json!({ "subscribed": true, "sessionId": id }))
+        }
+        "events.subscribe" => {
+            let (mut rx, live) = plane.subscribe_events().await;
+            let out = Arc::clone(out);
+            tokio::spawn(async move {
+                loop {
+                    let event = match rx.recv().await {
+                        Ok(event) => event,
+                        // The feed itself overflowed for this receiver —
+                        // surface it as a lagged marker, not a gap.
+                        Err(broadcast::error::RecvError::Lagged(count)) => NodeEvent::Lagged {
+                            session_id: None,
+                            count,
+                        },
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    };
+                    let params = serde_json::to_value(&event)
+                        .unwrap_or_else(|_| json!({ "type": "unserializable" }));
+                    write_line(
+                        &out,
+                        &sepia_driver::rpc::Notification::new("node.event", params),
+                    );
+                }
+            });
+            // `live` is the at-subscribe snapshot; a racing attach can
+            // appear both there and on the stream — dedup by sessionId.
+            Ok(json!({ "subscribed": true, "live": live }))
         }
         other => Err(RpcError::new(-32601, format!("unknown method: {other}"))),
     }
