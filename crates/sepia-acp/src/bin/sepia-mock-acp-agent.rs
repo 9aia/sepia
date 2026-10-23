@@ -53,7 +53,8 @@ fn caps() -> Vec<String> {
         })
 }
 
-fn sessions() -> Value {
+fn sessions(lock_all: bool) -> Value {
+    let lock_pid = env("MOCK_LOCK_PID").and_then(|p| p.parse::<u64>().ok());
     let rows = env("MOCK_SESSIONS")
         .map(|v| {
             v.split(';')
@@ -66,13 +67,15 @@ fn sessions() -> Value {
                         "title": cols.get(2).copied().unwrap_or_default(),
                         "updatedAt": cols.get(3).copied().unwrap_or_default(),
                     });
-                    if cols.get(4) == Some(&"locked") {
+                    let locked = cols.get(4) == Some(&"locked") || lock_all;
+                    if locked {
                         session["locked"] = json!(true);
-                        if let Some(pid) = cols.get(5).and_then(|p| p.parse::<u64>().ok()) {
-                            session["_meta"] = json!({
-                                "cognition.ai/isLocked": true,
-                                "cognition.ai/lockHolderPid": pid,
-                            });
+                        let pid = cols.get(5).and_then(|p| p.parse::<u64>().ok()).or(lock_pid);
+                        // The lock flag rides `_meta`; the pid is
+                        // optional (a holder that won't say who it is).
+                        session["_meta"]["cognition.ai/isLocked"] = json!(true);
+                        if let Some(pid) = pid {
+                            session["_meta"]["cognition.ai/lockHolderPid"] = json!(pid);
                         }
                     }
                     session
@@ -102,6 +105,7 @@ fn main() {
     let capabilities = caps();
     let perm_text = env("MOCK_PERM_TEXT").unwrap_or_else(|| "perm".into());
     let mut load_failed_once = false;
+    let mut list_calls = 0u64;
     for line in stdin.lock().lines() {
         let Ok(line) = line else { return };
         if line.trim().is_empty() {
@@ -184,7 +188,28 @@ fn main() {
             }
             ("session/list", Some(id)) => {
                 sleep_ms("MOCK_LIST_SLOW_MS");
-                let _ = writeln!(out, "{}", respond(id, json!({ "sessions": sessions() })));
+                list_calls += 1;
+                // MOCK_LOCK_AFTER_FIRST_LIST: the first list answers as
+                // configured; every later call reports all sessions
+                // locked (MOCK_LOCK_PID supplies the holder pid) — the
+                // "lock appeared between attach's probe and its
+                // post-load-failure reprobe" scenario.
+                let lock_all = env("MOCK_LOCK_AFTER_FIRST_LIST").is_some() && list_calls > 1;
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    respond(id, json!({ "sessions": sessions(lock_all) }))
+                );
+                // MOCK_EXIT_AFTER_LISTS=n: exit once n lists were
+                // answered — a pooled probe conn that dies between
+                // lock probes.
+                if env("MOCK_EXIT_AFTER_LISTS")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .is_some_and(|n| list_calls >= n)
+                {
+                    let _ = out.flush();
+                    return;
+                }
             }
             ("session/prompt", Some(id)) => {
                 sleep_ms("MOCK_PROMPT_SLOW_MS");
@@ -216,6 +241,42 @@ fn main() {
                     .as_str()
                     .unwrap_or("s1")
                     .to_string();
+                // MOCK_USER_CHUNK: echo the user's own message back as a
+                // user_message_chunk update — the plane's translator
+                // drops it, producing an empty event batch.
+                if env("MOCK_USER_CHUNK").is_some() {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        notify(
+                            "session/update",
+                            json!({
+                                "sessionId": session_id,
+                                "update": {
+                                    "sessionUpdate": "user_message_chunk",
+                                    "content": { "type": "text", "text": format!("u: {text}") }
+                                }
+                            })
+                        )
+                    );
+                }
+                // MOCK_THOUGHT_CHUNK: a reasoning chunk before the echo.
+                if env("MOCK_THOUGHT_CHUNK").is_some() {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        notify(
+                            "session/update",
+                            json!({
+                                "sessionId": session_id,
+                                "update": {
+                                    "sessionUpdate": "agent_thought_chunk",
+                                    "content": { "type": "text", "text": "thinking" }
+                                }
+                            })
+                        )
+                    );
+                }
                 let _ = writeln!(
                     out,
                     "{}",

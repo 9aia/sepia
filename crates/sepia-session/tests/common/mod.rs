@@ -181,3 +181,17 @@ pub fn mk_plane(
 pub fn tempdir() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
+
+// ---------- meta overlay helpers -----------------------------------------
+
+pub fn meta_store(dir: &tempfile::TempDir) -> sepia_meta::MetaStore {
+    sepia_meta::MetaStore::open(&dir.path().join("meta.json"))
+}
+
+pub fn meta_options(meta: sepia_meta::MetaStore) -> ControlPlaneOptions {
+    ControlPlaneOptions {
+        meta: Some(meta),
+        node_name: Some("test-node".into()),
+        ..ControlPlaneOptions::default()
+    }
+}

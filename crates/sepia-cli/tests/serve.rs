@@ -62,7 +62,7 @@ mod serve {
 
     struct Serve {
         child: Child,
-        stdin: ChildStdin,
+        stdin: Option<ChildStdin>,
         stdout: BufReader<ChildStdout>,
     }
 
@@ -83,20 +83,21 @@ mod serve {
             }
             let mut child = command.spawn().unwrap();
             Self {
-                stdin: child.stdin.take().unwrap(),
+                stdin: Some(child.stdin.take().unwrap()),
                 stdout: BufReader::new(child.stdout.take().unwrap()),
                 child,
             }
         }
 
         fn call(&mut self, id: u64, method: &str, params: Value) -> Value {
+            let stdin = self.stdin.as_mut().unwrap();
             writeln!(
-                self.stdin,
+                stdin,
                 "{}",
                 json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
             )
             .unwrap();
-            self.stdin.flush().unwrap();
+            stdin.flush().unwrap();
             loop {
                 let mut line = String::new();
                 assert!(self.stdout.read_line(&mut line).unwrap() > 0, "eof");
@@ -111,6 +112,17 @@ mod serve {
 
     impl Drop for Serve {
         fn drop(&mut self) {
+            // Close stdin first — `serve` exits cleanly on EOF, which
+            // lets an instrumented binary flush its coverage profile;
+            // a bare kill() would drop the profraw entirely.
+            drop(self.stdin.take());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                match self.child.try_wait() {
+                    Ok(Some(_)) | Err(_) => return,
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
+                }
+            }
             let _ = self.child.kill();
             let _ = self.child.wait();
         }

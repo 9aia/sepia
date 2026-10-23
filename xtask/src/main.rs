@@ -31,11 +31,19 @@ fn llvm_cov_available() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Binaries tests shell out to (driver, mock ACP agent, the sepia CLI
+/// Binaries tests shell out to (drivers, mock ACP agent, the sepia CLI
 /// itself) — one `cargo build` beats N in-test builds serializing on
 /// package/build-dir locks. Tests see SEPIA_TESTKIT_PREBUILT and
 /// resolve the paths directly.
-const TEST_BINS: &[&str] = &["sepia", "sepia-driver-devin", "sepia-mock-acp-agent"];
+const TEST_BINS: &[&str] = &[
+    "sepia",
+    "sepia-driver-devin",
+    "sepia-driver-cline",
+    "sepia-driver-claude",
+    "sepia-driver-cursor",
+    "sepia-driver-memtest",
+    "sepia-mock-acp-agent",
+];
 
 /// The effective target dir — `cargo metadata` reports it, which keeps
 /// `install` correct under a shared CARGO_TARGET_DIR (`target/release`
@@ -197,10 +205,15 @@ fn main() -> anyhow::Result<()> {
             });
             let html = if wants_report { "" } else { " --html" };
             let cov = format!("{runner}{html} \"$@\"");
+            // Spawned test binaries must resolve to the *instrumented*
+            // ones — llvm-cov builds into <target>/llvm-cov-target, so
+            // point testkit's search there ahead of the plain debug dir.
+            let instrumented_bins = target_dir()?.join("llvm-cov-target/debug");
             let status = Command::new("sh")
                 .args(["-c", &cov, "xtask-coverage"])
                 .args(&extra)
                 .env("SEPIA_TESTKIT_PREBUILT", "1")
+                .env("TESTKIT_BIN_DIRS", &instrumented_bins)
                 .status()?;
             anyhow::ensure!(status.success(), "coverage run failed");
         }

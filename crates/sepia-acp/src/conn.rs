@@ -42,6 +42,9 @@ const ALLOWED_ENV_KEYS: &[&str] = &[
     "WINDSURF_API_KEY",
     "ANTHROPIC_API_KEY",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    // Coverage runs instrument every spawned binary; without the profile
+    // path the child's profraw never lands where llvm-cov collects it.
+    "LLVM_PROFILE_FILE",
 ];
 
 /// `SEPIA_INHERIT_ENV=1` opts back into forwarding the whole parent env.
