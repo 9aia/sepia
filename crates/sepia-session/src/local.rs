@@ -82,12 +82,11 @@ pub fn node_identity(paths: &Paths) -> NodeIdentity {
             })
             .unwrap_or_else(|| "node".into()),
     };
-    if let Ok(json) = serde_json::to_vec(&identity) {
-        if let Some(dir) = paths.node_path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(&paths.node_path, json);
+    let json = serde_json::to_vec(&identity).unwrap_or_default();
+    if let Some(dir) = paths.node_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
     }
+    let _ = std::fs::write(&paths.node_path, json);
     identity
 }
 
@@ -271,10 +270,25 @@ pub struct Local {
 /// # Errors
 /// Currently infallible composition-wise; returns `Err` if the meta
 /// store's parent cannot be created.
-pub async fn build(paths: &Paths, mut options: ControlPlaneOptions) -> std::io::Result<Local> {
+pub async fn build(paths: &Paths, options: ControlPlaneOptions) -> std::io::Result<Local> {
+    let (registry, warnings) = DriverRegistry::discover().await;
+    build_with(paths, options, registry, warnings).await
+}
+
+/// [`build`] with the registry + discovery warnings injected — the
+/// seam tests use to exercise discovery-warning and driver-failure
+/// handling without planting binaries in real search dirs.
+///
+/// # Errors
+/// Same as [`build`].
+pub async fn build_with(
+    paths: &Paths,
+    mut options: ControlPlaneOptions,
+    registry: DriverRegistry,
+    warnings: Vec<String>,
+) -> std::io::Result<Local> {
     std::fs::create_dir_all(&paths.home)?;
 
-    let (registry, warnings) = DriverRegistry::discover().await;
     for warning in warnings {
         tracing::warn!("driver discovery: {warning}");
     }

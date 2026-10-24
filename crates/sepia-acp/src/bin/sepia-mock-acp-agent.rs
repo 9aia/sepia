@@ -194,7 +194,11 @@ fn main() {
                 // locked (MOCK_LOCK_PID supplies the holder pid) — the
                 // "lock appeared between attach's probe and its
                 // post-load-failure reprobe" scenario.
-                let lock_all = env("MOCK_LOCK_AFTER_FIRST_LIST").is_some() && list_calls > 1;
+                // MOCK_LOCK_ONLY_FIRST_LIST: the first list answers all
+                // sessions locked, later lists report the configured
+                // state — the takeover settle-poll "lock cleared" path.
+                let lock_all = (env("MOCK_LOCK_AFTER_FIRST_LIST").is_some() && list_calls > 1)
+                    || (env("MOCK_LOCK_ONLY_FIRST_LIST").is_some() && list_calls == 1);
                 let _ = writeln!(
                     out,
                     "{}",

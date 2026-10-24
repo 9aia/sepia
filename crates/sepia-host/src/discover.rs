@@ -28,12 +28,20 @@ pub fn search_dirs() -> Vec<PathBuf> {
 }
 
 fn data_dir() -> Option<PathBuf> {
-    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+    data_dir_from(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
+}
+
+/// The env-free half of [`data_dir`] — tests inject the vars.
+fn data_dir_from(
+    xdg: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    if let Some(xdg) = xdg {
         if !xdg.is_empty() {
             return Some(PathBuf::from(xdg));
         }
     }
-    std::env::var_os("HOME").map(|home| Path::new(&home).join(".local/share"))
+    home.map(|home| Path::new(&home).join(".local/share"))
 }
 
 fn is_driver_binary(path: &Path) -> bool {
@@ -57,38 +65,46 @@ fn is_driver_binary(path: &Path) -> bool {
 
 /// Find every `sepia-driver-*` binary reachable from the search dirs,
 /// deduplicated by file name (first dir wins).
-pub fn find_driver_binaries() -> Vec<PathBuf> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut found = Vec::new();
-    for dir in search_dirs() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+/// Scan one directory for `sepia-driver-*` binaries (first hit wins on
+/// name collision, tracked by `seen`).
+fn scan_dir(dir: &Path, seen: &mut std::collections::BTreeSet<String>, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            if is_driver_binary(&path) && seen.insert(name.to_string()) {
-                found.push(path);
-            }
+        if is_driver_binary(&path) && seen.insert(name.to_string()) {
+            found.push(path);
         }
     }
+}
+
+/// The env-free half of [`find_driver_binaries`] — tests inject the dirs.
+pub fn find_driver_binaries_in(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut found = Vec::new();
+    for dir in dirs {
+        scan_dir(dir, &mut seen, &mut found);
+    }
+    found
+}
+
+/// Find every `sepia-driver-*` binary reachable from the search dirs,
+/// deduplicated by file name (first dir wins).
+pub fn find_driver_binaries() -> Vec<PathBuf> {
+    let mut found = find_driver_binaries_in(&search_dirs());
     // PATH scan — a driver installed with a package manager lands here.
     if let Ok(path_var) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path_var) {
-            let Ok(entries) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                    continue;
-                };
-                if is_driver_binary(&path) && seen.insert(name.to_string()) {
-                    found.push(path);
-                }
-            }
+        let dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
+        let mut seen: std::collections::BTreeSet<String> = found
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .collect();
+        for dir in &dirs {
+            scan_dir(dir, &mut seen, &mut found);
         }
     }
     found

@@ -414,6 +414,10 @@ pub struct ControlPlaneOptions {
     pub sweep_interval: Option<std::time::Duration>,
     /// A pooled lock-probe connection unused this long is retired.
     pub probe_idle: Option<std::time::Duration>,
+    /// Lock-probe result cache TTL; `None` falls back to
+    /// `SEPIA_LOCK_TTL_MS` (5s). `Some(Duration::ZERO)` in tests forces a
+    /// fresh probe on every call.
+    pub lock_ttl: Option<std::time::Duration>,
     /// Signals the lock-holder pid during an explicit takeover — SIGTERM
     /// by default.
     pub terminate_lock_holder: Option<std::sync::Arc<dyn Fn(i64) + Send + Sync>>,

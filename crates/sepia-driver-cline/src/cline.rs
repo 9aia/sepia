@@ -76,6 +76,16 @@ fn js_truthy(value: &Value) -> bool {
     }
 }
 
+/// The `text` slot of a content block the caller already proved is
+/// `Some` + truthy. A non-string `text` can't be cleaned — the same
+/// failure Cline's own importer throws.
+fn clean_truthy_text(c: &Value) -> Result<String, String> {
+    match c.get("text") {
+        Some(Value::String(s)) => Ok(clean_user_text(s)),
+        _ => Err("cleanUserText: text.startsWith is not a function".into()),
+    }
+}
+
 fn key_of(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
@@ -173,10 +183,10 @@ fn block_from_cline(item: &Value) -> Option<Block> {
 /// The block list a Cline user message's `content` array carries. Kept only
 /// when a non-text block is present — an all-text list duplicates `content`.
 fn blocks_from_cline_content(content: &Value) -> Vec<Block> {
-    let Value::Array(items) = content else {
-        return Vec::new();
-    };
-    let blocks: Vec<Block> = items.iter().filter_map(block_from_cline).collect();
+    // Callers only reach here for array content, but tolerate anything.
+    let blocks: Vec<Block> = content.as_array().map_or_else(Vec::new, |items| {
+        items.iter().filter_map(block_from_cline).collect()
+    });
     if blocks.iter().any(|b| !matches!(b, Block::Text { .. })) {
         blocks
     } else {
@@ -606,15 +616,23 @@ fn tool_result_shares(cline_result: &Value, devin_calls: &[PendingCall]) -> Vec<
         .map(|i| values[*i].clone())
         .collect::<Vec<_>>()
         .join("\n");
+    // A `None` share exists only once `unclaimed` ran out — which leaves
+    // `tail` empty — so whenever the tail merges, the last share always
+    // holds content. `out` mirrors devin_calls (non-empty by the caller).
     if !tail.is_empty() {
-        if let Some(last) = out.last_mut() {
+        // `if let` would leave an unreachable-else edge; the Option
+        // iterates zero or one times either way.
+        #[allow(clippy::for_loops_over_fallibles)]
+        for last in out.last_mut() {
             let failed = last.success == Some(false)
                 || tail_indices.iter().any(|i| successes[*i] == Some(false));
             let merged_success = last.success;
-            last.content = Some(match last.content.take() {
-                None => tail,
-                Some(c) => format!("{c}\n{tail}"),
-            });
+            last.content = Some(
+                last.content
+                    .take()
+                    .map(|c| format!("{c}\n{tail}"))
+                    .unwrap_or(tail.clone()),
+            );
             last.success = if merged_success.is_none() && !failed {
                 None
             } else if failed {
@@ -963,15 +981,16 @@ pub fn to_iso_ms(ts_secs: f64) -> String {
     if !ts_secs.is_finite() {
         return String::new();
     }
-    let Ok(format) = time::format_description::parse_borrowed::<3>(
+    time::format_description::parse_borrowed::<3>(
         "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z",
-    ) else {
-        return String::new();
-    };
-    match time::OffsetDateTime::from_unix_timestamp_nanos((ts_secs * 1e9) as i128) {
-        Ok(t) => t.format(&format).unwrap_or_default(),
-        Err(_) => String::new(),
-    }
+    )
+    .ok()
+    .and_then(|format| {
+        time::OffsetDateTime::from_unix_timestamp_nanos((ts_secs * 1e9) as i128)
+            .ok()
+            .and_then(|t| t.format(&format).ok())
+    })
+    .unwrap_or_default()
 }
 
 fn build_session(
@@ -1057,15 +1076,7 @@ fn build_session(
                 && c.get("text").is_some_and(js_truthy)
             {
                 first_user_index = i64::try_from(index).unwrap_or(i64::MAX);
-                first_user_text = match c.get("text") {
-                    Some(Value::String(s)) => clean_user_text(s),
-                    // A truthy non-string `text` can't be cleaned — surface
-                    // the build failure Cline's importer would throw.
-                    Some(_) => {
-                        return Err("cleanUserText: text.startsWith is not a function".into());
-                    }
-                    None => String::new(),
-                };
+                first_user_text = clean_truthy_text(c)?;
                 first_user_blocks = blocks_from_cline_content(field(m, "content"));
                 found = true;
                 break;
@@ -1132,15 +1143,7 @@ fn build_session(
                     if c.get("type").and_then(Value::as_str) == Some("text")
                         && c.get("text").is_some_and(js_truthy)
                     {
-                        text = match c.get("text") {
-                            Some(Value::String(s)) => clean_user_text(s),
-                            Some(_) => {
-                                return Err(
-                                    "cleanUserText: text.startsWith is not a function".into()
-                                );
-                            }
-                            None => String::new(),
-                        };
+                        text = clean_truthy_text(c)?;
                         break;
                     }
                 }
@@ -1370,13 +1373,7 @@ fn build_session(
                 if c.get("type").and_then(Value::as_str) == Some("text")
                     && c.get("text").is_some_and(js_truthy)
                 {
-                    let content_text = match c.get("text") {
-                        Some(Value::String(s)) => clean_user_text(s),
-                        Some(_) => {
-                            return Err("cleanUserText: text.startsWith is not a function".into());
-                        }
-                        None => String::new(),
-                    };
+                    let content_text = clean_truthy_text(c)?;
                     prompt_history.push(PromptHistoryEntry {
                         content: content_text,
                         timestamp: ts_to_epoch_seconds(field(m, "ts"), created_at) * 1000.0,

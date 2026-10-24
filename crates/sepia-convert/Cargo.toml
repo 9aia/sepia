@@ -20,3 +20,4 @@ async-trait.workspace = true
 [dev-dependencies]
 tokio.workspace = true
 sepia-testkit.workspace = true
+tempfile.workspace = true

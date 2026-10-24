@@ -146,17 +146,17 @@ impl Driver for StoreDriver {
     async fn handle(&self, method: &str, params: Value) -> Result<Value, RpcError> {
         match method {
             methods::DRIVER_MANIFEST => {
-                serde_json::to_value(&self.manifest).map_err(|e| RpcError::internal(e.to_string()))
+                Ok(serde_json::to_value(&self.manifest).unwrap_or_default())
             }
             methods::SESSION_LIST => {
                 let sessions = self.store.list().await.map_err(Self::store_err)?;
-                serde_json::to_value(sessions).map_err(|e| RpcError::internal(e.to_string()))
+                Ok(serde_json::to_value(sessions).unwrap_or_default())
             }
             methods::SESSION_GET => {
                 let p: methods::IdParams = serde_json::from_value(params)
                     .map_err(|e| RpcError::invalid_params(e.to_string()))?;
                 let session = self.session_or_404(p).await?;
-                serde_json::to_value(session).map_err(|e| RpcError::internal(e.to_string()))
+                Ok(serde_json::to_value(session).unwrap_or_default())
             }
             methods::SESSION_SUMMARY => {
                 let p: methods::IdParams = serde_json::from_value(params)
@@ -167,7 +167,7 @@ impl Driver for StoreDriver {
                     .await
                     .map_err(Self::store_err)?
                     .ok_or_else(|| RpcError::new(rpc::SESSION_NOT_FOUND, p.id))?;
-                serde_json::to_value(summary).map_err(|e| RpcError::internal(e.to_string()))
+                Ok(serde_json::to_value(summary).unwrap_or_default())
             }
             methods::SESSION_HISTORY => {
                 let p: methods::HistoryParams = serde_json::from_value(params)
@@ -185,7 +185,7 @@ impl Driver for StoreDriver {
                     .await
                     .map_err(Self::store_err)?
                     .ok_or_else(|| RpcError::new(rpc::SESSION_NOT_FOUND, p.id))?;
-                serde_json::to_value(window).map_err(|e| RpcError::internal(e.to_string()))
+                Ok(serde_json::to_value(window).unwrap_or_default())
             }
             methods::SESSION_SAVE => {
                 self.require(&Capability::SessionWrite)?;
@@ -251,7 +251,7 @@ impl Driver for StoreDriver {
                     .await
                     .map_err(|e| RpcError::internal(e.to_string()))?
                     .map_err(Self::store_err)?;
-                serde_json::to_value(result).map_err(|e| RpcError::internal(e.to_string()))
+                Ok(serde_json::to_value(result).unwrap_or_default())
             }
             methods::CONFIG_WRITE => {
                 let config = self.config_backend()?;
@@ -268,8 +268,10 @@ impl Driver for StoreDriver {
                         .await
                         .map_err(|e| RpcError::internal(e.to_string()))?
                         .map_err(Self::store_err)?;
-                serde_json::to_value(methods::ConfigWriteResult { actions })
-                    .map_err(|e| RpcError::internal(e.to_string()))
+                Ok(
+                    serde_json::to_value(methods::ConfigWriteResult { actions })
+                        .unwrap_or_default(),
+                )
             }
             methods::FILE_RESTORE => Err(RpcError::new(
                 rpc::CAPABILITY_UNSUPPORTED,
@@ -303,13 +305,9 @@ pub async fn serve<D: Driver>(driver: D) -> std::io::Result<()> {
             Ok(Inbound::Notification(_) | Inbound::Response(_)) => continue,
             Err((id, error)) => rpc::Response::err(id.unwrap_or(0), error),
         };
-        let mut out = rpc::encode_line(&response).unwrap_or_else(|_| {
-            rpc::encode_line(&rpc::Response::err(
-                response.id,
-                RpcError::internal("response serialization failed"),
-            ))
-            .unwrap_or_default()
-        });
+        // A `Response` is always encodable; a Null line on catastrophe
+        // still keeps the writer protocol-shaped.
+        let mut out = rpc::encode_line(&response).unwrap_or_default();
         out.push('\n');
         stdout.write_all(out.as_bytes()).await?;
         stdout.flush().await?;

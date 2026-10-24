@@ -615,21 +615,22 @@ impl SessionRepository for CursorStore {
             }
             match entry {
                 StoreEntry::Chat(e) => {
-                    let fallback = entries.iter().find(|candidate| {
-                        matches!(candidate, StoreEntry::Transcript(t)
-                            if t.id == id && t.parent_session_id.is_none())
+                    let fallback = entries.iter().find_map(|candidate| match candidate {
+                        StoreEntry::Transcript(t)
+                            if t.id == id && t.parent_session_id.is_none() =>
+                        {
+                            Some((t, decode_project_dir(&t.project_slug)))
+                        }
+                        _ => None,
                     });
-                    let fallback_cwd = fallback.and_then(|candidate| match candidate {
-                        StoreEntry::Transcript(t) => Some(decode_project_dir(&t.project_slug)),
-                        StoreEntry::Chat(_) => None,
-                    });
-                    let session = Self::chat_session(e, fallback_cwd.as_deref())?;
+                    let session =
+                        Self::chat_session(e, fallback.as_ref().map(|(_, cwd)| cwd.as_str()))?;
                     // The blob store may be pruned to nothing while the
                     // transcript projection still holds the conversation —
                     // prefer whichever decoding carries more nodes; keep the
                     // store's richer meta (title, prompt history) when both
                     // are empty.
-                    if let Some(StoreEntry::Transcript(t)) = fallback {
+                    if let Some((t, _)) = fallback {
                         let projected = transcript_session(t, true);
                         if projected.nodes.len() > session.nodes.len() {
                             return Ok(Some(projected));

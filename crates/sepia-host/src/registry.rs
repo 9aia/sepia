@@ -41,10 +41,9 @@ impl DriverEntry {
                     .map_err(|e| format!("spawn {}: {e}", self.binary.display())),
             );
         }
-        match slot.as_ref() {
-            Some(Ok(client)) => Ok(Arc::clone(client)),
-            Some(Err(e)) => Err(e.clone()),
-            None => Err("driver spawn produced no client".to_string()),
+        match slot.as_ref().unwrap_or(&Err(String::new())) {
+            Ok(client) => Ok(Arc::clone(client)),
+            Err(e) => Err(e.clone()),
         }
     }
 }
@@ -58,9 +57,14 @@ impl DriverRegistry {
     /// Discover binaries + probe manifests without spawning any driver.
     /// Bad drivers are logged and skipped, never fatal.
     pub async fn discover() -> (Self, Vec<String>) {
+        Self::discover_binaries(discover::find_driver_binaries()).await
+    }
+
+    /// [`discover`] over an explicit binary list — tests inject paths.
+    pub async fn discover_binaries(binaries: Vec<PathBuf>) -> (Self, Vec<String>) {
         let mut registry = Self::default();
         let mut problems = Vec::new();
-        for binary in discover::find_driver_binaries() {
+        for binary in binaries {
             match discover::probe_manifest(&binary).await {
                 Ok(manifest) => {
                     let id = manifest.id.clone();

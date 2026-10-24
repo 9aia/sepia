@@ -34,11 +34,14 @@ impl SessionTruncator for DevinTruncator {
         plan: &RewindPlan,
         truncated: &Session,
     ) -> Result<(), String> {
-        let conn = Connection::open(&self.db_path).map_err(|e| e.to_string())?;
-        conn.pragma_update(None, "busy_timeout", 5000)
+        let conn = Connection::open(&self.db_path)
+            .and_then(|conn| {
+                conn.pragma_update(None, "busy_timeout", 5000)?;
+                conn.execute_batch("BEGIN")?;
+                Ok(conn)
+            })
             .map_err(|e| e.to_string())?;
         let removed_node_ids: Vec<i64> = plan.removed.iter().map(|n| n.node_id).collect();
-        conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
         let run = || -> Result<(), rusqlite::Error> {
             if !removed_node_ids.is_empty() {
                 let marks = removed_node_ids
@@ -102,10 +105,8 @@ impl SessionTruncator for DevinTruncator {
             )?;
             Ok(())
         };
-        match run() {
-            Ok(()) => conn
-                .execute_batch("COMMIT")
-                .map_err(|e| format!("Failed to truncate session: {e}")),
+        match run().and_then(|()| conn.execute_batch("COMMIT")) {
+            Ok(()) => Ok(()),
             Err(e) => {
                 let _ = conn.execute_batch("ROLLBACK");
                 Err(format!("Failed to truncate session: {e}"))

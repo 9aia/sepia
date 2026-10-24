@@ -20,7 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-time = { workspace = true, features = ["parsing"] }
+time = { workspace = true, features = ["parsing", "macros"] }
 rusqlite.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 

@@ -168,6 +168,7 @@ pub struct ControlPlane {
     idle_ttl: Option<Duration>,
     sweep_interval: Duration,
     probe_idle: Option<Duration>,
+    lock_ttl: Option<Duration>,
     terminate_lock_holder: Arc<dyn Fn(i64) + Send + Sync>,
     restore_exec: Arc<dyn RestoreExec>,
     file_history_dir: PathBuf,
@@ -207,6 +208,7 @@ impl ControlPlane {
             idle_ttl: (idle_ttl > Duration::ZERO).then_some(idle_ttl),
             sweep_interval,
             probe_idle: options.probe_idle,
+            lock_ttl: options.lock_ttl,
             terminate_lock_holder: options
                 .terminate_lock_holder
                 .unwrap_or_else(|| Arc::new(default_terminate)),
@@ -307,7 +309,9 @@ impl ControlPlane {
     /// its env took effect.
     #[must_use]
     pub fn config(&self) -> PlaneConfig {
-        let lock_ttl = env_duration("SEPIA_LOCK_TTL_MS", DEFAULT_LOCK_TTL);
+        let lock_ttl = self
+            .lock_ttl
+            .unwrap_or_else(|| env_duration("SEPIA_LOCK_TTL_MS", DEFAULT_LOCK_TTL));
         PlaneConfig {
             idle_ttl_ms: self
                 .idle_ttl
@@ -372,6 +376,19 @@ impl ControlPlane {
         state
             .live
             .get(id)
+            .filter(|live| agent_id.is_none_or(|a| live.agent_id == a))
+    }
+
+    /// Mutable [`live_for`] — the same agent-scoped lookup for callers
+    /// that mutate the entry (subscribe resets `idle_since`).
+    fn live_for_mut<'a>(
+        state: &'a mut State,
+        id: &str,
+        agent_id: Option<&str>,
+    ) -> Option<&'a mut LiveSession> {
+        state
+            .live
+            .get_mut(id)
             .filter(|live| agent_id.is_none_or(|a| live.agent_id == a))
     }
 
@@ -481,10 +498,11 @@ impl ControlPlane {
                 if let Some(pooled) = self.state.lock().await.probe_conns.remove(&agent_id) {
                     Self::close_agent(pooled.conn).await;
                 }
-            } else if !Self::probeable(Some(&conn.capabilities().await)) {
-                // The capability verdict is cached on the conn itself.
-                return Vec::new();
             } else {
+                // Pooled conns verified probeable at insert (below) —
+                // a `!probeable` verdict here cannot occur. If the
+                // invariant ever broke, `list_sessions` just errors and
+                // the conn is retired + respawned like any dead one.
                 match conn.list_sessions().await {
                     Ok(infos) => {
                         if let Some(p) = self.state.lock().await.probe_conns.get_mut(&agent_id) {
@@ -555,7 +573,9 @@ impl ControlPlane {
         force: bool,
         borrowed: Option<(&str, Arc<AcpConnection>)>,
     ) -> LockProbe {
-        let ttl = env_duration("SEPIA_LOCK_TTL_MS", DEFAULT_LOCK_TTL);
+        let ttl = self
+            .lock_ttl
+            .unwrap_or_else(|| env_duration("SEPIA_LOCK_TTL_MS", DEFAULT_LOCK_TTL));
         if !force {
             let state = self.state.lock().await;
             if let Some((at, probe)) = &state.lock_cache {
@@ -2427,8 +2447,7 @@ impl ControlPlane {
         agent_id: Option<&str>,
     ) -> Result<broadcast::Receiver<Vec<SessionEvent>>, ControlError> {
         let mut state = self.state.lock().await;
-        Self::require_live(&state, id, agent_id)?;
-        let live = state.live.get_mut(id).ok_or_else(|| {
+        let live = Self::live_for_mut(&mut state, id, agent_id).ok_or_else(|| {
             control_error(
                 ControlErrorCode::Invalid,
                 format!("Session is not attached: {id}"),

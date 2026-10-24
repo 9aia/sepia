@@ -245,3 +245,110 @@ fn parse_json_or_and_session_row_edges() {
     assert_eq!(s.id, "s1");
     assert_eq!(s.title, "s1"); // absent title falls back to the id
 }
+
+#[test]
+fn build_chat_message_full_feature_nodes() {
+    // Blocks of every variant → block_to_acp arms.
+    let mut n = node(Role::Assistant);
+    n.metadata = json!({"summarized_from": null});
+    n.blocks = vec![
+        Block::Text { text: "t".into() },
+        Block::Image {
+            data: Some("d".into()),
+            mime_type: Some("image/png".into()),
+            uri: Some("u".into()),
+        },
+        Block::Audio {
+            data: Some("a".into()),
+            mime_type: Some("audio/wav".into()),
+        },
+        Block::File {
+            uri: Some("u".into()),
+            name: None,
+            mime_type: Some("text/x".into()),
+            size: None,
+            text: Some("body".into()),
+            data: None,
+        },
+        Block::File {
+            uri: None,
+            name: None,
+            mime_type: None,
+            size: None,
+            text: None,
+            data: Some("Yg==".into()),
+        },
+        Block::File {
+            uri: Some("file://l".into()),
+            name: Some("n".into()),
+            mime_type: None,
+            size: None,
+            text: None,
+            data: None,
+        },
+    ];
+    n.tool_calls = vec![ToolCall {
+        id: "c1".into(),
+        name: "edit".into(),
+        arguments: json!({}),
+        index: 0,
+        kind: "function".into(),
+        status: Some(ToolCallStatus::Success),
+        exit_code: None,
+        duration_ms: None,
+        locations: vec![ToolCallLocation {
+            path: "a".into(),
+            line: Some(1),
+        }],
+        diffs: vec![ToolCallDiff {
+            path: "a".into(),
+            old_text: Some("o".into()),
+            new_text: Some("n".into()),
+        }],
+    }];
+    n.thinking_signature = Some("sig".into());
+    let blob = build_chat_message(&n, "model");
+    assert!(blob["metadata"]["extensions"]["chisel/tool_call_content"].is_object());
+    assert!(blob["thinking"]["signature"].is_string());
+
+    // A Tool node with a full tool_result → the Role::Tool arm.
+    let mut t = node(Role::Tool);
+    t.tool_name = Some("exec".into());
+    t.tool_call_id = Some("c1".into());
+    t.tool_result = Some(sepia_core::ToolResultInfo {
+        status: ToolCallStatus::Error,
+        exit_code: Some(1),
+        duration_ms: Some(5.0),
+    });
+    let blob = build_chat_message(&t, "model");
+    assert!(blob["metadata"]["extensions"]["chisel/tool_result_meta"].is_object());
+
+    // to_iso overflow → empty string rather than panic.
+    n.created_at = 1e30;
+    let _ = build_chat_message(&n, "model");
+}
+
+#[test]
+fn parse_chat_message_metrics_and_edge_extensions() {
+    // metrics object without token fields → no usage.
+    let parsed = parse_chat_message(
+        &json!({"role":"assistant","content":"x","metadata":{"metrics":{"cache":1}}}),
+        &Value::Null,
+        1,
+        None,
+        0.0,
+    );
+    assert!(parsed.usage.is_none());
+    // tool_call_content entries whose content items aren't diffs drop out.
+    let parsed = parse_chat_message(
+        &json!({"role":"tool","content":"x","metadata":{"extensions":{
+            "chisel/tool_call_content": {"c1": {"content": [{"type":"text"}]}},
+            "chisel/tool_result_meta": {}
+        }}}),
+        &Value::Null,
+        1,
+        None,
+        0.0,
+    );
+    assert!(parsed.tool_result.is_none());
+}

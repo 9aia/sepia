@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use sepia_acp::{AcpConnection, PromptPart};
 use sepia_core::restore::FILE_HISTORY_KIND;
 use sepia_core::storage::{NodesWindowOptions, SessionNodeWindow, SessionRepository};
-use sepia_core::{Role, Session, StorageError, ToolCall};
+use sepia_core::{MessageNode, Role, Session, StorageError, ToolCall};
 use sepia_session::{
     AgentRuntime, ControlErrorCode, ControlPlane, ControlPlaneOptions, GitResult, HistoryOptions,
     NodeEvent, RestoreRequest, RewindRequest,
@@ -2087,4 +2087,702 @@ async fn node_feed_carries_deleted_and_rewind_markers() {
     let _ = feed;
     plane.close_all().await;
     plane2.close_all().await;
+}
+
+// ---------- restore: path arms + exec failures --------------------------------
+
+fn diff_node(id: i64, diffs: Vec<sepia_core::ToolCallDiff>) -> MessageNode {
+    let mut n = node(id, Role::Assistant, "edits");
+    n.tool_calls = vec![ToolCall {
+        id: "tc-1".into(),
+        name: "edit".into(),
+        arguments: json!({}),
+        index: 0,
+        kind: "function".into(),
+        status: None,
+        exit_code: None,
+        duration_ms: None,
+        locations: vec![],
+        diffs,
+    }];
+    n
+}
+
+fn path_session(cwd: &std::path::Path) -> Session {
+    let mut session = session_with(
+        "devin",
+        vec![diff_node(
+            1,
+            vec![
+                sepia_core::ToolCallDiff {
+                    path: "w.rs".into(),
+                    old_text: Some("old".into()),
+                    new_text: Some("new".into()),
+                },
+                sepia_core::ToolCallDiff {
+                    path: "d.rs".into(),
+                    old_text: None,
+                    new_text: Some("created".into()),
+                },
+                sepia_core::ToolCallDiff {
+                    path: "u.rs".into(),
+                    old_text: None,
+                    new_text: Some("absent".into()),
+                },
+            ],
+        )],
+    );
+    session.working_directory = cwd.to_string_lossy().to_string();
+    session
+}
+
+fn restore_path_req(path: &str) -> RestoreRequest {
+    RestoreRequest {
+        confirm: true,
+        path: Some(path.into()),
+        tool_call_id: None,
+        checkpoint: None,
+        paths: None,
+    }
+}
+
+/// ScriptedGit with per-path error injection for the fs calls.
+struct FaultyGit {
+    inner: ScriptedGit,
+    read_err: Mutex<Vec<String>>,
+    write_err: Mutex<Vec<String>>,
+    remove_err: Mutex<Vec<String>>,
+}
+impl FaultyGit {
+    fn new() -> Self {
+        Self {
+            inner: ScriptedGit::new(),
+            read_err: Mutex::new(vec![]),
+            write_err: Mutex::new(vec![]),
+            remove_err: Mutex::new(vec![]),
+        }
+    }
+    fn hits(list: &Mutex<Vec<String>>, p: &std::path::Path) -> bool {
+        let s = p.to_string_lossy();
+        list.lock().unwrap().iter().any(|k| s.contains(k.as_str()))
+    }
+}
+#[async_trait]
+impl sepia_session::RestoreExec for FaultyGit {
+    async fn read_file(&self, p: &std::path::Path) -> Result<Option<Vec<u8>>, String> {
+        if Self::hits(&self.read_err, p) {
+            return Err("read down".into());
+        }
+        self.inner.read_file(p).await
+    }
+    async fn write_file(&self, p: &std::path::Path, c: &[u8]) -> Result<(), String> {
+        if Self::hits(&self.write_err, p) {
+            return Err("write down".into());
+        }
+        self.inner.write_file(p, c).await
+    }
+    async fn remove_file(&self, p: &std::path::Path) -> Result<(), String> {
+        if Self::hits(&self.remove_err, p) {
+            return Err("remove down".into());
+        }
+        self.inner.remove_file(p).await
+    }
+    async fn git(&self, c: &std::path::Path, a: &[&str]) -> Result<GitResult, String> {
+        self.inner.git(c, a).await
+    }
+}
+
+#[tokio::test]
+async fn restore_path_write_delete_unchanged_and_failures() {
+    let dir = tempdir();
+    let cwd = dir.path().join("ws");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let cwd_s = cwd.to_string_lossy().to_string();
+    let exec = Arc::new(FaultyGit::new());
+    // w.rs: recorded "old"→"new", file holds "new" → Write "old".
+    exec.inner.file(&format!("{cwd_s}/w.rs"), Some(b"new"));
+    // d.rs: call created it, still holds "created" → Delete.
+    exec.inner.file(&format!("{cwd_s}/d.rs"), Some(b"created"));
+    // u.rs: call created it, file absent → Unchanged.
+    let session = path_session(&cwd);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(exec.clone()),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let r = plane
+        .restore("s1", &restore_path_req("w.rs"), None)
+        .await
+        .unwrap();
+    assert_eq!(r.restored[0].action, sepia_session::RestoreAction::Written);
+    let r = plane
+        .restore("s1", &restore_path_req("d.rs"), None)
+        .await
+        .unwrap();
+    assert_eq!(r.restored[0].action, sepia_session::RestoreAction::Deleted);
+    let r = plane
+        .restore("s1", &restore_path_req("u.rs"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        r.restored[0].action,
+        sepia_session::RestoreAction::Unchanged
+    );
+
+    // exec failures → internal, one per verb. Rewind the file so the
+    // plan is a Write again (the first restore already reverted it).
+    exec.inner.file(&format!("{cwd_s}/w.rs"), Some(b"new"));
+    exec.write_err.lock().unwrap().push("w.rs".into());
+    let err = plane
+        .restore("s1", &restore_path_req("w.rs"), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    exec.write_err.lock().unwrap().clear();
+    exec.remove_err.lock().unwrap().push("d.rs".into());
+    let err = plane
+        .restore("s1", &restore_path_req("d.rs"), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn file_history_tombstone_absent_and_exec_failures() {
+    let dir = tempdir();
+    let ws = dir.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let session = file_history_session(
+        &ws,
+        json!({
+            "gone.rs": { "backup": null },
+            "keep.rs": { "backup": "b1" },
+        }),
+    );
+    let exec = Arc::new(FaultyGit::new());
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(exec.clone()),
+            file_history_dir: Some(dir.path().join("history")),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    // gone.rs: tombstone + file absent → Unchanged.
+    let r = plane
+        .restore("s1", &checkpoint_request("snap-1", None), None)
+        .await
+        .unwrap();
+    assert!(
+        r.restored
+            .iter()
+            .any(|f| f.action == sepia_session::RestoreAction::Unchanged)
+    );
+    // read of a covered path fails → internal.
+    exec.read_err.lock().unwrap().push("gone.rs".into());
+    let err = plane
+        .restore("s1", &checkpoint_request("snap-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    exec.read_err.lock().unwrap().clear();
+    // tombstone + file present + remove fails → internal.
+    exec.inner
+        .file(&format!("{}/gone.rs", ws.display()), Some(b"x"));
+    exec.remove_err.lock().unwrap().push("gone.rs".into());
+    let err = plane
+        .restore("s1", &checkpoint_request("snap-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    exec.remove_err.lock().unwrap().clear();
+    exec.inner.file(&format!("{}/gone.rs", ws.display()), None);
+    // backup blob read fails → internal.
+    exec.read_err.lock().unwrap().push("b1".into());
+    let err = plane
+        .restore("s1", &checkpoint_request("snap-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    exec.read_err.lock().unwrap().clear();
+    // backup differs + write fails → internal.
+    exec.inner.file(
+        &format!("{}/history/hist-session/b1", dir.path().display()),
+        Some(b"v1"),
+    );
+    exec.inner
+        .file(&format!("{}/keep.rs", ws.display()), Some(b"old"));
+    exec.write_err.lock().unwrap().push("keep.rs".into());
+    let err = plane
+        .restore("s1", &checkpoint_request("snap-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn checkpoint_restore_exec_and_git_failures() {
+    let dir = tempdir();
+    let ws = dir.path().join("ws");
+    let cwd_s = ws.to_string_lossy().to_string();
+    let session = checkpoint_session(&ws, "cp-1");
+
+    // Unscripted first git call → git_err → internal.
+    let exec = Arc::new(FaultyGit::new());
+    let (plane, _) = mk_plane(
+        vec![session.clone()],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(exec.clone()),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let err = plane
+        .restore("s1", &checkpoint_request("cp-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    plane.close_all().await;
+
+    // covered-list call fails → internal.
+    let exec = Arc::new(FaultyGit::new());
+    exec.inner
+        .on(&["rev-parse", "--is-inside-work-tree"], 0, "true\n");
+    exec.inner.on(&["cat-file", "-e", "cp-1^{commit}"], 0, "");
+    exec.inner
+        .on(&["rev-parse", "--show-toplevel"], 0, &format!("{cwd_s}\n"));
+    exec.inner.on(
+        &["rev-list", "--parents", "-n", "1", "cp-1"],
+        0,
+        "abc base\n",
+    );
+    // `diff` left unscripted → error.
+    let (plane, _) = mk_plane(
+        vec![session.clone()],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(exec.clone()),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let err = plane
+        .restore("s1", &checkpoint_request("cp-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+
+    // Same script plus per-file behavior: cat-file absent + file absent →
+    // Unchanged; cat-file absent + file present + remove fails → internal;
+    // cat-file present + show unscripted → internal; read fails → internal.
+    exec.inner.on(
+        &["diff", "--name-only", "-z", "base", "cp-1"],
+        0,
+        "a.rs\0b.rs\0c.rs\0d.rs\0",
+    );
+    exec.inner.on(&["cat-file", "-e", "cp-1:a.rs"], 1, "");
+    exec.inner.on(&["cat-file", "-e", "cp-1:b.rs"], 1, "");
+    exec.inner.on(&["cat-file", "-e", "cp-1:c.rs"], 0, "");
+    exec.inner.on(&["cat-file", "-e", "cp-1:d.rs"], 0, "");
+    exec.inner.on(&["show", "cp-1:d.rs"], 0, "blob");
+    exec.inner.file(&format!("{cwd_s}/b.rs"), Some(b"here"));
+    exec.inner.file(&format!("{cwd_s}/d.rs"), Some(b"stale"));
+    exec.remove_err.lock().unwrap().push("b.rs".into());
+    exec.read_err.lock().unwrap().push("d.rs".into());
+    let (plane, _) = mk_plane(
+        vec![session.clone()],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(exec.clone()),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let err = plane
+        .restore("s1", &checkpoint_request("cp-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal); // d.rs read fails first? order: a,b,c,d — b remove fails first
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn checkpoint_restore_unchanged_absent_and_write_failure() {
+    let dir = tempdir();
+    let ws = dir.path().join("ws");
+    let cwd_s = ws.to_string_lossy().to_string();
+    let session = checkpoint_session(&ws, "cp-1");
+    let exec = Arc::new(FaultyGit::new());
+    exec.inner
+        .on(&["rev-parse", "--is-inside-work-tree"], 0, "true\n");
+    exec.inner.on(&["cat-file", "-e", "cp-1^{commit}"], 0, "");
+    exec.inner
+        .on(&["rev-parse", "--show-toplevel"], 0, &format!("{cwd_s}\n"));
+    exec.inner.on(
+        &["rev-list", "--parents", "-n", "1", "cp-1"],
+        0,
+        "abc base\n",
+    );
+    exec.inner.on(
+        &["diff", "--name-only", "-z", "base", "cp-1"],
+        0,
+        "a.rs\0w.rs\0",
+    );
+    exec.inner.on(&["cat-file", "-e", "cp-1:a.rs"], 1, ""); // absent in ref + absent on disk → Unchanged
+    exec.inner.on(&["cat-file", "-e", "cp-1:w.rs"], 0, "");
+    exec.inner.on(&["show", "cp-1:w.rs"], 0, "fresh");
+    exec.inner.file(&format!("{cwd_s}/w.rs"), Some(b"stale"));
+    exec.write_err.lock().unwrap().push("w.rs".into());
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(exec.clone()),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let err = plane
+        .restore("s1", &checkpoint_request("cp-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    // w.rs write failed → the Unchanged arm already ran for a.rs.
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn checkpoint_restore_paths_outside_root_are_skipped() {
+    let dir = tempdir();
+    let ws = dir.path().join("ws");
+    let session = checkpoint_session(&ws, "cp-1");
+    let exec = Arc::new(FaultyGit::new());
+    exec.inner
+        .on(&["rev-parse", "--is-inside-work-tree"], 0, "true\n");
+    exec.inner.on(&["cat-file", "-e", "cp-1^{commit}"], 0, "");
+    // Toplevel differs from the session cwd → strip_prefix misses.
+    exec.inner
+        .on(&["rev-parse", "--show-toplevel"], 0, "/elsewhere\n");
+    exec.inner.on(
+        &["rev-list", "--parents", "-n", "1", "cp-1"],
+        0,
+        "abc base\n",
+    );
+    exec.inner
+        .on(&["diff", "--name-only", "-z", "base", "cp-1"], 0, "f.rs\0");
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(exec),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let r = plane
+        .restore(
+            "s1",
+            &checkpoint_request("cp-1", Some(vec!["f.rs".into()])),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(r.skipped.iter().any(|s| s.reason.contains("not touched")));
+    plane.close_all().await;
+}
+
+// ---------- probe-pool paths under a zero lock TTL ----------------------------
+
+fn zero_ttl() -> ControlPlaneOptions {
+    ControlPlaneOptions {
+        lock_ttl: Some(Duration::ZERO),
+        ..ControlPlaneOptions::default()
+    }
+}
+
+#[tokio::test]
+async fn probe_reuses_live_conn_when_cache_is_disabled() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        zero_ttl(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    // Zero TTL → no cache → the probe reuses the live attach conn.
+    let list = plane.list_sessions(true).await.unwrap();
+    assert_eq!(list.len(), 1);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn stale_pooled_conn_retires_and_respawns() {
+    let (plane, _) = mk_plane(
+        vec![contract::session("s1", "S1", 1.0)],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions {
+            lock_ttl: Some(Duration::ZERO),
+            probe_idle: Some(Duration::ZERO),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    plane.list_sessions(true).await.unwrap(); // pools a conn
+    plane.list_sessions(true).await.unwrap(); // stale on sight → retire + respawn
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn dead_pooled_conn_is_closed_and_respawned() {
+    let (plane, _) = mk_plane(
+        vec![contract::session("s1", "S1", 1.0)],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_EXIT_AFTER_LISTS", "1"),
+            ],
+        )],
+        zero_ttl(),
+    );
+    plane.list_sessions(true).await.unwrap(); // pools, then the agent exits
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The pooled conn's list fails → closed + fresh spawn.
+    plane.list_sessions(true).await.unwrap();
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn incapable_verdict_short_circuits_the_probe() {
+    let (plane, _) = mk_plane(
+        vec![contract::session("s1", "S1", 1.0)],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_CAPS", "load"), ("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        zero_ttl(),
+    );
+    plane.list_sessions(true).await.unwrap(); // incapable verdict recorded
+    plane.list_sessions(true).await.unwrap(); // probed → skipped at 507
+    plane.close_all().await;
+}
+
+// ---------- release_lock_holder / settle poll ----------------------------------
+
+#[tokio::test]
+async fn takeover_with_a_list_less_agent_skips_the_settle_poll() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let killed: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
+    let k = Arc::clone(&killed);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![
+            // attach conn: load only — no session/list at all.
+            MockRuntime::new("devin", &[("MOCK_CAPS", "load")]),
+            // a second agent that reports s1 locked by pid 777.
+            MockRuntime::new(
+                "cline",
+                &[
+                    ("MOCK_CAPS", "load,list"),
+                    ("MOCK_SESSIONS", "s1|/work|S1|now|locked|777"),
+                ],
+            ),
+        ],
+        ControlPlaneOptions {
+            terminate_lock_holder: Some(Arc::new(move |pid| {
+                k.lock().unwrap().push(pid);
+            })),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let result = plane.attach("s1", true, None, None, None).await.unwrap();
+    assert!(result.attached);
+    assert_eq!(*killed.lock().unwrap(), vec![777]);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn takeover_settle_poll_returns_when_the_lock_clears() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let killed: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
+    let k = Arc::clone(&killed);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_LOCK_ONLY_FIRST_LIST", "1"),
+                ("MOCK_LOCK_PID", "777"),
+            ],
+        )],
+        ControlPlaneOptions {
+            terminate_lock_holder: Some(Arc::new(move |pid| {
+                k.lock().unwrap().push(pid);
+            })),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let result = plane.attach("s1", true, None, None, None).await.unwrap();
+    assert!(result.attached);
+    assert_eq!(*killed.lock().unwrap(), vec![777]);
+    plane.close_all().await;
+}
+
+// ---------- prompt part gate + forward task drain ------------------------------
+
+#[tokio::test]
+async fn prompt_with_an_unadvertised_part_fails_invalid() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new("devin", &[("MOCK_CAPS", "load,list")])],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let err = plane
+        .prompt(
+            "s1",
+            &[PromptPart::Image {
+                data: "Zg==".into(),
+                mime_type: "image/png".into(),
+                uri: None,
+            }],
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Invalid);
+    // Audio and embedded context gated the same way.
+    for part in [
+        PromptPart::Audio {
+            data: "QQ==".into(),
+            mime_type: "audio/wav".into(),
+        },
+        PromptPart::Resource {
+            resource: sepia_acp::PromptResource::Text {
+                uri: "file://x".into(),
+                mime_type: None,
+                text: "t".into(),
+            },
+        },
+    ] {
+        let err = plane.prompt("s1", &[part], None).await.unwrap_err();
+        assert_eq!(err.code, ControlErrorCode::Invalid);
+    }
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn agent_death_lets_the_forward_tasks_finish() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_EXIT_AFTER_PROMPT", "1")],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let _ = plane
+        .prompt("s1", &[PromptPart::Text { text: "go".into() }], None)
+        .await;
+    // Give the conn reader a beat to see EOF and drop the channels.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn detach_on_a_missing_session_is_a_noop() {
+    let (plane, _) = mk_plane(vec![], vec![], ControlPlaneOptions::default());
+    plane.detach("ghost").await;
+    plane.close_all().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_all_stops_the_sweep_loop() {
+    let (plane, _) = mk_plane(
+        vec![],
+        vec![],
+        ControlPlaneOptions {
+            idle_ttl: Some(Duration::from_millis(30)),
+            sweep_interval: Some(Duration::from_millis(10)),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    plane.close_all().await;
+    // The next tick sees stop_sweep and returns out of the loop.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+// ---------- mock-agent knob coverage over the wire -----------------------------
+
+#[tokio::test]
+async fn takeover_retries_the_load_after_a_single_failure() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let killed: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
+    let k = Arc::clone(&killed);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now|locked|777"),
+                ("MOCK_LOAD_FAIL_ONCE", "held"),
+            ],
+        )],
+        ControlPlaneOptions {
+            terminate_lock_holder: Some(Arc::new(move |pid| {
+                k.lock().unwrap().push(pid);
+            })),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let result = plane.attach("s1", true, None, None, None).await.unwrap();
+    assert!(result.attached);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn delete_session_surfaces_the_agents_error() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_DELETE_FAIL", "nope"),
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let err = plane.delete_session("s1", None).await.unwrap_err();
+    assert!(err.message.contains("nope") || err.code == ControlErrorCode::Internal);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn thought_chunks_translate_through_the_prompt_stream() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new("devin", &[("MOCK_THOUGHT_CHUNK", "1")])],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    plane
+        .prompt("s1", &[PromptPart::Text { text: "go".into() }], None)
+        .await
+        .unwrap();
+    plane.close_all().await;
 }

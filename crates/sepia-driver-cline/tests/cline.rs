@@ -2789,3 +2789,271 @@ fn import_reads_cline_pass_prefixed_model_and_strips_it() {
     assert_eq!(session.model, "swe-2-high");
     assert_eq!(session.backend_type, "windsurf");
 }
+
+// ---------- coverage tail: id/key/stringify edges -----------------------------
+
+#[test]
+fn import_js_string_key_and_truthy_edges() {
+    let root = tempfile::tempdir().unwrap();
+    write_cline_dir(
+        root.path(),
+        "edges",
+        &json!([
+            { "id": "u0", "role": "user", "content": [{ "type": "text", "text": "go" }], "ts": 1 },
+            {
+                "id": "a0", "role": "assistant",
+                "content": [
+                    // js_string arms: array id, bool id, number id.
+                    { "type": "tool_use", "id": ["a", "b"], "name": "run_commands",
+                      "input": { "commands": ["x"] } },
+                    { "type": "tool_use", "id": true, "name": "run_commands",
+                      "input": { "commands": "" } },
+                    { "type": "tool_use", "id": 42, "name": "search_codebase",
+                      "input": { "queries": "[oops" } },
+                    // tool_use without an id → "undefined" key.
+                    { "type": "tool_use", "name": "read_files",
+                      "input": { "files": "f" } },
+                    // unknown content type → skipped arm.
+                    { "type": "video", "data": "v" },
+                    // non-string text content → js_string.
+                    { "type": "text", "text": 42 },
+                ],
+                "ts": 2,
+            },
+            {
+                "id": "u1", "role": "user",
+                "content": [
+                    { "type": "tool_result", "tool_use_id": ["a", "b"],
+                      "content": [
+                          // entry with a non-string result → serde path.
+                          { "query": "x", "result": {"a": 1} },
+                          // keyed via `url` + a 1-element key_of array.
+                          { "url": ["u"], "result": "r2" },
+                      ] },
+                    { "type": "tool_result", "tool_use_id": true,
+                      "content": [] },
+                ],
+                "ts": 3,
+            },
+        ]),
+        &json!({}),
+        None,
+    );
+    let session = load(root.path(), "edges");
+    assert!(!session.nodes.is_empty());
+}
+
+#[test]
+fn import_user_text_truthiness_and_error_edges() {
+    let root = tempfile::tempdir().unwrap();
+    // null/false/0/"" texts are all falsy → skipped, real text proceeds.
+    write_cline_dir(
+        root.path(),
+        "truthy",
+        &json!([
+            { "id": "u0", "role": "user", "content": [
+                { "type": "text", "text": null },
+                { "type": "text", "text": false },
+                { "type": "text", "text": 0 },
+                { "type": "text", "text": "" },
+                { "type": "text", "text": "real" },
+            ], "ts": 1 },
+        ]),
+        &json!({}),
+        None,
+    );
+    let session = load(root.path(), "truthy");
+    assert!(session.nodes.iter().any(|n| n.content.contains("real")));
+
+    // A truthy non-string text can't be cleaned — importer-style error.
+    write_cline_dir(
+        root.path(),
+        "badtext",
+        &json!([
+            { "id": "u0", "role": "user", "content": [
+                { "type": "text", "text": [] },
+            ], "ts": 1 },
+        ]),
+        &json!({}),
+        None,
+    );
+    let err = cline::from_directory(&root.path().join("badtext"), None).unwrap_err();
+    assert!(err.message.contains("startsWith"));
+}
+
+#[test]
+fn import_orphan_tool_result_content_shapes() {
+    let root = tempfile::tempdir().unwrap();
+    write_cline_dir(
+        root.path(),
+        "orphans",
+        &json!([
+            { "id": "u0", "role": "user", "content": [{ "type": "text", "text": "go" }], "ts": 1 },
+            { "id": "u1", "role": "user", "content": [
+                // Orphaned result with an object content → serde stringify.
+                { "type": "tool_result", "tool_use_id": "ghost", "content": {"a": 1} },
+                // Orphaned result with no content at all → "undefined".
+                { "type": "tool_result", "tool_use_id": "ghost2" },
+                // And one with plain string content.
+                { "type": "tool_result", "tool_use_id": "ghost3", "content": "s" },
+            ], "ts": 2 },
+        ]),
+        &json!({}),
+        None,
+    );
+    let session = load(root.path(), "orphans");
+    let texts: Vec<&str> = session.nodes.iter().map(|n| n.content.as_str()).collect();
+    assert!(texts.iter().any(|t| t.contains("tool output")));
+    assert!(texts.iter().any(|t| t.contains("undefined")));
+}
+
+#[test]
+fn manifest_checkpoint_latest_not_in_history_is_appended() {
+    let root = tempfile::tempdir().unwrap();
+    write_cline_dir(
+        root.path(),
+        "cp",
+        &json!([
+            { "id": "u0", "role": "user", "content": [{ "type": "text", "text": "go" }], "ts": 1 },
+        ]),
+        &json!({
+            "metadata": { "checkpoint": {
+                "latest": { "ref": "r9", "createdAt": 9.0 },
+                "history": [{ "ref": "r1", "createdAt": 1.0 }],
+            } },
+        }),
+        None,
+    );
+    let session = load(root.path(), "cp");
+    let refs: Vec<&str> = session
+        .checkpoints
+        .iter()
+        .map(|c| c.r#ref.as_str())
+        .collect();
+    assert!(refs.contains(&"r9"));
+}
+
+#[test]
+fn export_write_failures_surface() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let session = make_session(sample_nodes());
+    // A directory named like the manifest → manifest write fails.
+    std::fs::create_dir_all(out.join(format!("{}.json", session.id))).unwrap();
+    let err = cline::to_directory(&session, &out, false, false).unwrap_err();
+    assert!(err.message.contains("export failed") || err.message.contains("Export failed"));
+}
+
+#[test]
+fn to_iso_ms_edge_timestamps() {
+    assert!(cline::to_iso_ms(f64::NAN).is_empty());
+    assert!(cline::to_iso_ms(1e20).is_empty());
+    assert!(cline::to_iso_ms(1_700_000_000.0).ends_with('Z'));
+}
+
+// ---------- store.rs coverage tail -------------------------------------------
+
+#[tokio::test]
+async fn cline_store_title_and_index_edges() {
+    use sepia_core::storage::SessionRepository;
+    let dir = tempfile::tempdir().unwrap();
+    let store = sepia_driver_cline::ClineStore::new(dir.path().to_path_buf());
+    // Session with a blank title in metadata → falls to prompt text.
+    let mut session = make_session(vec![node(
+        0,
+        None,
+        Role::User,
+        "plain text",
+        vec![],
+        None,
+        None,
+        None,
+        None,
+        None,
+        Value::Null,
+    )]);
+    session.title.clear();
+    session.id = "t1".into();
+    store.save(&session).await.unwrap();
+    let listed = store.list().await.unwrap();
+    assert!(!listed.is_empty());
+    // title edge cases: whitespace-only metadata title + empty prompt.
+    write_cline_dir(
+        dir.path(),
+        "t2",
+        &json!([{ "id": "u0", "role": "user", "content": [{ "type": "text", "text": "x" }], "ts": 1 }]),
+        &json!({ "metadata": { "title": "   " }, "prompt": "<task>angled</task> rest" }),
+        None,
+    );
+    let s2 = store.get_by_id("t2", None).await.unwrap().unwrap();
+    assert!(!s2.title.is_empty());
+    // save again → exercises index upsert value arms.
+    store.save(&s2).await.unwrap();
+    store.delete("t2").await.unwrap();
+    assert!(store.get_by_id("t2", None).await.unwrap().is_none());
+    // has_session on a malformed index db → error arm, and on missing.
+    let bad_dir = tempfile::tempdir().unwrap();
+    std::fs::write(bad_dir.path().join("sessions.db"), b"garbage").unwrap();
+    let bad_store = sepia_driver_cline::ClineStore::new(bad_dir.path().to_path_buf());
+    let _ = bad_store.list().await;
+}
+
+#[test]
+fn source_index_and_resolve_path_edges() {
+    // save a session whose nodes carry non-integer clineMessageIndex values.
+    let dir = tempfile::tempdir().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        use sepia_core::storage::SessionRepository;
+        let store = sepia_driver_cline::ClineStore::new(dir.path().to_path_buf());
+        let mut n = node(
+            0,
+            None,
+            Role::User,
+            "x",
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Value::Null,
+        );
+        n.metadata = json!({"clineMessageIndex": 1.5});
+        let mut n2 = node(
+            1,
+            None,
+            Role::User,
+            "y",
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Value::Null,
+        );
+        n2.metadata = json!({"clineMessageIndex": -3});
+        let mut n3 = node(
+            2,
+            None,
+            Role::User,
+            "z",
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Value::Null,
+        );
+        n3.metadata = json!({"clineMessageIndex": "str"});
+        let mut s = make_session(vec![n, n2, n3]);
+        s.id = "idx".into();
+        store.save(&s).await.unwrap();
+    });
+}

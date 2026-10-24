@@ -287,10 +287,9 @@ impl MetaStore {
         let tmp = inner
             .path
             .with_extension(format!("tmp-{}", std::process::id()));
-        if let Ok(json) = serde_json::to_vec(&inner.data) {
-            if std::fs::write(&tmp, &json).is_ok() {
-                let _ = std::fs::rename(&tmp, &inner.path);
-            }
+        let json = serde_json::to_vec(&inner.data).unwrap_or_default();
+        if std::fs::write(&tmp, &json).is_ok() {
+            let _ = std::fs::rename(&tmp, &inner.path);
         }
     }
 

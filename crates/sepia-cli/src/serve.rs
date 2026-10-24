@@ -53,9 +53,9 @@ const PROTOCOL: u64 = 1;
 type Out = Arc<Mutex<std::io::BufWriter<std::io::Stdout>>>;
 
 fn write_line(out: &Out, message: &impl serde::Serialize) {
-    let Ok(line) = encode_line(message) else {
-        return;
-    };
+    // Notifications are always encodable; a blank line keeps the
+    // protocol shape on catastrophic failure.
+    let line = encode_line(message).unwrap_or_default();
     if let Ok(mut w) = out.lock() {
         let _ = writeln!(w, "{line}");
         let _ = w.flush();

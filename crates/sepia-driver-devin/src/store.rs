@@ -170,14 +170,12 @@ impl DevinStore {
                     .to_string_lossy(),
                 suffix
             ));
-            if let Ok(meta) = std::fs::metadata(&p) {
-                if let Ok(mtime) = meta.modified() {
-                    stamp = stamp.max(
-                        mtime
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map_or(0.0, |d| d.as_secs_f64()),
-                    );
-                }
+            if let Ok(mtime) = std::fs::metadata(&p).and_then(|m| m.modified()) {
+                stamp = stamp.max(
+                    mtime
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0.0, |d| d.as_secs_f64()),
+                );
             }
         }
         stamp
@@ -447,83 +445,6 @@ impl DevinStore {
             })
         })?;
         rows.collect()
-    }
-
-    /// Rewind write — `truncateSessionNodes` port: delete the removed
-    /// `message_nodes` plus their `tool_call_state`/`subagent_heads`
-    /// hangers-on; move `last_activity_at`/`main_chain_id` back.
-    /// `prompt_history` is deliberately left alone (no join key exists).
-    ///
-    /// # Errors
-    /// `StorageError` on sqlite failure.
-    pub fn truncate_session_nodes(
-        &self,
-        session_id: &str,
-        removed_node_ids: &[i64],
-        removed_tool_call_ids: &[String],
-        last_activity_at: f64,
-        main_chain_id: i64,
-    ) -> Result<(), StorageError> {
-        let conn = self
-            .conn
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(err("Failed to truncate session"))?;
-        if !removed_node_ids.is_empty() {
-            let marks = removed_node_ids
-                .iter()
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(", ");
-            let mut stmt = tx
-                .prepare(&format!(
-                    "DELETE FROM message_nodes WHERE session_id = ?1 AND node_id IN ({marks})"
-                ))
-                .map_err(err("Failed to truncate session"))?;
-            let mut sql_params: Vec<rusqlite::types::Value> = vec![session_id.to_string().into()];
-            sql_params.extend(removed_node_ids.iter().map(|id| (*id).into()));
-            stmt.execute(rusqlite::params_from_iter(sql_params))
-                .map_err(err("Failed to truncate session"))?;
-            if self.has_subagent_heads {
-                let mut stmt = tx
-                    .prepare(&format!(
-                        "DELETE FROM subagent_heads WHERE session_id = ?1 AND chain_node_id IN ({marks})"
-                    ))
-                    .map_err(err("Failed to truncate session"))?;
-                let mut sql_params: Vec<rusqlite::types::Value> =
-                    vec![session_id.to_string().into()];
-                sql_params.extend(removed_node_ids.iter().map(|id| (*id).into()));
-                stmt.execute(rusqlite::params_from_iter(sql_params))
-                    .map_err(err("Failed to truncate session"))?;
-            }
-        }
-        if self.has_tool_call_state && !removed_tool_call_ids.is_empty() {
-            let marks = removed_tool_call_ids
-                .iter()
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(", ");
-            let mut stmt = tx
-                .prepare(&format!(
-                    "DELETE FROM tool_call_state WHERE session_id = ?1 AND tool_call_id IN ({marks})"
-                ))
-                .map_err(err("Failed to truncate session"))?;
-            let mut sql_params: Vec<rusqlite::types::Value> = vec![session_id.to_string().into()];
-            sql_params.extend(removed_tool_call_ids.iter().map(|id| id.clone().into()));
-            stmt.execute(rusqlite::params_from_iter(sql_params))
-                .map_err(err("Failed to truncate session"))?;
-        }
-        tx.execute(
-            "UPDATE sessions SET last_activity_at = ?1, main_chain_id = ?2 WHERE id = ?3",
-            params![last_activity_at, main_chain_id, session_id],
-        )
-        .map_err(err("Failed to truncate session"))?;
-        tx.commit().map_err(err("Failed to truncate session"))?;
-        drop(conn);
-        self.invalidate();
-        Ok(())
     }
 }
 

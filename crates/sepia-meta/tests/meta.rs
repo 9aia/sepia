@@ -133,3 +133,69 @@ fn config_roundtrip() {
     store.set_config("sidebar", json!({"collapsed": true}));
     assert_eq!(store.config()["sidebar"], json!({"collapsed": true}));
 }
+
+#[test]
+fn spans_projects_model_and_patch_edges() {
+    use sepia_meta::{RunSpan, SessionMeta};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("meta.json");
+    // Crafted meta file exercising normalize_session tails: model as a
+    // non-string, spans with invalid entries filtered out, projects in
+    // object and string shapes plus a dropped number.
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "sessions": {
+                "s1": {
+                    "title": "T",
+                    "model": 42,
+                    "spans": [
+                        {"agent":"devin","node":"n1","at":1.0},
+                        {"agent":""},
+                        7
+                    ],
+                    "projects": [
+                        {"name":"proj-a"},
+                        "proj-b",
+                        42,
+                        {"name":"   "}
+                    ]
+                }
+            },
+            "config": {"historyLimit": 10}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store = MetaStore::open(&path);
+    let meta = store.of("s1").unwrap();
+    assert_eq!(meta.model, None);
+    assert_eq!(meta.spans.as_ref().map(Vec::len), Some(1));
+    let projects = meta.project_ids.unwrap_or_default();
+    assert!(projects.iter().any(|p| p == "proj-a" || p == "proj-b"));
+
+    // patch with spans + model set.
+    let store2 = MetaStore::open(&dir.path().join("m2.json"));
+    store2.patch(
+        "s2",
+        &SessionMeta {
+            spans: Some(vec![RunSpan {
+                agent: "devin".into(),
+                node: "n".into(),
+                at: 1.0,
+            }]),
+            model: Some(Some("claude".into())),
+            ..SessionMeta::default()
+        },
+    );
+    let meta = store2.of("s2").unwrap();
+    assert_eq!(meta.model, Some(Some("claude".to_string())));
+
+    // Corrupt + non-object + non-json files degrade to empty.
+    std::fs::write(dir.path().join("bad.json"), "{not json").unwrap();
+    let s = MetaStore::open(&dir.path().join("bad.json"));
+    assert!(s.sessions().is_empty());
+    std::fs::write(dir.path().join("arr.json"), "[1,2]").unwrap();
+    let s = MetaStore::open(&dir.path().join("arr.json"));
+    assert!(s.sessions().is_empty());
+}
