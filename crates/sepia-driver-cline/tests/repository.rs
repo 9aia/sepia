@@ -449,3 +449,223 @@ async fn list_skips_a_session_dir_whose_contents_or_manifest_are_unreadable() {
         std::fs::set_permissions(&manifest, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 }
+
+/* ---- residual coverage: titles, index probe, nodes_window, install --- */
+
+#[tokio::test]
+async fn title_falls_back_to_prompt_then_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path();
+    // A `<` with no closing `>` exercises the literal-push arm.
+    write_cline_session(
+        data_dir,
+        "p1",
+        &json!({ "prompt": "fix <broken angle" }),
+        &json!({}),
+    );
+    write_cline_session(data_dir, "p2", &json!({ "metadata": {} }), &json!({}));
+    let repo = ClineStore::new(data_dir.to_path_buf());
+    let listed = repo.list().await.unwrap();
+    let p1 = listed.iter().find(|s| s.id == "p1").unwrap();
+    assert!(p1.title.starts_with("fix"));
+    let p2 = listed.iter().find(|s| s.id == "p2").unwrap();
+    assert_eq!(p2.title, "p2");
+}
+
+#[tokio::test]
+async fn index_row_degrades_on_a_garbage_or_table_less_db() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path();
+    std::fs::create_dir_all(data_dir.join("db")).unwrap();
+    // Not a database at all → the schema read fails hard.
+    std::fs::write(data_dir.join("db/sessions.db"), b"junk").unwrap();
+    let repo = ClineStore::new(data_dir.to_path_buf());
+    assert!(repo.install(&simple_session("x"), "x", true).is_err());
+    // Valid db without the sessions table → no row.
+    let tmp2 = tempfile::tempdir().unwrap();
+    let data_dir2 = tmp2.path();
+    std::fs::create_dir_all(data_dir2.join("db")).unwrap();
+    let conn = rusqlite::Connection::open(data_dir2.join("db/sessions.db")).unwrap();
+    conn.execute_batch("CREATE TABLE other (x TEXT);").unwrap();
+    drop(conn);
+    let repo = ClineStore::new(data_dir2.to_path_buf());
+    repo.install(&simple_session("x"), "x", false).unwrap();
+}
+
+fn simple_session(id: &str) -> sepia_core::domain::Session {
+    sepia_testkit::contract::session(id, "T", 1.0)
+}
+
+#[tokio::test]
+async fn nodes_window_pages_before_and_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_session(tmp.path(), "s1", &json!({}), &json!({}));
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    let window = repo
+        .nodes_window(
+            "s1",
+            &sepia_core::storage::NodesWindowOptions {
+                limit: Some(1),
+                before: Some(1),
+                agent_id: None,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(window.nodes.len(), 1);
+    assert_eq!(window.start, 0);
+}
+
+#[tokio::test]
+async fn truncate_refuses_a_transcript_owned_by_another_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_session(
+        tmp.path(),
+        "s1",
+        &json!({}),
+        &json!({ "sessionId": "someone-else" }),
+    );
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    let msg = trunc_err(repo.truncate_session("s1", &[], &[]));
+    assert!(msg.contains("belongs to"), "{msg}");
+
+    // No sessionId anywhere + a manifest-declared transcript whose name
+    // can't prove ownership.
+    let dir = tmp.path().join("sessions/s2");
+    std::fs::create_dir_all(&dir).unwrap();
+    let other = dir.join("other.json");
+    std::fs::write(&other, json!({ "messages": [] }).to_string()).unwrap();
+    std::fs::write(
+        dir.join("s2.json"),
+        json!({ "session_id": "s2", "messages_path": other.to_string_lossy() }).to_string(),
+    )
+    .unwrap();
+    let msg = trunc_err(repo.truncate_session("s2", &[], &[]));
+    assert!(msg.contains("Cannot prove"), "{msg}");
+}
+
+#[tokio::test]
+async fn truncate_resolves_relative_and_dotted_declared_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_session(tmp.path(), "s1", &json!({}), &json!({}));
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    for declared in ["./rel.json", "../up.json", "a/b/c.json"] {
+        let dir = tmp.path().join("sessions/s1");
+        std::fs::write(
+            dir.join("s1.json"),
+            json!({ "session_id": "s1", "messages_path": declared }).to_string(),
+        )
+        .unwrap();
+        // All of them resolve outside or nowhere — the refusal still walks
+        // resolve_path's relative + component arms first.
+        let _ = repo.truncate_session("s1", &[], &[]);
+    }
+}
+
+#[tokio::test]
+async fn truncate_keeps_non_integral_indices_out_of_the_cut() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_session(tmp.path(), "s1", &json!({}), &json!({}));
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    // kept nodes with fractional/negative indices are unmappable → the
+    // cut stays at index 0 → nothing kept → refuses nothing removed-wise.
+    let _ = repo
+        .truncate_session("s1", &[tagged_node(0, Some(0))], &[])
+        .unwrap();
+}
+
+#[test]
+fn session_value_maps_every_json_storage_class() {
+    use rusqlite::types::Value as V;
+    use sepia_driver_cline::cline_index::session_value;
+    assert!(matches!(session_value(&Value::Null), V::Null));
+    assert!(matches!(session_value(&json!(true)), V::Integer(1)));
+    assert!(matches!(session_value(&json!(7)), V::Integer(7)));
+    assert!(matches!(session_value(&json!(1.5)), V::Real(_)));
+    assert!(matches!(session_value(&json!("s")), V::Text(_)));
+    assert!(matches!(session_value(&json!({"a":1})), V::Text(_)));
+    assert!(matches!(session_value(&json!([1])), V::Text(_)));
+}
+
+#[tokio::test]
+async fn title_falls_back_when_the_prompt_strips_to_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_session(tmp.path(), "t1", &json!({ "prompt": "<task>" }), &json!({}));
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    let listed = repo.list().await.unwrap();
+    let t1 = listed.iter().find(|s| s.id == "t1").unwrap();
+    assert_eq!(t1.title, "t1");
+}
+
+#[tokio::test]
+async fn truncate_skips_non_integer_message_indices() {
+    // A fractional clineMessageIndex fails source_index_of's integer
+    // check → the node contributes no index to the kept set.
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_session(tmp.path(), "s1", &json!({}), &json!({}));
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    let mut kept = tagged_node(0, None);
+    kept.metadata = json!({ "clineMessageIndex": 1.5 });
+    let removed = repo.truncate_session("s1", &[kept], &[]).unwrap();
+    assert_eq!(removed, 2);
+}
+
+#[tokio::test]
+async fn install_surfaces_a_corrupt_index_db() {
+    // Garbage db + !force → the schema-read map_err arm.
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("db")).unwrap();
+    std::fs::write(tmp.path().join("db/sessions.db"), b"junk").unwrap();
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    let err = repo.install(&simple_session("x"), "x", false).unwrap_err();
+    assert!(err.message.contains("session index"), "{err}");
+}
+
+#[tokio::test]
+async fn truncate_accepts_a_basename_proven_transcript() {
+    // No sessionId in the data → the basename must carry the id; when it
+    // does, the check passes and the truncate proceeds.
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_session(
+        tmp.path(),
+        "s1",
+        &json!({}),
+        &json!({ "sessionId": Value::Null }),
+    );
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    let removed = repo.truncate_session("s1", &[], &[]).unwrap();
+    assert_eq!(removed, 2);
+}
+
+#[tokio::test]
+async fn get_by_id_tolerates_a_messages_file_without_the_array() {
+    // `{...}` without a "messages" array → parse_messages_data's
+    // not-an-array arm yields an empty message list.
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_session(
+        tmp.path(),
+        "s1",
+        &json!({}),
+        &json!({ "messages": Value::Null }),
+    );
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    let session = repo.get_by_id("s1", None).await.unwrap().unwrap();
+    assert_eq!(session.id, "s1");
+}
+
+#[tokio::test]
+async fn checkpoints_manifest_without_a_latest_entry() {
+    // `checkpoint.history` only — the optional `latest` dup is absent.
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_session(
+        tmp.path(),
+        "c1",
+        &json!({ "metadata": { "checkpoint": { "history": [{ "ref": "r1", "createdAt": 1.0 }] } } }),
+        &json!({}),
+    );
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    let listed = repo.list().await.unwrap();
+    let c1 = listed.iter().find(|s| s.id == "c1").unwrap();
+    assert_eq!(c1.checkpoints.len(), 1);
+}

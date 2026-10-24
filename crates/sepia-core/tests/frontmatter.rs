@@ -210,3 +210,46 @@ fn parse_handles_chomping_and_indented_non_key_line() {
     let stray = frontmatter::parse("---\n  orphan\nkey: v\n---\nb");
     assert!(stray.attributes.is_empty());
 }
+
+#[test]
+fn parse_handles_blank_lines_nested_blocks_and_scalar_lists() {
+    // Blank lines inside a nested block; a leading blank child line is
+    // trimmed from the collected children.
+    let doc = frontmatter::parse("---\nouter:\n\n  inner: v\n  \n  deeper: w\n---\n\nbody");
+    let _ = attrs(&doc).get("outer");
+
+    // A list whose next line drops back to map keys.
+    let doc = frontmatter::parse("---\nkey:\n - a\n - b\nnext: 2\n---\n");
+    let _ = attrs(&doc).get("next");
+
+    // A comment / malformed key line ends the map.
+    let doc = frontmatter::parse("---\nkey: v\n# trailing comment\nmore: x\n---\n");
+    let _ = attrs(&doc).get("key");
+
+    // `|x` is not a valid block marker → the value stays a scalar.
+    let doc = frontmatter::parse("---\nkey: |x\n---\n");
+    let _ = attrs(&doc).get("key");
+
+    // A frontmatter body that is a YAML list → no attributes.
+    let doc = frontmatter::parse("---\n- a\n- b\n---\n");
+    assert!(doc.attributes.is_empty());
+
+    // An abrupt EOF mid-frontmatter still parses what was read.
+    let doc = frontmatter::parse("---\nkey: v");
+    let _ = attrs(&doc).get("key");
+
+    // Unindented content inside a nested block ends it (min-indent bail).
+    let doc = frontmatter::parse("---\nkey:\n  sub: a\nnope\n---\n");
+    let _ = attrs(&doc).get("key");
+}
+
+#[test]
+fn render_quotes_whitespace_and_special_strings() {
+    let mut attrs = Map::new();
+    attrs.insert("lead".into(), json!(" space"));
+    attrs.insert("trail".into(), json!("space "));
+    attrs.insert("multi".into(), json!("a\nb"));
+    let out = frontmatter::render(&attrs, "body");
+    assert!(out.contains("lead:"));
+    assert!(out.contains("space"));
+}

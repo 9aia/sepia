@@ -1528,6 +1528,8 @@ async fn file_history_snapshot_without_a_map_conflicts() {
 struct ScriptedGit {
     responses: Mutex<std::collections::VecDeque<(Vec<String>, GitResult)>>,
     files: Mutex<std::collections::HashMap<String, Option<Vec<u8>>>>,
+    fail_reads: std::sync::atomic::AtomicBool,
+    fail_removes: std::sync::atomic::AtomicBool,
 }
 
 impl ScriptedGit {
@@ -1535,6 +1537,8 @@ impl ScriptedGit {
         Self {
             responses: Mutex::new(std::collections::VecDeque::new()),
             files: Mutex::new(std::collections::HashMap::new()),
+            fail_reads: std::sync::atomic::AtomicBool::new(false),
+            fail_removes: std::sync::atomic::AtomicBool::new(false),
         }
     }
     fn on(&self, args: &[&str], code: i32, stdout: &str) {
@@ -1558,6 +1562,9 @@ impl ScriptedGit {
 #[async_trait]
 impl sepia_session::RestoreExec for ScriptedGit {
     async fn read_file(&self, path: &std::path::Path) -> Result<Option<Vec<u8>>, String> {
+        if self.fail_reads.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("read failed".into());
+        }
         Ok(self
             .files
             .lock()
@@ -1574,6 +1581,9 @@ impl sepia_session::RestoreExec for ScriptedGit {
         Ok(())
     }
     async fn remove_file(&self, path: &std::path::Path) -> Result<(), String> {
+        if self.fail_removes.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("remove failed".into());
+        }
         self.files
             .lock()
             .unwrap()
@@ -2074,9 +2084,10 @@ async fn node_feed_carries_deleted_and_rewind_markers() {
     let mut saw_deleted = false;
     while let Ok(ev) = feed3.try_recv() {
         match ev {
-            NodeEvent::Detached { reason, .. }
-                if reason == sepia_session::DetachReason::Deleted =>
-            {
+            NodeEvent::Detached {
+                reason: sepia_session::DetachReason::Deleted,
+                ..
+            } => {
                 saw_detached_deleted = true;
             }
             NodeEvent::Deleted { .. } => saw_deleted = true,
@@ -2242,6 +2253,8 @@ async fn restore_path_write_delete_unchanged_and_failures() {
         .unwrap_err();
     assert_eq!(err.code, ControlErrorCode::Internal);
     exec.write_err.lock().unwrap().clear();
+    // Re-create d.rs so the plan is a Delete again (it was removed above).
+    exec.inner.file(&format!("{cwd_s}/d.rs"), Some(b"created"));
     exec.remove_err.lock().unwrap().push("d.rs".into());
     let err = plane
         .restore("s1", &restore_path_req("d.rs"), None)
@@ -2782,6 +2795,285 @@ async fn thought_chunks_translate_through_the_prompt_stream() {
     plane.attach("s1", false, None, None, None).await.unwrap();
     plane
         .prompt("s1", &[PromptPart::Text { text: "go".into() }], None)
+        .await
+        .unwrap();
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn checkpoint_restore_surfaces_exec_failures() {
+    let dir = tempdir();
+    let ws = dir.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let cwd_s = ws.to_string_lossy().to_string();
+    let session = checkpoint_session(&ws, "cp-1");
+    let base = |git: &ScriptedGit| {
+        git.on(&["rev-parse", "--is-inside-work-tree"], 0, "true\n");
+        git.on(&["cat-file", "-e", "cp-1^{commit}"], 0, "");
+        git.on(&["rev-parse", "--show-toplevel"], 0, &format!("{cwd_s}\n"));
+        git.on(&["rev-list", "--parents", "-n", "1", "cp-1"], 0, "a b\n");
+        git.on(
+            &["diff", "--name-only", "-z", "b", "cp-1"],
+            0,
+            "f.rs\0gone.rs\0",
+        );
+        git.on(&["cat-file", "-e", "cp-1:f.rs"], 0, "");
+        git.on(&["cat-file", "-e", "cp-1:gone.rs"], 1, "");
+    };
+
+    // read_file fails.
+    let git = Arc::new(ScriptedGit::new());
+    base(&git);
+    git.on(&["show", "cp-1:f.rs"], 0, "blob");
+    git.fail_reads
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (plane, _) = mk_plane(
+        vec![session.clone()],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(git),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let err = plane
+        .restore("s1", &checkpoint_request("cp-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    plane.close_all().await;
+
+    // `git show` transport error (unscripted call).
+    let git = Arc::new(ScriptedGit::new());
+    base(&git);
+    git.file(&format!("{cwd_s}/f.rs"), Some(b"live"));
+    git.file(&format!("{cwd_s}/gone.rs"), None);
+    let (plane, _) = mk_plane(
+        vec![session.clone()],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(git),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let err = plane
+        .restore("s1", &checkpoint_request("cp-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    plane.close_all().await;
+
+    // remove_file fails.
+    let git = Arc::new(ScriptedGit::new());
+    base(&git);
+    git.on(&["show", "cp-1:f.rs"], 0, "blob");
+    git.file(&format!("{cwd_s}/f.rs"), Some(b"blob"));
+    git.file(&format!("{cwd_s}/gone.rs"), Some(b"here"));
+    git.fail_removes
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![],
+        ControlPlaneOptions {
+            restore_exec: Some(git),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    let err = plane
+        .restore("s1", &checkpoint_request("cp-1", None), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Internal);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn prompt_refuses_parts_the_agent_did_not_advertise() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    // No `image` in caps → an image part is refused before the call.
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new("devin", &[("MOCK_CAPS", "load,list")])],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let err = plane
+        .prompt(
+            "s1",
+            &[sepia_acp::PromptPart::Image {
+                data: "AAAA".into(),
+                mime_type: "image/png".into(),
+                uri: None,
+            }],
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("image"), "{err}");
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn flooded_updates_end_the_forward_tasks_with_lagged() {
+    // >512 updates overflow the conn's updates broadcast — the forward
+    // task's `while let Ok` exits instead of hanging on a dead stream.
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_CHUNK_FLOOD", "600"), ("MOCK_PERM_FLOOD", "150")],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let _ = plane
+        .prompt("s1", &[PromptPart::Text { text: "go".into() }], None)
+        .await;
+    // The lagged recv ends the forward tasks; detach then closes cleanly.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn stale_pooled_probe_conn_closes_on_a_real_idle_window() {
+    // probe_idle small but nonzero → the second probe's `at` delta is
+    // real → the stale arm runs `close_agent` on the pooled conn.
+    let (plane, _) = mk_plane(
+        vec![contract::session("s1", "S1", 1.0)],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions {
+            lock_ttl: Some(Duration::ZERO),
+            probe_idle: Some(Duration::from_millis(20)),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    plane.list_sessions(true).await.unwrap(); // pools a conn
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    plane.list_sessions(true).await.unwrap(); // pooled is stale → close + respawn
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn dropping_the_plane_lets_the_forward_tasks_end_on_closed_channels() {
+    // `unwire_and_close` always aborts the forward tasks first, so the
+    // only way their `while let Ok` loops exit cleanly is the broadcast
+    // senders dropping with the conn — which happens once the plane (and
+    // the last Inner refs held by the reader/watcher tasks) goes away.
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                // The agent must die on its own — the conn's Child
+                // lives inside Inner, so kill_on_drop can't fire while
+                // the reader/watcher tasks hold it.
+                ("MOCK_EXIT_AFTER_PROMPT", "1"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let _ = plane
+        .prompt("s1", &[PromptPart::Text { text: "go".into() }], None)
+        .await;
+    // Agent death → reader + watcher drain their Inner refs; dropping
+    // the plane drops the conn's, so the updates/permissions senders
+    // close and the forwarders exit on Err(Closed).
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drop(plane);
+    tokio::time::sleep(Duration::from_millis(800)).await;
+}
+
+#[tokio::test]
+async fn racing_stale_probes_find_the_pool_entry_already_gone() {
+    // Forced probes snapshot the same stale pooled conn; the first
+    // remove wins and the losers hit the already-gone arm.
+    let (plane, _) = mk_plane(
+        vec![contract::session("s1", "S1", 1.0)],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions {
+            lock_ttl: Some(Duration::ZERO),
+            probe_idle: Some(Duration::ZERO),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    plane.list_sessions(true).await.unwrap(); // pools a conn
+    let results = tokio::join!(
+        plane.list_sessions(true),
+        plane.list_sessions(true),
+        plane.list_sessions(true),
+        plane.list_sessions(true),
+    );
+    for res in [results.0, results.1, results.2, results.3] {
+        assert!(res.is_ok(), "{res:?}");
+    }
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn racing_dead_pool_probes_find_the_entry_already_retired() {
+    // A dead pooled conn raced by several forced probes: the first
+    // failing list retires it, the rest find the slot empty.
+    let (plane, _) = mk_plane(
+        vec![contract::session("s1", "S1", 1.0)],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_EXIT_AFTER_LISTS", "1"),
+            ],
+        )],
+        ControlPlaneOptions {
+            lock_ttl: Some(Duration::ZERO),
+            ..ControlPlaneOptions::default()
+        },
+    );
+    plane.list_sessions(true).await.unwrap(); // pools, then the agent exits
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let results = tokio::join!(
+        plane.list_sessions(true),
+        plane.list_sessions(true),
+        plane.list_sessions(true),
+        plane.list_sessions(true),
+    );
+    for res in [results.0, results.1, results.2, results.3] {
+        assert!(res.is_ok(), "{res:?}");
+    }
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn an_allowed_image_part_passes_the_capability_gate() {
+    // The default mock advertises image support — the gate's allowed
+    // arm runs and the prompt proceeds instead of erroring.
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    plane
+        .prompt(
+            "s1",
+            &[PromptPart::Image {
+                data: "AAAA".into(),
+                mime_type: "image/png".into(),
+                uri: None,
+            }],
+            None,
+        )
         .await
         .unwrap();
     plane.close_all().await;

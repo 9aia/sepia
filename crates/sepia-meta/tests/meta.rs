@@ -154,13 +154,10 @@ fn spans_projects_model_and_patch_edges() {
                         {"agent":""},
                         7
                     ],
-                    "projects": [
-                        {"name":"proj-a"},
-                        "proj-b",
-                        42,
-                        {"name":"   "}
-                    ]
-                }
+                    "projectIds": ["proj-a", 42, {"name":"x"}],
+                    "projectId": "ignored-when-array"
+                },
+                "s2": { "projectId": "proj-solo", "pinned": "yes" }
             },
             "config": {"historyLimit": 10}
         })
@@ -172,7 +169,10 @@ fn spans_projects_model_and_patch_edges() {
     assert_eq!(meta.model, None);
     assert_eq!(meta.spans.as_ref().map(Vec::len), Some(1));
     let projects = meta.project_ids.unwrap_or_default();
-    assert!(projects.iter().any(|p| p == "proj-a" || p == "proj-b"));
+    assert_eq!(projects, vec!["proj-a"]);
+    let solo = store.of("s2").unwrap();
+    assert_eq!(solo.project_ids.unwrap_or_default(), vec!["proj-solo"]);
+    assert!(solo.pinned.is_none());
 
     // patch with spans + model set.
     let store2 = MetaStore::open(&dir.path().join("m2.json"));
@@ -198,4 +198,32 @@ fn spans_projects_model_and_patch_edges() {
     std::fs::write(dir.path().join("arr.json"), "[1,2]").unwrap();
     let s = MetaStore::open(&dir.path().join("arr.json"));
     assert!(s.sessions().is_empty());
+}
+
+#[test]
+fn v2_projects_map_entries_parse_each_shape() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("meta.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "sessions": {},
+            "projects": {
+                "p1": {"name": "Object"},
+                "p2": "Plain",
+                "p3": 42
+            },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store = MetaStore::open(&path);
+    let names = store
+        .list_projects()
+        .into_iter()
+        .map(|p| (p.id.clone(), p))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(names.get("p1").map(|p| p.name.as_str()), Some("Object"));
+    assert_eq!(names.get("p2").map(|p| p.name.as_str()), Some("Plain"));
+    assert!(!names.contains_key("p3"));
 }

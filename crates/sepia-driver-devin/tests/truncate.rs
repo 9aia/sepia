@@ -71,3 +71,51 @@ async fn truncates_removed_nodes_and_updates_session_row() {
             .all(|n| plan.removed.iter().all(|r| r.node_id != n.node_id))
     );
 }
+
+#[tokio::test]
+async fn truncate_reports_open_failures_and_tool_state_deletes() {
+    // db_path a directory → the open fails.
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("blocked");
+    std::fs::write(&blocker, "x").unwrap();
+    let truncator = DevinTruncator::new(blocker.join("sessions.db"), false, false);
+    let session = contract::session("s1", "S1", 1.0);
+    let plan = rewind::RewindPlan {
+        keep_count: 0,
+        kept: vec![],
+        removed: vec![],
+        removed_tool_call_ids: vec![],
+    };
+    assert!(truncator.truncate(&session, &plan, &session).await.is_err());
+
+    // Empty `removed` skips the node delete; a tool-call-id delete runs
+    // only when the table exists.
+    let db = dir.path().join("sessions.db");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE sessions (id TEXT PRIMARY KEY, last_activity_at REAL, main_chain_id INTEGER);
+         CREATE TABLE tool_call_state (session_id TEXT, tool_call_id TEXT);
+         INSERT INTO sessions VALUES ('s1', 1.0, 0);
+         INSERT INTO tool_call_state VALUES ('s1', 'tc-1');",
+    )
+    .unwrap();
+    drop(conn);
+    let truncator = DevinTruncator::new(db.clone(), true, false);
+    let plan = rewind::RewindPlan {
+        keep_count: 0,
+        kept: vec![],
+        removed: vec![],
+        removed_tool_call_ids: vec!["tc-1".into()],
+    };
+    let mut truncated = contract::session("s1", "S1", 2.0);
+    truncated.main_chain_id = 0;
+    truncator
+        .truncate(&session, &plan, &truncated)
+        .await
+        .unwrap();
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let left: i64 = conn
+        .query_row("select count(*) from tool_call_state", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0);
+}

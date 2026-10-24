@@ -55,15 +55,16 @@ pub fn list(rt: &tokio::runtime::Runtime, json_out: bool) -> Result<(), CliError
     if json_out {
         let value = json!({
             "drivers": drivers.iter().map(|(binary, m)| {
-                let mut v = serde_json::to_value(m).unwrap_or_else(|_| Value::Null);
-                if let Value::Object(ref mut o) = v {
-                    o.insert("binary".into(), json!(binary));
-                    o.insert(
-                        "agentCommandResolves".into(),
-                        json!(m.agent_command.as_ref().is_none_or(|c| command_resolves(c))),
-                    );
-                }
-                v
+                let mut v = serde_json::to_value(m)
+                    .ok()
+                    .and_then(|v| v.as_object().cloned())
+                    .unwrap_or_default();
+                v.insert("binary".into(), json!(binary));
+                v.insert(
+                    "agentCommandResolves".into(),
+                    json!(m.agent_command.as_ref().is_none_or(|c| command_resolves(c))),
+                );
+                Value::Object(v)
             }).collect::<Vec<_>>(),
             "problems": problems,
         });

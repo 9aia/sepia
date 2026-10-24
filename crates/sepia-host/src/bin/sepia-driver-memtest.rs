@@ -44,7 +44,11 @@ impl SessionRepository for MemStore {
     }
 
     async fn delete(&self, id: &str) -> Result<(), StorageError> {
-        self.sessions.write().await.remove(id);
+        // Route through `has_session` — the wire has no `session.has`
+        // verb, so this is the only end-to-end exercise it gets.
+        if self.has_session(id).await? {
+            self.sessions.write().await.remove(id);
+        }
         Ok(())
     }
 

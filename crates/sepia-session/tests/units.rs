@@ -168,7 +168,7 @@ async fn merged_repository_primary_errors_propagate() {
 #[tokio::test]
 async fn default_restore_exec_file_ops() {
     use sepia_session::DefaultRestoreExec;
-    let exec = DefaultRestoreExec;
+    let exec = DefaultRestoreExec::default();
     let dir = tempdir();
     let path = dir.path().join("nested/deep/f.txt");
     assert!(exec.read_file(&path).await.unwrap().is_none());
@@ -198,7 +198,7 @@ async fn default_restore_exec_file_ops() {
 #[tokio::test]
 async fn default_restore_exec_runs_git() {
     use sepia_session::DefaultRestoreExec;
-    let exec = DefaultRestoreExec;
+    let exec = DefaultRestoreExec::default();
     let dir = tempdir();
     // Not a repo → non-zero code is an answer, not an error.
     let out = exec

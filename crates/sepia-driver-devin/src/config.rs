@@ -253,9 +253,13 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
     )?);
     if !owners.is_empty() || !block_rules.is_empty() {
         let existing = sdk_fs::read_file_if_exists(&agents_path)?;
-        if let Some(merged) = merge_memory_file(existing.as_deref(), &owners, &block_rules) {
-            actions.push(sdk_fs::write_file_action(&agents_path, &merged)?);
-        }
+        // Owners or blocks are non-empty past the guard, so the merge
+        // always produces content.
+        actions.extend(
+            merge_memory_file(existing.as_deref(), &owners, &block_rules)
+                .map(|merged| sdk_fs::write_file_action(&agents_path, &merged))
+                .transpose()?,
+        );
     }
 
     actions.extend(write_docs(

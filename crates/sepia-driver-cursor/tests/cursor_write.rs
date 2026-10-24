@@ -967,3 +967,17 @@ fn store_write_plan_derives_prompts_from_queries_and_encodes_the_root() {
         Some(r#"["explore the repo"]"#)
     );
 }
+
+#[test]
+fn from_transcript_jsonl_tolerates_a_text_block_without_text() {
+    // `{ "type": "text" }` with no text field — the `if let Some(text)`
+    // miss arm.
+    let raw = serde_json::to_string(&json!({
+        "role": "assistant",
+        "message": {"content": [{"type": "text"}, {"type": "text", "text": "kept"}]}
+    }))
+    .unwrap();
+    let session = cursor::from_transcript_jsonl(&raw, &CursorTranscriptSource::default());
+    assert_eq!(session.nodes.len(), 1);
+    assert_eq!(session.nodes[0].content, "kept");
+}

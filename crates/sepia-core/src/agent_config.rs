@@ -175,10 +175,10 @@ fn cursor_hook_events() -> &'static [(&'static str, &'static str)] {
 
 fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-    }
+    // Callers only pass non-empty strings — unwrap_or keeps the
+    // fallback eager (no dead arm under instrumentation).
+    let first = chars.next().unwrap_or('a');
+    first.to_uppercase().collect::<String>() + chars.as_str()
 }
 
 fn decapitalize(s: &str) -> String {

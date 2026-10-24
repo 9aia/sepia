@@ -461,3 +461,36 @@ pub fn config_diff(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn action_name_covers_every_kind() {
+        for (kind, name) in [
+            (WriteActionKind::Wrote, "wrote"),
+            (WriteActionKind::Updated, "updated"),
+            (WriteActionKind::Unchanged, "unchanged"),
+            (WriteActionKind::Merged, "merged"),
+            (WriteActionKind::Skipped, "skipped"),
+        ] {
+            assert_eq!(action_name(kind), name);
+        }
+    }
+
+    #[test]
+    fn write_agent_dispatches_to_the_cline_config_store() {
+        // The Cline arm of the per-agent write dispatch — the verbs only
+        // reach it when the CLI is pointed at a Cline workspace dir.
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = ConfigDirs {
+            cline: Some(dir.path().to_path_buf()),
+            ..ConfigDirs::default()
+        };
+        let actions = write_agent(AgentId::Cline, &dirs, &AgentConfig::default()).unwrap();
+        assert!(actions.is_empty());
+        print_actions(&actions, AgentId::Cline);
+    }
+}

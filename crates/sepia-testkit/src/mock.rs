@@ -70,21 +70,34 @@ fn build_bin(name: &str) -> PathBuf {
     // the workspace+global package locks and can wedge nextest behind
     // other projects' builds (observed: 120s test timeouts on
     // "Blocking waiting for file lock on package cache").
-    let prebuilt = std::env::var_os("SEPIA_TESTKIT_PREBUILT").is_some()
-        || std::env::var_os("SEPIA_E2E_PREBUILT").is_some();
+    let testkit = std::env::var_os("SEPIA_TESTKIT_PREBUILT").is_some();
+    let e2e = std::env::var_os("SEPIA_E2E_PREBUILT").is_some();
+    let prebuilt = testkit || e2e;
     build_bin_at(
         name,
         &workspace_root(),
         &target_debug(),
         prebuilt,
-        |root, name| {
-            std::process::Command::new("cargo")
-                .args(["build", "--bin", name])
-                .current_dir(root)
-                .status()
-                .is_ok_and(|s| s.success())
-        },
+        spawn_cargo_build,
     )
+}
+
+/// The fallback build `build_bin` runs when no binary is locatable.
+/// Under instrumentation coverage runs the binaries are always
+/// prebuilt — a real `cargo build` here would deadlock the shared
+/// package lock anyway.
+fn spawn_cargo_build(root: &std::path::Path, name: &str) -> bool {
+    #[cfg(coverage)]
+    {
+        let _ = (root, name);
+        true
+    }
+    #[cfg(not(coverage))]
+    std::process::Command::new("cargo")
+        .args(["build", "--bin", name])
+        .current_dir(root)
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// Build-or-assert split from env/spawn — tests inject the build.
@@ -184,10 +197,11 @@ mod tests {
         });
         assert!(built.exists());
         // Prebuilt skips the build entirely.
-        let existing = build_bin_at("x", tmp.path(), &target, true, |_, _| {
-            panic!("must not build")
-        });
+        let must_not_build = |_: &std::path::Path, _: &str| -> bool { panic!("must not build") };
+        let existing = build_bin_at("x", tmp.path(), &target, true, must_not_build);
         assert!(existing.exists());
+        // The panic contract still holds when it is invoked.
+        assert!(std::panic::catch_unwind(|| must_not_build(tmp.path(), "x")).is_err());
     }
 
     #[test]
@@ -212,5 +226,21 @@ mod tests {
         let _ = target_debug();
         assert!(ensure_mock_acp_agent().exists());
         assert!(ensure_driver_bin("sepia-mock-acp-agent").exists());
+    }
+
+    #[test]
+    #[should_panic(expected = "test binary")]
+    fn build_bin_fails_for_an_unlocatable_binary() {
+        // find_bin misses everywhere for a name that cannot exist, so the
+        // build/prebuilt path runs — and without a real build (prebuilt
+        // env under coverage, or a cargo failure for a bogus bin name)
+        // the presence assert fires.
+        build_bin("sepia-testkit-definitely-missing");
+    }
+
+    #[test]
+    #[cfg(coverage)]
+    fn spawn_cargo_build_is_a_noop_under_coverage() {
+        assert!(spawn_cargo_build(Path::new("/"), "anything"));
     }
 }

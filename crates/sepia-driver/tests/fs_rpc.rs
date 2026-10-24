@@ -265,3 +265,62 @@ fn capability_convert_variant_round_trips() {
     let back: DriverManifest = serde_json::from_value(json).unwrap();
     assert_eq!(back, m);
 }
+
+#[test]
+fn fs_error_and_skip_arms() {
+    // read_file_if_exists: a genuinely unreadable file → the Err arm.
+    let dir = tempfile::tempdir().unwrap();
+    let unread = dir.path().join("locked.md");
+    std::fs::write(&unread, "x").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&unread, std::fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(sepia_driver::fs::read_file_if_exists(&unread).is_err());
+        // A dir listing that hits a permission wall → the Err arm.
+        let nope = dir.path().join("sealed");
+        std::fs::create_dir(&nope).unwrap();
+        std::fs::set_permissions(&nope, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _ = sepia_driver::fs::read_markdown_dir(&nope, &[".md"]);
+        // An unreadable .md inside a readable dir → `let Some(text) else continue`.
+        let docs = dir.path().join("docs");
+        std::fs::create_dir(&docs).unwrap();
+        let locked_md = docs.join("a.md");
+        std::fs::write(&locked_md, "x").unwrap();
+        std::fs::set_permissions(&locked_md, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _ = sepia_driver::fs::read_markdown_dir(&docs, &[".md"]);
+    }
+    // write_file_action under a nonexistent subdir → parent creation arm.
+    let deep = dir.path().join("a/b/c.md");
+    let action = sepia_driver::fs::write_file_action(&deep, "body").unwrap();
+    assert!(deep.exists());
+    let _ = action;
+    // write_skills_dir where the skills dir is a FILE → `?` error arm.
+    let skills_file = dir.path().join("skills-as-file");
+    std::fs::write(&skills_file, "x").unwrap();
+    let skill = sepia_core::agent_config::ConfigSkill {
+        name: "s".into(),
+        description: None,
+        body: "b".into(),
+        files: vec![],
+        metadata: serde_json::Value::Null,
+    };
+    let _ = sepia_driver::fs::write_skills_dir(&skills_file, std::slice::from_ref(&skill));
+}
+
+#[test]
+fn write_file_action_fails_when_the_parent_is_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("blocked");
+    std::fs::write(&blocker, "x").unwrap();
+    assert!(sepia_driver::fs::write_file_action(&blocker.join("child.md"), "c").is_err());
+}
+
+#[test]
+fn read_markdown_dir_skips_entries_that_vanish_mid_scan() {
+    let dir = tempfile::tempdir().unwrap();
+    // A dangling symlink lists like a file but reads as missing.
+    std::os::unix::fs::symlink(dir.path().join("ghost.md"), dir.path().join("gone.md")).unwrap();
+    let docs = sepia_driver::fs::read_markdown_dir(dir.path(), &[".md"]).unwrap();
+    assert!(docs.is_empty());
+}

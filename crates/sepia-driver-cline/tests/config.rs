@@ -272,3 +272,113 @@ fn write_into_a_clinerules_file_merges_rules_and_skips_commands() {
             .contains("directory form")
     );
 }
+
+#[test]
+fn command_doc_keeps_the_description() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = sepia_core::agent_config::AgentConfig {
+        commands: vec![sepia_core::agent_config::ConfigCommand {
+            name: "run".into(),
+            description: Some("Run it".into()),
+            body: "Do it.\n".into(),
+            argument_hint: None,
+            allowed_tools: Vec::new(),
+            model: None,
+            metadata: Value::Null,
+        }],
+        ..Default::default()
+    };
+    config::write(&config, dir.path()).unwrap();
+    let doc = std::fs::read_to_string(dir.path().join(".clinerules/workflows/run.md")).unwrap();
+    assert!(doc.contains("description: Run it"));
+}
+
+#[test]
+fn file_form_rules_merge_into_clinerules_and_io_failures_propagate() {
+    use sepia_core::agent_config::{ConfigRule, RuleKind};
+
+    // `.clinerules` as a FILE: any rule merges into the managed block.
+    let dir = tempfile::tempdir().unwrap();
+    let rules_path = dir.path().join(".clinerules");
+    std::fs::write(&rules_path, "# existing\n").unwrap();
+    let rule = ConfigRule {
+        name: "extra".into(),
+        description: None,
+        body: "More.".into(),
+        globs: Vec::new(),
+        always_apply: false,
+        kind: RuleKind::Rule,
+        metadata: Value::Null,
+    };
+    let config = sepia_core::agent_config::AgentConfig {
+        rules: vec![rule.clone()],
+        ..Default::default()
+    };
+    config::write(&config, dir.path()).unwrap();
+    assert!(
+        std::fs::read_to_string(&rules_path)
+            .unwrap()
+            .contains("More.")
+    );
+
+    // Directory form, but `.clinerules` itself is not writable.
+    let dir = tempfile::tempdir().unwrap();
+    let rules_dir = dir.path().join(".clinerules");
+    std::fs::create_dir_all(&rules_dir).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&rules_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(config::write(&config, dir.path()).is_err());
+        std::fs::set_permissions(&rules_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // `.clinerules/workflows` as a file → the command stage fails.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".clinerules")).unwrap();
+    std::fs::write(dir.path().join(".clinerules/workflows"), "x").unwrap();
+    let with_command = sepia_core::agent_config::AgentConfig {
+        rules: vec![rule.clone()],
+        commands: vec![sepia_core::agent_config::ConfigCommand {
+            name: "c".into(),
+            description: None,
+            body: "x".into(),
+            argument_hint: None,
+            allowed_tools: Vec::new(),
+            model: None,
+            metadata: Value::Null,
+        }],
+        ..Default::default()
+    };
+    assert!(config::write(&with_command, dir.path()).is_err());
+
+    // `cline_mcp_settings.json` exists but can't be rewritten.
+    let dir = tempfile::tempdir().unwrap();
+    let mcp = dir.path().join("cline_mcp_settings.json");
+    std::fs::write(&mcp, "{}").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&mcp, std::fs::Permissions::from_mode(0o444)).unwrap();
+    }
+    let with_mcp = sepia_core::agent_config::AgentConfig {
+        mcp_servers: serde_json::Map::from_iter([("s".into(), json!({}))]),
+        ..Default::default()
+    };
+    assert!(config::write(&with_mcp, dir.path()).is_err());
+    let _ = RuleKind::Instructions;
+}
+
+#[test]
+fn write_with_no_rules_skips_the_clinerules_file_merge() {
+    // `.clinerules` as a file + an empty ruleset → the merge block is
+    // skipped entirely (the owners/blocks guard's false arm).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".clinerules"), "Always use bun.\n").unwrap();
+    let actions = config::write(&AgentConfig::default(), dir.path()).unwrap();
+    assert!(actions.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".clinerules")).unwrap(),
+        "Always use bun.\n"
+    );
+}

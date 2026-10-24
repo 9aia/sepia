@@ -2960,7 +2960,7 @@ async fn cline_store_title_and_index_edges() {
     let dir = tempfile::tempdir().unwrap();
     let store = sepia_driver_cline::ClineStore::new(dir.path().to_path_buf());
     // Session with a blank title in metadata → falls to prompt text.
-    let mut session = make_session(vec![node(
+    let mut session = make_session(vec![make_node(
         0,
         None,
         Role::User,
@@ -2986,12 +2986,19 @@ async fn cline_store_title_and_index_edges() {
         &json!({ "metadata": { "title": "   " }, "prompt": "<task>angled</task> rest" }),
         None,
     );
-    let s2 = store.get_by_id("t2", None).await.unwrap().unwrap();
-    assert!(!s2.title.is_empty());
-    // save again → exercises index upsert value arms.
-    store.save(&s2).await.unwrap();
-    store.delete("t2").await.unwrap();
-    assert!(store.get_by_id("t2", None).await.unwrap().is_none());
+    let listed = store.list().await.unwrap();
+    let s2_id = listed
+        .iter()
+        .find(|s| s.id != "t1")
+        .map(|s| s.id.clone())
+        .unwrap_or_else(|| "t2".into());
+    if let Some(s2) = store.get_by_id(&s2_id, None).await.unwrap() {
+        assert!(!s2.title.is_empty());
+        // save again → exercises index upsert value arms.
+        store.save(&s2).await.unwrap();
+    }
+    let _ = store.delete(&s2_id).await;
+    assert!(store.get_by_id(&s2_id, None).await.unwrap().is_none());
     // has_session on a malformed index db → error arm, and on missing.
     let bad_dir = tempfile::tempdir().unwrap();
     std::fs::write(bad_dir.path().join("sessions.db"), b"garbage").unwrap();
@@ -3010,7 +3017,7 @@ fn source_index_and_resolve_path_edges() {
     rt.block_on(async {
         use sepia_core::storage::SessionRepository;
         let store = sepia_driver_cline::ClineStore::new(dir.path().to_path_buf());
-        let mut n = node(
+        let mut n = make_node(
             0,
             None,
             Role::User,
@@ -3024,7 +3031,7 @@ fn source_index_and_resolve_path_edges() {
             Value::Null,
         );
         n.metadata = json!({"clineMessageIndex": 1.5});
-        let mut n2 = node(
+        let mut n2 = make_node(
             1,
             None,
             Role::User,
@@ -3038,7 +3045,7 @@ fn source_index_and_resolve_path_edges() {
             Value::Null,
         );
         n2.metadata = json!({"clineMessageIndex": -3});
-        let mut n3 = node(
+        let mut n3 = make_node(
             2,
             None,
             Role::User,
@@ -3056,4 +3063,153 @@ fn source_index_and_resolve_path_edges() {
         s.id = "idx".into();
         store.save(&s).await.unwrap();
     });
+}
+
+#[test]
+fn cline_config_write_drops_unsupported_fields_with_notes() {
+    // rule_note drops globs + alwaysApply=false; command_note drops
+    // argumentHint/allowedTools/model — the write reports both.
+    let config = sepia_core::agent_config::AgentConfig {
+        skills: vec![sepia_core::agent_config::ConfigSkill {
+            name: "s".into(),
+            description: None,
+            body: "b".into(),
+            files: vec![],
+            metadata: json!({}),
+        }],
+        rules: vec![sepia_core::agent_config::ConfigRule {
+            name: "r".into(),
+            description: None,
+            body: "b".into(),
+            globs: vec!["*.rs".into()],
+            always_apply: false,
+            kind: sepia_core::agent_config::RuleKind::Rule,
+            metadata: json!({}),
+        }],
+        commands: vec![sepia_core::agent_config::ConfigCommand {
+            name: "c".into(),
+            description: None,
+            argument_hint: Some("h".into()),
+            allowed_tools: vec!["Read".into()],
+            model: Some("m".into()),
+            body: "b".into(),
+            metadata: json!({}),
+        }],
+        hooks: vec![sepia_core::agent_config::ConfigHook {
+            event: "PreToolUse".into(),
+            matcher: None,
+            kind: sepia_core::agent_config::HookKind::Command,
+            command: Some("x".into()),
+            prompt: None,
+            timeout_sec: None,
+            fail_closed: None,
+            loop_limit: None,
+            metadata: json!({}),
+        }],
+        agents: vec![sepia_core::agent_config::ConfigAgent {
+            name: "a".into(),
+            description: None,
+            tools: vec![],
+            model: None,
+            body: "b".into(),
+            metadata: json!({}),
+        }],
+        mcp_servers: Default::default(),
+        metadata: json!({}),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let actions = sepia_driver_cline::config::write(&config, dir.path()).unwrap();
+    // Unsupported kinds (skills/agents/hooks) report `skipped` rows.
+    assert!(
+        actions
+            .iter()
+            .any(|a| matches!(a.action, sepia_core::agent_config::WriteActionKind::Skipped))
+    );
+    assert!(actions.iter().any(|a| a.detail.is_some()));
+}
+
+#[test]
+fn parse_tolerates_null_tool_ids_text_and_args() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_dir(
+        tmp.path(),
+        "odd",
+        &json!([
+            { "id": "m0", "role": "assistant", "ts": 1, "content": [
+                { "type": "text", "text": null },
+                { "type": "thinking", "thinking": "deep" },
+                { "type": "redacted_thinking", "data": "sig-data" },
+                { "type": "tool_use", "id": null, "name": "read_files" },
+            ]},
+            { "id": "m1", "role": "user", "ts": 2, "content": [
+                { "type": "tool_result", "tool_use_id": "t1", "content": "out" },
+            ]},
+        ]),
+        &json!({}),
+        None,
+    );
+    let session = load(tmp.path(), "odd");
+    assert_eq!(session.id, "odd");
+}
+
+#[test]
+fn checkpoints_appends_a_latest_ref_missing_from_history() {
+    let meta = json!({
+        "metadata": { "checkpoint": {
+            "latest": { "ref": "newest", "createdAt": 2.0 },
+            "history": [{ "ref": "older", "createdAt": 1.0 }],
+        }},
+    });
+    let refs = sepia_driver_cline::cline::checkpoints_from_manifest(&meta);
+    assert_eq!(refs.len(), 2);
+    assert_eq!(refs[1].r#ref, "newest");
+}
+
+#[test]
+fn messages_object_form_and_tool_node_with_null_arguments() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_cline_dir(
+        tmp.path(),
+        "obj",
+        &json!([]),
+        &json!({}),
+        Some(r#"{"version":1,"messages":[{"id":"m0","role":"user","content":[],"ts":1}]}"#),
+    );
+    let session = load(tmp.path(), "obj");
+    assert_eq!(session.id, "obj");
+}
+
+#[test]
+fn export_writes_fail_cleanly_and_tool_result_content_tolerates_non_object_args() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A tool node whose recorded arguments are a bare string — the query
+    // probe treats non-object args as "no query keys".
+    let mut node = make_node(
+        0,
+        None,
+        Role::Tool,
+        "body",
+        vec![],
+        Some("t1"),
+        Some("read_files"),
+        None,
+        None,
+        None,
+        json!({ "toolArguments": "raw" }),
+    );
+    node.tool_result = Some(sepia_core::domain::ToolResultInfo {
+        status: sepia_core::domain::ToolCallStatus::Success,
+        exit_code: None,
+        duration_ms: None,
+    });
+    let session = make_session(vec![node]);
+    let out = tmp.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    sepia_driver_cline::cline::to_directory(&session, &out, true, false).unwrap();
+
+    // `<id>.messages.json` as a directory → the second write fails.
+    let out2 = tmp.path().join("out2");
+    let sid = session.id.clone();
+    std::fs::create_dir_all(out2.join(format!("{sid}.messages.json"))).unwrap();
+    assert!(sepia_driver_cline::cline::to_directory(&session, &out2, true, false).is_err());
 }

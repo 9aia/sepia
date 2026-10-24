@@ -295,6 +295,45 @@ fn main() {
                         })
                     )
                 );
+                // MOCK_CHUNK_FLOOD=n: a burst of chunks to overflow
+                // broadcast buffers in tests.
+                if let Some(n) = env("MOCK_CHUNK_FLOOD").and_then(|v| v.parse::<u32>().ok()) {
+                    for i in 0..n {
+                        let _ = writeln!(
+                            out,
+                            "{}",
+                            notify(
+                                "session/update",
+                                json!({
+                                    "sessionId": session_id,
+                                    "update": {
+                                        "sessionUpdate": "agent_message_chunk",
+                                        "content": { "type": "text", "text": format!("flood {i}") }
+                                    }
+                                })
+                            )
+                        );
+                    }
+                }
+                // MOCK_PERM_FLOOD=n: a burst of permission requests — same
+                // overflow purpose on the permissions channel.
+                if let Some(n) = env("MOCK_PERM_FLOOD").and_then(|v| v.parse::<u32>().ok()) {
+                    for i in 0..n {
+                        let _ = writeln!(
+                            out,
+                            "{}",
+                            json!({
+                                "jsonrpc": "2.0", "id": 900,
+                                "method": "session/request_permission",
+                                "params": {
+                                    "sessionId": session_id,
+                                    "toolCall": { "toolCallId": format!("tc-{i}"), "title": "t" },
+                                    "options": [{ "optionId": "allow", "name": "Allow", "kind": "allow_once" }]
+                                }
+                            })
+                        );
+                    }
+                }
                 if text == perm_text {
                     let _ = writeln!(
                         out,

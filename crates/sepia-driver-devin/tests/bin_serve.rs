@@ -296,3 +296,32 @@ fn seed_save(store: &sepia_driver_devin::DevinStore, session: &sepia_core::Sessi
                 .unwrap();
         });
 }
+
+#[test]
+fn empty_env_dirs_fall_back_to_home() {
+    // SEPIA_DEVIN_DB="" and SEPIA_DEVIN_DIR="" — both empty-string guards
+    // fall through to the HOME defaults.
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(home.join(".local/share/devin/cli")).unwrap();
+    let mut wire = Wire::spawn(
+        &[
+            ("HOME", home.to_str().unwrap()),
+            ("SEPIA_DEVIN_DB", ""),
+            ("SEPIA_DEVIN_DIR", ""),
+        ],
+        tmp.path(),
+    );
+    let res = wire.call(1, "session.list", json!({}));
+    assert!(
+        res.get("result").is_some() || res.get("error").is_some(),
+        "{res}"
+    );
+    // A dir-less config.read resolves through devin_dir() — the empty
+    // SEPIA_DEVIN_DIR takes the HOME fallback.
+    let res = wire.call(2, "config.read", Value::Null);
+    assert!(
+        res.get("result").is_some() || res.get("error").is_some(),
+        "{res}"
+    );
+}

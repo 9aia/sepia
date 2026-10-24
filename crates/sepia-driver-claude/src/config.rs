@@ -310,9 +310,13 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
             continue;
         }
         let existing = sdk_fs::read_file_if_exists(path)?;
-        if let Some(merged) = merge_memory_file(existing.as_deref(), owners, blocks) {
-            actions.push(sdk_fs::write_file_action(path, &merged)?);
-        }
+        // Owners or blocks are non-empty past the guard, so the merge
+        // always produces content.
+        actions.extend(
+            merge_memory_file(existing.as_deref(), owners, blocks)
+                .map(|merged| sdk_fs::write_file_action(path, &merged))
+                .transpose()?,
+        );
     }
 
     // `metadata.source` routes each hook back to the file it was read from;

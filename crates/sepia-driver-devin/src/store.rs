@@ -247,12 +247,15 @@ impl DevinStore {
         if !self.has_subagent_heads {
             return parents;
         }
-        if let Ok(mut stmt) = conn.prepare("select session_id, agent_id from subagent_heads") {
-            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
-            if let Ok(rows) = rows {
-                for row in rows.flatten() {
-                    parents.insert(row.1, row.0);
-                }
+        if let Ok(rows) = conn
+            .prepare("select session_id, agent_id from subagent_heads")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                    .map(|rows| rows.flatten().collect::<Vec<_>>())
+            })
+        {
+            for row in rows {
+                parents.insert(row.1, row.0);
             }
         }
         parents

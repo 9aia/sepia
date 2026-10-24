@@ -57,6 +57,8 @@ insta = { version = "1", features = ["json", "redactions"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# `cfg(coverage)` is set by cargo-llvm-cov during instrumented runs.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
 
 [workspace.lints.clippy]
 # Hard gates: deny classes that hide real bugs.

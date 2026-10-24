@@ -63,13 +63,24 @@ fn take_stdio(child: &mut Child) -> Result<(ChildStdout, ChildStdin, ChildStderr
 /// `SEPIA_INHERIT_ENV=1` opts back into forwarding the whole parent env.
 fn build_child_env(spec: &AgentSpec, options: &SpawnOptions) -> Vec<(String, String)> {
     let inherit = std::env::var("SEPIA_INHERIT_ENV").is_ok_and(|v| v == "1");
+    build_child_env_with(spec, options, inherit, std::env::vars())
+}
+
+/// The env-free half of [`build_child_env`] — tests inject the knobs.
+fn build_child_env_with(
+    spec: &AgentSpec,
+    options: &SpawnOptions,
+    inherit: bool,
+    vars: impl Iterator<Item = (String, String)>,
+) -> Vec<(String, String)> {
+    let vars: std::collections::BTreeMap<String, String> = vars.collect();
     let mut env = std::collections::BTreeMap::new();
     if inherit {
-        env.extend(std::env::vars());
+        env.extend(vars);
     } else {
         for key in ALLOWED_ENV_KEYS {
-            if let Ok(value) = std::env::var(key) {
-                env.insert((*key).to_string(), value);
+            if let Some(value) = vars.get(*key) {
+                env.insert((*key).to_string(), value.clone());
             }
         }
     }
@@ -135,12 +146,13 @@ impl Inner {
             Ok(result) => rpc::Response::ok(req.id, result),
             Err(e) => rpc::Response::err(req.id, RpcError::internal(e)),
         };
-        if let Ok(mut line) = rpc::encode_line(&response) {
-            line.push('\n');
-            if let Some(stdin) = &mut *self.stdin.lock().await {
-                let _ = stdin.write_all(line.as_bytes()).await;
-                let _ = stdin.flush().await;
-            }
+        // A Response carries only JSON Values — encoding cannot fail, so
+        // the empty-line default is unreachable in practice.
+        let mut line = rpc::encode_line(&response).unwrap_or_default();
+        line.push('\n');
+        if let Some(stdin) = &mut *self.stdin.lock().await {
+            let _ = stdin.write_all(line.as_bytes()).await;
+            let _ = stdin.flush().await;
         }
     }
 
@@ -483,28 +495,7 @@ pub async fn spawn_agent(
         });
     }
     // exit watcher → fail pending + permissions.
-    {
-        let inner = Arc::clone(&inner);
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                let mut child = inner.child.lock().await;
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        drop(child);
-                        inner
-                            .fail_all(&format!(
-                                "Agent process exited before responding ({status})"
-                            ))
-                            .await;
-                        return;
-                    }
-                    Ok(None) => {}
-                    Err(_) => return,
-                }
-            }
-        });
-    }
+    spawn_exit_watcher(&inner);
 
     let conn = AcpConnection {
         inner,
@@ -513,6 +504,31 @@ pub async fn spawn_agent(
     };
     conn.initialize().await?;
     Ok(conn)
+}
+
+/// Poll the child until it exits, then fail every pending request and
+/// permission so blocked callers wake with the exit error instead of
+/// hanging on a dead agent.
+fn spawn_exit_watcher(inner: &Arc<Inner>) {
+    let inner = Arc::clone(inner);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let mut child = inner.child.lock().await;
+            // `.ok().flatten()` — a wait error means the child state is
+            // unknown, so keep polling; the stdout reader still fails
+            // pending calls when the agent dies.
+            if let Some(status) = child.try_wait().ok().flatten() {
+                drop(child);
+                inner
+                    .fail_all(&format!(
+                        "Agent process exited before responding ({status})"
+                    ))
+                    .await;
+                return;
+            }
+        }
+    });
 }
 
 #[cfg(all(test, unix))]
@@ -648,5 +664,91 @@ mod tests {
         conn.inner.pending.lock().await.clear();
         let err = task.await.unwrap().unwrap_err();
         assert!(err.message.contains("channel closed"), "{err}");
+    }
+
+    /// A response carrying an id nobody asked for is dropped quietly;
+    /// a request for any method but `session/request_permission` is
+    /// likewise ignored — the in-band permission lane is exclusive.
+    #[tokio::test]
+    async fn dispatch_ignores_orphaned_responses_and_other_requests() {
+        let (child, stdin) = spawn_sh("sleep 30");
+        let conn = bare_conn(child, stdin);
+        conn.inner
+            .dispatch(r#"{"jsonrpc":"2.0","id":7,"result":{}}"#)
+            .await;
+        conn.inner
+            .dispatch(r#"{"jsonrpc":"2.0","id":8,"method":"fs/read","params":{}}"#)
+            .await;
+        assert!(conn.inner.pending.lock().await.is_empty());
+    }
+
+    /// A permission request round-trips: dispatch → broadcast → broker
+    /// answer → JSON-RPC response written back to the agent's stdin.
+    #[tokio::test]
+    async fn permission_request_is_answered_back_on_stdin() {
+        let (child, stdin) = spawn_sh("sleep 30");
+        let conn = bare_conn(child, stdin);
+        let mut rx = conn.permissions();
+        conn.inner
+            .dispatch(
+                r#"{"jsonrpc":"2.0","id":900,"method":"session/request_permission","params":{"sessionId":"s1","toolCall":{"toolCallId":"tc","title":"t"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]}}"#,
+            )
+            .await;
+        let request = rx.recv().await.unwrap();
+        assert!(
+            conn.inner
+                .broker
+                .respond(&request.request_id, Some("allow"))
+        );
+        // The answer task writes the response asynchronously — give it a
+        // beat, then confirm the request was consumed from the broker.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!conn.inner.broker.respond(&request.request_id, None));
+    }
+
+    /// The exit watcher returns silently when `try_wait` reports an
+    /// already-reaped child (a racing `wait()` consumed the status).
+    #[tokio::test]
+    async fn exit_watcher_returns_on_a_reaped_child() {
+        let (mut child, _stdin) = spawn_sh("exit 0");
+        child.wait().await.unwrap();
+        let conn = bare_conn(child, None);
+        spawn_exit_watcher(&conn.inner);
+        // One watcher period is enough to hit the `Err`/reaped arm; the
+        // task then returns — nothing to join, just let it run.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::*;
+
+    #[test]
+    fn build_child_env_inherit_vs_filtered() {
+        let spec = AgentSpec {
+            id: "x".into(),
+            label: "x".into(),
+            command: vec!["a".into()],
+            env: None,
+        };
+        let options = SpawnOptions {
+            cwd: "/tmp".into(),
+            env: None,
+            model: None,
+            fallbacks: None,
+        };
+        let vars = vec![
+            ("HOME".to_string(), "/h".to_string()),
+            ("SECRET_TOKEN".to_string(), "s".to_string()),
+            ("PATH".to_string(), "/p".to_string()),
+        ];
+        // Inherit mode forwards everything.
+        let env = build_child_env_with(&spec, &options, true, vars.clone().into_iter());
+        assert!(env.iter().any(|(k, _)| k == "SECRET_TOKEN"));
+        // Filtered mode keeps only the allowlist.
+        let env = build_child_env_with(&spec, &options, false, vars.into_iter());
+        assert!(!env.iter().any(|(k, _)| k == "SECRET_TOKEN"));
+        assert!(env.iter().any(|(k, _)| k == "PATH"));
     }
 }

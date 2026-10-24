@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use sepia_core::agent_config::{AgentConfig, ConfigWriteAction};
-use sepia_core::storage::{NodesWindowOptions, SessionNodeWindow, SessionRepository};
+use sepia_core::storage::SessionRepository;
 use sepia_core::{Session, StorageError};
 use sepia_driver::{
     AgentConfigStore, Capability, DRIVER_PROTOCOL, Driver, DriverManifest, SessionTruncator,
@@ -162,15 +162,25 @@ async fn manifest_and_session_surface() {
 async fn rewind_truncator_error_maps_to_store_error() {
     let driver = StoreDriver::new(manifest(&[Capability::Rewind]), Arc::new(Mem))
         .with_truncator(Arc::new(BadTrunc));
+    let session: Session = serde_json::from_value(json!({
+        "id":"s","title":"T","workingDirectory":"/w","model":"m",
+        "createdAt":1.0,"lastActivityAt":2.0,"mainChainId":0
+    }))
+    .unwrap();
+    // Decodable params → the truncator runs and its error maps onto the
+    // store-error code.
     let err = driver
         .handle(
             "session.rewind",
-            json!({"session": {"id":"s"}, "plan": {}, "truncated": {"id":"s"}}),
+            json!({
+                "session": serde_json::to_value(&session).unwrap(),
+                "plan": {"keepCount":0,"kept":[],"removed":[],"removedToolCallIds":[]},
+                "truncated": serde_json::to_value(&session).unwrap(),
+            }),
         )
-        .await;
-    // Either decodes + truncates (error → store error) or fails decode —
-    // both run the params branch; force a decode-checking call too.
-    let _ = err;
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("cut failed"), "{err}");
     let err = driver
         .handle("session.rewind", json!(42))
         .await
@@ -206,5 +216,13 @@ async fn config_backend_panic_and_errors() {
         .handle("config.write", json!({"config": {"rules":[]}}))
         .await
         .unwrap_err();
+    assert!(!err.message.is_empty());
+}
+
+#[test]
+fn write_file_action_on_a_parentless_path_skips_mkdir() {
+    // An empty path has no parent — the mkdir arm is skipped and the
+    // write itself surfaces the OS error.
+    let err = sepia_driver::fs::write_file_action(std::path::Path::new(""), "x").unwrap_err();
     assert!(!err.message.is_empty());
 }

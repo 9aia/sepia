@@ -13,7 +13,7 @@ mod unix_edges {
 
     use sepia_core::storage::{NodesWindowOptions, SessionRepository};
     use sepia_host::store::{MergedStore, RemoteStore};
-    use sepia_host::{DriverClient, DriverRegistry, command_resolves, discover, refresh_manifest};
+    use sepia_host::{DriverClient, command_resolves, discover, refresh_manifest};
     use serde_json::json;
 
     /// A driver script: answers `--manifest`, spews stderr (past the
@@ -301,7 +301,7 @@ mod unix_edges {
         assert!(refresh_manifest(&client).await.is_err());
 
         // Registry insert + entry lookups + capability filtering.
-        let mut registry = DriverRegistry::default();
+        let mut registry = sepia_host::DriverRegistry::default();
         let manifest = discover::probe_manifest(&good).await.unwrap();
         registry.insert(good.clone(), manifest);
         assert_eq!(registry.manifest("fake").unwrap().id, "fake");
@@ -319,7 +319,7 @@ mod unix_edges {
         assert!(merged.list().await.unwrap().is_empty());
 
         // A driver entry whose binary is missing errors on client().
-        let mut registry = DriverRegistry::default();
+        let mut registry = sepia_host::DriverRegistry::default();
         let mut m = discover::probe_manifest(&good).await.unwrap();
         m.id = "ghost".into();
         // An agent_command that can't resolve keeps it out of
@@ -345,4 +345,154 @@ mod unix_edges {
         std::fs::write(dir.path().join("sepia-driver-x"), "x").unwrap();
         let _ = dir;
     }
+
+    #[tokio::test]
+    async fn remote_store_reports_decode_errors() {
+        // A driver whose result shape doesn't decode into the wire
+        // types → the from_value arm errors.
+        let dir = tempfile::tempdir().unwrap();
+        let bin = bad_driver(
+            dir.path(),
+            "sepia-driver-malformed",
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\),"method".*/\1/p')
+  printf '{"id":%s,"result":{"weird":true}}\n' "${id:-0}"
+done
+"#,
+        );
+        let client = Arc::new(DriverClient::spawn(&bin, &[]).await.unwrap());
+        let store = RemoteStore::new(client, "malformed".into());
+        assert!(store.list().await.is_err());
+        assert!(store.summary("s1", None).await.is_err());
+        assert!(
+            store
+                .nodes_window("s1", &NodesWindowOptions::default())
+                .await
+                .is_err()
+        );
+    }
+
+    // ---------- discovery helpers with injected env -------------------------------
+
+    #[test]
+    fn data_dir_prefers_xdg_then_home() {
+        let xdg = sepia_host::discover::data_dir_from(
+            Some("/tmp/xdg-data".into()),
+            Some("/home/u".into()),
+        );
+        assert_eq!(xdg, Some(std::path::PathBuf::from("/tmp/xdg-data")));
+        // Empty XDG falls through to HOME.
+        let home = sepia_host::discover::data_dir_from(Some("".into()), Some("/home/u".into()));
+        assert_eq!(home, Some(std::path::PathBuf::from("/home/u/.local/share")));
+        assert_eq!(sepia_host::discover::data_dir_from(None, None), None);
+    }
+
+    #[test]
+    fn find_driver_binaries_in_scans_and_dedupes() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        // Executable driver-looking file, a non-executable, a foreign binary,
+        // and a duplicate name in the second dir.
+        let drv = dir.path().join("sepia-driver-fake");
+        std::fs::write(&drv, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&drv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let non_exec = dir.path().join("sepia-driver-noexec");
+        std::fs::write(&non_exec, "x").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&non_exec, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        std::fs::write(dir.path().join("not-a-driver"), "x").unwrap();
+        std::fs::write(other.path().join("sepia-driver-fake"), "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                other.path().join("sepia-driver-fake"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+        let found = sepia_host::discover::find_driver_binaries_in(&[
+            dir.path().to_path_buf(),
+            dir.path().join("missing-subdir"), // read_dir fails → skip arm
+            other.path().to_path_buf(),        // dup name → seen arm
+        ]);
+        assert_eq!(found, vec![drv]);
+    }
+
+    #[tokio::test]
+    async fn discover_binaries_reports_problems_and_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        // A driver script whose --manifest output is garbage → problem arm.
+        let bad = dir.path().join("sepia-driver-bad");
+        std::fs::write(&bad, "#!/bin/sh\necho '{\"nope\":1}'\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // A script that exits nonzero → spawn/manifest failure arm.
+        let dead = dir.path().join("sepia-driver-dead");
+        std::fs::write(&dead, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dead, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let (registry, problems) =
+            sepia_host::DriverRegistry::discover_binaries(vec![bad, dead]).await;
+        assert!(problems.len() >= 2);
+        assert_eq!(registry.manifests().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn client_spawn_failure_surfaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("sepia-driver-missing");
+        let mut registry = sepia_host::DriverRegistry::default();
+        registry.insert(
+            missing,
+            sepia_driver::DriverManifest {
+                id: "gone".into(),
+                label: "gone".into(),
+                version: "0".into(),
+                protocol: sepia_driver::DRIVER_PROTOCOL,
+                capabilities: std::collections::BTreeSet::new(),
+                agent_command: None,
+                config_schema: serde_json::json!({}),
+                backend_type: None,
+            },
+        );
+        let err = registry.entry("gone").unwrap().client().await;
+        assert!(err.is_err());
+        // A second call returns the cached error — same arm.
+        let err = registry.entry("gone").unwrap().client().await;
+        assert!(err.is_err());
+        // merged_store: the unavailable driver is skipped with a warning.
+        let store = registry.merged_store().await;
+        let _ = store;
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn scan_dir_skips_non_utf8_names() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    // A driver-shaped name that isn't UTF-8 → file_name() misses entirely.
+    let bad = dir
+        .path()
+        .join(std::ffi::OsString::from_vec(b"sepia-driver-\xFF".to_vec()));
+    std::fs::write(&bad, "x").unwrap();
+    std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let found = sepia_host::discover::find_driver_binaries_in(&[dir.path().to_path_buf()]);
+    assert!(found.is_empty());
 }

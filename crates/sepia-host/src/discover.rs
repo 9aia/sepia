@@ -32,7 +32,7 @@ fn data_dir() -> Option<PathBuf> {
 }
 
 /// The env-free half of [`data_dir`] — tests inject the vars.
-fn data_dir_from(
+pub fn data_dir_from(
     xdg: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,
 ) -> Option<PathBuf> {
@@ -44,10 +44,9 @@ fn data_dir_from(
     home.map(|home| Path::new(&home).join(".local/share"))
 }
 
-fn is_driver_binary(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
+/// `name` is the entry's already-verified UTF-8 file name (the scan
+/// skips non-UTF-8 names before calling).
+fn is_driver_binary(path: &Path, name: &str) -> bool {
     if !name.starts_with("sepia-driver-") {
         return false;
     }
@@ -76,7 +75,7 @@ fn scan_dir(dir: &Path, seen: &mut std::collections::BTreeSet<String>, found: &m
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if is_driver_binary(&path) && seen.insert(name.to_string()) {
+        if is_driver_binary(&path, name) && seen.insert(name.to_string()) {
             found.push(path);
         }
     }
@@ -97,15 +96,15 @@ pub fn find_driver_binaries_in(dirs: &[PathBuf]) -> Vec<PathBuf> {
 pub fn find_driver_binaries() -> Vec<PathBuf> {
     let mut found = find_driver_binaries_in(&search_dirs());
     // PATH scan — a driver installed with a package manager lands here.
-    if let Ok(path_var) = std::env::var("PATH") {
-        let dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
-        let mut seen: std::collections::BTreeSet<String> = found
-            .iter()
-            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
-            .collect();
-        for dir in &dirs {
-            scan_dir(dir, &mut seen, &mut found);
-        }
+    let dirs: Vec<PathBuf> = std::env::var("PATH")
+        .map(|v| std::env::split_paths(&v).collect())
+        .unwrap_or_default();
+    let mut seen: std::collections::BTreeSet<String> = found
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+        .collect();
+    for dir in &dirs {
+        scan_dir(dir, &mut seen, &mut found);
     }
     found
 }

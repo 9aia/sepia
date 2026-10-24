@@ -117,3 +117,100 @@ async fn permission_requests_settle_out_of_band() {
     assert!(!conn.respond_to_permission("bogus", Some("allow")));
     conn.close().await;
 }
+
+#[tokio::test]
+async fn permission_request_is_answered_over_the_wire() {
+    let conn = Arc::new(spawn_agent(&mock_spec(), &options()).await.unwrap());
+    conn.load_session("s1", "/work").await.unwrap();
+    // "perm" is the default MOCK_PERM_TEXT trigger.
+    let _ = conn
+        .prompt(
+            "s1",
+            &[sepia_acp::PromptPart::Text {
+                text: "perm".into(),
+            }],
+        )
+        .await;
+    conn.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_stderr_and_mid_call_death_are_drained() {
+    // A spec whose shell spews stderr before exec'ing the mock — the
+    // stderr drain task reads it while the conn is alive.
+    let mut spec = AgentSpec {
+        id: "x".into(),
+        label: "x".into(),
+        command: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "echo noise-on-stderr >&2; exec \"$0\" \"$@\"".into(),
+            std::env::var("CARGO_BIN_EXE_sepia-mock-acp-agent")
+                .unwrap_or_else(|_| "sepia-mock-acp-agent".into()),
+        ],
+        env: Some(
+            [("MOCK_EXIT_AFTER_PROMPT".to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+        ),
+    };
+    let conn = Arc::new(spawn_agent(&spec, &options()).await.unwrap());
+    conn.load_session("s1", "/work").await.unwrap();
+    // The first prompt kills the agent mid-call — the exit watcher fails
+    // the pending call instead of hanging.
+    let _ = conn
+        .prompt("s1", &[sepia_acp::PromptPart::Text { text: "go".into() }])
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    conn.close().await;
+    spec.env = None;
+}
+
+#[test]
+fn resolve_agent_unknown_lists_known_or_nothing() {
+    // Unknown ids report the known-agent list (builtins always present).
+    let err = sepia_acp::resolve_agent("ghost", &[]).unwrap_err();
+    assert!(err.contains("known agents"));
+    let known = AgentSpec {
+        id: "k".into(),
+        label: "k".into(),
+        command: vec!["x".into()],
+        env: None,
+    };
+    let err = sepia_acp::resolve_agent("ghost", &[known]).unwrap_err();
+    assert!(err.contains("known agents"));
+}
+
+/// A raw spawn of the mock agent: a non-request line and a
+/// non-numeric-id request hit the `_ => {}` + string-id error arms.
+#[cfg(unix)]
+#[test]
+fn mock_agent_tolerates_odd_lines() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let bin = env!("CARGO_BIN_EXE_sepia-mock-acp-agent");
+    let mut child = Command::new(bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    // A bare notification (no id) → `_ => {}` arm.
+    writeln!(
+        stdin,
+        "{{\"jsonrpc\":\"2.0\",\"method\":\"weird/thing\",\"params\":{{}}}}"
+    )
+    .unwrap();
+    // A request with a non-numeric id → the invalid-id error path.
+    writeln!(
+        stdin,
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"str-id\",\"method\":\"session/list\",\"params\":{{}}}}"
+    )
+    .unwrap();
+    // Garbage JSON → decode error arm.
+    writeln!(stdin, "not json at all").unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    let _ = out;
+}

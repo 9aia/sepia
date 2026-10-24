@@ -169,3 +169,39 @@ fn default_dir_falls_back_to_home() {
     let res = wire.call(1, "session.list", json!({}));
     assert_eq!(res["result"], json!([]), "{res}");
 }
+
+#[test]
+fn an_empty_env_dir_also_falls_back_to_home() {
+    // SEPIA_CLINE_DIR="" — the empty-string guard falls through to HOME.
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut wire = Wire::spawn(
+        &[("HOME", home.to_str().unwrap()), ("SEPIA_CLINE_DIR", "")],
+        tmp.path(),
+    );
+    let res = wire.call(1, "session.list", json!({}));
+    assert_eq!(res["result"], json!([]), "{res}");
+}
+
+#[test]
+fn rewind_errors_and_bad_config_params_surface() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let mut wire = Wire::spawn(&[("SEPIA_CLINE_DIR", data.to_str().unwrap())], tmp.path());
+    // A valid rewind shape on a session that doesn't exist → truncator err.
+    let res = wire.call(
+        1,
+        "session.rewind",
+        json!({
+            "session": {"id": "ghost"},
+            "plan": {"keepCount": 0, "kept": [], "removed": [], "removedToolCallIds": []},
+            "truncated": {"id": "ghost"},
+        }),
+    );
+    assert!(res.get("error").is_some(), "{res}");
+    // config.read with a non-string dir → invalid params.
+    let res = wire.call(2, "config.read", json!({"dir": 42}));
+    assert_eq!(res["error"]["code"], -32602, "{res}");
+}

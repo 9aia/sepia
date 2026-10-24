@@ -249,7 +249,7 @@ async fn import_export_install_error_surfaces() {
 
     // dry_run: parses but never saves.
     let out2 = dir.path().join("cline-out2");
-    let mut other = contract::session("dry", "Dry", 1.0);
+    let other = contract::session("dry", "Dry", 1.0);
     let store2: Arc<dyn SessionRepository> = Arc::new(MemStore {
         sessions: Mutex::new(HashMap::new()),
     });
@@ -270,4 +270,39 @@ async fn import_export_install_error_surfaces() {
         .unwrap();
     assert_eq!(id, "dry2");
     let _ = other;
+}
+
+#[tokio::test]
+async fn import_cline_real_write_and_install_edges() {
+    // cline source dir → from_directory
+    let src = tempfile::tempdir().unwrap();
+    let dir = src.path().join("sess-1");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("sess-1.json"), r#"{"session_id":"sess-1","cwd":"/w","started_at":"2026-01-01T00:00:00Z","status":"completed","model":"m"}"#).unwrap();
+    std::fs::write(dir.join("sess-1.messages.json"), r#"{"messages":[{"id":"m0","role":"user","content":[{"type":"text","text":"hi"}],"ts":1}]}"#).unwrap();
+    let store: Arc<dyn SessionRepository> = Arc::new(MemStore {
+        sessions: Mutex::new(HashMap::new()),
+    });
+    // dry_run=false → the real import runs.
+    let id = sepia_convert::import_cline(&dir, None, &store, false)
+        .await
+        .unwrap();
+    assert_eq!(id, "sess-1");
+    assert!(store.get_by_id("sess-1", None).await.unwrap().is_some());
+
+    // install with no explicit id → derived id; failing install → error.
+    let data = tempfile::tempdir().unwrap();
+    let id = sepia_convert::install_cline(&store, "sess-1", data.path(), None, true)
+        .await
+        .unwrap();
+    assert!(!id.is_empty());
+    // An install that can't even create its dir fails cleanly.
+    let blocker = tempfile::tempdir().unwrap();
+    let file_dir = blocker.path().join("file");
+    std::fs::write(&file_dir, "x").unwrap();
+    assert!(
+        sepia_convert::install_cline(&store, "sess-1", &file_dir, Some("sess-2"), true)
+            .await
+            .is_err()
+    );
 }

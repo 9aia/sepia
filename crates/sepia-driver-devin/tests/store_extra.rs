@@ -5,8 +5,6 @@
 //! malformed rows, missing tables, and the cold `nodes_window` SQL path
 //! (the whole-session cache only answers once `get_by_id` has run).
 
-use std::path::PathBuf;
-
 use rusqlite::Connection;
 use sepia_core::storage::{NodesWindowOptions, SessionRepository};
 use sepia_driver_devin::DevinStore;
@@ -287,4 +285,31 @@ async fn truncator_error_paths() {
         .await
         .unwrap_err();
     assert!(err.contains("Failed to truncate session"));
+}
+
+#[tokio::test]
+async fn subagent_parents_degrades_on_a_schema_without_agent_id() {
+    // The table exists (has_subagent_heads) but lacks the queried
+    // column → the prepare fails and parents degrade to empty.
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("sessions.db");
+    {
+        let store = DevinStore::open(&db, false).unwrap();
+        store
+            .save(&contract::session("s1", "S1", 1.0))
+            .await
+            .unwrap();
+    }
+    {
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS subagent_heads;
+             CREATE TABLE subagent_heads(session_id TEXT, chain_node_id INTEGER);",
+        )
+        .unwrap();
+    }
+    let store = DevinStore::open(&db, true).unwrap();
+    assert!(store.has_subagent_heads());
+    let listed = store.list().await.unwrap();
+    assert!(!listed.is_empty());
 }

@@ -46,6 +46,16 @@ const PROBE_IDLE_FACTOR: u32 = 10;
 const MIN_PROBE_IDLE: Duration = Duration::from_secs(60);
 const EVENT_BUFFER: usize = 512;
 
+/// The broadcast fan-out depth — `SEPIA_EVENT_BUFFER` shrinks it so
+/// tests surface lagged receivers deterministically.
+fn event_buffer() -> usize {
+    std::env::var("SEPIA_EVENT_BUFFER")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(EVENT_BUFFER)
+}
+
 fn now_ms() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -214,7 +224,7 @@ impl ControlPlane {
                 .unwrap_or_else(|| Arc::new(default_terminate)),
             restore_exec: options
                 .restore_exec
-                .unwrap_or_else(|| Arc::new(crate::exec::DefaultRestoreExec)),
+                .unwrap_or_else(|| Arc::new(crate::exec::DefaultRestoreExec::default())),
             file_history_dir: options.file_history_dir.unwrap_or_else(|| {
                 std::env::var_os("HOME")
                     .map_or_else(|| PathBuf::from("/"), PathBuf::from)
@@ -223,7 +233,7 @@ impl ControlPlane {
             rewinders: options.rewinders,
             meta: options.meta,
             node_name: options.node_name,
-            node_events: broadcast::channel(EVENT_BUFFER).0,
+            node_events: broadcast::channel(event_buffer()).0,
             state: Mutex::new(State::default()),
             me: me.clone(),
             stop_sweep: AtomicBool::new(false),
@@ -1103,7 +1113,7 @@ impl ControlPlane {
         LiveSession {
             id: thread_id.to_string(),
             conn: Arc::clone(conn),
-            events: broadcast::channel(EVENT_BUFFER).0,
+            events: broadcast::channel(event_buffer()).0,
             forward_tasks: Vec::new(),
             translator: Arc::new(StdMutex::new(Translator::new(thread_id))),
             cwd,

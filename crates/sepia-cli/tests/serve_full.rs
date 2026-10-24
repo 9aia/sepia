@@ -173,6 +173,23 @@ mod serve {
             }
             panic!("no {method} notification in {tries} lines");
         }
+
+        /// `call` but collect the notifications read while waiting.
+        fn call_collect(&mut self, id: u64, method: &str, params: Value) -> (Value, Vec<Value>) {
+            self.send(
+                &json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string(),
+            );
+            let mut notes = Vec::new();
+            loop {
+                let mut line = String::new();
+                assert!(self.stdout.read_line(&mut line).unwrap() > 0, "eof");
+                let message: Value = serde_json::from_str(&line).unwrap();
+                if message["id"].as_u64() == Some(id) {
+                    return (message, notes);
+                }
+                notes.push(message);
+            }
+        }
     }
 
     impl Drop for Serve {
@@ -519,7 +536,164 @@ mod serve {
             res["result"].is_object() || res["error"].is_object(),
             "{res}"
         );
+        serve.call(5, "shutdown", json!({}));
+    }
 
+    #[test]
+    fn patch_meta_model_forms_permission_success_and_lagged_feeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let drivers = tmp.path().join("drivers");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&drivers).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        let session_file = fake_devin_driver(&drivers);
+        write_session(&session_file, &work, json!(null));
+        let mock = sepia_testkit::ensure_mock_acp_agent()
+            .to_string_lossy()
+            .into_owned();
+        let mut serve = Serve::start(
+            &home,
+            &drivers,
+            &[("SEPIA_AGENT_DEVIN_COMMAND", mock.as_str())],
+        );
+
+        // `model` present → Some(Some(s)); `model: null` → Some(None);
+        // absent → keep (the model-guard's false arm).
+        let res = serve.call(
+            1,
+            "sessions.patch_meta",
+            json!({"id": "s1", "patch": {"model": "gpt-x"}}),
+        );
+        assert!(
+            res["error"].is_null() || res.get("error").is_none(),
+            "{res}"
+        );
+        let res = serve.call(
+            2,
+            "sessions.patch_meta",
+            json!({"id": "s1", "patch": {"model": null}}),
+        );
+        assert!(
+            res["error"].is_null() || res.get("error").is_none(),
+            "{res}"
+        );
+        let res = serve.call(
+            21,
+            "sessions.patch_meta",
+            json!({"id": "s1", "patch": {"pinned": true}}),
+        );
+        assert!(
+            res["error"].is_null() || res.get("error").is_none(),
+            "{res}"
+        );
+
+        // attach + subscribe both feeds, then prompt "perm" — the mock's
+        // permission request surfaces on the session feed carrying the
+        // broker-minted request id; answering it returns Null.
+        let res = serve.call(3, "sessions.attach", json!({"id": "s1"}));
+        assert_eq!(res["result"]["attached"], true, "{res}");
+        let res = serve.call(4, "sessions.subscribe", json!({"id": "s1"}));
+        assert_eq!(res["result"]["subscribed"], true, "{res}");
+        let res = serve.call(5, "events.subscribe", json!({}));
+        assert_eq!(res["result"]["subscribed"], true, "{res}");
+        // The permission notification can land before or after the
+        // prompt response — collect every note read while doing a few
+        // calls and pull the broker-minted request id out of whichever
+        // notification carried it.
+        fn request_id_in(note: &Value) -> Option<String> {
+            match note {
+                Value::Object(map) => map.iter().find_map(|(k, v)| {
+                    if k == "requestId" {
+                        v.as_str().map(str::to_string)
+                    } else {
+                        request_id_in(v)
+                    }
+                }),
+                Value::Array(items) => items.iter().find_map(request_id_in),
+                _ => None,
+            }
+        }
+        let (_res, mut notes) = serve.call_collect(
+            6,
+            "sessions.prompt",
+            json!({"id": "s1", "parts": [{"type": "text", "text": "perm"}]}),
+        );
+        let mut request_id = notes.iter().find_map(request_id_in);
+        for id in 70..80 {
+            if request_id.is_some() {
+                break;
+            }
+            let (_r, more) = serve.call_collect(id, "sessions.list", json!({}));
+            notes.extend(more);
+            request_id = notes.iter().find_map(request_id_in);
+        }
+        let request_id = request_id.unwrap_or_else(|| panic!("no request id"));
+        let res = serve.call(
+            7,
+            "sessions.permission",
+            json!({"id": "s1", "request": request_id, "option": "allow"}),
+        );
+        assert_eq!(res["result"], Value::Null, "{res}");
+        assert!(res.get("error").is_none(), "{res}");
+
+        serve.call(9, "shutdown", json!({}));
+    }
+
+    #[test]
+    fn lagged_feeds_emit_drop_markers() {
+        // SEPIA_EVENT_BUFFER=1 makes every update burst overflow the
+        // feed — both subscribe forwarders run their Lagged arms and
+        // report the dropped counts as notifications.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let drivers = tmp.path().join("drivers");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&drivers).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        let session_file = fake_devin_driver(&drivers);
+        write_session(&session_file, &work, json!(null));
+        let mock = sepia_testkit::ensure_mock_acp_agent()
+            .to_string_lossy()
+            .into_owned();
+        let mut serve = Serve::start(
+            &home,
+            &drivers,
+            &[
+                ("SEPIA_AGENT_DEVIN_COMMAND", mock.as_str()),
+                ("SEPIA_INHERIT_ENV", "1"),
+                ("MOCK_CHUNK_FLOOD", "40"),
+                ("SEPIA_EVENT_BUFFER", "1"),
+            ],
+        );
+        let res = serve.call(1, "sessions.attach", json!({"id": "s1"}));
+        assert_eq!(res["result"]["attached"], true, "{res}");
+        let res = serve.call(2, "sessions.subscribe", json!({"id": "s1"}));
+        assert_eq!(res["result"]["subscribed"], true, "{res}");
+        let res = serve.call(3, "events.subscribe", json!({}));
+        assert_eq!(res["result"]["subscribed"], true, "{res}");
+        let (_res, mut notes) = serve.call_collect(
+            4,
+            "sessions.prompt",
+            json!({"id": "s1", "parts": [{"type": "text", "text": "go"}]}),
+        );
+        // The flood's notifications stream in behind the response —
+        // keep making calls until a lagged marker shows on either feed.
+        let mut lagged = notes
+            .iter()
+            .filter(|n| n.to_string().contains("lagged"))
+            .count();
+        let mut id = 10;
+        while lagged == 0 && id < 40 {
+            let (_r, more) = serve.call_collect(id, "sessions.list", json!({}));
+            notes.extend(more);
+            lagged = notes
+                .iter()
+                .filter(|n| n.to_string().contains("lagged"))
+                .count();
+            id += 1;
+        }
+        assert!(lagged > 0, "no lagged marker in {notes:?}");
         serve.call(5, "shutdown", json!({}));
     }
 }

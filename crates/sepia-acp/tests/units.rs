@@ -91,7 +91,7 @@ fn resolve_agent_prefers_overrides_then_builtins() {
         command: vec!["x".into()],
         env: None,
     };
-    let found = resolve_agent("devin", &[custom.clone()]).unwrap();
+    let found = resolve_agent("devin", std::slice::from_ref(&custom)).unwrap();
     assert_eq!(found.label, "Custom");
     // Builtin fallback.
     assert_eq!(resolve_agent("cline", &[]).unwrap().label, "Cline");
@@ -178,7 +178,9 @@ async fn call_after_agent_death_fails_fast() {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         match conn.list_sessions().await {
-            Err(e) if e.message.contains("exited") => break,
+            // Any fast failure counts — "exited" once the watcher lands,
+            // or the broken-pipe write failure racing ahead of it.
+            Err(e) if e.message.contains("exited") || e.message.contains("stdin") => break,
             _ if std::time::Instant::now() > deadline => {
                 panic!("agent never marked dead")
             }

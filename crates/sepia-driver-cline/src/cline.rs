@@ -622,7 +622,7 @@ fn tool_result_shares(cline_result: &Value, devin_calls: &[PendingCall]) -> Vec<
     if !tail.is_empty() {
         // `if let` would leave an unreachable-else edge; the Option
         // iterates zero or one times either way.
-        #[allow(clippy::for_loops_over_fallibles)]
+        #[allow(for_loops_over_fallibles)]
         for last in out.last_mut() {
             let failed = last.success == Some(false)
                 || tail_indices.iter().any(|i| successes[*i] == Some(false));
@@ -1968,4 +1968,29 @@ pub fn to_directory(
         return Ok([ExportAction::Replaced, ExportAction::Replaced]);
     }
     Ok([ExportAction::Created, ExportAction::Created])
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn build_tool_node_with_null_arguments_carries_null_metadata() {
+        // `map_tool_use` always yields object arguments, so the null arm
+        // is unreachable through parse — the constructor still honors it.
+        let node = build_tool_node(0, None, "tc-1", "out", "read", &Value::Null, 1.0, None);
+        assert_eq!(node.metadata, Value::Null);
+        let node = build_tool_node(
+            1,
+            Some(0),
+            "tc-2",
+            "out",
+            "read",
+            &json!({"file_path": "/a"}),
+            1.0,
+            None,
+        );
+        assert_eq!(node.metadata["toolArguments"]["file_path"], "/a");
+    }
 }

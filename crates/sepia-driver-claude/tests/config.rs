@@ -7,7 +7,8 @@
 use std::path::Path;
 
 use sepia_core::agent_config::{
-    AgentConfig, ConfigHook, ConfigRule, HookKind, RuleKind, WriteActionKind,
+    AgentConfig, ConfigCommand, ConfigHook, ConfigRule, ConfigSkill, HookKind, RuleKind,
+    WriteActionKind,
 };
 use sepia_driver_claude::config;
 use serde_json::{Value, json};
@@ -221,4 +222,82 @@ fn write_to_a_fresh_dir_creates_all_surfaces() {
         serde_json::from_str(&std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap())
             .unwrap();
     assert_eq!(mcp["mcpServers"]["srv"], json!({ "command": "x" }));
+}
+
+#[test]
+fn write_skips_unusable_stems_and_propagates_io_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = AgentConfig {
+        commands: vec![ConfigCommand {
+            name: "..".into(),
+            description: None,
+            body: "x".into(),
+            argument_hint: None,
+            allowed_tools: Vec::new(),
+            model: None,
+            metadata: Value::Null,
+        }],
+        ..AgentConfig::default()
+    };
+    let actions = config::write(&config, dir.path()).unwrap();
+    assert!(actions.iter().any(|a| a.action == WriteActionKind::Skipped));
+
+    let full = AgentConfig {
+        skills: vec![ConfigSkill {
+            name: "s".into(),
+            description: None,
+            body: "x".into(),
+            files: Vec::new(),
+            metadata: Value::Null,
+        }],
+        commands: vec![ConfigCommand {
+            name: "c".into(),
+            description: None,
+            body: "x".into(),
+            argument_hint: None,
+            allowed_tools: Vec::new(),
+            model: None,
+            metadata: Value::Null,
+        }],
+        agents: vec![],
+        mcp_servers: serde_json::Map::from_iter([("srv".into(), json!({}))]),
+        ..AgentConfig::default()
+    };
+    for blocker in ["skills", "commands"] {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(blocker), "file").unwrap();
+        assert!(config::write(&full, d.path()).is_err(), "{blocker}");
+    }
+    // CLAUDE.md merge produces text, then the write fails.
+    let d = tempfile::tempdir().unwrap();
+    let memory = d.path().join("CLAUDE.md");
+    std::fs::write(&memory, "keep").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&memory, std::fs::Permissions::from_mode(0o444)).unwrap();
+    }
+    let owned = AgentConfig {
+        rules: vec![ConfigRule {
+            name: "mem".into(),
+            description: None,
+            body: "More".into(),
+            globs: Vec::new(),
+            always_apply: false,
+            kind: sepia_core::agent_config::RuleKind::Instructions,
+            metadata: serde_json::json!({ "sourcePath": memory.display().to_string() }),
+        }],
+        ..AgentConfig::default()
+    };
+    assert!(config::write(&owned, d.path()).is_err());
+    // mcp.json exists but can't be rewritten.
+    let d = tempfile::tempdir().unwrap();
+    let mcp = d.path().join(".mcp.json");
+    std::fs::write(&mcp, "{}").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&mcp, std::fs::Permissions::from_mode(0o444)).unwrap();
+    }
+    assert!(config::write(&full, d.path()).is_err());
 }

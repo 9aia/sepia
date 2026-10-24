@@ -68,11 +68,9 @@ pub fn write_file_action(path: &Path, content: &str) -> Result<ConfigWriteAction
             detail: None,
         });
     }
-    if let Some(dir) = path.parent() {
-        if !dir.as_os_str().is_empty() {
-            std::fs::create_dir_all(dir)
-                .map_err(fs_error(&format!("Failed to create {}", dir.display())))?;
-        }
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)
+            .map_err(fs_error(&format!("Failed to create {}", dir.display())))?;
     }
     std::fs::write(path, content)
         .map_err(fs_error(&format!("Failed to write {}", path.display())))?;

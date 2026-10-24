@@ -170,6 +170,23 @@ pub fn session_row(
     row
 }
 
+/// JSON column value → the sqlite binding `register` writes. JSON has no
+/// sqlite affinity — bools land as INTEGER, non-integral numbers as REAL,
+/// and containers (which `session_row` never emits) as their text form.
+#[must_use]
+pub fn session_value(value: &Value) -> rusqlite::types::Value {
+    match value {
+        Value::Null => rusqlite::types::Value::Null,
+        Value::Bool(b) => rusqlite::types::Value::Integer(i64::from(*b)),
+        Value::Number(n) => n.as_i64().map_or_else(
+            || rusqlite::types::Value::Real(n.as_f64().unwrap_or(0.0)),
+            rusqlite::types::Value::Integer,
+        ),
+        Value::String(s) => rusqlite::types::Value::Text(s.clone()),
+        other => rusqlite::types::Value::Text(other.to_string()),
+    }
+}
+
 /// True for a pid this process can still signal. `/proc/<pid>` standing in
 /// for `process.kill(pid, 0)` — on Linux an existing entry means the
 /// process exists (including one owned by another user — the `EPERM`

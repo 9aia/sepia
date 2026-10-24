@@ -170,3 +170,16 @@ fn default_dir_falls_back_to_home() {
     let res = wire.call(1, "session.list", json!({}));
     assert_eq!(res["result"], json!([]), "{res}");
 }
+
+#[test]
+fn an_empty_env_dir_also_falls_back_to_home() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut wire = Wire::spawn(&[("HOME", home.to_str().unwrap()), ("SEPIA_CLAUDE_DIR", "")]);
+    let res = wire.call(1, "session.list", json!({}));
+    assert!(
+        res.get("result").is_some() || res.get("error").is_some(),
+        "{res}"
+    );
+}

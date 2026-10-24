@@ -15,9 +15,8 @@ pub struct FrontmatterDoc {
 
 /// `/^---[ \t]*\r?\n/` — `---` on its own first line followed by a newline.
 pub fn has(text: &str) -> bool {
-    let Some(first) = text.split('\n').next() else {
-        return false;
-    };
+    // `str::split` always yields at least one item.
+    let first = text.split('\n').next().unwrap_or_default();
     if text.split('\n').count() < 2 {
         return false;
     }

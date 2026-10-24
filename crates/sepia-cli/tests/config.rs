@@ -443,3 +443,91 @@ fn config_import_default_target_is_cursor() {
     assert!(stdout.contains("cursor config"), "{stdout}");
     assert!(home.join(".cursor").is_dir());
 }
+
+#[test]
+fn config_list_default_dirs_and_diff_shapes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // `--from cline`/`--from devin` with no dir flag exercise their
+    // default_dir arms.
+    let out = sepia_env(
+        &["config", "list", "--from", "cline"],
+        &[("HOME", &path(&home))],
+    );
+    assert!(
+        ok(&out).contains("cline"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = sepia_env(
+        &["config", "list", "--from", "devin"],
+        &[("HOME", &path(&home))],
+    );
+    assert!(
+        ok(&out).contains("devin"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // A hook with neither command nor prompt prints empty.
+    let claude = tmp.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::write(
+        claude.join("settings.json"),
+        r#"{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command"}]}]}}"#,
+    )
+    .unwrap();
+    let out = sepia(&[
+        "config",
+        "list",
+        "--from",
+        "claude",
+        "--claude-dir",
+        &path(&claude),
+    ]);
+    assert!(
+        ok(&out).contains("Hooks"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // diff: an item only in the target side.
+    let src = write_config_file(&tmp);
+    let target = tmp.path().join("target-claude");
+    std::fs::create_dir_all(&target).unwrap();
+    let res = sepia(&[
+        "config",
+        "import",
+        &src,
+        "--to",
+        "claude",
+        "--claude-dir",
+        &path(&target),
+    ]);
+    assert!(
+        res.status.success(),
+        "{}",
+        String::from_utf8_lossy(&res.stderr)
+    );
+    let _ = src;
+    let empty = tmp.path().join("empty-cursor");
+    std::fs::create_dir_all(&empty).unwrap();
+    let out = sepia(&[
+        "config",
+        "diff",
+        "--from",
+        "cursor",
+        "--cursor-dir",
+        &path(&empty),
+        "--to",
+        "claude",
+        "--claude-dir",
+        &path(&target),
+    ]);
+    assert!(
+        ok(&out).contains("only in target"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

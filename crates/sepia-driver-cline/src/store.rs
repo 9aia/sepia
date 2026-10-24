@@ -168,8 +168,15 @@ fn resolve_path(path: &Path) -> PathBuf {
             .unwrap_or_else(|_| PathBuf::from("/"))
             .join(path)
     };
+    fold_components(&abs)
+}
+
+/// Lexical `.`/`..` folding — `CurDir` only shows up on relative inputs
+/// (`resolve_path` always hands us an absolute path, but the folding is
+/// correct for either).
+fn fold_components(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
-    for component in abs.components() {
+    for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
@@ -217,21 +224,12 @@ impl ClineStore {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         )
         .map_err(|e| StorageError::new(format!("Failed to read the Cline session index: {e}")))?;
-        let tables: Vec<String> = {
-            let mut stmt = conn
-                .prepare("select name from sqlite_master where type = 'table'")
-                .map_err(|e| {
-                    StorageError::new(format!("Failed to read the Cline session index: {e}"))
-                })?;
-            stmt.query_map([], |r| r.get(0))
-                .map_err(|e| {
-                    StorageError::new(format!("Failed to read the Cline session index: {e}"))
-                })?
-                .collect::<Result<_, _>>()
-                .map_err(|e| {
-                    StorageError::new(format!("Failed to read the Cline session index: {e}"))
-                })?
-        };
+        let tables: Vec<String> = conn
+            .prepare("select name from sqlite_master where type = 'table'")
+            .and_then(|mut stmt| stmt.query_map([], |r| r.get(0)).and_then(Iterator::collect))
+            .map_err(|e| {
+                StorageError::new(format!("Failed to read the Cline session index: {e}"))
+            })?;
         if !tables.iter().any(|t| t == "sessions") {
             return Ok(None);
         }
@@ -269,16 +267,7 @@ impl ClineStore {
         let row = cline_index::session_row(session, id, &messages_path.to_string_lossy(), &now);
         let values: Vec<rusqlite::types::Value> = cline_index::SESSION_COLUMNS
             .iter()
-            .map(|col| match row.get(*col).unwrap_or(&Value::Null) {
-                Value::Null => rusqlite::types::Value::Null,
-                Value::Bool(b) => rusqlite::types::Value::Integer(i64::from(*b)),
-                Value::Number(n) => n.as_i64().map_or_else(
-                    || rusqlite::types::Value::Real(n.as_f64().unwrap_or(0.0)),
-                    rusqlite::types::Value::Integer,
-                ),
-                Value::String(s) => rusqlite::types::Value::Text(s.clone()),
-                other => rusqlite::types::Value::Text(other.to_string()),
-            })
+            .map(|col| cline_index::session_value(row.get(*col).unwrap_or(&Value::Null)))
             .collect();
         conn.execute(
             &cline_index::insert_session_sql(),
@@ -692,5 +681,21 @@ impl sepia_driver::SessionTruncator for ClineStore {
         self.truncate_session(&session.id, &plan.kept, &plan.removed)
             .map(|_| ())
             .map_err(|e| e.message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn fold_components_collapses_dot_and_dotdot() {
+        // A relative input is the only way CurDir appears — resolve_path
+        // always absolutizes first.
+        let folded = fold_components(Path::new("./a/b/../c"));
+        assert_eq!(folded, PathBuf::from("a/c"));
+        let folded = fold_components(Path::new("/x/./y/../z"));
+        assert_eq!(folded, PathBuf::from("/x/z"));
     }
 }

@@ -242,25 +242,26 @@ fn blob_row(conn: &Connection, id: &str) -> Option<Vec<u8>> {
 }
 
 fn all_blobs(conn: &Connection) -> Vec<(String, Vec<u8>)> {
-    let Ok(mut stmt) = conn.prepare("select id, data from blobs") else {
-        return Vec::new();
-    };
-    let Ok(rows) = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, rusqlite::types::Value>(0)?,
-            r.get::<_, rusqlite::types::Value>(1)?,
-        ))
-    }) else {
-        return Vec::new();
-    };
-    rows.flatten()
-        .filter_map(|(id, data)| match (id, data) {
-            (rusqlite::types::Value::Text(id), rusqlite::types::Value::Blob(data)) => {
-                Some((id, data))
-            }
-            _ => None,
+    conn.prepare("select id, data from blobs")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, rusqlite::types::Value>(0)?,
+                    r.get::<_, rusqlite::types::Value>(1)?,
+                ))
+            })
+            .map(|rows| {
+                rows.flatten()
+                    .filter_map(|(id, data)| match (id, data) {
+                        (rusqlite::types::Value::Text(id), rusqlite::types::Value::Blob(data)) => {
+                            Some((id, data))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
         })
-        .collect()
+        .unwrap_or_default()
 }
 
 /// `meta['0']` plus the root checkpoint's workspace, from an open store.
@@ -343,14 +344,14 @@ fn node_emits_blob(node: &MessageNode) -> bool {
 /// Metadata keys the native decode knows and the embed can't: the blob id
 /// a node was read from, the paired tool args, the `<user_info>` marker.
 fn overlay_metadata(embedded: &Value, native: &Value) -> Value {
-    let mut merged = match native.as_object() {
-        Some(obj) => obj.clone(),
-        None => return embedded.clone(),
+    // The native decode always stamps an object — `unwrap_or_default`
+    // keeps a corrupt native side degrading to the embed's own keys.
+    let mut merged = native.as_object().cloned().unwrap_or_default();
+    let Some(extra) = embedded.as_object() else {
+        return Value::Object(merged);
     };
-    if let Some(extra) = embedded.as_object() {
-        for (k, v) in extra {
-            merged.insert(k.clone(), v.clone());
-        }
+    for (k, v) in extra {
+        merged.insert(k.clone(), v.clone());
     }
     Value::Object(merged)
 }

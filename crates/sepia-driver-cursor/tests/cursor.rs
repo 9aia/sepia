@@ -5,6 +5,7 @@
 //! write-side encoders.
 
 use sepia_core::domain::{REDACTED_THINKING, Role, ToolCallStatus};
+use sepia_core::{MessageNode, Session, ToolCall};
 use sepia_driver_cursor::cursor::{self, CursorStoreInput, CursorStoreMeta, SummarizeStoreInput};
 use serde_json::{Value, json};
 
@@ -513,4 +514,217 @@ fn session_from_store_skips_unparseable_blobs_and_odd_message_shapes() {
     // the result-less tool-result still emits a node with empty output
     assert_eq!(session.nodes[1].content, "");
     assert_eq!(session.nodes[2].content, "[cursor banana]");
+}
+
+/* ---- coverage tail --------------------------------------------------- */
+
+#[test]
+fn decoder_scalar_edge_arms() {
+    // decode_uri_component: truncated escape and bad hex both yield None.
+    assert_eq!(cursor::workspace_from_uri(Some("file:///a%")), None);
+    assert_eq!(cursor::workspace_from_uri(Some("file:///a%zz")), None);
+    assert_eq!(
+        cursor::workspace_from_uri(Some("file:///home%20me/proj")).as_deref(),
+        Some("/home me/proj")
+    );
+    // strip_angle_tags: a dangling `<` survives verbatim.
+    assert_eq!(
+        cursor::extract_user_query("question with a dangling <tag").as_deref(),
+        Some("question with a dangling <tag")
+    );
+    // resolve_path: relative cwd + `..` folding.
+    assert!(cursor::workspace_hash_from_cwd("rel/../x").len() == 32);
+    assert_eq!(
+        cursor::workspace_hash_from_cwd("/a/./b/../c"),
+        cursor::workspace_hash_from_cwd("/a/c")
+    );
+    // checkpoint proto: unknown field numbers are skipped.
+    let mut ckpt = proto_field(1, &cursor::from_hex(&blob_id(1)).unwrap());
+    ckpt.extend_from_slice(&proto_varint_field(5, 99));
+    ckpt.extend_from_slice(&proto_field(9, b"file:///w"));
+    let decoded = cursor::decode_checkpoint(&ckpt).unwrap();
+    assert_eq!(decoded.message_ids, vec![blob_id(1)]);
+}
+
+#[test]
+fn apply_patch_refs_hunk_edges() {
+    // A pre-hunk context line, an unknown char, a `\\ No newline` marker,
+    // and a non-directive line — all skipped, Update still lands.
+    let patch = concat!(
+        "*** Begin Patch\n*** Update File: src/a.rs\n",
+        "-orphan before hunk\n",          // hunk == None → continue
+        "@@\n",                           // hunk opens
+        "\\ No newline at end of file\n", // marker skipped
+        " context\n",                     // both sides
+        "-old\n+new\n",                   // minus/plus
+        "!unknown prefix\n",              // `_` arm
+        "not a directive line\n",         // directive → None
+        "*** End Patch\n",
+    );
+    let refs = cursor::tool_file_refs("ApplyPatch", &json!(patch));
+    assert_eq!(refs.diffs.len(), 1);
+    let diff = &refs.diffs[0];
+    assert!(diff.old_text.as_deref().unwrap_or("").is_empty() || diff.old_text.is_some());
+}
+
+#[test]
+fn store_message_shape_edges() {
+    let blobs = vec![
+        (
+            blob_id(0),
+            checkpoint(
+                &[
+                    blob_id(1).as_str(),
+                    blob_id(2).as_str(),
+                    blob_id(3).as_str(),
+                    blob_id(4).as_str(),
+                    blob_id(5).as_str(),
+                    blob_id(6).as_str(),
+                    blob_id(7).as_str(),
+                ],
+                None,
+                "cli",
+            ),
+        ),
+        // non-object JSON → parse_message None arm.
+        (blob_id(1), json_bytes(&json!([1, 2, 3]))),
+        // empty blob data → opaque_blobs arm.
+        (blob_id(2), Vec::new()),
+        // system with non-string content → tool_result_text arm.
+        (
+            blob_id(3),
+            json_bytes(&json!({"role":"system","content":[1,2]})),
+        ),
+        // plain user string (not user_info) → bare blobId metadata arm.
+        (
+            blob_id(4),
+            json_bytes(&json!({"role":"user","content":"plain question"})),
+        ),
+        // assistant: non-object item, tool-call sans id, unknown type.
+        (
+            blob_id(5),
+            json_bytes(&json!({
+                "role": "assistant", "id": "1",
+                "content": [
+                    5,
+                    {"type": "tool-call", "toolName": "Shell", "args": {"command": "ls"}},
+                    {"type": "video", "data": "x"},
+                    {"type": "text", "text": "answer"},
+                ],
+            })),
+        ),
+        // user text with a dangling `<` → strip_angle_tags else arm in title.
+        (
+            blob_id(6),
+            json_bytes(
+                &json!({"role":"user","content":[{"type":"text","text":"<user_query>\nfix the <weird tag\n</user_query>"}]}),
+            ),
+        ),
+        (
+            blob_id(7),
+            json_bytes(
+                &json!({"role":"user","content":[{"type":"text","text":"<user_query>\nreal query\n</user_query>"}]}),
+            ),
+        ),
+    ];
+    let session = cursor::session_from_store(&CursorStoreInput {
+        id: "chat-edge".into(),
+        meta: Some(CursorStoreMeta {
+            agent_id: Some("chat-edge".into()),
+            latest_root_blob_id: Some(blob_id(0)),
+            ..Default::default()
+        }),
+        blobs,
+        ..Default::default()
+    });
+    assert!(!session.nodes.is_empty());
+    // the generated tool call id follows the cursor-tool-{node}-N scheme.
+    let calls: Vec<&str> = session
+        .nodes
+        .iter()
+        .flat_map(|n| n.tool_calls.iter().map(|c| c.id.as_str()))
+        .collect();
+    assert!(calls.iter().any(|id| id.starts_with("cursor-tool-")));
+}
+
+fn tail_node(node_id: i64, role: Role, content: &str) -> MessageNode {
+    MessageNode {
+        node_id,
+        parent_node_id: (node_id > 1).then_some(node_id - 1),
+        role,
+        content: content.into(),
+        blocks: Vec::new(),
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+        tool_name: None,
+        thinking: None,
+        thinking_signature: None,
+        usage: None,
+        model: None,
+        request_id: None,
+        finish_reason: None,
+        tool_result: None,
+        created_at: 1.0,
+        metadata: Value::Null,
+    }
+}
+
+#[test]
+fn store_write_plan_empty_fields_arms() {
+    let mut session = Session {
+        id: "w1".into(),
+        title: "unused".into(),
+        working_directory: "/w".into(),
+        backend_type: "cursor".into(),
+        agent_mode: "accept-edits".into(),
+        model: "composer-1".into(),
+        created_at: 1_700_000_000.0,
+        last_activity_at: 1_700_000_300.0,
+        main_chain_id: 0,
+        shell_last_seen_index: 0,
+        cogs_json: "[]".into(),
+        workspace_dirs: "[]".into(),
+        hidden: 0,
+        parent_session_id: None,
+        agent_id: None,
+        checkpoints: Vec::new(),
+        metadata: json!({}),
+        nodes: Vec::new(),
+        prompt_history: Vec::new(),
+    };
+    session.title.clear();
+    session.title.clear();
+    session.model.clear();
+    session.agent_mode.clear();
+    // Nodes exercising every message_json None/degenerate arm:
+    // empty system content → None; empty user content → None;
+    // assistant with a null-args tool call and no text; assistant empty.
+    let n_sys = tail_node(1, Role::System, "");
+    let n_user = tail_node(2, Role::User, "");
+    let mut n_asst = tail_node(3, Role::Assistant, "");
+    n_asst.tool_calls = vec![ToolCall {
+        id: "t1".into(),
+        name: "Shell".into(),
+        arguments: Value::Null,
+        index: 0,
+        kind: "function".into(),
+        status: None,
+        exit_code: None,
+        duration_ms: None,
+        locations: vec![],
+        diffs: vec![],
+    }];
+    let n_empty = tail_node(4, Role::Assistant, "");
+    session.nodes = vec![n_sys, n_user, n_asst, n_empty];
+    let plan = cursor::store_write_plan(&session, None);
+    assert!(!plan.blobs.is_empty());
+    let meta_json = String::from_utf8(cursor::from_hex(&plan.meta_row).unwrap()).unwrap();
+    assert!(!meta_json.contains("\"name\""));
+    // "unknown" model also maps to "default".
+    session.model = "unknown".into();
+    session.title = "T".into();
+    session.agent_mode = "m".into();
+    let plan = cursor::store_write_plan(&session, None);
+    let meta_json = String::from_utf8(cursor::from_hex(&plan.meta_row).unwrap()).unwrap();
+    assert!(meta_json.contains("\"lastUsedModel\":\"default\""));
 }

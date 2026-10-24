@@ -462,3 +462,11 @@ fn file_history_snapshot_none_without_a_map() {
     });
     assert!(file_history_snapshot(&session, "msg-1").is_none());
 }
+
+#[test]
+fn resolve_folds_dot_components() {
+    let r = sepia_core::restore::resolve_workspace_path("/w", "./x.rs").unwrap();
+    assert!(r.ends_with("x.rs"), "{r:?}");
+    let r = sepia_core::restore::resolve_workspace_path("/w", "a/./b.rs").unwrap();
+    assert!(r.ends_with("a/b.rs"), "{r:?}");
+}

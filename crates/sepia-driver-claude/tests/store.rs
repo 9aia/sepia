@@ -549,3 +549,67 @@ async fn truncate_fails_when_a_kept_node_has_no_locatable_entry() {
     };
     assert!(repo.truncate_transcript("sess-1", &[orphan], &[]).is_err());
 }
+
+#[tokio::test]
+async fn list_stamp_tolerates_a_pre_epoch_mtime() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("proj");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("ancient.jsonl");
+    std::fs::write(&file, "{\"type\":\"user\"}").unwrap();
+    let h = std::fs::File::options().write(true).open(&file).unwrap();
+    h.set_modified(std::time::UNIX_EPOCH - std::time::Duration::from_secs(1))
+        .unwrap();
+    let store = sepia_driver_claude::ClaudeStore::new(tmp.path().to_path_buf());
+    let _ = store.list().await;
+}
+
+#[tokio::test]
+async fn truncate_handles_bad_lines_order_violations_and_full_keeps() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("proj");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("sess-1.jsonl"),
+        [
+            r#"{"type":"user","uuid":"u1","sessionId":"sess-1"}"#,
+            "garbage line",
+            r#"{"type":"assistant","uuid":"u2","sessionId":"sess-1"}"#,
+            "",
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let store = sepia_driver_claude::ClaudeStore::new(tmp.path().to_path_buf());
+    let at = |uuid: &str| MessageNode {
+        node_id: 0,
+        parent_node_id: None,
+        role: Role::User,
+        content: "x".into(),
+        blocks: Vec::new(),
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+        tool_name: None,
+        thinking: None,
+        thinking_signature: None,
+        usage: None,
+        model: None,
+        request_id: None,
+        finish_reason: None,
+        tool_result: None,
+        created_at: 0.0,
+        metadata: serde_json::json!({ "uuid": uuid }),
+    };
+    // Removing the earlier line while keeping the later one violates order.
+    let err = store
+        .truncate_transcript("sess-1", &[at("u2")], &[at("u1")])
+        .unwrap_err();
+    assert!(err.message.contains("order"), "{err}");
+    // Keeping everything is a no-op.
+    assert_eq!(
+        store
+            .truncate_transcript("sess-1", &[at("u1"), at("u2")], &[])
+            .unwrap(),
+        0
+    );
+}

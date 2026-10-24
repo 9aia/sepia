@@ -1662,3 +1662,73 @@ fn to_jsonl_drops_unsigned_thinking_and_a_redacted_marker_echoes_its_blob() {
         "sealed content",
     );
 }
+
+#[test]
+fn to_jsonl_handles_extreme_timestamps_null_args_and_empty_uuids() {
+    let mut session = sepia_testkit::contract::session("s1", "Titled", 1.0);
+    session.created_at = 1e30;
+    session.last_activity_at = -1e30;
+    let mut n = sepia_core::domain::MessageNode {
+        node_id: 0,
+        parent_node_id: None,
+        role: sepia_core::Role::Assistant,
+        content: "x".into(),
+        blocks: vec![],
+        tool_calls: vec![sepia_core::domain::ToolCall {
+            id: "t1".into(),
+            name: "x".into(),
+            arguments: serde_json::Value::Null,
+            index: 0,
+            kind: "function".into(),
+            status: None,
+            exit_code: None,
+            duration_ms: None,
+            locations: vec![],
+            diffs: vec![],
+        }],
+        tool_call_id: None,
+        tool_name: None,
+        thinking: None,
+        thinking_signature: None,
+        usage: None,
+        model: None,
+        request_id: None,
+        finish_reason: None,
+        tool_result: None,
+        created_at: 1.0,
+        metadata: serde_json::Value::Null,
+    };
+    session.nodes = vec![n.clone()];
+    // No uuid anywhere + a title → the summary insert finds no leaf.
+    session.title = "Titled".into();
+    let out = sepia_driver_claude::transcript::to_jsonl(&session);
+    assert!(out.contains("tool_use"));
+    n.metadata = serde_json::Value::Null;
+    let _ = n;
+}
+
+#[test]
+fn to_jsonl_epoch_fallback_for_out_of_range_timestamps() {
+    // `from_unix_timestamp_nanos` rejects f64-extreme timestamps — the
+    // epoch fallback keeps the line valid.
+    let mut n = node(Role::User, "hi", 0);
+    n.created_at = f64::MAX;
+    let writer = writer_session(vec![n], json!({}));
+    let out = to_jsonl(&writer);
+    assert!(out.contains("1970-01-01T00:00:00.000Z"), "{out}");
+}
+
+#[test]
+fn to_jsonl_skips_the_summary_entry_without_nodes() {
+    // A titled session with no nodes has no uuid to pin the summary
+    // against — the summary stays unwritten.
+    let writer = writer_session(vec![], json!({}));
+    let out = to_jsonl(&writer);
+    assert!(!out.contains("\"summary\""), "{out}");
+
+    // An untitled session skips the summary block entirely.
+    let mut writer = writer_session(vec![node(Role::User, "hi", 0)], json!({}));
+    writer.title = String::new();
+    let out = to_jsonl(&writer);
+    assert!(!out.contains("\"summary\""), "{out}");
+}

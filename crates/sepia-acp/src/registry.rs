@@ -41,14 +41,8 @@ pub fn resolve_agent(id: &str, overrides: &[AgentSpec]) -> Result<AgentSpec, Str
         .map(|a| a.id.clone())
         .collect::<Vec<_>>()
         .join(", ");
-    Err(format!(
-        "Unknown agent \"{id}\"{}",
-        if known.is_empty() {
-            String::new()
-        } else {
-            format!("; known agents: {known}")
-        }
-    ))
+    // `known` is never empty — the builtin specs are always present.
+    Err(format!("Unknown agent \"{id}\"; known agents: {known}"))
 }
 
 /// Per-agent spawn flags for model selection — appended to the agent's

@@ -91,3 +91,19 @@ fn collect_diff(actual: &Value, expected: &Value, path: &str, out: &mut String, 
         }
     }
 }
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn diff_budget_stops_reporting() {
+        // A document with more mismatches than the line budget → the
+        // early-return arm in collect_diff.
+        let a = serde_json::json!({"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6});
+        let b = serde_json::json!({"a": 9, "b": 9, "c": 9, "d": 9, "e": 9, "f": 9});
+        let mut out = String::new();
+        collect_diff(&a, &b, "", &mut out, 2);
+        assert!(out.lines().count() <= 3);
+    }
+}

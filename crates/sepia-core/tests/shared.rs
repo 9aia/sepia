@@ -161,3 +161,22 @@ fn minimal_session_decodes_with_defaults() {
     assert!(s.checkpoints.is_empty());
     assert_eq!(s.hidden, 0);
 }
+
+#[test]
+fn tool_outcomes_skip_non_tool_roles_and_checkpoint_metadata_degrades() {
+    // A node with call+result wiring but the wrong role contributes nothing.
+    let mut n = node();
+    n.role = Role::Assistant;
+    n.tool_call_id = Some("c1".into());
+    n.tool_result = Some(ToolResultInfo {
+        status: ToolCallStatus::Success,
+        exit_code: None,
+        duration_ms: None,
+    });
+    let outcomes = tool_node_outcomes(&[n]);
+    assert!(outcomes.is_empty());
+
+    // The checkpoints key present but not an array → empty.
+    let meta = json!({ "sepia/checkpoints": {"a": 1} });
+    assert!(checkpoints_from_metadata(&meta).is_empty());
+}

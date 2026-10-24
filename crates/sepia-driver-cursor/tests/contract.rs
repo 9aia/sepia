@@ -650,3 +650,115 @@ fn transcript_timestamp_persists_through_the_save_stamp() {
         assert_eq!(ms, 1_700_000_300_000.0);
     });
 }
+
+/* ---- coverage tail ----------------------------------------------------- */
+
+#[tokio::test]
+async fn transcript_projection_content_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // Transcript lines: a non-text item inside array content (transcript_text
+    // `None`), content that is neither array nor string (`_`), and a text
+    // item that strip_redacted empties (the `!cleaned.is_empty()` edge).
+    write_transcript(
+        root,
+        "w-proj",
+        "t-edge",
+        &[
+            transcript_line("user", json!([{ "type": "image", "x": 1 }])),
+            transcript_line("user", json!(42)),
+            transcript_line(
+                "assistant",
+                json!([{ "type": "text", "text": "[REDACTED]" }]),
+            ),
+            transcript_line("user", json!([{ "type": "text", "text": "real question" }])),
+        ],
+        1_700_000_000_000,
+    );
+    let store = CursorStore::new(root.to_path_buf());
+    let listed = store.list().await.unwrap();
+    assert!(!listed.is_empty());
+    let session = store.get_by_id("t-edge", None).await.unwrap().unwrap();
+    assert!(!session.nodes.is_empty());
+}
+
+#[tokio::test]
+async fn scan_filters_weird_dir_layouts() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // Junk entries around a real transcript: files where dirs belong,
+    // names that aren't chat dirs, an unsafe-looking slug.
+    let projects = root.join("projects");
+    std::fs::create_dir_all(&projects).unwrap();
+    std::fs::write(projects.join("loose-file"), b"x").unwrap();
+    std::fs::create_dir_all(projects.join("safe-slug/agent-transcripts")).unwrap();
+    std::fs::write(projects.join("safe-slug/agent-transcripts/not-a-dir"), b"x").unwrap();
+    std::fs::create_dir_all(projects.join("empty-slug")).unwrap();
+    // A transcript in a slug whose name needs decoding.
+    write_transcript(
+        root,
+        "a%20b",
+        "slug-decode",
+        &[transcript_line("user", json!("hi from slug"))],
+        1_700_000_000_000,
+    );
+    let store = CursorStore::new(root.to_path_buf());
+    let listed = store.list().await.unwrap();
+    assert!(listed.iter().any(|s| s.id == "slug-decode"));
+}
+
+#[tokio::test]
+async fn get_by_id_prefers_a_richer_transcript_projection() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // A transcript-only session (no store.db) → the fallback path uses
+    // the transcript projection entirely.
+    write_transcript(
+        root,
+        "w-proj",
+        "t-only",
+        &[
+            transcript_line("user", json!("q1")),
+            transcript_line("assistant", json!("a1")),
+        ],
+        1_700_000_000_000,
+    );
+    let store = CursorStore::new(root.to_path_buf());
+    let session = store.get_by_id("t-only", None).await.unwrap().unwrap();
+    assert!(!session.nodes.is_empty());
+    // save() then get() → the write path for metadata + blobs.
+    let mut saved = writable_session("s-w", "/w", saved_nodes());
+    store.save(&saved).await.unwrap();
+    let loaded = store.get_by_id("s-w", None).await.unwrap().unwrap();
+    assert!(!loaded.nodes.is_empty());
+    saved.nodes.clear();
+    // A session with empty fields exercises the meta write arms.
+    store.save(&saved).await.unwrap();
+    // delete() removes both artifacts.
+    store.delete("s-w").await.unwrap();
+    assert!(store.get_by_id("s-w", None).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn store_db_value_type_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // A store.db whose blobs table exists but carries non-blob payloads —
+    // the per-row type arms in the read path.
+    let chats = root.join("chats").join("hash1");
+    std::fs::create_dir_all(&chats).unwrap();
+    let db = chats.join("store.db");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE meta(key TEXT, value TEXT);
+         CREATE TABLE blobs(id TEXT, data BLOB);
+         INSERT INTO meta VALUES('0', 'not-hex-or-json');
+         INSERT INTO blobs VALUES('aabb', X'00');",
+    )
+    .unwrap();
+    drop(conn);
+    let store = CursorStore::new(root.to_path_buf());
+    // list/get must not panic on odd rows.
+    let _ = store.list().await.unwrap();
+    let _ = store.get_by_id("anything", None).await.unwrap();
+}

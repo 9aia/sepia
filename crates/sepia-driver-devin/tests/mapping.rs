@@ -352,3 +352,27 @@ fn parse_chat_message_metrics_and_edge_extensions() {
     );
     assert!(parsed.tool_result.is_none());
 }
+
+#[test]
+fn rendered_tool_call_without_diffs_omits_the_content_entry() {
+    // The `if !tc.diffs.is_empty()` false arm — a rendered call with no
+    // diffs gets no `content` key in the extension entry.
+    let mut asst = node(Role::Assistant);
+    asst.metadata = json!({"summarized_from": "x"});
+    asst.tool_calls = vec![ToolCall {
+        id: "tc-plain".into(),
+        name: "read".into(),
+        arguments: json!({"file_path": "/a.rs"}),
+        index: 0,
+        kind: "function".into(),
+        status: None,
+        exit_code: None,
+        duration_ms: None,
+        locations: Vec::new(),
+        diffs: Vec::new(),
+    }];
+    let m = build_chat_message(&asst, "m1");
+    let ext = &m["metadata"]["extensions"]["chisel/tool_call_content"];
+    assert!(ext["tc-plain"].is_object(), "{ext}");
+    assert!(ext["tc-plain"].get("content").is_none(), "{ext}");
+}
