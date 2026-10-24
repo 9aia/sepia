@@ -153,9 +153,10 @@ fn skills_dir_round_trip_includes_sibling_files() {
     assert!(read.iter().any(|s| s.name == "custom"));
     assert!(!read.iter().any(|s| s.name == "empty"));
 
-    // An unsafe skill name is skipped on write.
+    // An unsafe skill name is skipped on write: ".." survives
+    // `safe_file_stem`'s sanitizers as a bare traversal segment.
     let bad = vec![sepia_core::agent_config::ConfigSkill {
-        name: "a/b".into(),
+        name: "..".into(),
         description: None,
         body: String::new(),
         files: vec![],

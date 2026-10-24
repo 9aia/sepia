@@ -36,7 +36,7 @@ mod serve {
              \t\t*'\"method\":\"session.delete\"'*) printf '%s\\n' \"$line\" >> '{saves}'; result='null' ;;\n\
              \t\t*'\"method\":\"session.rename\"'*) result='null' ;;\n\
              \t\t*'\"method\":\"session.list\"'*) result=\"[$(cat '{session_file}')]\" ;;\n\
-             \t\t*'\"method\":\"session.get\"'*) result=$(cat '{session_file}') ;;\n\
+             \t\t*'\"method\":\"session.get\"'*) case \"$line\" in *'\"id\":\"s1\"'*) result=$(cat '{session_file}') ;; *) printf '{{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{{\"code\":-32001,\"message\":\"no such session\"}}}}\\n' \"$id\"; continue ;; esac ;;\n\
              \t\t*'\"method\":\"session.summary\"'*) result=$(cat '{session_file}') ;;\n\
              \t\t*'\"method\":\"session.history\"'*) result='{{\"nodes\":[],\"toolCallNodes\":[],\"total\":0,\"start\":0,\"backendType\":\"windsurf\"}}' ;;\n\
              \t\t*'\"method\":\"session.checkpoints\"'*) result='{{\"checkpoints\":[]}}' ;;\n\
@@ -346,6 +346,10 @@ mod serve {
         assert_eq!(res["error"]["code"], -32602, "{res}");
 
         // prompt/cancel/permission/detach on the live created session.
+        // session.event only flows while a subscriber is attached —
+        // subscribe mock-session before prompting or the drain blocks.
+        let res = serve.call(222, "sessions.subscribe", json!({"id": "mock-session"}));
+        assert_eq!(res["result"]["subscribed"], true, "{res}");
         let res = serve.call(
             23,
             "sessions.prompt",
@@ -412,8 +416,16 @@ mod serve {
         assert_eq!(res["error"]["code"], -32602, "{res}");
         let res = serve.call(11, "projects.delete", json!({}));
         assert_eq!(res["error"]["code"], -32602, "{res}");
-        let res = serve.call(12, "projects.delete", json!({"id": "ghost"}));
-        assert!(res["error"].is_object(), "{res}");
+        // projects.delete is idempotent (no not_found arm); rename is the
+        // verb that 404s on an unknown project id.
+        let res = serve.call(
+            12,
+            "projects.rename",
+            json!({"id": "ghost", "name": "still-ghost"}),
+        );
+        assert_eq!(res["error"]["data"]["code"], "not_found", "{res}");
+        let res = serve.call(112, "projects.delete", json!({"id": "ghost"}));
+        assert!(res["result"].is_null(), "{res}");
 
         // sessions.delete hits the store and the overlay.
         let res = serve.call(13, "sessions.delete", json!({"id": "s1", "agent": "devin"}));

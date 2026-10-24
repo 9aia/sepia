@@ -209,20 +209,22 @@ async fn contract_suite_passes_against_a_memory_store() {
         async fn nodes_window(
             &self,
             id: &str,
-            _o: &NodesWindowOptions,
+            o: &NodesWindowOptions,
         ) -> Result<Option<SessionNodeWindow>, StorageError> {
-            Ok(self
-                .sessions
-                .lock()
-                .unwrap()
-                .get(id)
-                .map(|s| SessionNodeWindow {
-                    nodes: s.nodes.clone(),
+            Ok(self.sessions.lock().unwrap().get(id).map(|s| {
+                let total = s.nodes.len();
+                let before = o.before.map_or(total, |b| {
+                    usize::try_from(b.max(0)).unwrap_or(usize::MAX).min(total)
+                });
+                let start = before.saturating_sub(o.limit.unwrap_or(total));
+                SessionNodeWindow {
+                    nodes: s.nodes[start..before].to_vec(),
                     tool_call_nodes: Vec::new(),
-                    total: s.nodes.len(),
-                    start: 0,
+                    total,
+                    start,
                     backend_type: s.backend_type.clone(),
-                }))
+                }
+            }))
         }
     }
 

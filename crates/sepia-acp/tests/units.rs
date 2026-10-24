@@ -155,23 +155,33 @@ async fn spawn_fails_on_empty_command_and_missing_binary() {
     assert!(err.message.contains("failed to spawn"), "{err}");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn call_after_agent_death_fails_fast() {
-    // The mock exits right after initialize — calls land on the
-    // exit_error short-circuit once the watcher observes the death.
-    let mut spec = spec(vec![env!("CARGO_BIN_EXE_sepia-mock-acp-agent").to_string()]);
-    spec.env = Some(
-        [("MOCK_EXIT_AFTER_INIT".to_string(), "1".to_string())]
-            .into_iter()
-            .collect(),
-    );
-    let conn = spawn_agent(&spec, &options()).await.unwrap();
-    // Wait for the exit watcher to record the death.
+    // The agent answers initialize, then exits while a backgrounded
+    // `sleep` keeps its stdout pipe open — the exit watcher (not the
+    // reader's EOF arm) must record the death, so calls land on the
+    // exit_error short-circuit.
+    let conn = spawn_agent(
+        &spec(vec![
+            "sh".into(),
+            "-c".into(),
+            "printf '%s\\n' \
+             '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"agentCapabilities\":{}}}'; \
+             sleep 10 & exit 0"
+                .into(),
+        ]),
+        &options(),
+    )
+    .await
+    .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         match conn.list_sessions().await {
             Err(e) if e.message.contains("exited") => break,
-            _ if std::time::Instant::now() > deadline => panic!("agent never marked dead"),
+            _ if std::time::Instant::now() > deadline => {
+                panic!("agent never marked dead")
+            }
             _ => tokio::time::sleep(Duration::from_millis(25)).await,
         }
     }

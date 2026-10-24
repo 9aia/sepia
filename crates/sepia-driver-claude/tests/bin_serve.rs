@@ -132,10 +132,20 @@ fn serves_the_driver_wire() {
         }),
     );
     assert!(res.get("error").is_none(), "{res}");
+    // Claude collapses foreign rules into the managed `sepia:rules`
+    // block of CLAUDE.md — the read-back rule is the memory file's
+    // instructions rule "claude" carrying "## wire" inside.
     let res = wire.call(12, "config.read", json!({"dir": claude_dir}));
-    assert_eq!(res["result"]["rules"][0]["name"], "wire", "{res}");
+    assert_eq!(res["result"]["rules"][0]["name"], "claude", "{res}");
+    assert!(
+        res["result"]["rules"][0]["body"]
+            .as_str()
+            .unwrap()
+            .contains("## wire"),
+        "{res}"
+    );
     let res = wire.call(13, "config.read", Value::Null);
-    assert_eq!(res["result"]["rules"][0]["name"], "wire", "{res}");
+    assert_eq!(res["result"]["rules"][0]["name"], "claude", "{res}");
 
     let res = wire.call(
         14,

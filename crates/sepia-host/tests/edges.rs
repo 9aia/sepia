@@ -16,38 +16,48 @@ mod unix_edges {
     use sepia_host::{DriverClient, DriverRegistry, command_resolves, discover, refresh_manifest};
     use serde_json::json;
 
-    /// A driver script: spews stderr (past the 64-line ring), emits a
-    /// notification + a request + garbage on `emit.junk`, never answers
-    /// `never.answers`, exits on `die`, errors on `boom`, and answers the
-    /// session/config surface minimally.
+    /// A driver script: answers `--manifest`, spews stderr (past the
+    /// 64-line ring), emits a notification + a request + garbage on
+    /// `emit.junk`, never answers `never.answers`, exits on `die`, errors
+    /// on `boom`, maps session id `missing`/`err`/`weird` onto the
+    /// error-code arms, and answers the session/config surface minimally.
     fn fake_driver(dir: &Path, name: &str) -> PathBuf {
         let bin = dir.join(name);
-        let script = "#!/bin/sh\n\
+        // Plain JSON — `format!` inserts it literally, no escaping.
+        let session = r#"{"id":"s1","title":"T","workingDirectory":"/w","model":"m","createdAt":1,"lastActivityAt":2,"mainChainId":0,"nodes":[],"promptHistory":[]}"#;
+        let script = format!(
+            "#!/bin/sh\n\
+            if [ \"$1\" = \"--manifest\" ]; then\n\
+            \tprintf '%s\\n' '{{\"id\":\"fake\",\"label\":\"F\",\"version\":\"0\",\"protocol\":1,\"capabilities\":[\"sessionStore\",\"sessionWrite\",\"agentConfig\",\"rewind\"]}}'\n\
+            \texit 0\n\
+            fi\n\
             i=0; while [ $i -lt 80 ]; do echo \"noise $i\" >&2; i=$((i+1)); done\n\
             while IFS= read -r line; do\n\
             \tid=$(printf '%s' \"$line\" | sed -n 's/.*\"id\":\\([0-9][0-9]*\\),\"method\".*/\\1/p')\n\
             \tcase \"$line\" in\n\
-            \t\t*'\"method\":\"driver.manifest\"'*) result='{\"id\":\"fake\",\"label\":\"F\",\"version\":\"0\",\"protocol\":1,\"capabilities\":[\"sessionStore\",\"sessionWrite\",\"agentConfig\",\"rewind\"]}' ;;\n\
+            \t\t*'\"id\":\"missing\"'*) printf '{{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{{\"code\":-32001,\"message\":\"not found\"}}}}\\n' \"$id\"; continue ;;\n\
+            \t\t*'\"id\":\"err\"'*) printf '{{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{{\"code\":-32005,\"message\":\"store blew up\"}}}}\\n' \"$id\"; continue ;;\n\
+            \t\t*'\"id\":\"weird\"'*) printf '{{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":\"not-a-session\"}}\\n' \"$id\"; continue ;;\n\
+            \t\t*'\"method\":\"driver.manifest\"'*) result='{{\"id\":\"fake\",\"label\":\"F\",\"version\":\"0\",\"protocol\":1,\"capabilities\":[\"sessionStore\",\"sessionWrite\",\"agentConfig\",\"rewind\"]}}' ;;\n\
             \t\t*'\"method\":\"session.list\"'*) result='[]' ;;\n\
-            \t\t*'\"method\":\"session.get\"'*) result='{\"id\":\"s1\",\"title\":\"T\",\"workingDirectory\":\"/w\",\"model\":\"m\",\"createdAt\":1,\"lastActivityAt\":2,\"mainChainId\":0,\"nodes\":[],\"promptHistory\":[]}' ;;\n\
-            \t\t*'\"method\":\"session.summary\"'*) result='{\"id\":\"s1\"}' ;;\n\
-            \t\t*'\"method\":\"session.history\"'*) result='{\"nodes\":[],\"toolCallNodes\":[],\"total\":0,\"start\":0,\"backendType\":\"fake\"}' ;;\n\
+            \t\t*'\"method\":\"session.get\"'*) result='{session}' ;;\n\
+            \t\t*'\"method\":\"session.summary\"'*) result='{session}' ;;\n\
+            \t\t*'\"method\":\"session.history\"'*) result='{{\"nodes\":[],\"toolCallNodes\":[],\"total\":0,\"start\":0,\"backendType\":\"fake\"}}' ;;\n\
             \t\t*'\"method\":\"session.save\"'*) result='null' ;;\n\
             \t\t*'\"method\":\"session.delete\"'*) result='null' ;;\n\
             \t\t*'\"method\":\"session.rewind\"'*) result='null' ;;\n\
-            \t\t*'\"method\":\"config.read\"'*) result='{\"rules\":[]}' ;;\n\
-            \t\t*'\"method\":\"config.write\"'*) result='{\"actions\":[]}' ;;\n\
-            \t\t*'\"method\":\"boom\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{\"code\":-32001,\"message\":\"went boom\"}}\\n' \"$id\"; continue ;;\n\
-            \t\t*'\"id\":\"missing\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{\"code\":-32001,\"message\":\"not found\"}}\\n' \"$id\"; continue ;;\n\
-            \t\t*'\"id\":\"err\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{\"code\":-32005,\"message\":\"store blew up\"}}\\n' \"$id\"; continue ;;\n\
-            \t\t*'\"id\":\"weird\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":\"not-a-session\"}\\n' \"$id\"; continue ;;\n\
-            \t\t*'\"method\":\"emit.junk\"'*) printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"method\":\"noise\",\"params\":{}}' '{\"jsonrpc\":\"2.0\",\"id\":555,\"method\":\"inbound.req\"}' '{\"jsonrpc\":\"2.0\",\"id\":556,\"result\":null}' 'not even json' ;;\n\
+            \t\t*'\"method\":\"config.read\"'*) result='{{\"rules\":[]}}' ;;\n\
+            \t\t*'\"method\":\"config.write\"'*) result='{{\"actions\":[]}}' ;;\n\
+            \t\t*'\"method\":\"boom\"'*) printf '{{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{{\"code\":-32001,\"message\":\"went boom\"}}}}\\n' \"$id\"; continue ;;\n\
+            \t\t*'\"method\":\"emit.junk\"'*) printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"method\":\"noise\",\"params\":{{}}}}' '{{\"jsonrpc\":\"2.0\",\"id\":555,\"method\":\"inbound.req\"}}' '{{\"jsonrpc\":\"2.0\",\"id\":556,\"result\":null}}' 'not even json'; result='null' ;;\n\
             \t\t*'\"method\":\"never.answers\"'*) continue ;;\n\
             \t\t*'\"method\":\"die\"'*) exit 0 ;;\n\
             \t\t*) result='null' ;;\n\
             \tesac\n\
-            \tprintf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":%s}\\n' \"$id\" \"$result\"\n\
-            done\n";
+            \tprintf '{{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":%s}}\\n' \"$id\" \"$result\"\n\
+            done\n",
+            session = session,
+        );
         std::fs::write(&bin, script).unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         bin
@@ -67,9 +77,20 @@ mod unix_edges {
         let bin = fake_driver(dir.path(), "sepia-driver-fake");
         let client = DriverClient::spawn(&bin, &[]).await.unwrap();
 
-        // The startup stderr flood ran through the 64-line ring.
-        let tail = client.stderr_tail().await;
-        assert_eq!(tail.len(), 64);
+        // The startup stderr flood runs through the 64-line ring — the
+        // reader task drains asynchronously, so poll until it fills.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let tail = loop {
+            let tail = client.stderr_tail().await;
+            if tail.len() == 64 {
+                break tail;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "stderr tail never filled: {tail:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        };
         assert!(tail.last().unwrap().contains("noise 79"));
 
         // Notifications broadcast; junk/request lines are dropped.
@@ -85,12 +106,12 @@ mod unix_edges {
         let err = client.call("boom", json!({})).await.unwrap_err();
         assert_eq!(err.message, "went boom");
 
-        // The 30s default call timeout fires when the driver never answers.
-        // (Skipped unless explicitly asked — it costs 30s wall-clock.)
-        if std::env::var_os("SEPTEST_SLOW_TIMEOUT").is_some() {
-            let err = client.call("never.answers", json!({})).await.unwrap_err();
-            assert!(err.message.contains("timed out"), "{err}");
-        }
+        // The call timeout fires when the driver never answers —
+        // shrunk to milliseconds via the test hook, no 30s wait.
+        client.set_call_timeout(Duration::from_millis(50));
+        let err = client.call("never.answers", json!({})).await.unwrap_err();
+        assert!(err.message.contains("timed out"), "{err}");
+        client.set_call_timeout(Duration::from_secs(30));
 
         // Death: stdout closes, is_closed flips, pending fails.
         let pending = {
@@ -252,11 +273,12 @@ mod unix_edges {
             "sepia-driver-junk",
             "#!/bin/sh\necho not-json\n",
         );
-        // --manifest prints JSON that fails validation (bad protocol).
+        // --manifest prints JSON that parses but fails validation
+        // (wrong protocol — missing fields would die earlier in serde).
         let invalid = bad_driver(
             dir.path(),
             "sepia-driver-invalid",
-            "#!/bin/sh\necho '{\"id\":\"bad\",\"protocol\":99}'\n",
+            "#!/bin/sh\necho '{\"id\":\"bad\",\"label\":\"B\",\"version\":\"0\",\"protocol\":99}'\n",
         );
 
         assert!(discover::probe_manifest(&good).await.is_ok());
@@ -300,6 +322,9 @@ mod unix_edges {
         let mut registry = DriverRegistry::default();
         let mut m = discover::probe_manifest(&good).await.unwrap();
         m.id = "ghost".into();
+        // An agent_command that can't resolve keeps it out of
+        // usable_agents (a driver with `None` would pass the filter).
+        m.agent_command = Some("definitely-not-a-real-command-xyz".into());
         registry.insert(dir.path().join("missing-bin"), m);
         assert!(registry.entry("ghost").unwrap().client().await.is_err());
         // usable_agents / command_resolves edges.

@@ -9,7 +9,7 @@ use std::time::Duration;
 use sepia_driver::rpc::{self, Inbound, RpcError};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, OnceCell, RwLock, broadcast, oneshot};
 
 use crate::broker::PermissionBroker;
@@ -21,7 +21,7 @@ use crate::types::{
     SpawnOptions,
 };
 
-const CALL_TIMEOUT: Duration = Duration::from_secs(120);
+const CALL_TIMEOUT_MS: u64 = 120_000;
 const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 const PROTOCOL_VERSION: u64 = 1;
 
@@ -46,6 +46,19 @@ const ALLOWED_ENV_KEYS: &[&str] = &[
     // path the child's profraw never lands where llvm-cov collects it.
     "LLVM_PROFILE_FILE",
 ];
+
+fn missing_stdio(which: &str) -> RpcError {
+    RpcError::internal(format!("agent {which} missing"))
+}
+
+/// Pull the piped stdio handles out of a spawned child; `None` means the
+/// spawn wasn't piped — a caller bug, reported as an internal error.
+fn take_stdio(child: &mut Child) -> Result<(ChildStdout, ChildStdin, ChildStderr), RpcError> {
+    let stdout = child.stdout.take().ok_or_else(|| missing_stdio("stdout"))?;
+    let stdin = child.stdin.take().ok_or_else(|| missing_stdio("stdin"))?;
+    let stderr = child.stderr.take().ok_or_else(|| missing_stdio("stderr"))?;
+    Ok((stdout, stdin, stderr))
+}
 
 /// `SEPIA_INHERIT_ENV=1` opts back into forwarding the whole parent env.
 fn build_child_env(spec: &AgentSpec, options: &SpawnOptions) -> Vec<(String, String)> {
@@ -79,6 +92,7 @@ struct Inner {
     broker: PermissionBroker,
     exit_error: OnceCell<RpcError>,
     exited: AtomicBool,
+    call_timeout_ms: AtomicU64,
 }
 
 impl Inner {
@@ -191,6 +205,15 @@ impl AcpConnection {
         self.inner.broker.respond(request_id, option_id)
     }
 
+    /// Override the per-call timeout — tests shrink it to drive the
+    /// timeout arm in milliseconds instead of the 120s default.
+    pub fn set_call_timeout(&self, timeout: Duration) {
+        self.inner.call_timeout_ms.store(
+            u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+    }
+
     async fn call(&self, method: &str, params: Value) -> Result<Value, RpcError> {
         if let Some(err) = self.inner.exit_error.get() {
             return Err(err.clone());
@@ -205,7 +228,8 @@ impl AcpConnection {
             self.inner.pending.lock().await.remove(&id);
             return Err(e);
         }
-        match tokio::time::timeout(CALL_TIMEOUT, rx).await {
+        let budget = Duration::from_millis(self.inner.call_timeout_ms.load(Ordering::Relaxed));
+        match tokio::time::timeout(budget, rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(RpcError::internal("agent response channel closed")),
             Err(_) => {
@@ -415,18 +439,7 @@ pub async fn spawn_agent(
         .spawn()
         .map_err(|e| RpcError::internal(format!("Agent \"{}\" failed to spawn: {e}", spec.id)))?;
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| RpcError::internal("agent stdout missing"))?;
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| RpcError::internal("agent stdin missing"))?;
-    let child_stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| RpcError::internal("agent stderr missing"))?;
+    let (stdout, stdin, child_stderr) = take_stdio(&mut child)?;
 
     let stderr = Arc::new(StderrTail::new(
         &spec.id,
@@ -445,6 +458,7 @@ pub async fn spawn_agent(
         broker: PermissionBroker::new(),
         exit_error: OnceCell::new(),
         exited: AtomicBool::new(false),
+        call_timeout_ms: AtomicU64::new(CALL_TIMEOUT_MS),
     });
 
     // stdout reader → dispatch.
@@ -499,4 +513,140 @@ pub async fn spawn_agent(
     };
     conn.initialize().await?;
     Ok(conn)
+}
+
+#[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use std::process::Stdio;
+
+    use super::*;
+
+    /// `take_stdio` reports each unpiped handle — `spawn_agent` always
+    /// pipes, so the error arms are driven here with unpiped children.
+    #[tokio::test]
+    async fn take_stdio_reports_unpiped_handles() {
+        let mut no_stdio = Command::new("true").spawn().unwrap();
+        assert!(
+            take_stdio(&mut no_stdio)
+                .unwrap_err()
+                .message
+                .contains("stdout")
+        );
+
+        let mut no_stdin = Command::new("true").stdout(Stdio::piped()).spawn().unwrap();
+        assert!(
+            take_stdio(&mut no_stdin)
+                .unwrap_err()
+                .message
+                .contains("stdin")
+        );
+
+        let mut no_stderr = Command::new("true")
+            .stdout(Stdio::piped())
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        assert!(
+            take_stdio(&mut no_stderr)
+                .unwrap_err()
+                .message
+                .contains("stderr")
+        );
+    }
+
+    /// A conn wired by hand — no handshake — so tests reach the
+    /// transport arms `spawn_agent`'s happy path can't.
+    fn bare_conn(child: Child, stdin: Option<ChildStdin>) -> AcpConnection {
+        let (updates, _) = broadcast::channel(8);
+        let (permissions_tx, _) = broadcast::channel(8);
+        AcpConnection {
+            inner: Arc::new(Inner {
+                child: Mutex::new(child),
+                stdin: Mutex::new(stdin),
+                pending: Mutex::new(HashMap::new()),
+                next_id: AtomicU64::new(1),
+                updates,
+                permissions_tx,
+                broker: PermissionBroker::new(),
+                exit_error: OnceCell::new(),
+                exited: AtomicBool::new(false),
+                call_timeout_ms: AtomicU64::new(CALL_TIMEOUT_MS),
+            }),
+            stderr: Arc::new(StderrTail::new("test", false)),
+            capabilities: RwLock::new(AcpCapabilities::default()),
+        }
+    }
+
+    /// `sh -c <script>` with piped stdin; stdout/stderr dropped.
+    fn spawn_sh(script: &str) -> (Child, Option<ChildStdin>) {
+        let mut child = Command::new("sh")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take();
+        (child, stdin)
+    }
+
+    #[tokio::test]
+    async fn call_and_notify_fail_when_stdin_is_closed() {
+        let (child, _stdin) = spawn_sh("sleep 30");
+        let conn = bare_conn(child, None);
+        // notify() → write() on a closed stdin.
+        let err = conn.cancel("s").await.unwrap_err();
+        assert!(err.message.contains("stdin closed"), "{err}");
+        // call() → write() fails *after* the pending entry registered —
+        // the removal arm must not leak it.
+        let err = conn.list_sessions().await.unwrap_err();
+        assert!(err.message.contains("stdin closed"), "{err}");
+        assert!(conn.inner.pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_fails_after_the_agent_process_exited() {
+        let (mut child, stdin) = spawn_sh("exit 0");
+        // Reap the child so stdin's read end is gone — writes hit EPIPE.
+        child.wait().await.unwrap();
+        let conn = bare_conn(child, stdin);
+        let err = conn.list_sessions().await.unwrap_err();
+        assert!(err.message.contains("agent stdin"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn call_times_out_when_the_agent_never_answers() {
+        let (child, stdin) = spawn_sh("sleep 30");
+        let conn = bare_conn(child, stdin);
+        conn.set_call_timeout(Duration::from_millis(30));
+        let err = conn.list_sessions().await.unwrap_err();
+        assert!(err.message.contains("timed out"), "{err}");
+        assert!(conn.inner.pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn call_fails_when_the_response_channel_drops() {
+        let (child, stdin) = spawn_sh("sleep 30");
+        let conn = Arc::new(bare_conn(child, stdin));
+        let task = {
+            let conn = Arc::clone(&conn);
+            tokio::spawn(async move { conn.list_sessions().await })
+        };
+        // Wait for the request to register, then drop the sender
+        // mid-flight — teardown-without-resolve leaves rx to a
+        // `RecvError`, which `call` reports as a closed channel.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while conn.inner.pending.lock().await.is_empty() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "pending entry never appeared"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        conn.inner.pending.lock().await.clear();
+        let err = task.await.unwrap().unwrap_err();
+        assert!(err.message.contains("channel closed"), "{err}");
+    }
 }

@@ -388,4 +388,29 @@ mod tests {
         };
         let _ = build_provider(&config); // Err or lazy-Ok — both inert here
     }
+
+    // `init_from` installs the global subscriber, so each of these runs
+    // in its own test process (nextest isolates every test).
+
+    #[test]
+    fn init_from_with_endpoint_installs_the_otel_layer() {
+        let guard = init_from(Some(TelemetryConfig {
+            endpoint: Some("http://127.0.0.1:9/v1/traces".to_string()),
+            service_name: "sepia-test".to_string(),
+        }));
+        assert!(guard.is_enabled());
+        drop(guard);
+    }
+
+    #[test]
+    fn init_from_exporter_failure_warns_and_stays_tracing_only() {
+        // An unparseable endpoint fails the exporter build — init logs
+        // and installs the tracing-only subscriber anyway.
+        let guard = init_from(Some(TelemetryConfig {
+            endpoint: Some("http://[::1".to_string()),
+            service_name: "sepia-test".to_string(),
+        }));
+        assert!(!guard.is_enabled());
+        drop(guard);
+    }
 }

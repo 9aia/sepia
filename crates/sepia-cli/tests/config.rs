@@ -192,7 +192,10 @@ fn config_list_prints_the_full_summary() {
     ]));
     for needle in [
         "Rules (1):",
-        "  house",
+        // Claude has no rules dir — the import collapsed the named rule
+        // into the managed `sepia:rules` block of CLAUDE.md, which reads
+        // back as the single instructions rule named "claude".
+        "  claude",
         "Commands (1):",
         "Skills (1):",
         "Subagents (1):",
@@ -324,7 +327,9 @@ fn config_install_copies_between_agents() {
         "--devin-dir",
         &path(&devin),
     ]));
-    assert!(stdout.contains("house"), "{stdout}");
+    // Claude's collapsed rule installs into devin's AGENTS.md managed
+    // block, which reads back as the instructions rule "agents".
+    assert!(stdout.contains("  agents"), "{stdout}");
 }
 
 // --- diff -----------------------------------------------------------------------
@@ -361,11 +366,13 @@ fn config_diff_reports_every_kind() {
         &path(&a),
     ]));
     // Target holds a same-named-but-different rule + its own extras.
+    // Claude reads its CLAUDE.md back as the instructions rule "claude",
+    // so the target names its rule "claude" to land on the changed arm.
     let other = tmp.path().join("other.json");
     std::fs::write(
         &other,
         r#"{
-            "rules": [{"name": "house", "kind": "rule", "body": "different"}],
+            "rules": [{"name": "claude", "kind": "rule", "body": "different"}],
             "hooks": [{"event": "PostToolUse", "type": "command", "command": "x.sh"}],
             "mcpServers": {"extra": {"command": "mcp-extra"}, "docs": {"command": "other-docs"}}
         }"#,
@@ -395,7 +402,7 @@ fn config_diff_reports_every_kind() {
     ]));
     for needle in [
         "# claude → cursor",
-        "rule changed: house",
+        "rule changed: claude",
         "command only in source: ship",
         "skill only in source: tidy",
         "subagent only in source: scout",

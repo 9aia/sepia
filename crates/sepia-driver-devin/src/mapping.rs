@@ -282,7 +282,8 @@ pub fn build_chat_message(node: &MessageNode, generation_model: &str) -> Value {
         }
         Role::Assistant => {
             let is_rendered = node.metadata.as_object().is_some_and(|m| {
-                m.contains_key("summarized_from") && m["is_system_prefix"] != true
+                m.contains_key("summarized_from")
+                    && m.get("is_system_prefix") != Some(&Value::Bool(true))
             });
 
             let mut extensions = Map::new();
