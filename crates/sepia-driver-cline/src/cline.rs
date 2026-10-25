@@ -23,6 +23,21 @@ fn str_field<'a>(obj: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
 
 static NULL: Value = Value::Null;
 
+/// sepia's IR sidecar suffix — `<id>.sepia.json` sits beside the manifest
+/// but is sepia's file, never a session manifest.
+pub const SEPIA_SIDECAR_SUFFIX: &str = ".sepia.json";
+
+/// The `<id>.json` manifest in a session dir: a json that is neither the
+/// transcript (`<id>.messages.json`), the compaction rewrite, nor sepia's
+/// own IR sidecar. Shared by `from_directory` and the store's scans.
+#[allow(clippy::case_sensitive_file_extension_comparisons)]
+pub fn is_manifest_name(name: &str) -> bool {
+    name.ends_with(".json")
+        && !name.ends_with(".messages.json")
+        && !name.ends_with(SEPIA_SIDECAR_SUFFIX)
+        && !name.contains(".compaction.")
+}
+
 /// `v.get(key)` tolerating a non-object input the way `obj[key]` does.
 fn field<'a>(value: &'a Value, key: &str) -> &'a Value {
     value.get(key).unwrap_or(&NULL)
@@ -918,11 +933,7 @@ pub fn from_directory(dir: &Path, session_id: Option<&str>) -> Result<Session, C
         names.push(entry.file_name().to_string_lossy().to_string());
     }
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
-    let meta_name = names.iter().find(|name| {
-        name.ends_with(".json")
-            && !name.ends_with(".messages.json")
-            && !name.contains(".compaction.")
-    });
+    let meta_name = names.iter().find(|name| is_manifest_name(name));
     let Some(meta_name) = meta_name else {
         return Err(fail(format!(
             "No session metadata json found in {}",

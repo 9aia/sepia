@@ -4,9 +4,10 @@
 //! `list` summarizes manifests behind a dir-stamp cache; `get_by_id`
 //! parses the full transcript. On the write side `save` runs the
 //! `ClineStore.install` pipeline — manifest + transcript pair plus the
-//! `db/sessions.db` index row — and embeds the full IR under a `sepia`
-//! key in the transcript so a `save` round-trips faithfully. `delete`
-//! removes the session dir and its index row.
+//! `db/sessions.db` index row — and records the full IR in sepia's own
+//! `<id>.sepia.json` sidecar so a `save` round-trips faithfully without
+//! inflating the transcript Cline loads. `delete` removes the session
+//! dir and its index row.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
@@ -16,16 +17,26 @@ use async_trait::async_trait;
 use rusqlite::params;
 use sepia_core::domain::{MessageNode, Session, StorageError};
 use sepia_core::storage::{NodesWindowOptions, SessionNodeWindow, SessionRepository};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::cline;
 use crate::cline_index;
 
-/// Embedded-IR key inside the messages file — `data["sepia"]["session"]`
-/// carries the wire payload `save` wrote, so `get_by_id` can return the
-/// session exactly (the native pair is lossy by design: it synthesizes
-/// system/user seed nodes on every read).
-const SIDECAR_KEY: &str = "sepia";
+/// sepia's lossless IR record — `<id>.sepia.json` next to the manifest.
+/// Cline never reads it; `get_by_id` does, so a `save` round-trips
+/// without the lossy re-parse (the native pair synthesizes system/user
+/// seed nodes on every read). Keeping it out of the transcript matters:
+/// the transcript is what Cline loads *and* ships over its hub, whose
+/// WebSocket rejects frames over 100 MiB.
+const SIDECAR_SUFFIX: &str = cline::SEPIA_SIDECAR_SUFFIX;
+
+/// Where the IR sits inside the sidecar.
+const SIDECAR_SESSION_KEY: &str = "session";
+
+/// Legacy location — older conversions embedded the same payload at
+/// `transcript["sepia"]["session"]`, inflating the transcript (and
+/// busting cline's hub limit on big sessions). Still read, never written.
+const LEGACY_SIDECAR_KEY: &str = "sepia";
 
 /// A `SessionRepository` over `<dataDir>/sessions/` — `data_dir` is
 /// usually `~/.cline/data`.
@@ -43,7 +54,7 @@ fn storage_err(prefix: &str) -> impl Fn(std::io::Error) -> StorageError + '_ {
 
 #[allow(clippy::case_sensitive_file_extension_comparisons)]
 fn is_manifest(name: &str) -> bool {
-    name.ends_with(".json") && !name.ends_with(".messages.json") && !name.contains(".compaction.")
+    cline::is_manifest_name(name)
 }
 
 fn file_mtime_ms(path: &Path) -> Option<f64> {
@@ -277,18 +288,24 @@ impl ClineStore {
         Ok(())
     }
 
-    /// The embedded IR `save` stored in `<id>.messages.json`, or `None`
-    /// for a native Cline session (whose transcript parses through
-    /// `from_directory` instead).
+    /// The IR `save` recorded in `<id>.sepia.json`, or `None` for a
+    /// native Cline session (whose transcript parses through
+    /// `from_directory` instead). Transcripts written before the sidecar
+    /// moved out still carry the payload inline — read those too.
     fn read_sidecar(&self, id: &str) -> Option<Session> {
-        let path = self
-            .sessions_dir()
-            .join(id)
-            .join(format!("{id}.messages.json"));
-        let raw = std::fs::read_to_string(path).ok()?;
-        let data: Value = serde_json::from_str(&raw).ok()?;
-        let embedded = data.get(SIDECAR_KEY)?.get("session")?;
-        let mut session = sepia_core::wire::session_from_json(embedded).ok()?;
+        let dir = self.sessions_dir().join(id);
+        let recorded = std::fs::read_to_string(dir.join(format!("{id}{SIDECAR_SUFFIX}")))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .and_then(|data| data.get(SIDECAR_SESSION_KEY).cloned())
+            .or_else(|| {
+                let raw = std::fs::read_to_string(dir.join(format!("{id}.messages.json"))).ok()?;
+                let data: Value = serde_json::from_str(&raw).ok()?;
+                data.get(LEGACY_SIDECAR_KEY)?
+                    .get(SIDECAR_SESSION_KEY)
+                    .cloned()
+            })?;
+        let mut session = sepia_core::wire::session_from_json(&recorded).ok()?;
         // The repository stamps its own backend on every read, sidecar or not.
         session.backend_type = "cline".into();
         Some(session)
@@ -436,9 +453,10 @@ impl ClineStore {
             "messages".into(),
             Value::Array(messages[..cut_index].to_vec()),
         );
-        // The embedded `sepia` IR would go stale past the cut — drop it so
-        // reads fall back to the (now truncated) transcript itself.
-        out.remove(SIDECAR_KEY);
+        // sepia's IR record would go stale past the cut — drop the sidecar
+        // (and any legacy inline copy) so reads fall back to the
+        // now-truncated transcript itself.
+        out.remove(LEGACY_SIDECAR_KEY);
         let removed_messages = messages_len - cut_index;
 
         // tmp + rename: a crash mid-write must not leave a torn transcript.
@@ -450,6 +468,11 @@ impl ClineStore {
         .map_err(storage_err("Failed to truncate cline session"))?;
         std::fs::rename(&tmp, &resolved)
             .map_err(storage_err("Failed to truncate cline session"))?;
+        let sidecar = dir.join(format!("{session_id}{SIDECAR_SUFFIX}"));
+        if sidecar.exists() {
+            std::fs::remove_file(&sidecar)
+                .map_err(storage_err("Failed to truncate cline session"))?;
+        }
         self.invalidate();
         Ok(i64::try_from(removed_messages).unwrap_or(i64::MAX))
     }
@@ -492,15 +515,19 @@ impl ClineStore {
         )
         .map_err(storage_err("Cline install failed"))?;
 
-        // The transcript embeds the full IR — `get_by_id` prefers it so a
-        // saved session round-trips without the lossy re-parse.
-        let mut messages = cline::session_messages(session, id);
-        if let Value::Object(map) = &mut messages {
-            let sidecar = sepia_core::wire::session_to_json(session).unwrap_or_default();
-            let mut sepia = Map::new();
-            sepia.insert("session".into(), sidecar);
-            map.insert(SIDECAR_KEY.into(), Value::Object(sepia));
-        }
+        // The IR rides sepia's own file, never the transcript: Cline loads
+        // (and ships) the whole transcript, so an embed there duplicates
+        // the session and can exceed its 100 MiB hub frame.
+        let sidecar = json!({
+            SIDECAR_SESSION_KEY: sepia_core::wire::session_to_json(session).unwrap_or_default(),
+        });
+        std::fs::write(
+            dir.join(format!("{id}{SIDECAR_SUFFIX}")),
+            serde_json::to_string(&sidecar).unwrap_or_default(),
+        )
+        .map_err(storage_err("Cline install failed"))?;
+
+        let messages = cline::session_messages(session, id);
         std::fs::write(
             messages_path,
             serde_json::to_string_pretty(&messages).unwrap_or_default(),

@@ -23,13 +23,15 @@
 //! `delete` removes both the chat store dir and the transcript dir for the
 //! id.
 //!
-//! One Rust-side addition the TS adapter doesn't have: `meta.json` carries a
-//! `sepia` block with the full IR and the store root it was written against
-//! (`{"sepia": {"storeRoot", "session"}}`). The store format is lossy —
+//! One Rust-side addition the TS adapter doesn't have: `meta.sepia.json`
+//! next to the chat store carries the full IR and the store root it was
+//! written against (`{"storeRoot", "session"}`). The store format is lossy —
 //! diffs/locations/extra node fields can't be re-encoded — so `get_by_id`
-//! prefers the embedded IR when the store's `latestRootBlobId` still matches
-//! the recorded root (a Cursor-side append moves the root and the embed is
-//! ignored). Mirrors the `sepia` transcript sidecar `sepia-driver-cline`
+//! prefers the recorded IR when the store's `latestRootBlobId` still matches
+//! the recorded root (a Cursor-side append moves the root and the record is
+//! ignored). It rides sepia's own file rather than `meta.json` so Cursor's
+//! metadata stays Cursor's — an embed there turned the agent's own sidecar
+//! into a copy of the session. Mirrors the sidecar `sepia-driver-cline`
 //! writes for the same reason.
 
 use std::collections::{HashMap, HashSet};
@@ -49,10 +51,16 @@ use crate::cursor::{
     SummarizeStoreInput,
 };
 
-/// Embedded-IR key inside `meta.json` — `metaJson["sepia"]["session"]`
-/// carries the wire payload `save` wrote, so `get_by_id` can splice the
-/// fields the store format can't hold back into the native decode.
-const SIDECAR_KEY: &str = "sepia";
+/// sepia's IR record for a chat — `<chat>/meta.sepia.json`, holding the
+/// wire payload `save` wrote plus the store root it was written against,
+/// so `get_by_id` can splice the fields the store format can't hold back
+/// into the native decode. Cursor never reads the file.
+const SIDECAR_FILE: &str = "meta.sepia.json";
+
+/// Legacy location — earlier writes embedded the same `{"storeRoot",
+/// "session"}` block inside `meta.json`, burying Cursor's own metadata
+/// under a copy of the session. Still read, never written.
+const LEGACY_SIDECAR_KEY: &str = "sepia";
 
 const JSONL: &str = ".jsonl";
 
@@ -106,6 +114,11 @@ fn read_meta_json(chat_dir: &Path, has_meta: bool) -> Option<Value> {
         return None;
     }
     serde_json::from_str::<Value>(&read_file_or_empty(&chat_dir.join("meta.json"))).ok()
+}
+
+/// sepia's IR record for a chat, when `save` left one behind.
+fn read_sidecar(chat_dir: &Path) -> Option<Value> {
+    serde_json::from_str::<Value>(&read_file_or_empty(&chat_dir.join(SIDECAR_FILE))).ok()
 }
 
 struct ChatEntry {
@@ -517,20 +530,23 @@ impl CursorStore {
         });
         drop(conn);
 
-        // The embedded `sepia` IR is trusted only while the store root it
-        // was written against still matches `latestRootBlobId` — a Cursor-
-        // side append moves the root and the embed is ignored.
-        let embedded = meta_json_value
-            .as_ref()
-            .and_then(|v| v.get(SIDECAR_KEY))
+        // sepia's recorded IR is trusted only while the store root it was
+        // written against still matches `latestRootBlobId` — a Cursor-side
+        // append moves the root and the record is dropped. Older writes put
+        // the same block inside `meta.json`.
+        let sidecar = read_sidecar(&entry.dir);
+        let record = sidecar.as_ref().or_else(|| {
+            meta_json_value
+                .as_ref()
+                .and_then(|v| v.get(LEGACY_SIDECAR_KEY))
+        });
+        let Some(embedded) = record
             .and_then(|s| s.get("session"))
-            .and_then(|s| sepia_core::wire::session_from_json(s).ok());
-        let Some(embedded) = embedded else {
+            .and_then(|s| sepia_core::wire::session_from_json(s).ok())
+        else {
             return Ok(native);
         };
-        let recorded_root = meta_json_value
-            .as_ref()
-            .and_then(|v| v.get(SIDECAR_KEY))
+        let recorded_root = record
             .and_then(|s| s.get("storeRoot"))
             .and_then(Value::as_str);
         let current_root = meta.as_ref().and_then(|m| m.latest_root_blob_id.as_deref());
@@ -766,21 +782,19 @@ impl SessionRepository for CursorStore {
                 ))
             })?;
 
-            // meta.json = the canonical sidecar plus the embedded IR, so a
-            // `get_by_id` can splice back fields the blob format can't hold.
-            let mut meta_json: serde_json::Map<String, Value> =
-                serde_json::from_str(&plan.meta_json).unwrap_or_default();
-            let sidecar = sepia_core::wire::session_to_json(session).unwrap_or_default();
-            meta_json.insert(
-                SIDECAR_KEY.into(),
-                serde_json::json!({
-                    "storeRoot": plan.root_blob_id,
-                    "session": sidecar,
-                }),
-            );
+            // meta.json stays Cursor's own; sepia's IR rides the
+            // `meta.sepia.json` sidecar so `get_by_id` can splice back the
+            // fields the blob format can't hold without burying the agent's
+            // metadata under a copy of the session.
+            std::fs::write(chat_dir.join("meta.json"), &plan.meta_json)
+                .map_err(storage_error(prefix))?;
+            let sidecar = serde_json::json!({
+                "storeRoot": plan.root_blob_id,
+                "session": sepia_core::wire::session_to_json(session).unwrap_or_default(),
+            });
             std::fs::write(
-                chat_dir.join("meta.json"),
-                serde_json::to_string(&Value::Object(meta_json)).unwrap_or_default(),
+                chat_dir.join(SIDECAR_FILE),
+                serde_json::to_string(&sidecar).unwrap_or_default(),
             )
             .map_err(storage_error(prefix))?;
             if let Some(prompt_history) = &plan.prompt_history_json {

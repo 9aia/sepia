@@ -412,6 +412,8 @@ async fn truncate_cuts_the_transcript_on_whole_message_boundaries() {
             .iter()
             .all(|n| { n.metadata.get("clineMessageIndex").and_then(Value::as_i64) == Some(1) })
     );
+    // an IR sidecar left by `save` must not outlive the cut either
+    std::fs::write(tmp.path().join("sessions/s1/s1.sepia.json"), "{}").unwrap();
     let removed_count = repo.truncate_session("s1", &kept, &removed).unwrap();
     assert_eq!(removed_count, 1);
     let data: Value = serde_json::from_str(
@@ -420,6 +422,72 @@ async fn truncate_cuts_the_transcript_on_whole_message_boundaries() {
     .unwrap();
     assert_eq!(data["messages"].as_array().unwrap().len(), 1);
     assert!(data["updated_at"].as_str().is_some());
+    // a stale IR sidecar must not outlive the cut
+    assert!(!tmp.path().join("sessions/s1/s1.sepia.json").exists());
+}
+
+#[tokio::test]
+async fn save_keeps_the_ir_beside_the_transcript_not_inside_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path();
+    let repo = ClineStore::new(data_dir.to_path_buf());
+    let session = sepia_testkit::contract::session("w2", "Sidecar", 1.0);
+    repo.save(&session).await.unwrap();
+
+    let dir = data_dir.join("sessions/w2");
+    let sidecar: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("w2.sepia.json")).unwrap()).unwrap();
+    assert_eq!(sidecar["session"]["title"], "Sidecar");
+
+    // the transcript Cline loads (and ships to its hub) stays a transcript
+    let transcript: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("w2.messages.json")).unwrap())
+            .unwrap();
+    assert!(transcript.get("sepia").is_none());
+
+    // the sidecar is not mistaken for the manifest when listing the dir
+    let listed = repo.list().await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, "w2");
+}
+
+#[tokio::test]
+async fn a_saved_dir_still_parses_as_a_cline_session() {
+    // the IR sidecar sits next to the manifest — the transcript parser
+    // must not mistake it for one
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = ClineStore::new(tmp.path().to_path_buf());
+    let session = sepia_testkit::contract::session("w3", "Parses", 1.0);
+    repo.save(&session).await.unwrap();
+
+    let parsed =
+        sepia_driver_cline::cline::from_directory(&tmp.path().join("sessions/w3"), None).unwrap();
+    assert_eq!(parsed.id, "w3");
+    assert!(!parsed.nodes.is_empty());
+}
+
+#[tokio::test]
+async fn a_legacy_inline_sidecar_still_reads_after_the_ir_moved_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path();
+    let repo = ClineStore::new(data_dir.to_path_buf());
+    let session = sepia_testkit::contract::session("old", "Embedded", 1.0);
+    repo.save(&session).await.unwrap();
+
+    // rebuild the pre-fix layout: IR inline in the transcript, no sidecar file
+    let dir = data_dir.join("sessions/old");
+    let sidecar: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("old.sepia.json")).unwrap())
+            .unwrap();
+    let mut transcript: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("old.messages.json")).unwrap())
+            .unwrap();
+    transcript["sepia"] = json!({ "session": sidecar["session"].clone() });
+    std::fs::write(dir.join("old.messages.json"), transcript.to_string()).unwrap();
+    std::fs::remove_file(dir.join("old.sepia.json")).unwrap();
+
+    let got = repo.get_by_id("old", None).await.unwrap().unwrap();
+    assert_eq!(got.title, "Embedded");
 }
 
 #[tokio::test]

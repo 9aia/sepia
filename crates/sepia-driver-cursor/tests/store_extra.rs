@@ -418,12 +418,10 @@ async fn embedded_ir_with_more_nodes_than_the_native_decode() {
         .join("chats")
         .join(cursor::workspace_hash_from_cwd("/w"))
         .join("s-splice");
-    let meta_path = chat.join("meta.json");
+    let meta_path = chat.join("meta.sepia.json");
     let mut meta_json: Value =
         serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap()).unwrap();
-    let nodes = meta_json["sepia"]["session"]["nodes"]
-        .as_array_mut()
-        .unwrap();
+    let nodes = meta_json["session"]["nodes"].as_array_mut().unwrap();
     let extra_emitting = {
         let mut n = nodes[0].clone();
         n["nodeId"] = json!(1);
@@ -441,4 +439,32 @@ async fn embedded_ir_with_more_nodes_than_the_native_decode() {
     std::fs::write(&meta_path, meta_json.to_string()).unwrap();
     let got = store.get_by_id("s-splice", None).await.unwrap().unwrap();
     assert_eq!(got.nodes.len(), 3);
+}
+
+#[tokio::test]
+async fn a_legacy_embedded_sidecar_in_meta_json_still_reads() {
+    // Pre-fix writes buried the IR inside Cursor's own `meta.json`; the
+    // reader still honours it when the separate sidecar is absent.
+    let tmp = tempfile::tempdir().unwrap();
+    let store = CursorStore::new(tmp.path().to_path_buf());
+    let s = session("s-legacy", vec![node(0, Role::User, "hi", Value::Null)]);
+    store.save(&s).await.unwrap();
+    let chat = store
+        .cursor_dir()
+        .join("chats")
+        .join(cursor::workspace_hash_from_cwd("/w"))
+        .join("s-legacy");
+
+    let sidecar: Value =
+        serde_json::from_str(&std::fs::read_to_string(chat.join("meta.sepia.json")).unwrap())
+            .unwrap();
+    let mut meta: Value =
+        serde_json::from_str(&std::fs::read_to_string(chat.join("meta.json")).unwrap()).unwrap();
+    meta["sepia"] = sidecar;
+    std::fs::write(chat.join("meta.json"), meta.to_string()).unwrap();
+    std::fs::remove_file(chat.join("meta.sepia.json")).unwrap();
+
+    let got = store.get_by_id("s-legacy", None).await.unwrap().unwrap();
+    assert_eq!(got.nodes.len(), 1);
+    assert_eq!(got.nodes[0].content, "hi");
 }
