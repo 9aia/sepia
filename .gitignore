@@ -16,3 +16,6 @@ target/webdriver/
 # UI toolchain (tailwind v4 via bun/npm)
 node_modules/
 docs/
+
+# myco worktree mount point (created by `myco init`)
+project/
