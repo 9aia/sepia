@@ -111,6 +111,7 @@ pub struct HistoryMessage {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AttachResult {
     pub attached: bool,
     pub read_only: bool,
