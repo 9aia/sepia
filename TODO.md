@@ -2,6 +2,8 @@
 
 ## Open
 
+- [ ] T-007 presentation deck — pending: run via ~/.9aia-pres pipeline (pres kick sepia or supervisor); agent writes presentation/ on branch presentation/initial, slidev build verify, push; open PR manually (agent token cannot create PRs); status board: ~/.9aia-pres/STATUS.md · created:2026-11-02
+
 ## Wire surface — what an orchestrator can't reach yet
 
 ## Ops / QA
