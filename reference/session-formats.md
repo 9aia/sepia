@@ -161,6 +161,13 @@ messages_path}`. Sepia's `sessionManifest` (`Cline.ts:750`) reproduces
 - `<id>.messages.json` — **transcript**: `{version, updated_at, agent,
 sessionId, origin{source,mode,sessionId,version}, system_prompt,
 messages[]}`.
+- `<id>.sepia.json` — **sepia's own IR sidecar** (not read by Cline):
+`{session}` carries the wire payload `save` wrote, so a converted session
+round-trips without the lossy re-parse. It lives in its own file because
+Cline loads *and ships* the whole transcript — embedding the IR there
+tripled transcripts and blew past Cline's 100 MiB hub WebSocket frame
+limit. Transcripts converted before the sidecar moved out still carry
+`{"sepia": {"session": …}}` inline and are still read.
 
 ### `messages[]` entry shape
 
@@ -255,6 +262,12 @@ one **global** KV store; neither is per-session-file like Claude Code.
   a decodable slug):
   - `meta.json` — `{schemaVersion, createdAtMs, updatedAtMs, title,
 hasConversation, cwd?}` (optional file; `cwd` only on some chats).
+  - `meta.sepia.json` — **sepia's own IR sidecar** (not read by Cursor):
+`{storeRoot, session}` records the wire payload `save` wrote plus the
+checkpoint root it was written against, so `get_by_id` can splice back the
+fields the blob format cannot hold; it is ignored once a Cursor-side append
+moves `latestRootBlobId`. Earlier writes embedded the same block inside
+`meta.json` and are still read.
   - `prompt_history.json` — plain JSON array of submitted prompt strings.
   - `store.db` (SQLite): `blobs(id TEXT PK, data BLOB)` +
     `meta(key,value)`.
