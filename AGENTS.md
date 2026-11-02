@@ -96,3 +96,18 @@ this wire — never link the session plane into an orchestrator.
   honest (claimed → in-progress → blocked/done).
 
 <!-- /myco:agent-awareness -->
+
+<!-- sturn:agent-awareness -->
+
+## Sturn awareness
+
+- **No PRs.** The pushed branch/commit is the deliverable; review
+  streams continuously (sturn WAL), merge is a human/sturn call.
+- sturn-wired repo (`sturn.toml` present): `sturn claim "<glob>"
+  --ws <ws>` *before* edits — claims surface conflicts in ms.
+- Ops via `sturn write|rename|delete`; `sturn snap` folds the ws
+  into a real commit; `sturn push` publishes heads + refs/sturn/*.
+- `sturn leave` on exit — drops the actor's claims.
+
+<!-- /sturn:agent-awareness -->
+
