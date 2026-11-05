@@ -23,7 +23,8 @@ use std::path::Path;
 
 use sepia_core::agent_config::{
     AgentConfig, ConfigCommand, ConfigRule, ConfigWriteAction, RuleKind, WriteActionKind,
-    extra_frontmatter, merge_mcp_servers, merge_memory_file, safe_file_stem, source_path,
+    extra_frontmatter, merge_mcp_servers, merge_memory_file, rules_from_memory_file,
+    safe_file_stem, source_path,
 };
 use sepia_core::domain::StorageError;
 use sepia_core::frontmatter;
@@ -74,15 +75,23 @@ pub fn read(dir: &Path) -> Result<AgentConfig, StorageError> {
     match std::fs::metadata(&rules_path) {
         Ok(info) if info.is_file() => {
             if let Some(text) = sdk_fs::read_file_if_exists(&rules_path)? {
+                // A managed `sepia:rules` block splits back out to
+                // `rule`-kind items; everything outside is instructions.
+                let (outside, mut block) = rules_from_memory_file(&text)
+                    .unwrap_or_else(|| (text.trim_end().to_string(), vec![]));
                 rules.push(ConfigRule {
                     name: "clinerules".into(),
                     description: None,
-                    body: text.trim_end().to_string(),
+                    body: outside,
                     globs: Vec::new(),
                     always_apply: true,
                     kind: RuleKind::Instructions,
                     metadata: json!({ "sourcePath": rules_path.display().to_string() }),
                 });
+                for r in &mut block {
+                    r.metadata = json!({ "sourcePath": rules_path.display().to_string() });
+                }
+                rules.append(&mut block);
             }
         }
         Ok(info) if info.is_dir() => {
