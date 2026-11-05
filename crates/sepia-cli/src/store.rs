@@ -204,15 +204,21 @@ fn install_into(
         StoreId::Devin => {
             let repo = repo(StoreId::Devin, dirs, true)?;
             let exists = block_on(rt, repo.has_session(&renamed.id)).map_err(storage_err)?;
-            if exists {
+            if exists && !force {
                 println!(
                     "Session {} is already imported; leaving it untouched",
                     renamed.id
                 );
                 return Ok(renamed.id.clone());
             }
-            block_on(rt, sepia_convert::import_session(&repo, &renamed))
-                .map_err(|e| CliError(format!("Import failed: {}", e.message)))?;
+            let write = async {
+                if exists {
+                    sepia_convert::overwrite_session(&repo, &renamed).await
+                } else {
+                    sepia_convert::import_session(&repo, &renamed).await
+                }
+            };
+            block_on(rt, write).map_err(|e| CliError(format!("Import failed: {}", e.message)))?;
             println!("{imported_log}");
             Ok(renamed.id)
         }

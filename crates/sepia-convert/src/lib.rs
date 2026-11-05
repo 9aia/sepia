@@ -244,6 +244,26 @@ pub async fn import_session(
     Ok(session.id.clone())
 }
 
+/// Save a session into the Devin store whether or not the id exists —
+/// the `--force` counterpart of [`import_session`], still grafting cog
+/// scaffolding from a donor when needed.
+///
+/// # Errors
+/// On store failure.
+pub async fn overwrite_session(
+    repo: &Arc<dyn SessionRepository>,
+    session: &Session,
+) -> Result<String, ConversionError> {
+    let cogs_json = graft_cogs(repo, session).await?;
+    repo.save(&Session {
+        cogs_json,
+        ..session.clone()
+    })
+    .await
+    .map_err(storage_err("Import failed"))?;
+    Ok(session.id.clone())
+}
+
 /// Read a Cline session dir into the IR and import it into the Devin
 /// store. Existing sessions are left untouched.
 ///
