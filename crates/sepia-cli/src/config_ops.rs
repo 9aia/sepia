@@ -349,10 +349,26 @@ pub fn config_install(
 }
 
 /// Strip per-source provenance so a diff compares content, not origin.
-fn norm(item: &Value) -> String {
+/// `strip_kind` drops a rule's `kind` — a cross-agent install coerces
+/// kinds the target can't express (`instructions` becomes `rule`), so
+/// comparing it literally reports phantom changes; same-agent diffs keep
+/// it, where kind still means real file placement.
+fn norm(item: &Value, strip_kind: bool) -> String {
     let mut clone = item.clone();
     if let Value::Object(map) = &mut clone {
         map.remove("metadata");
+        if strip_kind {
+            map.remove("kind");
+        }
+        // Trailing newlines are per-store formatting (one writer appends
+        // `\n`, the next reads it verbatim) — not a content difference.
+        if let Some(trimmed) = map
+            .get("body")
+            .and_then(Value::as_str)
+            .map(|b| b.trim_end().to_string())
+        {
+            map.insert("body".into(), Value::String(trimmed));
+        }
     }
     serde_json::to_string(&clone).unwrap_or_default()
 }
@@ -361,23 +377,61 @@ fn name_of(v: &Value) -> &str {
     v.get("name").and_then(Value::as_str).unwrap_or_default()
 }
 
-fn diff_kind(label: &str, a: &[Value], b: &[Value]) -> Vec<String> {
+fn diff_kind(label: &str, a: &[Value], b: &[Value], strip_kind: bool) -> Vec<String> {
     let mut lines = Vec::new();
+    let mut extra_a: Vec<&Value> = Vec::new();
+    let mut paired_b = vec![false; b.len()];
     for item in a {
         let name = name_of(item);
-        match b.iter().find(|o| name_of(o) == name) {
-            None => lines.push(format!("  {label} only in source: {name}")),
-            Some(other) if norm(item) != norm(other) => {
+        match b.iter().enumerate().find(|(_, o)| name_of(o) == name) {
+            None => extra_a.push(item),
+            Some((i, other)) if norm(item, strip_kind) != norm(other, strip_kind) => {
+                paired_b[i] = true;
                 lines.push(format!("  {label} changed: {name}"));
             }
-            _ => {}
+            Some((i, _)) => paired_b[i] = true,
         }
     }
-    for item in b {
-        let name = name_of(item);
-        if !a.iter().any(|o| name_of(o) == name) {
-            lines.push(format!("  {label} only in target: {name}"));
+    let mut extra_b: Vec<&Value> = b
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !paired_b[*i])
+        .map(|(_, v)| v)
+        .collect();
+    // Cross-agent, an instructions rule is renamed to the target's fixed
+    // memory file (`claude` → `agents` in `AGENTS.md`) — pair the
+    // leftovers by content so the rename isn't reported as a delta.
+    if strip_kind {
+        let instructions =
+            |v: &Value| v.get("kind").and_then(Value::as_str) == Some("instructions");
+        // The name is the filename that differs by construction — pair on
+        // everything but it.
+        let content = |v: &Value| {
+            let mut c = v.clone();
+            if let Value::Object(m) = &mut c {
+                m.remove("name");
+            }
+            norm(&c, true)
+        };
+        let mut still_a = Vec::new();
+        for item in extra_a {
+            if instructions(item)
+                && let Some(pos) = extra_b
+                    .iter()
+                    .position(|o| instructions(o) && content(o) == content(item))
+            {
+                extra_b.remove(pos);
+                continue;
+            }
+            still_a.push(item);
         }
+        extra_a = still_a;
+    }
+    for item in extra_a {
+        lines.push(format!("  {label} only in source: {}", name_of(item)));
+    }
+    for item in extra_b {
+        lines.push(format!("  {label} only in target: {}", name_of(item)));
     }
     lines
 }
@@ -401,19 +455,41 @@ pub fn config_diff(
             .cloned()
             .unwrap_or_default()
     };
+    let cross_agent = source != target;
     let mut lines = [
-        diff_kind("rule", &list(&a_v, "rules"), &list(&b_v, "rules")),
-        diff_kind("command", &list(&a_v, "commands"), &list(&b_v, "commands")),
-        diff_kind("skill", &list(&a_v, "skills"), &list(&b_v, "skills")),
-        diff_kind("subagent", &list(&a_v, "agents"), &list(&b_v, "agents")),
+        diff_kind(
+            "rule",
+            &list(&a_v, "rules"),
+            &list(&b_v, "rules"),
+            cross_agent,
+        ),
+        diff_kind(
+            "command",
+            &list(&a_v, "commands"),
+            &list(&b_v, "commands"),
+            false,
+        ),
+        diff_kind("skill", &list(&a_v, "skills"), &list(&b_v, "skills"), false),
+        diff_kind(
+            "subagent",
+            &list(&a_v, "agents"),
+            &list(&b_v, "agents"),
+            false,
+        ),
     ]
     .concat();
 
+    // Provenance (`source`, `sourceEvent`) is per-store — strip it like
+    // `norm` does, or identical hooks diff after every install.
     let hook_key = |h: &sepia_core::agent_config::ConfigHook| {
+        let mut v = serde_json::to_value(h).unwrap_or_default();
+        if let Value::Object(map) = &mut v {
+            map.remove("metadata");
+        }
         format!(
             "{}:{}",
             h.event,
-            serde_json::to_string(h).unwrap_or_default()
+            serde_json::to_string(&v).unwrap_or_default()
         )
     };
     let a_hooks: std::collections::HashSet<String> = a.hooks.iter().map(hook_key).collect();
@@ -490,7 +566,7 @@ mod tests {
             ..ConfigDirs::default()
         };
         let actions = write_agent(AgentId::Cline, &dirs, &AgentConfig::default()).unwrap();
-        assert!(actions.is_empty());
+        assert_eq!(actions, [] as [ConfigWriteAction; 0]);
         print_actions(&actions, AgentId::Cline);
     }
 }

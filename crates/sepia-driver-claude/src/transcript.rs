@@ -252,7 +252,7 @@ pub fn tool_file_refs(name: &str, input: &Value) -> (Vec<ToolCallLocation>, Vec<
                 .map(|edits| {
                     edits
                         .iter()
-                        .filter_map(|e| as_map(e).map(&hunk))
+                        .filter_map(|e| as_map(e).map(hunk))
                         .flatten()
                         .collect()
                 })

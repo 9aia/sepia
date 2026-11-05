@@ -304,6 +304,20 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
             None => block_rules.push(rule.clone()),
         }
     }
+    // A foreign instructions rule (imported from another agent's memory
+    // file) owns `<dir>/CLAUDE.md` when nothing else does and the file
+    // doesn't exist yet — writing it verbatim is the faithful conversion.
+    // With a live file in place it still merges into the managed block.
+    if memories[0].1.is_empty() {
+        let existing = sdk_fs::read_file_if_exists(&memories[0].0)?;
+        if existing.as_deref().is_none_or(|t| t.trim().is_empty())
+            && let Some(pos) = block_rules
+                .iter()
+                .position(|r| r.kind == RuleKind::Instructions)
+        {
+            memories[0].1.push(block_rules.remove(pos));
+        }
+    }
     for (i, (path, owners)) in memories.iter().enumerate() {
         let blocks: &[ConfigRule] = if i == 0 { &block_rules } else { &[] };
         if owners.is_empty() && blocks.is_empty() {
