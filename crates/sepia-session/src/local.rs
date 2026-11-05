@@ -599,4 +599,24 @@ impl Local {
         self.import_session(agent, &session, &ImportOverrides::default())
             .await
     }
+
+    /// Delete `id` from `agent`'s store via `session.delete` over the
+    /// driver wire — the fallback for agents with no runtime (cursor),
+    /// where [`crate::plane::Plane::delete_session`] can't spawn an ACP
+    /// `session/delete`. Callers should prefer the plane path first:
+    /// it detaches live handles instead of just erasing store rows.
+    ///
+    /// # Errors
+    /// `unknown_agent` without a SessionWrite driver for `agent`;
+    /// `internal` on driver spawn or store-delete failure.
+    pub async fn delete_session_store(&self, agent: &str, id: &str) -> Result<(), ControlError> {
+        let store = self.write_store(agent).await?;
+        store.delete(id).await.map_err(|e| {
+            ControlError::caused(
+                ControlErrorCode::Internal,
+                format!("delete in {agent} failed"),
+                e.message,
+            )
+        })
+    }
 }

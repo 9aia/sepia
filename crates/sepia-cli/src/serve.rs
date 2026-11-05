@@ -330,11 +330,24 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
             Ok(Value::Null)
         }
         "sessions.delete" => {
-            plane
-                .delete_session(id_of(&req.params)?, agent.as_deref())
-                .await
-                .map_err(|e| control_err(&e))?;
-            Ok(Value::Null)
+            let id = id_of(&req.params)?;
+            match plane.delete_session(id, agent.as_deref()).await {
+                Ok(()) => Ok(Value::Null),
+                // Agents without a runtime (cursor) can't serve ACP
+                // `session/delete` — fall back to the store-level delete
+                // over the driver wire when the request names the agent.
+                Err(e)
+                    if e.code == sepia_session::ControlErrorCode::UnknownAgent
+                        && agent.is_some() =>
+                {
+                    local
+                        .delete_session_store(agent.as_deref().unwrap_or_default(), id)
+                        .await
+                        .map_err(|e| control_err(&e))?;
+                    Ok(Value::Null)
+                }
+                Err(e) => Err(control_err(&e)),
+            }
         }
         "sessions.patch_meta" => {
             let id = id_of(&req.params)?;

@@ -86,7 +86,7 @@ mod tests {
         };
         // A missing git binary → the spawn map_err arm.
         let err = exec.git(Path::new("/"), &["status"]).await.unwrap_err();
-        assert!(!err.is_empty());
+        assert_ne!(err, "");
         // Write under a path that is a file → create_dir_all fails.
         let tmp = tempfile::tempdir().unwrap();
         let file = tmp.path().join("a-file");
@@ -96,10 +96,10 @@ mod tests {
             .write_file(&file.join("nested"), b"x")
             .await
             .unwrap_err();
-        assert!(!err.is_empty());
+        assert_ne!(err, "");
         // Write TO a directory path → create_dir_all passes, write fails.
         let err = exec.write_file(tmp.path(), b"x").await.unwrap_err();
-        assert!(!err.is_empty());
+        assert_ne!(err, "");
         // remove_file on a real file → Ok; missing → NotFound → Ok.
         exec.remove_file(&file).await.unwrap();
         exec.remove_file(&file).await.unwrap();
