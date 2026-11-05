@@ -10,6 +10,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use serde_json::{Value, json};
 
 const METHOD_NOT_FOUND: i64 = -32601;
+const INVALID_PARAMS: i64 = -32602;
 const SESSION_NOT_FOUND: i64 = -32001;
 const CAPABILITY_UNSUPPORTED: i64 = -32004;
 
@@ -100,23 +101,22 @@ fn serves_the_driver_wire() {
     let res = wire.call(3, "session.get", json!({"id": "nope"}));
     assert_eq!(res["error"]["code"], SESSION_NOT_FOUND, "{res}");
 
-    // The write surface is gated off — capability errors, not crashes.
-    for (id, method, params) in [
-        (4, "session.save", json!({})),
-        (5, "session.delete", json!({"id": "x"})),
-        (6, "session.rename", json!({"id": "x", "title": "t"})),
-        (
-            7,
-            "session.rewind",
-            json!({"session": {}, "plan": {}, "truncated": {}}),
-        ),
-    ] {
-        let res = wire.call(id, method, params);
-        assert_eq!(
-            res["error"]["code"], CAPABILITY_UNSUPPORTED,
-            "{method}: {res}"
-        );
-    }
+    // The write surface is enabled — save rejects a malformed session
+    // at the param layer, delete/rename reach the store.
+    let res = wire.call(4, "session.save", json!({}));
+    assert_eq!(res["error"]["code"], INVALID_PARAMS, "{res}");
+    let res = wire.call(5, "session.delete", json!({"id": "x"}));
+    assert!(res.get("error").is_none(), "{res}");
+    let res = wire.call(6, "session.rename", json!({"id": "x", "title": "t"}));
+    assert_eq!(res["error"]["code"], SESSION_NOT_FOUND, "{res}");
+
+    // Rewind stays gated — the cursor driver ships no truncator.
+    let res = wire.call(
+        7,
+        "session.rewind",
+        json!({"session": {}, "plan": {}, "truncated": {}}),
+    );
+    assert_eq!(res["error"]["code"], CAPABILITY_UNSUPPORTED, "{res}");
 
     // config.* is supported — round-trip through the wire.
     let res = wire.call(
