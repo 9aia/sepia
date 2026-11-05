@@ -325,6 +325,21 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
             memories[0].1.push(block_rules.remove(pos));
         }
     }
+    // A foreign instructions rule whose body is already the file's own
+    // content (or an owner's body — same thing after an earlier install)
+    // must not land in the block again: every reinstall would append a
+    // `## name` duplicate of the file body.
+    {
+        let existing = sdk_fs::read_file_if_exists(&memories[0].0)?;
+        let outside = existing.as_deref().map_or_else(String::new, |t| {
+            rules_from_memory_file(t).map_or_else(|| t.trim().to_string(), |(o, _)| o)
+        });
+        block_rules.retain(|r| {
+            r.kind != RuleKind::Instructions
+                || memories[0].1.iter().all(|o| o.body.trim() != r.body.trim())
+                    && r.body.trim() != outside.as_str()
+        });
+    }
     for (i, (path, owners)) in memories.iter().enumerate() {
         let blocks: &[ConfigRule] = if i == 0 { &block_rules } else { &[] };
         if owners.is_empty() && blocks.is_empty() {

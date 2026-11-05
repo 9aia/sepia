@@ -23,6 +23,7 @@ sepia-driver = { path = "crates/sepia-driver" }
 sepia-host = { path = "crates/sepia-host" }
 sepia-testkit = { path = "crates/sepia-testkit" }
 sepia-telemetry = { path = "crates/sepia-telemetry" }
+sepia-peregrin = { path = "crates/sepia-peregrin" }
 
 # External dependencies — pin conservative majors/minors.
 serde = { version = "1.0", features = ["derive"] }

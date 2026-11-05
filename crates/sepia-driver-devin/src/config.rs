@@ -270,6 +270,19 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
     {
         owners.push(block_rules.remove(0));
     }
+    // A foreign instructions rule whose body is already the file's own
+    // content (or an owner's body) must not land in the block again —
+    // every reinstall would append a `## name` duplicate of it.
+    {
+        let outside = existing.as_deref().map_or_else(String::new, |t| {
+            rules_from_memory_file(t).map_or_else(|| t.trim().to_string(), |(o, _)| o)
+        });
+        block_rules.retain(|r| {
+            r.kind != RuleKind::Instructions
+                || owners.iter().all(|o| o.body.trim() != r.body.trim())
+                    && r.body.trim() != outside.as_str()
+        });
+    }
     if !owners.is_empty() || !block_rules.is_empty() {
         actions.extend(
             merge_memory_file(existing.as_deref(), &owners, &block_rules)

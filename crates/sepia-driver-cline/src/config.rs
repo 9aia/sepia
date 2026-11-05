@@ -248,6 +248,16 @@ pub fn write(config: &AgentConfig, dir: &Path) -> Result<Vec<ConfigWriteAction>,
         }
         if !owners.is_empty() || !block_rules.is_empty() {
             let existing = sdk_fs::read_file_if_exists(&rules_path)?;
+            // A foreign instructions rule whose body is already the
+            // file's own content must not land in the block again.
+            let outside = existing.as_deref().map_or_else(String::new, |t| {
+                rules_from_memory_file(t).map_or_else(|| t.trim().to_string(), |(o, _)| o)
+            });
+            block_rules.retain(|r| {
+                r.kind != RuleKind::Instructions
+                    || owners.iter().all(|o| o.body.trim() != r.body.trim())
+                        && r.body.trim() != outside.as_str()
+            });
             // Owners or blocks are non-empty past the guard, so the
             // merge always produces content.
             actions.extend(
