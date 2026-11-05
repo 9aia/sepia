@@ -191,11 +191,13 @@ fn config_list_prints_the_full_summary() {
         &path(&claude),
     ]));
     for needle in [
-        "Rules (1):",
+        "Rules (2):",
         // Claude has no rules dir — the import collapsed the named rule
-        // into the managed `sepia:rules` block of CLAUDE.md, which reads
-        // back as the single instructions rule named "claude".
+        // into the managed `sepia:rules` block of CLAUDE.md; the
+        // read-back splits the block out again — an empty instructions
+        // owner "claude" plus the parsed rule.
         "  claude",
+        "  house",
         "Commands (1):",
         "Skills (1):",
         "Subagents (1):",

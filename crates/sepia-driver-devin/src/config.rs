@@ -25,7 +25,7 @@ use std::path::Path;
 use sepia_core::agent_config::{
     AgentConfig, ConfigCommand, ConfigRule, ConfigWriteAction, RuleKind, WriteActionKind,
     dropped_hook_fields, extra_frontmatter, hooks_from_claude_json, merge_hook_events,
-    merge_memory_file, safe_file_stem, source_path,
+    merge_memory_file, rules_from_memory_file, safe_file_stem, source_path,
 };
 use sepia_core::domain::StorageError;
 use sepia_core::frontmatter;
@@ -83,15 +83,23 @@ pub fn read(dir: &Path) -> Result<AgentConfig, StorageError> {
 
     let agents_path = dir.join("AGENTS.md");
     if let Some(agents_md) = sdk_fs::read_file_if_exists(&agents_path)? {
+        // The managed `sepia:rules` block splits back out to `rule`-kind
+        // items; everything outside it is the instructions body.
+        let (outside, mut block) = rules_from_memory_file(&agents_md)
+            .unwrap_or_else(|| (agents_md.trim_end().to_string(), vec![]));
         rules.push(ConfigRule {
             name: "agents".into(),
             description: None,
-            body: agents_md.trim_end().to_string(),
+            body: outside,
             globs: Vec::new(),
             always_apply: true,
             kind: RuleKind::Instructions,
             metadata: json!({ "sourcePath": agents_path.display().to_string() }),
         });
+        for r in &mut block {
+            r.metadata = json!({ "sourcePath": agents_path.display().to_string() });
+        }
+        rules.append(&mut block);
     }
 
     let hooks = sdk_fs::read_json_if_exists(&dir.join("hooks.v1.json"))?

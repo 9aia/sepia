@@ -359,6 +359,10 @@ fn norm(item: &Value, strip_kind: bool) -> String {
         map.remove("metadata");
         if strip_kind {
             map.remove("kind");
+            // Memory-file rule blocks can't express `alwaysApply: false`
+            // (a managed block is unconditional) — re-reads coerce it to
+            // true, so cross-agent diffs drop it like `kind`.
+            map.remove("alwaysApply");
         }
         // Trailing newlines are per-store formatting (one writer appends
         // `\n`, the next reads it verbatim) — not a content difference.
@@ -383,13 +387,29 @@ fn diff_kind(label: &str, a: &[Value], b: &[Value], strip_kind: bool) -> Vec<Str
     let mut paired_b = vec![false; b.len()];
     for item in a {
         let name = name_of(item);
-        match b.iter().enumerate().find(|(_, o)| name_of(o) == name) {
-            None => extra_a.push(item),
-            Some((i, other)) if norm(item, strip_kind) != norm(other, strip_kind) => {
-                paired_b[i] = true;
+        // Several same-named candidates can appear (an empty instructions
+        // owner next to a block-parsed rule): pair with the equal one;
+        // only when none matches is the first a "changed" report.
+        let idxs: Vec<usize> = b
+            .iter()
+            .enumerate()
+            .filter(|(i, o)| !paired_b[*i] && name_of(o) == name)
+            .map(|(i, _)| i)
+            .collect();
+        if idxs.is_empty() {
+            extra_a.push(item);
+            continue;
+        }
+        match idxs
+            .iter()
+            .copied()
+            .find(|i| norm(&b[*i], strip_kind) == norm(item, strip_kind))
+        {
+            Some(i) => paired_b[i] = true,
+            None => {
+                paired_b[idxs[0]] = true;
                 lines.push(format!("  {label} changed: {name}"));
             }
-            Some((i, _)) => paired_b[i] = true,
         }
     }
     let mut extra_b: Vec<&Value> = b
@@ -426,6 +446,16 @@ fn diff_kind(label: &str, a: &[Value], b: &[Value], strip_kind: bool) -> Vec<Str
             still_a.push(item);
         }
         extra_a = still_a;
+        // An empty-body instructions owner is a placeholder — the file
+        // exists only to carry the managed block — not a real rule.
+        let placeholder = |v: &Value| {
+            instructions(v)
+                && v.get("body")
+                    .and_then(Value::as_str)
+                    .is_none_or(|b| b.trim().is_empty())
+        };
+        extra_a.retain(|v| !placeholder(v));
+        extra_b.retain(|v| !placeholder(v));
     }
     for item in extra_a {
         lines.push(format!("  {label} only in source: {}", name_of(item)));

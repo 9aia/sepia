@@ -556,6 +556,63 @@ pub fn rules_to_memory_file(existing: Option<&str>, rules: &[ConfigRule]) -> Opt
     Some(format!("{}{block}{}", &text[..begin], &text[after..]))
 }
 
+/// The read-side counterpart of [`merge_memory_file`]: split a memory
+/// file into the content outside the managed `sepia:rules` block and the
+/// rules inside it, so collapse-written `rule`-kind items round-trip
+/// back to rules instead of blobbing into the instructions body. `None`
+/// when there's no block; `(outside, rules)` otherwise, `outside`
+/// trimmed (empty when the file is block-only).
+#[must_use]
+pub fn rules_from_memory_file(text: &str) -> Option<(String, Vec<ConfigRule>)> {
+    let begin = text.find(RULES_BLOCK_BEGIN)?;
+    let end = text.find(RULES_BLOCK_END).filter(|e| *e > begin)?;
+    let outside = format!("{}{}", &text[..begin], &text[end + RULES_BLOCK_END.len()..])
+        .trim()
+        .to_string();
+    let inner = &text[begin + RULES_BLOCK_BEGIN.len()..end];
+    let mut rules = Vec::new();
+    let mut name: Option<String> = None;
+    let mut description: Option<String> = None;
+    let mut globs: Vec<String> = Vec::new();
+    let mut body = String::new();
+    let mut flush = |name: &mut Option<String>,
+                     description: &mut Option<String>,
+                     globs: &mut Vec<String>,
+                     body: &mut String| {
+        if let Some(n) = name.take() {
+            rules.push(ConfigRule {
+                name: n,
+                description: description.take(),
+                body: body.trim().to_string(),
+                globs: std::mem::take(globs),
+                always_apply: true,
+                kind: RuleKind::Rule,
+                metadata: Value::Null,
+            });
+        }
+        body.clear();
+    };
+    for line in inner.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            flush(&mut name, &mut description, &mut globs, &mut body);
+            name = Some(heading.trim().to_string());
+        } else if name.is_some() {
+            if let Some(attr) = line.strip_prefix("> ") {
+                if let Some(rest) = attr.strip_prefix("Applies to: ") {
+                    globs = rest.split(", ").map(str::to_string).collect();
+                } else {
+                    description = Some(attr.to_string());
+                }
+                continue;
+            }
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    flush(&mut name, &mut description, &mut globs, &mut body);
+    Some((outside, rules))
+}
+
 /// Render a memory file (`CLAUDE.md`, `AGENTS.md`, a file-form `.clinerules`)
 /// for write. `instructions` are the rules that *own* the file — the ones
 /// the read side lifted out of it — so their bodies are the file's content

@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 use sepia_core::agent_config::{
     AgentConfig, ConfigAgent, ConfigCommand, ConfigHook, ConfigRule, ConfigWriteAction, RuleKind,
     WriteActionKind, dropped_hook_fields, extra_frontmatter, hooks_from_claude_json,
-    merge_claude_hooks, merge_mcp_servers, merge_memory_file, safe_file_stem, source_path,
-    string_list,
+    merge_claude_hooks, merge_mcp_servers, merge_memory_file, rules_from_memory_file,
+    safe_file_stem, source_path, string_list,
 };
 use sepia_core::domain::StorageError;
 use sepia_core::frontmatter;
@@ -138,18 +138,25 @@ fn mcp_path(dir: &Path) -> PathBuf {
 /// `StorageError` on filesystem failures.
 pub fn read(dir: &Path) -> Result<AgentConfig, StorageError> {
     let mut rules: Vec<ConfigRule> = Vec::new();
+    let mut memory_rules = |name: &str, path: &Path, text: &str| {
+        // The managed `sepia:rules` block splits back out to `rule`-kind
+        // items; everything outside it is the instructions body.
+        let (outside, mut block) =
+            rules_from_memory_file(text).unwrap_or_else(|| (text.trim_end().to_string(), vec![]));
+        rules.push(instructions_rule(name, path, &outside));
+        for r in &mut block {
+            r.metadata = json!({ "sourcePath": path.display().to_string() });
+        }
+        rules.append(&mut block);
+    };
     let memory_path = dir.join("CLAUDE.md");
     if let Some(memory) = sdk_fs::read_file_if_exists(&memory_path)? {
-        rules.push(instructions_rule("claude", &memory_path, &memory));
+        memory_rules("claude", &memory_path, &memory);
     }
     if is_project_dir(dir) {
         let project_memory_path = project_root(dir).join("CLAUDE.md");
         if let Some(project_memory) = sdk_fs::read_file_if_exists(&project_memory_path)? {
-            rules.push(instructions_rule(
-                "claude-project",
-                &project_memory_path,
-                &project_memory,
-            ));
+            memory_rules("claude-project", &project_memory_path, &project_memory);
         }
     }
 
