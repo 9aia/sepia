@@ -4,3 +4,9 @@
 slow-timeout = { period = "30s", terminate-after = 4 }
 failure-output = "final"
 fail-fast = false
+
+# serve_full::session_surface_over_the_wire spawns the whole driver set
+# and starves under a full parallel run (0.2s isolated, >120s starved).
+[[profile.default.overrides]]
+filter = 'test(session_surface_over_the_wire)'
+slow-timeout = { period = "60s", terminate-after = 8 }
