@@ -400,16 +400,15 @@ fn diff_kind(label: &str, a: &[Value], b: &[Value], strip_kind: bool) -> Vec<Str
             extra_a.push(item);
             continue;
         }
-        match idxs
+        if let Some(i) = idxs
             .iter()
             .copied()
             .find(|i| norm(&b[*i], strip_kind) == norm(item, strip_kind))
         {
-            Some(i) => paired_b[i] = true,
-            None => {
-                paired_b[idxs[0]] = true;
-                lines.push(format!("  {label} changed: {name}"));
-            }
+            paired_b[i] = true;
+        } else {
+            paired_b[idxs[0]] = true;
+            lines.push(format!("  {label} changed: {name}"));
         }
     }
     let mut extra_b: Vec<&Value> = b
