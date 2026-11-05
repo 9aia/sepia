@@ -59,6 +59,32 @@ const SESSION_CACHE_MAX: usize = 64;
 const SESSION_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const CALLS_INDEX_TTL: Duration = Duration::from_secs(15);
 
+/// Cogs for a save: verbatim when usable, else grafted from a donor
+/// session in the store (same working directory preferred), else the
+/// stub cog filled with the session's model. Sessions written via the
+/// driver wire (`session.save` — import/convert) would otherwise land
+/// with an empty model cog Devin can't spawn on.
+fn graft_cogs(tx: &rusqlite::Transaction, session: &Session) -> Result<String, rusqlite::Error> {
+    if shared::has_model_cog(&session.cogs_json) {
+        return Ok(session.cogs_json.clone());
+    }
+    let mut stmt = tx.prepare("SELECT cogs_json, working_directory FROM sessions WHERE id != ?")?;
+    let rows = stmt
+        .query_map(params![session.id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let usable = |(cogs, _): &(String, String)| shared::has_model_cog(cogs);
+    let donor = rows
+        .iter()
+        .find(|r| usable(r) && r.1 == session.working_directory)
+        .or_else(|| rows.iter().find(|r| usable(r)));
+    Ok(donor.map_or_else(
+        || shared::with_model_cog(&session.cogs_json, &session.model),
+        |d| d.0.clone(),
+    ))
+}
+
 struct SessionStamp {
     last_activity_at: f64,
     backend_type: String,
@@ -505,6 +531,8 @@ impl SessionRepository for DevinStore {
         tx.execute("DELETE FROM sessions WHERE id = ?", params![session.id])
             .map_err(err("Failed to save session"))?;
 
+        let cogs_json = graft_cogs(&tx, session).map_err(err("Failed to save session"))?;
+
         // Checkpoint refs ride the session metadata under a sepia-namespaced
         // key so an imported session keeps its snapshot pointers.
         let mut session_meta = match &session.metadata {
@@ -534,7 +562,7 @@ impl SessionRepository for DevinStore {
                 session.title,
                 session.main_chain_id,
                 session.shell_last_seen_index,
-                session.cogs_json,
+                cogs_json,
                 session.workspace_dirs,
                 session.hidden,
                 serde_json::to_string(&session_meta).unwrap_or_default(),

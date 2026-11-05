@@ -169,34 +169,6 @@ pub fn session_from_history(
     }
 }
 
-/// A cogs blob is usable when its `core/model` cog resolves to a real
-/// model.
-fn model_cog(cogs_json: &str) -> bool {
-    let Ok(cogs) = serde_json::from_str::<Value>(cogs_json) else {
-        return false;
-    };
-    cogs.as_array().is_some_and(|arr| {
-        arr.iter().any(|c| {
-            c["lifetime"]["Unique"] == "core/model"
-                && c["model"].as_str().is_some_and(|m| !m.is_empty())
-        })
-    })
-}
-
-/// Fill the stub `core/model` cog's model when no donor session exists.
-fn with_model(cogs_json: &str, model: &str) -> String {
-    let mut cogs = serde_json::from_str::<Value>(cogs_json).unwrap_or(Value::Null);
-    if let Some(arr) = cogs.as_array_mut() {
-        for c in arr.iter_mut() {
-            if c["lifetime"]["Unique"] == "core/model" {
-                c["model"] = Value::String(model.to_string());
-            }
-        }
-        return serde_json::to_string(&cogs).unwrap_or_else(|_| cogs_json.to_string());
-    }
-    cogs_json.to_string()
-}
-
 /// Sepia cannot mint Devin's cog scaffolding (model cog, tool allow-list,
 /// profile prompt), so graft it from a sibling session in the store —
 /// same working directory preferred — or at least fill the model cog.
@@ -205,14 +177,18 @@ async fn graft_cogs(
     session: &Session,
 ) -> Result<String, ConversionError> {
     let donors = repo.list().await.unwrap_or_default();
-    let usable = |s: &Session| s.id != session.id && model_cog(&s.cogs_json);
+    let usable =
+        |s: &Session| s.id != session.id && sepia_core::shared::has_model_cog(&s.cogs_json);
     let donor = donors
         .iter()
         .find(|s| usable(s) && s.working_directory == session.working_directory)
         .or_else(|| donors.iter().find(|s| usable(s)));
     match donor {
         Some(donor) => Ok(donor.cogs_json.clone()),
-        None => Ok(with_model(&session.cogs_json, &session.model)),
+        None => Ok(sepia_core::shared::with_model_cog(
+            &session.cogs_json,
+            &session.model,
+        )),
     }
 }
 

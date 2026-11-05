@@ -164,6 +164,45 @@ pub fn default_cogs_json() -> String {
     .to_string()
 }
 
+/// A cogs blob is usable when its `core/model` cog resolves to a real
+/// model — the invariant a Devin session needs to resume.
+#[must_use]
+pub fn has_model_cog(cogs_json: &str) -> bool {
+    let Ok(cogs) = serde_json::from_str::<Value>(cogs_json) else {
+        return false;
+    };
+    cogs.as_array().is_some_and(|arr| {
+        arr.iter().any(|c| {
+            c["lifetime"]["Unique"] == "core/model"
+                && c["model"].as_str().is_some_and(|m| !m.is_empty())
+        })
+    })
+}
+
+/// Fill the `core/model` cog's `model` field. A blob without the stub at
+/// all (`[]`, foreign shapes) falls back to the canonical defaults with
+/// the model filled in — an empty cog list is unusable either way, so
+/// the full scaffold is the better import.
+#[must_use]
+pub fn with_model_cog(cogs_json: &str, model: &str) -> String {
+    let base = match serde_json::from_str::<Value>(cogs_json) {
+        Ok(Value::Array(arr)) if arr.iter().any(|c| c["lifetime"]["Unique"] == "core/model") => {
+            cogs_json.to_string()
+        }
+        _ => default_cogs_json(),
+    };
+    let mut cogs = serde_json::from_str::<Value>(&base).unwrap_or(Value::Null);
+    if let Some(arr) = cogs.as_array_mut() {
+        for c in arr.iter_mut() {
+            if c["lifetime"]["Unique"] == "core/model" {
+                c["model"] = Value::String(model.to_string());
+            }
+        }
+        return serde_json::to_string(&cogs).unwrap_or(base);
+    }
+    base
+}
+
 /// The namespaced slot sepia keeps workspace-snapshot refs under in the
 /// `sessions.metadata` JSON.
 pub const SESSION_CHECKPOINTS_KEY: &str = "sepia/checkpoints";
