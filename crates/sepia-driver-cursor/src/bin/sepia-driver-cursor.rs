@@ -51,9 +51,13 @@ fn manifest() -> DriverManifest {
         label: "Cursor chats + transcripts".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         protocol: DRIVER_PROTOCOL,
-        capabilities: [Capability::SessionStore, Capability::AgentConfig]
-            .into_iter()
-            .collect(),
+        capabilities: [
+            Capability::SessionStore,
+            Capability::SessionWrite,
+            Capability::AgentConfig,
+        ]
+        .into_iter()
+        .collect(),
         // Cursor has no ACP runtime — sessions are read/history only.
         agent_command: None,
         config_schema: serde_json::json!({
