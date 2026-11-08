@@ -110,4 +110,3 @@ this wire — never link the session plane into an orchestrator.
 - `sturn leave` on exit — drops the actor's claims.
 
 <!-- /sturn:agent-awareness -->
-
