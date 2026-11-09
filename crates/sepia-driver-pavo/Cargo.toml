@@ -1,10 +1,12 @@
 [package]
 name = "sepia-driver-pavo"
 description = "tamias-driver-sepia — pavo view driver over `sepia serve` (read-only session/agent/project surfaces)"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+license.workspace = true
+publish = false
 
 [[bin]]
 name = "tamias-driver-sepia"

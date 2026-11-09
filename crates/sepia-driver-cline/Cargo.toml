@@ -1,10 +1,11 @@
 [package]
 name = "sepia-driver-cline"
 description = "Cline store driver — ~/.cline/data session dirs as a SessionRepository over the driver-wire protocol"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true

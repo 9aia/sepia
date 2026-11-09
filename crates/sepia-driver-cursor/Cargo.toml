@@ -1,10 +1,11 @@
 [package]
 name = "sepia-driver-cursor"
 description = "Cursor store driver — ~/.cursor chats store.db + agent-transcripts as a SessionRepository over the driver-wire protocol"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true

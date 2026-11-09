@@ -1,10 +1,12 @@
 [package]
 name = "sepia-testkit"
 description = "Sepia test backbone — conformance suites, golden fixtures, mock drivers/agents"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+license.workspace = true
+publish = false
 
 [lints]
 workspace = true

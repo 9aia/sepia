@@ -1,10 +1,11 @@
 [package]
 name = "sepia-meta"
 description = "Sepia-owned per-session overlay metadata (title/pin/project/spans/config) — a JSON file beside the read-only session stores"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true

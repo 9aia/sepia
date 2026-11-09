@@ -1,10 +1,11 @@
 [package]
 name = "sepia-host"
 description = "Daemon side of the sepia driver protocol — discovery, spawn, registry, remote SessionRepository"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true

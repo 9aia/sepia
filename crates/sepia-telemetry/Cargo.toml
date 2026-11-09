@@ -1,10 +1,11 @@
 [package]
 name = "sepia-telemetry"
 description = "Opt-in OpenTelemetry layer over the tracing stack — OTLP export, W3C context propagation"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true

@@ -1,8 +1,14 @@
 name: release
 
-# Manual — builds release binaries for linux x86_64 and macOS (aarch64
-# + x86_64) and attaches them to a GitHub release tagged from VERSION.
+# Tag-triggered (`v*`/`sepia-v*`) or manual — builds release binaries
+# for linux x86_64 and macOS (aarch64 + x86_64) and attaches them to a
+# GitHub release. On a tag push the release uses the pushed tag; on
+# manual dispatch it mints `VERSION-<timestamp>`.
 on:
+  push:
+    tags:
+      - "v*"
+      - "sepia-v*"
   workflow_dispatch:
 
 permissions:
@@ -57,7 +63,11 @@ jobs:
       - uses: actions/download-artifact@v4
       - name: Tag + release
         run: |
-          VERSION="$(cat VERSION)-$(date -u +%y%m%d.%H%M)"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="$(cat VERSION)-$(date -u +%y%m%d.%H%M)"
+          fi
           gh release create "$VERSION" --generate-notes sepia-*.tar.gz
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
