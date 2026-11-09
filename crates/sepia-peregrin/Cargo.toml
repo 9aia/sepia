@@ -14,4 +14,17 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 ureq.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+form_urlencoded.workspace = true
+sepia-acp.workspace = true
+sepia-core.workspace = true
+sepia-convert.workspace = true
+sepia-meta.workspace = true
 sepia-session.workspace = true
+hypha-http.workspace = true
+time.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

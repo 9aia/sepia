@@ -10,3 +10,8 @@ jobs = 6
 # or your package manager), then every cargo build reuses cached artifacts.
 # Disable by deleting this line.
 build.rustc-wrapper = "sccache"
+
+# Git deps (hypha) fetch over the git CLI — libgit2 can't reach the
+# ssh-agent, the CLI can. Same setting peregrin carries.
+[net]
+git-fetch-with-cli = true

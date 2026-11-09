@@ -56,6 +56,12 @@ tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 proptest = "1"
 insta = { version = "1", features = ["json", "redactions"] }
+axum = "0.8"
+form_urlencoded = "1"
+# hypha — the substrate `sepia-peregrin`'s server-side entity plane
+# plugs into (PL-005). Git dep on `main`, same pattern peregrin uses
+# for sepia.
+hypha-http = { git = "ssh://git@github.com/9aia/hypha.git", branch = "main" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
