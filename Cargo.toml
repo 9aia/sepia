@@ -18,6 +18,7 @@ sepia-driver-cline = { path = "crates/sepia-driver-cline" }
 sepia-driver-claude = { path = "crates/sepia-driver-claude" }
 sepia-driver-cursor = { path = "crates/sepia-driver-cursor" }
 sepia-driver-devin = { path = "crates/sepia-driver-devin" }
+sepia-driver-pavo = { path = "crates/sepia-driver-pavo" }
 sepia-meta = { path = "crates/sepia-meta" }
 sepia-driver = { path = "crates/sepia-driver" }
 sepia-host = { path = "crates/sepia-host" }

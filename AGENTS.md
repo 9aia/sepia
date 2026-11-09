@@ -22,6 +22,7 @@ depend on it; `sepia-cli` composes the local plane.
 | `crates/sepia-{meta,convert}` | overlay store, store conversion |
 | `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
 | `crates/sepia-cli` | `sepia` binary — store/driver/config verbs + `serve` |
+| `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo view driver (read-only) proxying `sepia serve` |
 | `crates/sepia-testkit` | conformance suites, golden fixtures, mock ACP agent |
 
 ## Boundary

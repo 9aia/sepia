@@ -1003,6 +1003,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "pavo-protocol"
+version = "0.1.0"
+source = "git+https://github.com/9aia/pavo#130817eb3ba149f1cf2702a9b5c922c606b757dc"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "pavo-testkit"
+version = "0.1.0"
+source = "git+https://github.com/9aia/pavo#130817eb3ba149f1cf2702a9b5c922c606b757dc"
+dependencies = [
+ "pavo-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1451,6 +1473,18 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "sepia-driver-pavo"
+version = "0.0.0"
+dependencies = [
+ "pavo-protocol",
+ "pavo-testkit",
+ "sepia-driver",
+ "serde",
+ "serde_json",
+ "time",
 ]
 
 [[package]]

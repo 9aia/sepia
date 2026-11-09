@@ -1,0 +1,30 @@
+[package]
+name = "sepia-driver-pavo"
+description = "tamias-driver-sepia — pavo view driver over `sepia serve` (read-only session/agent/project surfaces)"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "tamias-driver-sepia"
+path = "src/main.rs"
+
+[dependencies]
+sepia-driver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+# The public wire contract — git dep so `cargo install --git` and
+# `cargo xtask install` work without a sibling ../pavo checkout
+# (path deps break workspace resolution on a fresh clone; sepia's
+# CI has no pavo checkout). `version` is the crates.io fallback.
+pavo-protocol = { git = "https://github.com/9aia/pavo", version = "0.1.0" }
+
+[dev-dependencies]
+# Conformance gate — `cargo test` runs pavo's wire-contract suite
+# against this crate's own `tamias-driver-sepia serve` binary.
+pavo-testkit = { git = "https://github.com/9aia/pavo" }
+
+[lints]
+workspace = true
