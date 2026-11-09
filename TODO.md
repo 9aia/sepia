@@ -3,6 +3,7 @@
 ## Open
 
 - [ ] T-007 presentation deck — pending: run via ~/.9aia-pres pipeline (pres kick sepia or supervisor); agent writes presentation/ on branch presentation/initial, slidev build verify, push; no PR (sturn flow) — the pushed branch is the deliverable; merge is a human/sturn call; status board: ~/.9aia-pres/STATUS.md · created:2026-11-02
+- [ ] T-008 tamias-driver-sepia — pavo view driver over sepia serve (5 views, conformance green, shipped fe01d668) · created:2026-11-09
 
 ## Wire surface — what an orchestrator can't reach yet
 
