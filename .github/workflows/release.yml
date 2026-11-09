@@ -1,0 +1,63 @@
+name: release
+
+# Manual — builds release binaries for linux x86_64 and macOS (aarch64
+# + x86_64) and attaches them to a GitHub release tagged from VERSION.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-13
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - name: Build
+        # `dist` profile: fat LTO + single codegen unit for shipped
+        # binaries (release itself is thin LTO for fast local installs).
+        run: |
+          cargo build --locked --profile dist --target ${{ matrix.target }} \
+            --bin sepia \
+            --bin sepia-driver-devin --bin sepia-driver-cline \
+            --bin sepia-driver-claude --bin sepia-driver-cursor
+      - name: Stage
+        run: |
+          mkdir -p "dist/sepia-${{ matrix.target }}"
+          cd "target/${{ matrix.target }}/dist"
+          for b in sepia sepia-driver-devin sepia-driver-cline sepia-driver-claude sepia-driver-cursor; do
+            install -m 755 "$b" "$OLDPWD/dist/sepia-${{ matrix.target }}/"
+          done
+          tar -czf "$OLDPWD/sepia-${{ matrix.target }}.tar.gz" -C "$OLDPWD/dist" "sepia-${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sepia-${{ matrix.target }}
+          path: sepia-${{ matrix.target }}.tar.gz
+
+  release:
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+      - name: Tag + release
+        run: |
+          VERSION="$(cat VERSION)-$(date -u +%y%m%d.%H%M)"
+          gh release create "$VERSION" --generate-notes sepia-*.tar.gz
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

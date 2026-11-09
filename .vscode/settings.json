@@ -1,0 +1,9 @@
+{
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.patterns": {
+        "Cargo.toml": "Cargo.lock, rustfmt.toml, rust-toolchain.toml",
+    },
+    "files.exclude": {
+        "target/": true
+    }
+}

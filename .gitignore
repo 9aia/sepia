@@ -1,0 +1,25 @@
+# Rust
+target/
+# swept-aside build dir (was accidentally committed once — keep it out)
+target-sweep/
+**/*.rs.bk
+
+# Browser e2e tooling (chromedriver etc.) — redundant with target/ but
+# keeps the dir ignored if the target layout ever changes.
+target/webdriver/
+
+# misc
+*.log
+.history_*.md
+.hook-cache/
+
+# UI toolchain (tailwind v4 via bun/npm)
+node_modules/
+docs/
+
+# coverage artifacts
+*.profraw
+lcov.info
+
+# myco worktree mount point (created by `myco init`)
+project/
