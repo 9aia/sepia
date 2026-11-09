@@ -23,69 +23,31 @@
 //! the `sepia` CLI / `sepia serve` consumers — this driver is
 //! strictly read-only.
 
-use pavo_protocol::{
-    ColumnNode, Contributes, Contribution, DriverManifest, KvNode, NodeBase, QueryBinding,
-    TableColumn, TableNode, ViewNode, ViewSpec,
-};
+use pavo_driver_kit as kit;
+use pavo_protocol::{DriverManifest, ViewNode, ViewSpec};
 use serde_json::{Map, Value, json};
 
 use crate::data;
 
 // ---------------------------------------------------------------- helpers
 
-fn titled(title: &str) -> NodeBase {
-    NodeBase {
-        title: Some(title.to_string()),
-        ..NodeBase::default()
-    }
-}
-
-fn bound(title: &str, query: &str) -> NodeBase {
-    NodeBase {
-        title: Some(title.to_string()),
-        query: Some(query.to_string()),
-        ..NodeBase::default()
-    }
-}
-
 fn col(title: &str, children: Vec<ViewNode>) -> ViewNode {
-    ViewNode::Column(ColumnNode {
-        base: titled(title),
-        children,
-        gap: None,
-    })
+    kit::column(kit::base().title(title), children)
 }
 
 fn kv(title: &str, query: &str) -> ViewNode {
-    ViewNode::Kv(KvNode {
-        base: bound(title, query),
-        pairs: Vec::new(),
-    })
+    kit::kv(kit::base().title(title).query(query), Vec::new())
 }
 
 fn table(title: &str, query: &str, columns: &[(&str, &str)]) -> ViewNode {
-    ViewNode::Table(TableNode {
-        base: bound(title, query),
-        columns: columns
+    kit::sortable_table(
+        kit::base().title(title).query(query),
+        columns
             .iter()
-            .map(|(key, t)| TableColumn {
-                key: (*key).to_string(),
-                title: (*t).to_string(),
-                align: None,
-                width: None,
-            })
+            .map(|(key, t)| kit::table_column(key, t))
             .collect(),
-        rows: Vec::new(),
-        sortable: true,
-    })
-}
-
-fn binding(name: &str) -> QueryBinding {
-    QueryBinding {
-        name: name.to_string(),
-        op: "query".to_string(),
-        params: Map::new(),
-    }
+        Vec::new(),
+    )
 }
 
 fn spec(
@@ -96,14 +58,11 @@ fn spec(
     queries: &[&str],
     root: ViewNode,
 ) -> ViewSpec {
-    ViewSpec {
-        id: id.to_string(),
-        title: title.to_string(),
-        route: route.to_string(),
-        description: Some(description.to_string()),
-        queries: queries.iter().map(|q| binding(q)).collect(),
-        root,
+    let mut view = kit::view(id, title, route, root).description(description);
+    for q in queries {
+        view = view.query(kit::binding(q, "query"));
     }
+    view.build()
 }
 
 // ---------------------------------------------------------------- manifest
@@ -195,41 +154,25 @@ pub fn specs() -> Vec<ViewSpec> {
 
 /// The `manifest` op result.
 pub fn manifest() -> DriverManifest {
-    DriverManifest {
-        name: "sepia".to_string(),
-        title: "Sepia".to_string(),
-        icon: Some("🐙".to_string()),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        verbs: vec!["manifest".to_string(), "serve".to_string()],
-        capabilities: vec!["pavo".to_string()],
-        contributes: Contributes {
-            navbar: vec![Contribution {
-                id: "sessions".to_string(),
-                title: "Sepia".to_string(),
-                route: "/sepia/sessions".to_string(),
-                priority: 20,
-                icon: None,
-            }],
-            dashboard: vec![Contribution {
-                id: "status".to_string(),
-                title: "Sepia status".to_string(),
-                route: "/sepia/status".to_string(),
-                priority: 30,
-                icon: None,
-            }],
-            statusbar: vec![Contribution {
-                id: "status".to_string(),
-                title: "Sepia sessions".to_string(),
-                route: "/sepia/status".to_string(),
-                priority: 40,
-                icon: None,
-            }],
-            routes: Vec::new(),
-            extra: std::collections::BTreeMap::default(),
-        },
-        views: specs(),
-        renderers: Vec::new(),
+    // `kit::contribution` defaults priority to 100 — the chrome order
+    // this driver wants is explicit, so set it on the public field.
+    let mut navbar = kit::contribution("sessions", "Sepia", "/sepia/sessions");
+    navbar.priority = 20;
+    let mut dashboard = kit::contribution("status", "Sepia status", "/sepia/status");
+    dashboard.priority = 30;
+    let mut statusbar = kit::contribution("status", "Sepia sessions", "/sepia/status");
+    statusbar.priority = 40;
+
+    let mut m = kit::Manifest::new("sepia", "Sepia")
+        .version(env!("CARGO_PKG_VERSION"))
+        .icon("🐙")
+        .navbar(navbar)
+        .dashboard(dashboard)
+        .statusbar(statusbar);
+    for spec in specs() {
+        m = m.view(spec);
     }
+    m.build()
 }
 
 // ---------------------------------------------------------------- queries

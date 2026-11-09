@@ -21,25 +21,18 @@
 mod data;
 mod views;
 
-use std::io::{BufRead, Write};
-
+use pavo_driver_kit as kit;
 use pavo_protocol::wire::{self, Request, Response, ViewSummary};
-
-fn manifest_json() -> serde_json::Value {
-    serde_json::to_value(views::manifest()).unwrap_or(serde_json::Value::Null)
-}
 
 fn capabilities_json() -> serde_json::Value {
     let m = views::manifest();
-    serde_json::json!({
-        "capabilities": m.capabilities,
-        "verbs": m.verbs,
-        "views": m.views.len(),
-    })
+    let mut caps = kit::capabilities_value(&m);
+    caps["views"] = serde_json::json!(m.views.len());
+    caps
 }
 
 /// Dispatch one parsed request to its response.
-fn dispatch(req: Request) -> Response {
+fn dispatch(req: &Request) -> Response {
     match req {
         Request::Manifest => Response::ok_typed(&views::manifest()),
         Request::Views => {
@@ -47,7 +40,7 @@ fn dispatch(req: Request) -> Response {
                 views::specs().iter().map(ViewSummary::from).collect();
             Response::ok_typed(&summaries)
         }
-        Request::View { view, params } => match views::view_result(&view, &params) {
+        Request::View { view, params } => match views::view_result(view, params) {
             Ok(result) => Response::ok_typed(&result),
             Err(e) => Response::err(e),
         },
@@ -56,12 +49,12 @@ fn dispatch(req: Request) -> Response {
             // `ok:true` — degraded serve calls travel as
             // `{"error": …}` data (the marker renderers understand),
             // matching the reference driver's contract.
-            if !views::known_query(&query) {
+            if !views::known_query(query) {
                 return Response::err(format!("unknown query: {query}"));
             }
-            let payload = views::query_data(&query, &params);
+            let payload = views::query_data(query, params);
             Response::ok_typed(&wire::QueryResult {
-                query,
+                query: query.clone(),
                 data: payload,
             })
         }
@@ -74,6 +67,12 @@ fn dispatch(req: Request) -> Response {
         Request::Submit { .. } => {
             Response::err("tamias-driver-sepia is read-only and implements no forms")
         }
+        // `jobs`/`notifications` — the manifest declares neither
+        // `contributes` feed slot, so both answer the same
+        // unsupported-op error hosts read as "no feed".
+        Request::Jobs | Request::Notifications => {
+            Response::err("tamias-driver-sepia provides no jobs or notifications feed")
+        }
     }
 }
 
@@ -81,27 +80,9 @@ fn serve() -> i32 {
     // Pre-spawn `sepia serve` so its plane build overlaps the
     // manifest/views handshake — see `data::warm`.
     data::warm();
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let response = match wire::parse_request(&line) {
-            Ok(req) => dispatch(req),
-            // Malformed JSON or an unknown op — the conformance
-            // contract wants `ok:false`, never a dropped line.
-            Err(e) => Response::err(e.to_string()),
-        };
-        let Ok(text) = wire::response_line(&response) else {
-            continue;
-        };
-        if writeln!(out, "{text}").is_err() || out.flush().is_err() {
-            break; // host went away — exit quietly
-        }
-    }
+    // The kit loop answers every line (parse failures become
+    // `ok:false`), ends quietly on stdin EOF or a dead client.
+    let _ = kit::serve_stdio(dispatch);
     0
 }
 
@@ -109,10 +90,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("manifest") => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&manifest_json()).unwrap_or_default()
-            );
+            println!("{}", kit::manifest_json(&views::manifest()));
         }
         Some("capabilities") => {
             println!(

@@ -20,6 +20,7 @@ time.workspace = true
 # (path deps break workspace resolution on a fresh clone; sepia's
 # CI has no pavo checkout). `version` is the crates.io fallback.
 pavo-protocol = { git = "https://github.com/9aia/pavo", version = "0.1.0" }
+pavo-driver-kit = { git = "https://github.com/9aia/pavo", version = "0.1.0" }
 
 [dev-dependencies]
 # Conformance gate — `cargo test` runs pavo's wire-contract suite
