@@ -1,8 +1,8 @@
 name = "sepia"
 
 [next]
-t = 2
+t = 8
 i = 1
 p = 1
 adr = 1
-pl = 1
+pl = 2
