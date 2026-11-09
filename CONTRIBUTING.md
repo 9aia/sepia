@@ -40,3 +40,18 @@ Follow Diátaxis: `docs/tutorials/` (learn) · `docs/how-to/` (tasks) ·
 `docs/reference/` (lookup) · `docs/explanation/` (why). The domain
 references (`session-formats`, `protocol`, `agent-configs`) are the
 source of truth for the IR and both wires — keep them current.
+
+## Releasing
+
+- crates.io publish is dep-ordered via `scripts/release.sh` (bupha
+  watch trigger — register the watch ops-side). `sepia-peregrin`'s
+  `hypha-http` dep needs **hypha 0.1.0 on crates.io first** — org
+  publish order: **hypha → sepia → peregrin**.
+- crates.io names: `sepia` is taken — the CLI publishes as
+  `sepia-cli` (it ships the `sepia` bin,
+  `cargo install sepia-cli`). `sepia-testkit` and
+  `sepia-driver-pavo` are `publish = false`.
+- Release binaries: push a `v*`/`sepia-v*` tag (or workflow_dispatch)
+  — `.github/workflows/release.yml` builds `sepia-<target>.tar.gz`
+  (linux x86_64, macOS aarch64/x86_64) carrying `sepia` + the four
+  store drivers.
