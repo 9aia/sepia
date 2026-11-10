@@ -71,11 +71,10 @@ for t in $tags; do git tag "$t"; done
 ver="$(grep -m1 '^version' crates/sepia-cli/Cargo.toml | cut -d'"' -f2)"
 git push -q origin HEAD:main --tags
 
-# binaries: tag-triggered .github/workflows/release.yml builds the
-# release tarballs on `v*`/`sepia-v*` tags (manual dispatch still
-# works and mints a `VERSION-<timestamp>` tag). To ship binaries:
+# binaries: releases are manual — GHA workflows were removed org-wide.
+# This script bumps, publishes, and tags; the `dist build` path below
+# produces release tarballs (host arch). To ship:
 #   git tag sepia-v${ver} && git push origin sepia-v${ver}
-# The local `dist build` path below is the ops fallback (host arch).
 if command -v dist >/dev/null && command -v gh >/dev/null; then
     dist build --output-format=json > /tmp/dist-manifest.json 2>&1 || true
     for f in target/distrib/*; do

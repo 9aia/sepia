@@ -43,8 +43,8 @@ source of truth for the IR and both wires — keep them current.
 
 ## Releasing
 
-- crates.io publish is dep-ordered via `scripts/release.sh` (bupha
-  watch trigger — register the watch ops-side). `sepia-peregrin`'s
+- crates.io publish is dep-ordered via `scripts/release.sh` (manual —
+  bupha watch retired, releases are operator-run). `sepia-peregrin`'s
   `hypha-http` dep needs **hypha 0.1.0 on crates.io first** — org
   publish order: **hypha → sepia → peregrin**.
 - crates.io names: `sepia` is taken — the CLI publishes as
