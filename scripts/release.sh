@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Triggered by bupha watch on pushes to 9aia/sepia (script runner) —
-# register the watch ops-side; the script is the deliverable here.
+# Run manually: `./scripts/release.sh` from the repo root (needs
+# `.env` with CARGO_REGISTRY_TOKEN; dist + gh for binary artifacts).
+# bupha is deprecated — no watch registration; releases are operator-run.
 # The leading sleep is the debounce window: a newer push kills this
 # run via cancel_running, so only the last push in a quiet window
 # releases. Runs inside a detached worktree — commits/tags are pushed
