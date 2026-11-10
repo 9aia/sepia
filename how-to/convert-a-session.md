@@ -99,8 +99,8 @@ sepia list --data-dir /tmp/probe
 - `claude` and `cursor` refuse an id that already exists in the target
   store — `pass --force to overwrite`.
 - A `devin` target leaves an existing session alone and says so
-  (`already imported; leaving it untouched`); `--force` does not
-  overwrite there.
+  (`already imported; leaving it untouched`); `--force` overwrites it
+  (the store deletes and re-inserts the session's rows).
 - `--force` also lets a Cline install replace a session row a live
   session still owns.
 

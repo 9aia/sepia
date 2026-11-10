@@ -1,5 +1,6 @@
 # Reference
 
+- [CLI and environment](cli.md)
 - [Driver protocol](protocol.md)
 - [The `sepia serve` wire](serve-wire.md)
 - [Session formats](session-formats.md)

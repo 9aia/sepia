@@ -6,8 +6,10 @@ This guide shows how to add a new agent's session store to sepia.
 
 A driver is a standalone binary named `sepia-driver-<id>` that speaks
 ndjson JSON-RPC over stdio — the same framing `sepia serve` uses. It
-answers a `manifest` handshake and the store ops it supports
-(`sessions.list`, `sessions.get`, history, and optionally write ops).
+answers a `driver.manifest` handshake and the store ops it supports
+(`session.list`/`get`/`summary`/`history`, and optionally
+`session.save`/`rename`/`delete`, `session.rewind`, `config.read`/
+`config.write` — see [the driver protocol](../reference/protocol.md)).
 
 ## Steps
 
@@ -22,15 +24,19 @@ answers a `manifest` handshake and the store ops it supports
 
 3. **Declare a manifest.** Name, version, protocol level, and the
    capability flags sepia uses to decide what a store supports
-   (history pages, rewind, live attach).
+   (`sessionStore`, `sessionWrite`, `checkpoints`, `rewind`,
+   `agentConfig` — see [the driver protocol](../reference/protocol.md)).
 
 4. **Pass conformance.** Point `sepia-testkit`'s contract suite at your
    driver — it exercises the invariants every store must satisfy
    (round-trip listing, unknown-id behaviour, golden fixtures).
 
 5. **Install.** Drop the binary where discovery finds it:
-   `$SEPIA_DRIVER_DIR`, `<data-dir>/sepia/drivers`, or anywhere on
-   `PATH`. `sepia driver` lists what the plane can see.
+   `$SEPIA_DRIVER_DIR` → the platform data dir
+   (`$XDG_DATA_HOME/sepia/drivers` or `~/.local/share/sepia/drivers`)
+   → `/usr/local/lib/sepia/drivers` → anywhere on `PATH`.
+   `sepia driver list` shows what the plane can see (`--json` prints
+   the probed manifests).
 
 ## Conventions
 

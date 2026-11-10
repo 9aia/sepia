@@ -28,6 +28,7 @@ export default defineConfig({
       {
         text: 'Reference',
         items: [
+          { text: 'CLI and environment', link: '/reference/cli' },
           { text: 'Driver protocol', link: '/reference/protocol' },
           { text: 'Serve wire', link: '/reference/serve-wire' },
           { text: 'Session formats', link: '/reference/session-formats' },

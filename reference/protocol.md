@@ -23,21 +23,23 @@ request or is a protocol error.
 | field | meaning |
 | --- | --- |
 | `id` | driver id — `cline`, `claude`, `cursor`, `devin`, … |
+| `label` | human-facing driver name |
 | `version` | driver build version |
 | `protocol` | driver-wire version; the host refuses a mismatch |
 | `capabilities` | which method families the driver serves (below) |
 | `agentCommand` | the agent CLI argv the host resolves on PATH — an agent only appears when the driver *and* its command resolve |
 | `configSchema` | JSON Schema for driver-specific config |
+| `backendType` | store backend label stamped onto sessions |
 
 | Capability | Methods it unlocks |
 | --- | --- |
-| `sessionStore` | `session.list`/`get`/`summary`/`history`/`checkpoints` — reads |
+| `sessionStore` | `session.list`/`get`/`summary`/`history` — reads |
 | `sessionWrite` | `session.save`/`rename`/`delete` — writes; `save` is the *install* path (the driver writes its full store layout, e.g. cline's manifest + transcript + index row) |
-| `checkpoints` | `session.checkpoints` — workspace snapshot refs |
-| `restore` | `file.restore` — file restore from recorded diffs/checkpoints |
+| `checkpoints` | `session.checkpoints` — workspace snapshot refs (served ungated by `StoreDriver`; all shipped drivers declare it) |
 | `rewind` | `session.rewind` — transcript truncation |
-| `convert` | cross-store conversion between two backends |
 | `agentConfig` | `config.read`/`config.write` — the agent-config IR |
+| `restore` | reserved — `file.restore` is in the wire but no shipped driver implements it; file restore runs plane-side (`RestoreExec` in `sepia-session`) |
+| `convert{from,to}` | reserved — no shipped driver declares it; conversion is host-side read-IR → `session.save` (`sepia-convert`) |
 
 ## Methods
 
@@ -47,12 +49,12 @@ request or is a protocol error.
 | `session.get` | `{id, agentId?}` → full session IR |
 | `session.summary` | `{id, agentId?}` → metadata-only session |
 | `session.history` | `{id, limit?, before?, agentId?}` → a message page |
-| `session.save` | `{session}` → `{}` — write the IR into the store (the import/install path) |
-| `session.rename` | `{id, title}` |
-| `session.delete` | `{id}` |
-| `session.checkpoints` | `{id}` → snapshot refs |
-| `session.rewind` | `{session, plan, truncated}` — the plane ships the full pre-rewind IR, the computed cut, and the already-truncated IR; the driver picks its store mechanism |
-| `file.restore` | `{id, path, toolCallId?, confirm}` — `confirm` is the mandatory destructive-op gate → `{restored, skipped:[{path,reason}]}` |
+| `session.save` | the session IR object itself → `null` — write the IR into the store (the import/install path) |
+| `session.rename` | `{id, title}` → `null` |
+| `session.delete` | `{id, agentId?}` → `null` |
+| `session.checkpoints` | `{id, agentId?}` → `{checkpoints: [CheckpointRef…]}` |
+| `session.rewind` | `{session, plan, truncated}` — the plane ships the full pre-rewind IR, the computed cut, and the already-truncated IR; the driver picks its store mechanism → `null` |
+| `file.restore` | `{id, path, toolCallId?, confirm}` — reserved: `StoreDriver` answers `CAPABILITY_UNSUPPORTED`; restore executes plane-side |
 | `config.read` | `{dir?}` → `AgentConfig` IR — `dir` is the config root the driver's adapter expects (a `.claude`/`.cursor`/devin dir, or a Cline *workspace root*); absent, the driver resolves its default (`SEPIA_*_DIR`, user dir, or its own cwd) |
 | `config.write` | `{dir?, config}` → `{actions:[{path,action,detail?}]}` — `config` takes the `config export` payload or a serialized `AgentConfig`; items the format can't express come back `skipped` honestly |
 
@@ -77,12 +79,12 @@ Standard JSON-RPC codes plus sepia's application range (`-320xx`):
 ## Discovery and lifecycle
 
 `sepia-host` finds drivers in order: `$SEPIA_DRIVER_DIR` →
-`~/.local/share/sepia/drivers` → `/usr/local/lib/sepia/drivers` → PATH
-scan for `sepia-driver-*`. A `<name>.driver.toml` sibling can supply
-the manifest without spawning; otherwise the host spawns, handshakes,
-and supervises the process (kill-on-drop, stderr ring buffer). Drivers
-are spawned per call-site as needed and reused; a dead child is
-respawned on the next call.
+`~/.local/share/sepia/drivers` (the platform data dir,
+`$XDG_DATA_HOME`-aware) → `/usr/local/lib/sepia/drivers` → PATH
+scan for `sepia-driver-*`. The host spawns each candidate with
+`--manifest`, handshakes, and supervises the process (kill-on-drop,
+stderr ring buffer). Drivers are spawned per call-site as needed and
+reused; a dead child is respawned on the next call.
 
 Store dir envs per driver (`SEPIA_CLINE_DIR`, `SEPIA_CLAUDE_DIR`,
 `SEPIA_CURSOR_DIR`, `SEPIA_DEVIN_DB`, `SEPIA_DEVIN_DIR`) resolve inside

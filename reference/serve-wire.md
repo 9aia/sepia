@@ -99,10 +99,12 @@ failed load emits nothing.
 Failures come back as JSON-RPC errors with `data.code` matching the
 plane's `ControlErrorCode` (`not_found`, `locked`, `invalid_params`,
 `internal`, …) and `data.cause` carrying the underlying store/driver
-message. `sessions.import`/`sessions.convert` answer `invalid` on a
-malformed `session` payload and `unknown_agent` when no `SessionWrite`
-driver exists for `agent`. `config.get`/`config.import`/`config.list`
-answer `unknown_agent` when `agent` is absent or its driver lacks the
+message. `sessions.import` answers `invalid` on a malformed `session`
+payload; `sessions.convert` takes `{id, agent, from?}` — it reads the
+session from the store by id (`not_found` when absent) and answers
+`unknown_agent` when no `SessionWrite` driver exists for `agent`.
+`config.get`/`config.import`/`config.list` answer `unknown_agent` when
+`agent` is absent or its driver lacks the
 `AgentConfig` capability; `config.import` answers `invalid` on a
 malformed `config` payload. `dir` is the config root the driver's
 adapter expects — `.claude`/`.cursor`/devin config dirs, or a Cline

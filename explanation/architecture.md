@@ -44,9 +44,10 @@ and auditors can see what a store could not express.
 Store adapters ship as `sepia-driver-<id>` executables speaking ndjson
 JSON-RPC over stdio. Discovery order: `$SEPIA_DRIVER_DIR`, the platform
 data dir (`$XDG_DATA_HOME/sepia/drivers` or `~/.local/share/sepia/drivers`),
-then PATH. The session plane never links a driver — a crashed or hung
-adapter kills a subprocess, not your daemon. Adding an agent is dropping
-a binary in a discovery dir; see [write a driver](../how-to/write-a-driver.md).
+`/usr/local/lib/sepia/drivers`, then PATH. The session plane never links
+a driver — a crashed or hung adapter kills a subprocess, not your
+daemon. Adding an agent is dropping a binary in a discovery dir; see
+[write a driver](../how-to/write-a-driver.md).
 
 ## Crates
 
@@ -61,12 +62,16 @@ a binary in a discovery dir; see [write a driver](../how-to/write-a-driver.md).
 | `sepia-session` | The local session plane — attach modes, lock probes, prompt/cancel/permission, restore/rewind |
 | `sepia-meta`, `sepia-convert` | Overlay store; cross-store conversion/import |
 | `sepia-telemetry` | Opt-in OTEL layer over `tracing` |
+| `sepia-peregrin` | The entity-plane adapter — sessions as `kind="sepia-session"` entities (`/api/entities*` client + server side) |
 | `sepia-cli` | The `sepia` binary — store/driver/config verbs + `serve` |
+| `sepia-driver-pavo` | `tamias-driver-sepia` — pavo's read-only view driver, proxying `sepia serve` |
 | `sepia-testkit` | Conformance suites, golden fixtures, mock ACP agent |
 
 ## The service wire
 
 `sepia serve` is the embedding contract. `manifest` negotiates protocol
-versions; `sessions.*` and `agents.*` cover the plane's surface;
-`session.event` notifications stream live events. The full method
-table lives in `crates/sepia-cli/src/serve.rs`.
+versions; `sessions.*`, `agents.*`, `projects.*`, `config.*`, and the
+two `*.subscribe` feeds cover the plane's surface; `session.event` and
+`node.event` notifications stream live events. The full method table
+lives in [serve-wire](../reference/serve-wire.md) and
+`crates/sepia-cli/src/serve.rs`.

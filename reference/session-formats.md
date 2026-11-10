@@ -15,25 +15,35 @@ schema references for Claude Code (no local data).
 
 ## What the IR captures today
 
-`Session` (`Domain.ts:40`): `id, title, workingDirectory, backendType,
-agentMode, model, createdAt, lastActivityAt, mainChainId, shellLastSeenIndex,
-cogsJson, workspaceDirs, hidden, metadata, nodes[], promptHistory[]`.
+`Session` (`crates/sepia-core/src/domain.rs`): `id, title,
+workingDirectory, backendType, agentMode, model, createdAt,
+lastActivityAt, mainChainId, shellLastSeenIndex, cogsJson,
+workspaceDirs, hidden, parentSessionId?, agentId?, checkpoints[],
+metadata, nodes[], promptHistory[]`.
 
-`MessageNode` (`Domain.ts:19`): `nodeId, parentNodeId (tree, not a flat list),
-role ∈ {system,user,assistant,tool}, content (string), toolCalls[]
-{id,name,arguments,index,kind,status,exitCode,durationMs,locations,diffs},
-toolCallId, toolName, thinking,
-thinkingSignature (opaque provider seal — see gap #4), createdAt
-(epoch **seconds**), metadata`. `Session` additionally carries
-`checkpoints[]` (workspace-snapshot refs — see the Cline section).
+`MessageNode`: `nodeId, parentNodeId?` (tree, not a flat list),
+`role ∈ {system,user,assistant,tool}`, `content` (string), `blocks[]`
+(the complete ordered block list — `text`/`image`/`audio`/`file` —
+when the store records non-text content; `content` stays the joined
+text projection), `toolCalls[]`, `toolCallId`, `toolName`, `thinking`,
+`thinkingSignature` (opaque provider seal — see the store sections),
+`usage` (`TokenUsage`: input/output plus optional cache tiers,
+thinking tokens, cost), `model`, `requestId`, `finishReason`,
+`toolResult` (`ToolResultInfo`: status/exitCode/durationMs on
+`role:"tool"` nodes), `createdAt` (epoch **seconds**), `metadata`.
+`Session` additionally carries `checkpoints[]` (workspace-snapshot
+refs — see the Cline section).
 
-Notable: nodes form a **forest** (node_id + parent_node_id), matching Devin's
-branching model. `content` is a flat string — no content-block array, no
-attachments. `ToolCall` has no result inline — results are separate
-`role:"tool"` nodes paired via `toolCallId`; the call's file footprint rides
-on the call itself: `locations[]` (`{path, line?}`, ACP `locations`) and
-`diffs[]` (`{path, oldText?, newText?}`, the before/after payloads the store
-recorded — ACP `diff` content on Devin, `editor` inputs on Cline).
+`ToolCall`: `id, name, arguments, index, kind, status?, exitCode?,
+durationMs?, locations[]` (`{path, line?}`, ACP `locations`),
+`diffs[]` (`{path, oldText?, newText?}`, the before/after payloads the
+store recorded — ACP `diff` content on Devin, `editor` inputs on
+Cline).
+
+Notable: nodes form a **forest** (node_id + parent_node_id), matching
+Devin's branching model. Tool results are separate `role:"tool"` nodes
+paired via `toolCallId`; the call's file footprint rides on the call
+itself.
 
 ## Devin CLI
 
@@ -390,26 +400,30 @@ path:{backupFileName,version,backupTime}}}}` — **checkpoints**.
 single source of truth (provider transcript with usage per message,
 sidechains reconstructable via `parentUuid`+`isSidechain`).
 
-## Gap analysis
+## IR coverage and remaining gaps
 
-Fields each agent persists vs. what the IR normalizes:
+Fields each agent persists vs. what the IR normalizes. The old "IR v2"
+proposals shipped — `usage`, per-message `model`/`requestId`/
+`finishReason`, tool `status`/`exitCode`/`durationMs`,
+`parentSessionId`/`agentId`, and `blocks` are all in `sepia-core` now.
+The table below is current as of the Rust rewrite:
 
 | Field                        | Devin                                    | Cline                              | Cursor                               | Claude Code                               | IR today                      |
 | ---------------------------- | ---------------------------------------- | ---------------------------------- | ------------------------------------ | ----------------------------------------- | ----------------------------- |
 | Message tree (branch/rewind) | ✅ parent_node_id                        | ❌ flat                            | headers list                         | ✅ parentUuid                             | ✅ parentNodeId               |
 | Timestamps per message       | ✅ ISO+epoch                             | ✅ ms                              | ✅ ms/ISO                            | ✅ ISO                                    | ✅ createdAt (s)              |
-| Token usage per message      | ✅ metrics.*                             | ✅ metrics                         | ✅ tokenCount                        | ✅ usage (incl. cache tiers)              | ❌ dropped                    |
-| Cost / credits               | ✅ session metadata (acu/credit)         | ~ cost field                       | ~ usageUuid                          | service_tier only                         | ❌                            |
-| Model per message            | ✅ generation_model                      | ✅ modelInfo                       | ✅ modelInfo/lastUsedModel           | ✅ message.model                          | ❌ session only               |
-| Request id                   | ✅ request_id                            | ❌                                 | ✅ requestId                         | ✅ requestId                              | ❌                            |
+| Token usage per message      | ✅ metrics.*                             | ✅ metrics                         | ✅ tokenCount                        | ✅ usage (incl. cache tiers)              | ✅ usage (opt.)             |
+| Cost / credits               | ✅ session metadata (acu/credit)         | ~ cost field                       | ~ usageUuid                          | service_tier only                         | ~ TokenUsage.cost (opt.)    |
+| Model per message            | ✅ generation_model                      | ✅ modelInfo                       | ✅ modelInfo/lastUsedModel           | ✅ message.model                          | ✅ model (opt.)             |
+| Request id                   | ✅ request_id                            | ❌                                 | ✅ requestId                         | ✅ requestId                              | ✅ requestId (opt.)         |
 | Tool call args               | ✅ arguments                             | ✅ input                           | ✅ toolFormerData                    | ✅ input                                  | ✅                            |
 | Tool call result             | ✅ tool node + terminal_output ext       | ✅ tool_result                     | ✅ tool-result                       | ✅ tool_result(+toolUseResult)            | ✅ tool node                  |
-| Tool call status/error       | ✅ tool_call_state + result_meta.success | result.success                     | status field                         | is_error                                  | ❌ assumed success            |
-| Tool timing                  | ✅ tool_call_timing                      | ❌                                 | ✅ timingInfo                        | ❌                                        | ❌                            |
+| Tool call status/error       | ✅ tool_call_state + result_meta.success | result.success                     | status field                         | is_error                                  | ✅ status/exitCode           |
+| Tool timing                  | ✅ tool_call_timing                      | ❌                                 | ✅ timingInfo                        | ❌                                        | ✅ durationMs (opt.)         |
 | Reasoning/thinking           | ✅ text + **signature**                  | ✅ thinking(+signature)            | ⚠️ redacted-reasoning (opaque)       | ✅ thinking / redacted_thinking           | ✅ text + `thinkingSignature` |
 | File diffs / edits           | ✅ tool_call_content content[].diff      | via editor args                    | ✅ suggestedCodeBlocks/diffHistories | via Edit tool args + file-history backups | ✅ ToolCall.diffs             |
 | Images/attachments           | ✅ chisel/acp-content-blocks (ACP)       | image/document blocks              | ✅ images, attached chunks           | ✅ image/document blocks                  | ✅ blocks (non-text only)     |
-| Sub-agent/task trees         | ⚠️ subagent_heads table                  | ✅ parent_session_id/agent_id/team | ✅ subComposerIds                    | ✅ isSidechain + Task tool                | ❌                            |
+| Sub-agent/task trees         | ⚠️ subagent_heads table                  | ✅ parent_session_id/agent_id/team | ✅ subComposerIds                    | ✅ isSidechain + Task tool                | ✅ parentSessionId/agentId   |
 | Checkpoints/file history     | ❌                                       | ✅ manifest checkpoint {latest,    | ✅ originalFileStates                | ✅ file-history-snapshot                  | ✅ Session.checkpoints (refs) |
 |                              |                                          | history} + scratch git             |                                      |                                           |                               |
 | Tool-call file locations     | ✅ tool_call_content locations           | via tool args                      | toolFormerData paths                 | via tool args                             | ✅ ToolCall.locations         |
@@ -421,104 +435,28 @@ Fields each agent persists vs. what the IR normalizes:
 | Web citations                | ❌                                       | fetch tool                         | ✅ webCitations                      | WebSearch result blocks                   | ❌                            |
 | Todos/plans                  | ❌                                       | team tasks                         | ✅ todos, plans/*.md                 | ✅ todos files, TodoWrite                 | ❌                            |
 
-### Ranked gaps
+### Remaining gaps
 
-1. **Token usage & cost per message** — all four agents store it; IR drops
-   it everywhere (`Devin.ts` writes `metrics:null`, Cline import writes
-   zeros into `metrics`). Highest value: billing display, model
-   comparison, compaction decisions.
-2. **Tool call status + structured result envelope** — IR assumes every
-   result succeeded (`success:true` hardcoded in `Devin.ts:123`,
-   `Cline.ts:700`). Devin's `tool_call_state`/`tool_result_meta`,
-   Claude's `is_error`, Cline's `result.success` all carry failure.
-   Needed for honest replay and UI.
-3. **Sub-agent/session tree** — Cline already persists
-   `parent_session_id`/`agent_id`/`is_subagent`; Claude has
-   `isSidechain`/`Task`; Devin has `subagent_heads`; Cursor has
-   `subComposerIds`. IR has no session-link field, and `ClineRepository`
-   flattens `__teamtask__` dirs into siblings.
-4. ~~**Thinking signatures / opaque reasoning**~~ — **done**: Devin and
-   Claude seal thinking blocks (`signature`, `redacted_thinking`); Cursor
-   fully redacts. IR keeps the seal in `MessageNode.thinkingSignature`
-   (opaque, verbatim; last one wins when several sealed blocks fold into a
-   node) and writers echo it back — Devin writes `thinking{thinking,
-signature}`, Cline writes `signature`/`redacted_thinking`. Unsigned
-   thinking is still dropped on write: the backend rejects it on replay.
-5. **Per-message model + requestId** — mixed-model sessions (sub-agents,
-   model switches) can't be represented; `session.model` is single.
-6. ~~Attachments / content blocks~~ — **done**: `MessageNode.blocks` holds
-   the ordered block list (`text|image|audio|file`) when a store records
-   non-text content — Devin's `chisel/acp-content-blocks` (ACP blocks) and
-   Cline `image`/`document` entries map in and out; `content` stays the
-   text projection.
-7. **Lifecycle/status on Session** — Cline's `status`/`exit_code`/`pid`,
+What the Rust IR still does not model, roughly by value:
+
+1. **Session lifecycle/status** — Cline's `status`/`exit_code`/`pid`,
    Devin's `hidden`/locks, Claude's implicit completeness. Needed for a
-   correct "resumable vs. live vs. failed" listing.
-8. ~~**Checkpoints / file diffs**~~ — **done**: the IR records refs, not
-   payloads. `Session.checkpoints[]` keeps Cline's manifest
-   `metadata.checkpoint` history (`{ref, createdAt, runCount, kind}` shadow
-   -git shas, written back verbatim on export; a Devin-DB copy rides in the
-   session metadata under `sepia/checkpoints`). `ToolCall.locations[]` /
-   `diffs[]` keep ACP `locations` and `diff` content — Devin's real
-   `{type:"diff", path, oldText?, newText?}` payloads and Cline's `editor`
-   inputs. Cursor `originalFileStates` and Claude `file-history-snapshot`
-   remain unread; they'd map onto the same shapes.
-9. **Git context** — Claude records `gitBranch` per entry; cheap to add
-   to Session.
-10. **Tool call timing + exec env** (cwd, terminal_id, exit_code) — nice
-    for diagnostics; Devin has it all in extensions, dropped today.
-
-## IR v2 — recommended additions
-
-Concrete, additive changes to `Domain.ts` (all optional/`default`-ed so
-existing stores decode unchanged). Sources in parentheses.
-
-```ts
-// MessageNode
-usage: Option<{
-  inputTokens: number; outputTokens: number;
-  cacheReadTokens?: number; cacheWriteTokens?: number;
-  thinkingTokens?: number; cost?: number;
-}>,                              // Devin metrics, Cline metrics, CC usage, Cursor tokenCount
-model: Option<string>,           // per-message model (all agents)
-requestId: Option<string>,       // Devin request_id, CC requestId, Cursor requestId
-finishReason: Option<string>,    // Devin finish_reason, CC stop_reason
-thinkingSignature: Option<string>, // ✅ done — thinking-block seal (Devin
-                                 // signature, CC signature/redacted_thinking.data,
-                                 // Cursor redacted-reasoning.data)
-
-// ToolCall
-status: Option<"pending"|"running"|"completed"|"failed"|"cancelled">,
-                                 // Devin tool_call_state, CC is_error, Cursor status
-result: Option<unknown>,         // or keep tool nodes but add:
-isError / exitCode / durationMs  // Devin tool_result_meta+timing+terminal_output
-locations: {path:string; line?:number}[], // ✅ done — ACP tool_call locations
-diffs: {path:string; oldText?; newText?}[], // ✅ done — ACP diff content, Cline
-                                 // editor inputs; file-change before/after
-kind: "read"|"edit"|"execute"|"search"|"fetch"|"function"|…,
-                                 // ACP kind; Devin tool_call_state.kind, Cursor tool enum
-
-// Content blocks (replace or augment `content: string`)
-blocks: Option<ContentBlock[]>   // {type:"text"}|{type:"image",mediaType,data|uri}
-                                 // |{type:"file",path}|{type:"thinking",…}
-                                 // Claude image/document, Cursor images/attachments
-
-// Session
-parentSessionId: Option<string>, // Cline parent_session_id, CC sidechain root,
-                                 // Cursor subComposerIds, Devin subagent_heads
-agentId: Option<string>,         // Cline agent_id/team_name
-status: Option<"running"|"idle"|"completed"|"failed">,
-exitCode: Option<number>,        // Cline manifest/index
-git: Option<{branch:string; sha?:string}>,   // CC gitBranch (+sha if captured)
-checkpoints: {ref:string; createdAt:number; runCount?; kind?}[],
-                                 // ✅ done — Cline checkpoint-scratch hash, CC file-history
-citations: Option<{title,url}[]> // Cursor webCitations, CC WebSearch results
-```
-
-Priority order for implementation mirrors the ranked gaps: `usage` →
-tool `status`/`isError` → `parentSessionId` → ~~thinking `signature`~~
-(done) → per-message `model`/`requestId` → `blocks`/attachments → `status`/
-`exitCode` → `git`/`checkpoints`.
+   correct "resumable vs. live vs. failed" listing; `hidden` is
+   captured, the rest is not.
+2. **Git context** — Claude records `gitBranch` per entry; cheap to add
+   to `Session`.
+3. **Compaction/summaries** — all four agents persist them; the IR only
+   keeps the raw payloads in `node.metadata`.
+4. **Shell/exec identity** — cwd, `terminal_id`, exit code; Devin
+   carries them in tool extensions. `exitCode`/`durationMs` now survive
+   on `ToolCall`/`ToolResultInfo`, but cwd/terminal identity is
+   flattened.
+5. **Web citations and todos/plans** — Cursor `webCitations`,
+   Claude `WebSearch` result blocks, Cursor `todos`/`plans/*.md`.
+   Not modeled.
+6. **Checkpoint payloads for Cursor/Claude** — `originalFileStates` and
+   `file-history-snapshot` remain unread; they'd map onto
+   `Session.checkpoints[]` refs like Cline's do.
 
 ## Format surprises worth remembering
 

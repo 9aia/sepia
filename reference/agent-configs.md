@@ -175,7 +175,11 @@ sepia config diff    --from <a> --to <b>     # name-level delta + hook/MCP sets
 
 `<agent>` ∈ `claude|cursor|cline|devin`. Dir flags pick the store — and
 imply the agent when `--from`/`--to` is omitted (same convention as the
-session verbs):
+session verbs). The fallbacks are asymmetric: `list`/`export` default
+the source to `claude`, while `import`/`install`/`diff` default the
+target to `cursor` (and `install`/`diff` default the source to `claude`
+once the target is known) — pass `--from`/`--to` explicitly rather than
+rely on them.
 
 | Flag           | Default           | Meaning                                          |
 | -------------- | ----------------- | ------------------------------------------------ |
