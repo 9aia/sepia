@@ -51,7 +51,7 @@ source of truth for the IR and both wires — keep them current.
   `sepia-cli` (it ships the `sepia` bin,
   `cargo install sepia-cli`). `sepia-testkit` and
   `sepia-driver-pavo` are `publish = false`.
-- Release binaries: push a `v*`/`sepia-v*` tag (or workflow_dispatch)
-  — `.github/workflows/release.yml` builds `sepia-<target>.tar.gz`
-  (linux x86_64, macOS aarch64/x86_64) carrying `sepia` + the four
-  store drivers.
+- Release binaries: run `scripts/release.sh` manually (there is no
+  release CI — releases are operator-driven). It builds
+  `sepia-<target>.tar.gz` (linux x86_64, macOS aarch64/x86_64)
+  carrying `sepia` + the four store drivers.

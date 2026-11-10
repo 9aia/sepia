@@ -5,9 +5,8 @@ members = ["cargo:."]
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.33.0"
-# CI backends to support — none: binary releases are the tag-triggered
-# .github/workflows/release.yml; `dist build` in scripts/release.sh is
-# the local/ops path (dist 0.33 rejects the string "none").
+# CI backends to support — none: releases are operator-driven via
+# `dist build` in scripts/release.sh (dist 0.33 rejects "none").
 ci = []
 # The installers to generate for each app — none: the "shell"
 # installer makes dist 0.33 panic on this virtual workspace (same as
