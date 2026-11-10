@@ -41,9 +41,10 @@ checkpoints, and a meta overlay (title/pin/projects/spans).
 **Drivers** — store adapters as separate binaries
 (`sepia-driver-devin`, `sepia-driver-cline`, `sepia-driver-claude`,
 `sepia-driver-cursor`). Discovered at runtime from
-`$SEPIA_DRIVER_DIR` → the platform data dir → PATH, probed for a
+`$SEPIA_DRIVER_DIR` → the platform data dir →
+`/usr/local/lib/sepia/drivers` → PATH, probed for a
 manifest + capabilities (SessionStore, SessionWrite, Checkpoints,
-Restore, Rewind, Convert), and driven over ndjson JSON-RPC stdio.
+Restore, Rewind, AgentConfig), and driven over ndjson JSON-RPC stdio.
 
 **ACP** — agents attach through the Agent Client Protocol
 (`sepia-acp`): spawn, initialize/capabilities, session
@@ -69,7 +70,9 @@ assembles it all from this machine's drivers and agent CLIs.
 | `crates/sepia-meta` | overlay store (title/pin/projects/run spans) |
 | `crates/sepia-convert` | store format conversion |
 | `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
+| `crates/sepia-peregrin` | entity-plane adapter — sessions as `kind="sepia-session"` entities |
 | `crates/sepia-cli` | the `sepia` binary |
+| `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo's read-only view driver over `sepia serve` |
 | `crates/sepia-testkit` | conformance suites + golden fixtures |
 
 ## Develop
@@ -82,9 +85,12 @@ cargo xtask install  # release-build sepia + drivers → ~/.local
 
 ## Docs
 
-`docs/session-formats.md`, `docs/protocol.md`, `docs/agent-configs.md`
-— domain references for the IR, the driver wire, and the agent config
-IR.
+The `docs/` worktree holds the VitePress site (Diátaxis:
+tutorials, how-to, reference, explanation) — the session IR and
+per-agent store formats in `reference/session-formats.md`, the driver
+wire in `reference/protocol.md`, the `sepia serve` surface in
+`reference/serve-wire.md`, and the agent config IR in
+`reference/agent-configs.md`.
 
 [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) ·
 [LICENSE](LICENSE) (MIT) · [project](project/index.md) — TODO, backlog
