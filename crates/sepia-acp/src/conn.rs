@@ -361,6 +361,23 @@ impl AcpConnection {
         Ok(())
     }
 
+    /// `session/set_mode` — switch the session's mode (agents that
+    /// advertise `modes` in `session/new`, e.g. devin's
+    /// `accept-edits`/`smart`/`bypass`). Unattended callers use this
+    /// to pick an auto-approve level; there is no human to answer
+    /// `session/request_permission` otherwise.
+    ///
+    /// # Errors
+    /// On RPC failure — including agents without mode support.
+    pub async fn set_mode(&self, session_id: &str, mode_id: &str) -> Result<(), RpcError> {
+        self.call(
+            "session/set_mode",
+            json!({ "sessionId": session_id, "modeId": mode_id }),
+        )
+        .await?;
+        Ok(())
+    }
+
     /// `session/prompt` — send a prompt; the call resolves with the
     /// turn's [`PromptResult`] when the agent finishes it (streaming
     /// replies arrive via [`Self::updates`]).

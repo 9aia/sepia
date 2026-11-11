@@ -1988,6 +1988,33 @@ impl ControlPlane {
         Ok(())
     }
 
+    /// Switches a live session's agent mode (`session/set_mode`) —
+    /// the unattended-run knob: agents that gate tool use behind
+    /// `session/request_permission` (devin's `accept-edits` prompts on
+    /// exec) need a permissive mode when no human is attached.
+    ///
+    /// # Errors
+    /// `invalid` when not attached, `not_found` on unknown session,
+    /// `internal` on agent/RPC failure (agents without mode support
+    /// included — check `AcpCapabilities`/the `session/new` modes list
+    /// before calling).
+    #[tracing::instrument(name = "control_set_mode", skip_all, fields(session = %id, mode = %mode_id, agent = ?agent_id))]
+    pub async fn set_mode(
+        &self,
+        id: &str,
+        mode_id: &str,
+        agent_id: Option<&str>,
+    ) -> Result<(), ControlError> {
+        let conn = {
+            let state = self.state.lock().await;
+            let live = Self::require_live(&state, id, agent_id)?;
+            Arc::clone(&live.conn)
+        };
+        conn.set_mode(id, mode_id)
+            .await
+            .map_err(acp_error("Failed to set session mode"))
+    }
+
     /// Settles a pending permission request.
     ///
     /// # Errors

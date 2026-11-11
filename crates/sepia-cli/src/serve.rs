@@ -104,7 +104,7 @@ fn manifest(local: &Local) -> Value {
             "sessions.history", "sessions.attach", "sessions.detach",
             "sessions.create", "sessions.prompt", "sessions.prompt_wait",
             "sessions.cancel",
-            "sessions.permission", "sessions.delete", "sessions.patch_meta",
+            "sessions.permission", "sessions.set_mode", "sessions.delete", "sessions.patch_meta",
             "sessions.restore", "sessions.rewind", "sessions.subscribe",
             "events.subscribe",
             "projects.list", "projects.create", "projects.rename",
@@ -352,6 +352,19 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
             let option = req.params.get("option").and_then(Value::as_str);
             plane
                 .respond_to_permission(id, request_id, option, agent.as_deref())
+                .await
+                .map_err(|e| control_err(&e))?;
+            Ok(Value::Null)
+        }
+        "sessions.set_mode" => {
+            let id = id_of(&req.params)?;
+            let mode = req
+                .params
+                .get("mode")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RpcError::invalid_params("missing mode"))?;
+            plane
+                .set_mode(id, mode, agent.as_deref())
                 .await
                 .map_err(|e| control_err(&e))?;
             Ok(Value::Null)
