@@ -12,7 +12,7 @@ pack — a generated shim that resolves `tamias-driver-sepia` at call
 time. With `tamias` installed:
 
 ```bash
-tamias install 9aia:sepia@0.1.0    # org registry (needs TAMIAS_REGISTRY_TOKEN)
+tamias install 9aia:sepia@0.2.0    # org registry (needs TAMIAS_REGISTRY_TOKEN)
 ```
 
 Or from a checkout:

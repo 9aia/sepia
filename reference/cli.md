@@ -29,6 +29,19 @@ Store flags (`--devin-dir`, `--claude-dir`, `--cursor-dir`,
 `--cline-dir`) pick the store directory and imply the agent when
 `--from`/`--to` is omitted.
 
+## The driver ops surface
+
+`tamias-driver-sepia` doubles as the generated-surface driver
+(P-021). `ops` answers an ops manifest derived from the clap tree:
+every bounded verb is a `cli.<verb>` wire query — `driver`, `list`,
+`export`, `import`, `install`, `delete`, `config`, `version` and
+friends, 18 ops total — dispatched through `sepia_cli::run_from` in
+a captured child. `run <argv>` is the raw passthrough; `cli <argv>`
+is the `bins[]` shim verb the `sepia` command itself execs (inherited
+stdio, so `sepia serve` streams end-to-end). `serve` is listed under
+`surfaces`, never an op — it never returns. A feature-gated `mcp`
+mode renders the same manifest as MCP tools via pavo-driver-kit.
+
 ## Environment
 
 Read by `sepia serve` and the store verbs; driver discovery and store

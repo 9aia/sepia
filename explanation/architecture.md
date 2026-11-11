@@ -63,9 +63,28 @@ daemon. Adding an agent is dropping a binary in a discovery dir; see
 | `sepia-meta`, `sepia-convert` | Overlay store; cross-store conversion/import |
 | `sepia-telemetry` | Opt-in OTEL layer over `tracing` |
 | `sepia-peregrin` | The entity-plane adapter — sessions as `kind="sepia-session"` entities (`/api/entities*` client + server side) |
-| `sepia-cli` | The `sepia` binary — store/driver/config verbs + `serve` |
-| `sepia-driver-pavo` | `tamias-driver-sepia` — pavo's read-only view driver, proxying `sepia serve` |
+| `sepia-cli` | The `sepia` engine lib (`command`/`run_from`) — **no bin**: the command ships as the tamias pack |
+| `sepia-driver-pavo` | `tamias-driver-sepia` — pavo's view driver over `sepia serve`, plus the engine ops surface (`ops` manifest, `cli.*` queries, `run`/`cli` passthroughs) |
 | `sepia-testkit` | Conformance suites, golden fixtures, mock ACP agent |
+
+## Distribution: the tamias pack
+
+There is no hand-rolled `sepia` binary. The command ships as the
+tamias pack in `libraries/sepia/` — `tamias.yaml` declares
+`bins: [{name: sepia, shim: cli, driver: sepia}]`, so
+`tamias install 9aia:sepia@<ver>` (or `./libraries/sepia` from a
+checkout) deploys a generated shim that execs
+`tamias-driver-sepia cli <argv>` → `sepia_cli::run_from` in-process.
+Full argv parity, `sepia serve` included — the unbounded wire loop
+rides the same shim as a *surface*, never an op.
+
+`tamias-driver-sepia` (the `sepia-driver-pavo` crate) is also the
+generated-surface driver: its `ops` manifest derives from
+`sepia_cli::command()` — every bounded verb becomes a `cli.<verb>`
+wire query (18 ops today), `run <argv>` re-execs the engine, and a
+feature-gated `mcp` renders the same manifest as MCP tools. The pavo
+views proxy `sepia serve` read-only on top of that. See
+[CLI and environment](../reference/cli.md#the-driver-ops-surface).
 
 ## The service wire
 
