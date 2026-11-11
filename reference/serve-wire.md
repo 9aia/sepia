@@ -47,7 +47,8 @@ override, or ten lock TTLs floored at 60s.
 | `sessions.attach` | Attach (`id`, `takeover`, `model`, `fallbacks`) |
 | `sessions.detach` | Release a held session |
 | `sessions.create` | New session (`cwd`, `agent`, `title`, `model`, `fallbacks`) |
-| `sessions.prompt` | Send a turn (`id`, `parts`, `agent`) |
+| `sessions.prompt` | Send a turn (`id`, `parts`, `agent`) — resolves when the agent finishes the turn, returns `null` |
+| `sessions.prompt_wait` | Prompt + await the turn's terminal state (`id`, `parts`, `agent?`, `timeoutMs?`) → `PromptWaitResult` |
 | `sessions.cancel` | Cancel a running turn |
 | `sessions.permission` | Resolve a permission request (`id`, `request`, `option`) |
 | `sessions.delete` | Delete from the owning store |
@@ -64,6 +65,42 @@ override, or ten lock TTLs floored at 60s.
 | `sessions.subscribe` | Subscribe (`id`) → `session.event` notifications |
 | `events.subscribe` | Node-wide feed → `node.event` notifications |
 | `shutdown` | Close the plane, exit 0 |
+
+## `sessions.prompt_wait`
+
+The blocking counterpart of `sessions.prompt` — the primitive an
+orchestrator uses to drive an agent to completion without subscribing:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"sessions.prompt_wait","params":{"id":"<session>","parts":[{"type":"text","text":"fix the build"}],"timeoutMs":300000}}
+```
+
+Params mirror `sessions.prompt` plus `timeoutMs` (milliseconds; `0` or
+absent waits until the turn settles, bounded only by agent liveness).
+The result is the settled-turn report:
+
+```json
+{"sessionId":"…","agentId":"devin","stopReason":"end_turn","text":"…","eventCount":12,"laggedEvents":0,"durationMs":8421.3,"timedOut":false}
+```
+
+- `stopReason` — the agent's terminal reason (`end_turn`, `cancelled`,
+  `max_tokens`, `refusal`, …); absent when the turn errored before the
+  agent answered or the wait timed out mid-flight.
+- `text` — the assistant text observed during the turn (concatenated
+  `textMessageContent` deltas); `laggedEvents` counts broadcast batches
+  the waiter dropped, so a nonzero value means `text` may be partial.
+- `timedOut` — the timeout elapsed before the turn settled. The wait
+  sends `session/cancel` and gives the turn a short settle window; a
+  turn that outlives it keeps running in the background (its events
+  still stream to subscribers) and `stopReason` stays absent.
+- `error` — present on turn-level failure (agent died mid-turn, ACP
+  error); pre-dispatch rejections (`invalid`, `busy`, …) still come
+  back as JSON-RPC errors.
+
+Requests dispatch concurrently — a `prompt_wait` (or a long
+`sessions.prompt`) in flight does not starve `sessions.cancel`,
+`sessions.permission`, or the subscribe verbs. Responses are
+id-correlated; completion order is not guaranteed.
 
 ## Event streams
 

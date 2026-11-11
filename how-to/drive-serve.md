@@ -24,6 +24,13 @@ framing if you are in Rust, or plain line-buffered stdio otherwise.
 {"jsonrpc":"2.0","id":3,"method":"sessions.prompt","params":{"id":"<session>","parts":[{"type":"text","text":"hello"}]}}
 ```
 
+To drive a turn to completion without subscribing, use
+`sessions.prompt_wait` — same params plus `timeoutMs`; it resolves with
+the turn's `stopReason`, captured assistant `text`, `durationMs`, and
+`timedOut` (an elapsed timeout cancels the turn). Requests dispatch
+concurrently, so `sessions.cancel`/`sessions.permission` still work
+while a wait is in flight.
+
 Reads are idempotent and safe to retry. `sessions.attach` with
 `takeover` is the only preemptive op — who is *allowed* to take over is
 your policy decision, not sepia's.
