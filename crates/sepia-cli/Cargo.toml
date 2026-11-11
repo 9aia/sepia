@@ -1,6 +1,6 @@
 [package]
 name = "sepia-cli"
-description = "The sepia CLI — local store verbs (list/export/import/install/delete), agent config IR ops, driver discovery, and the stdio session-plane service"
+description = "The sepia CLI — local store verbs (list/export/import/install/delete), agent config IR ops, driver discovery, and the stdio session-plane service; the engine is also a library (`Cli`/`command`/`run_from`) for drivers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

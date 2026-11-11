@@ -22,6 +22,7 @@ sepia-driver-claude = { path = "crates/sepia-driver-claude", version = "0.1.0" }
 sepia-driver-cursor = { path = "crates/sepia-driver-cursor", version = "0.1.0" }
 sepia-driver-devin = { path = "crates/sepia-driver-devin", version = "0.1.0" }
 sepia-driver-pavo = { path = "crates/sepia-driver-pavo", version = "0.1.0" }
+sepia-cli = { path = "crates/sepia-cli", version = "0.1.0" }
 sepia-meta = { path = "crates/sepia-meta", version = "0.1.0" }
 sepia-driver = { path = "crates/sepia-driver", version = "0.1.0" }
 sepia-host = { path = "crates/sepia-host", version = "0.1.0" }

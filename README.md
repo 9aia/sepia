@@ -71,8 +71,8 @@ assembles it all from this machine's drivers and agent CLIs.
 | `crates/sepia-convert` | store format conversion |
 | `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
 | `crates/sepia-peregrin` | entity-plane adapter — sessions as `kind="sepia-session"` entities |
-| `crates/sepia-cli` | the `sepia` binary |
-| `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo's read-only view driver over `sepia serve` |
+| `crates/sepia-cli` | the `sepia` binary + engine lib (`command`/`run_from`) |
+| `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo's read-only view driver over `sepia serve`, plus the engine ops surface (`ops`/`cli.*`/`run`, feature-gated `cli`/`mcp`) |
 | `crates/sepia-testkit` | conformance suites + golden fixtures |
 
 ## Develop

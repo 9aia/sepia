@@ -21,8 +21,8 @@ depend on it; `sepia-cli` composes the local plane.
 | `crates/sepia-session` | local session plane: attach modes, lock probes, prompt/cancel/permission, restore/rewind, `local::build` |
 | `crates/sepia-{meta,convert}` | overlay store, store conversion |
 | `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
-| `crates/sepia-cli` | `sepia` binary — store/driver/config verbs + `serve` |
-| `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo view driver (read-only) proxying `sepia serve` |
+| `crates/sepia-cli` | `sepia` binary — store/driver/config verbs + `serve`; the engine lib (`Cli`/`command`/`parse_from`/`dispatch`/`run_from`) drivers embed or re-exec |
+| `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo view driver (read-only views proxying `sepia serve`) **plus the engine ops surface**: `ops` manifest derived from `sepia_cli::command()`, `cli.<verb>` wire queries + `run <argv>` passthrough re-execing the engine, feature-gated `cli`/`mcp` via pavo-driver-kit |
 | `crates/sepia-driver-config` | `tamias-driver-sepia-config` — `type: sepia-config` content driver: AgentConfig IR packs → per-agent config dirs (P-018) |
 | `crates/sepia-testkit` | conformance suites, golden fixtures, mock ACP agent |
 
@@ -54,6 +54,16 @@ same framing as driver binaries (`sepia_driver::rpc`). The method
 surface is documented in `crates/sepia-cli/src/serve.rs`; `manifest`
 reports `protocol` for version negotiation. New session ops go over
 this wire — never link the session plane into an orchestrator.
+
+`tamias-driver-sepia` is the CLI-as-generated-surface driver (org
+proposal P-021): `ops` answers an ops manifest derived from
+`sepia_cli::command()` — every bounded verb a `cli.<verb>` wire query,
+`serve` a streaming `surface`, never an op. `cli.*`/`run` dispatch
+through `sepia_cli::run_from` in a captured child; feature-gated
+`cli`/`mcp` argv verbs render the same manifest through
+pavo-driver-kit. No verb takes secrets or prompts via argv (prompts
+are a `sepia serve` wire concern), so nothing needs the pending
+`params-stdin` channel (T-008).
 
 ## Rules
 
