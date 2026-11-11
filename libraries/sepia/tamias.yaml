@@ -1,0 +1,32 @@
+# sepia — the agent-session abstraction as a tamias package (the T-012
+# replication of the cuora P-023 pilot: a real product CLI riding
+# `bins[]`, no hand-rolled binary).
+#
+# `cargo xtask pack` release-builds `tamias-driver-sepia` into
+# `drivers/bin/<host-triple>/` (gitignored — a build artifact) and
+# this manifest ships it as a bundled driver. `tamias install
+# ./libraries/sepia` (or the packed `.tgz` / a registry ref)
+# registers the driver into `<tamias-home>/drivers/` and deploys the
+# `sepia` bin below by default.
+#
+# The `sepia` shim is a generated script → `tamias bin exec` →
+# `tamias-driver-sepia cli --dir <pkg> --name sepia <argv>` → the
+# sepia-cli engine lib's `run_from` in-process with inherited stdio.
+# That is full argv parity with the retired `sepia` binary:
+# `--help`/`version`, `driver list`, store/config verbs, and the
+# unbounded `sepia serve` ndjson loop all stream end-to-end. No
+# `tools/bin/` payload bin: `sepia serve` is a *surface*, not a
+# second binary — it rides the same shim.
+name: sepia
+version: "0.1.0"
+type: files
+description: >-
+  The agent-session abstraction — one canonical IR, store drivers,
+  and an ACP client for every agent. Every verb rides the
+  tamias-driver-sepia engine passthrough; `sepia serve` is the
+  ndjson session-plane wire orchestrators (peregrin) drive.
+
+bins:
+  - name: sepia
+    shim: cli
+    driver: sepia

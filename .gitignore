@@ -21,5 +21,8 @@ docs/
 *.profraw
 lcov.info
 
+# tamias pack build artifacts (cargo xtask pack stages these)
+/libraries/sepia/drivers/
+
 # myco worktree mount point (created by `myco init`)
 project/

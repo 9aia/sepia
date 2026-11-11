@@ -31,12 +31,12 @@ fn llvm_cov_available() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Binaries tests shell out to (drivers, mock ACP agent, the sepia CLI
-/// itself) — one `cargo build` beats N in-test builds serializing on
-/// package/build-dir locks. Tests see SEPIA_TESTKIT_PREBUILT and
-/// resolve the paths directly.
+/// Binaries tests shell out to (drivers, mock ACP agent, the engine
+/// driver the `sepia` shim resolves to) — one `cargo build` beats N
+/// in-test builds serializing on package/build-dir locks. Tests see
+/// SEPIA_TESTKIT_PREBUILT and resolve the paths directly.
 const TEST_BINS: &[&str] = &[
-    "sepia",
+    "tamias-driver-sepia",
     "sepia-driver-devin",
     "sepia-driver-cline",
     "sepia-driver-claude",
@@ -66,6 +66,54 @@ fn prebuild() -> anyhow::Result<()> {
         args.push(bin);
     }
     run("cargo", &args)
+}
+
+/// Captured stdout of a command — for probes like `rustc -vV`.
+fn run_out(args: &[&str]) -> Option<String> {
+    let (prog, rest) = args.split_first()?;
+    let out = Command::new(prog).args(rest).output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The host target triple — the `drivers/bin/<triple>/` selector
+/// tamias uses for compiled driver payloads.
+fn host_triple() -> String {
+    run_out(&["rustc", "-vV"])
+        .and_then(|v| {
+            v.lines()
+                .find_map(|l| l.strip_prefix("host: ").map(str::to_string))
+        })
+        .unwrap_or_else(|| "x86_64-unknown-linux-gnu".to_string())
+}
+
+/// `cargo xtask pack` — stage the tamias pack payload (T-012):
+/// release-build `tamias-driver-sepia` and drop it under
+/// `libraries/sepia/drivers/bin/<host-triple>/` — the
+/// bundled-driver dir `tamias install` registers into
+/// `<tamias-home>/drivers/`. Gitignored on purpose: the binary is a
+/// build artifact; the committed pack is just `tamias.yaml` + this
+/// staging verb.
+fn pack() -> anyhow::Result<()> {
+    run("cargo", &["build", "--release", "-p", "sepia-driver-pavo"])?;
+    let triple = host_triple();
+    let dest_dir = std::path::PathBuf::from("libraries/sepia/drivers/bin").join(&triple);
+    std::fs::create_dir_all(&dest_dir)?;
+    let src = std::path::PathBuf::from("target/release/tamias-driver-sepia");
+    let dest = dest_dir.join("tamias-driver-sepia");
+    std::fs::copy(&src, &dest)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+    }
+    println!("pack staged: {}", dest.display());
+    println!();
+    println!("install the sepia command (generated bins[] shim):");
+    println!("  tamias install --allow-drivers ./libraries/sepia");
+    println!("  # or a pinned tarball: tamias bundle pack libraries/sepia");
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -102,11 +150,16 @@ fn main() -> anyhow::Result<()> {
                 .status()?;
             anyhow::ensure!(status.success(), "workspace tests failed");
         }
+        Some("pack") => pack()?,
         Some("install") => {
             // Build every user-facing binary in release and copy it to
-            // ~/.local/bin (idempotent, PATH-friendly names).
+            // ~/.local/bin (idempotent, PATH-friendly names). There is
+            // no `sepia` cargo bin — the command ships as the tamias
+            // pack (`cargo xtask pack` + `tamias install
+            // ./libraries/sepia`); this installs the driver the shim
+            // resolves plus the store drivers.
             let bins = [
-                "sepia",
+                "tamias-driver-sepia",
                 "sepia-driver-devin",
                 "sepia-driver-cline",
                 "sepia-driver-claude",
@@ -219,7 +272,7 @@ fn main() -> anyhow::Result<()> {
         }
         Some(other) => anyhow::bail!("unknown task {other}"),
         None => {
-            anyhow::bail!("usage: cargo xtask <check|test|install|coverage>")
+            anyhow::bail!("usage: cargo xtask <check|test|pack|install|coverage>")
         }
     }
     Ok(())
