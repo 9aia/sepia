@@ -1,7 +1,12 @@
 # CLI and environment
 
-The `sepia` binary's command surface and the environment variables the
+The `sepia` command's surface and the environment variables the
 plane reads. `sepia --help` is authoritative; this page is the map.
+
+There is no hand-rolled `sepia` binary: the command ships as the
+tamias pack in `libraries/sepia/` — a generated `bins[]` shim that
+runs `tamias-driver-sepia cli` → `sepia_cli::run_from` in-process
+(T-012). Every verb below behaves identically through the shim.
 
 ## Commands
 
@@ -51,4 +56,4 @@ paths apply to the `serve` child, so set them in its environment.
 | `SEPIA_OTEL_SERVICE_NAME` | — | OTEL service name |
 | `SEPIA_INHERIT_ENV` | — | env vars passed through to agent subprocesses |
 | `SEPIA_DEBUG` | — | debug logging |
-| `SEPIA_BIN` | — | path to the `sepia` binary (used by `sepia-driver-pavo`) |
+| `SEPIA_BIN` | — | path to a `sepia`-shaped executable the view driver spawns for `serve` (the tamias shim, a legacy binary, or a test fake) |

@@ -7,13 +7,19 @@ Claude Code, or Cursor.
 
 ## Install
 
+The `sepia` command ships as a [tamias](https://github.com/9aia/tamias)
+pack — a generated shim that resolves `tamias-driver-sepia` at call
+time. From a checkout:
+
 ```bash
-cargo install --path crates/sepia-cli
+cargo xtask pack                                  # stage the driver payload
+cargo xtask install                              # tamias-driver-sepia + store drivers → ~/.local
+tamias install --allow-drivers ./libraries/sepia # deploy the `sepia` shim
 ```
 
-Or, inside a checkout, `cargo xtask install` builds release `sepia` and
-the store drivers into `~/.local` — the same layout an installed
-release uses, so driver discovery works identically.
+`cargo xtask install` alone gives you the driver binaries (the same
+layout an installed release uses, so driver discovery works
+identically) — the `sepia` command itself comes from the pack step.
 
 ## See your sessions
 
