@@ -1,0 +1,28 @@
+[package]
+name = "sepia-driver-config"
+description = "tamias-driver-sepia-config — `type: sepia-config` content driver: agent-config IR packs deployed to agent config dirs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+sepia-core.workspace = true
+sepia-driver-claude.workspace = true
+sepia-driver-cline.workspace = true
+sepia-driver-cursor.workspace = true
+sepia-driver-devin.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng = "0.10"
+toml.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+
+[[bin]]
+name = "tamias-driver-sepia-config"
+path = "src/main.rs"
+
+[lints]
+workspace = true

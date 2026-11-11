@@ -1,0 +1,24 @@
+{
+  "skills": [
+    {
+      "name": "release-notes",
+      "description": "Draft release notes from a changelog",
+      "body": "Given a CHANGELOG section, write concise release notes: lead with the headline change, group by area, link issues when present."
+    }
+  ],
+  "rules": [
+    {
+      "name": "no-secrets",
+      "description": "Never expose secret values",
+      "body": "Never print, log, commit, or paste secret values. Refer to secrets by name only.",
+      "alwaysApply": true
+    }
+  ],
+  "commands": [
+    {
+      "name": "summarize-diff",
+      "description": "Summarize the working diff",
+      "body": "Summarize the current uncommitted diff in three bullets: what changed, why it matters, what to verify."
+    }
+  ]
+}

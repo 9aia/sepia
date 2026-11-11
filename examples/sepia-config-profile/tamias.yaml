@@ -1,0 +1,22 @@
+# sepia-config-profile — example `type: sepia-config` tamias pack.
+# Deploys AgentConfig IR docs into each agent's config dir through
+# the same write path as `sepia config write`.
+#
+#   tamias install <ref-to-this-dir>
+#   # or directly:
+#   tamias-driver-sepia-config deploy --dir . --name sepia-config-profile \
+#     --claude-dir ~/.claude   # dirs default per agent anyway
+name: sepia-config-profile
+type: sepia-config
+version: "0.1.0"
+description: >-
+  Example agent profile: a shared skill, an always-on rule, and a
+  slash command, applied to claude + cursor (others via `all`).
+
+sepia:
+  agents:
+    claude: configs/profile.json
+    cursor: configs/profile.json
+    # cline/devin fall through to `all` when present; uncomment to
+    # give them the same profile:
+    # all: configs/profile.json

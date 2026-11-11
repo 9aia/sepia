@@ -23,6 +23,7 @@ depend on it; `sepia-cli` composes the local plane.
 | `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
 | `crates/sepia-cli` | `sepia` binary — store/driver/config verbs + `serve` |
 | `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo view driver (read-only) proxying `sepia serve` |
+| `crates/sepia-driver-config` | `tamias-driver-sepia-config` — `type: sepia-config` content driver: AgentConfig IR packs → per-agent config dirs (P-018) |
 | `crates/sepia-testkit` | conformance suites, golden fixtures, mock ACP agent |
 
 ## Boundary
