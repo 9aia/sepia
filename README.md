@@ -30,6 +30,19 @@ JSON-RPC on stdin — `manifest`, `agents.list`, `sessions.list`,
 `sessions.restore`, `sessions.rewind`, … — and get events back as
 notifications. That's the whole contract an orchestrator needs.
 
+## Install
+
+`sepia` is a tamias pack (`libraries/sepia`) — a generated `bins[]`
+shim over `tamias-driver-sepia`, not a cargo-installed binary:
+
+```sh
+tamias install 9aia:sepia@0.1.0    # org registry (needs TAMIAS_REGISTRY_TOKEN)
+```
+
+From a checkout: `cargo xtask pack` stages the driver payload, then
+`tamias install --allow-drivers ./libraries/sepia` deploys the shim.
+See `## Develop` below.
+
 ## Concepts
 
 **Session IR** — the canonical representation every store reads and
