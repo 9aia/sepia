@@ -2,7 +2,7 @@
 id = "PL-001"
 title = "Sepia → Rust: full rewrite plan"
 status = "open"
-priority = "medium"
+priority = "med"
 +++
 
 # Sepia → Rust: full rewrite plan
