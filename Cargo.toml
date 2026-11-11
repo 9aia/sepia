@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*", "xtask"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -12,23 +12,23 @@ description = "The agent-session abstraction — one canonical IR, store drivers
 
 [workspace.dependencies]
 # Internal crates.
-sepia-core = { path = "crates/sepia-core", version = "0.1.0" }
-sepia-proto = { path = "crates/sepia-proto", version = "0.1.0" }
-sepia-acp = { path = "crates/sepia-acp", version = "0.1.0" }
-sepia-session = { path = "crates/sepia-session", version = "0.1.0" }
-sepia-convert = { path = "crates/sepia-convert", version = "0.1.0" }
-sepia-driver-cline = { path = "crates/sepia-driver-cline", version = "0.1.0" }
-sepia-driver-claude = { path = "crates/sepia-driver-claude", version = "0.1.0" }
-sepia-driver-cursor = { path = "crates/sepia-driver-cursor", version = "0.1.0" }
-sepia-driver-devin = { path = "crates/sepia-driver-devin", version = "0.1.0" }
-sepia-driver-pavo = { path = "crates/sepia-driver-pavo", version = "0.1.0" }
-sepia-cli = { path = "crates/sepia-cli", version = "0.1.0" }
-sepia-meta = { path = "crates/sepia-meta", version = "0.1.0" }
-sepia-driver = { path = "crates/sepia-driver", version = "0.1.0" }
-sepia-host = { path = "crates/sepia-host", version = "0.1.0" }
-sepia-testkit = { path = "crates/sepia-testkit", version = "0.1.0" }
-sepia-telemetry = { path = "crates/sepia-telemetry", version = "0.1.0" }
-sepia-peregrin = { path = "crates/sepia-peregrin", version = "0.1.0" }
+sepia-core = { path = "crates/sepia-core", version = "0.2.0" }
+sepia-proto = { path = "crates/sepia-proto", version = "0.2.0" }
+sepia-acp = { path = "crates/sepia-acp", version = "0.2.0" }
+sepia-session = { path = "crates/sepia-session", version = "0.2.0" }
+sepia-convert = { path = "crates/sepia-convert", version = "0.2.0" }
+sepia-driver-cline = { path = "crates/sepia-driver-cline", version = "0.2.0" }
+sepia-driver-claude = { path = "crates/sepia-driver-claude", version = "0.2.0" }
+sepia-driver-cursor = { path = "crates/sepia-driver-cursor", version = "0.2.0" }
+sepia-driver-devin = { path = "crates/sepia-driver-devin", version = "0.2.0" }
+sepia-driver-pavo = { path = "crates/sepia-driver-pavo", version = "0.2.0" }
+sepia-cli = { path = "crates/sepia-cli", version = "0.2.0" }
+sepia-meta = { path = "crates/sepia-meta", version = "0.2.0" }
+sepia-driver = { path = "crates/sepia-driver", version = "0.2.0" }
+sepia-host = { path = "crates/sepia-host", version = "0.2.0" }
+sepia-testkit = { path = "crates/sepia-testkit", version = "0.2.0" }
+sepia-telemetry = { path = "crates/sepia-telemetry", version = "0.2.0" }
+sepia-peregrin = { path = "crates/sepia-peregrin", version = "0.2.0" }
 
 # External dependencies — pin conservative majors/minors.
 serde = { version = "1.0", features = ["derive"] }

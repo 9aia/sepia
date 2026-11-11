@@ -2596,7 +2596,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-acp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -2610,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "nix",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-convert"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "sepia-core",
@@ -2649,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "proptest",
@@ -2660,7 +2660,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "sepia-core",
@@ -2673,7 +2673,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-claude"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "sepia-core",
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-cline"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -2706,7 +2706,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "sepia-core",
  "sepia-driver-claude",
@@ -2723,7 +2723,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-cursor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "md-5",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-devin"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -2757,7 +2757,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-pavo"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "pavo-driver-kit",
@@ -2779,7 +2779,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-host"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "sepia-core",
@@ -2794,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-meta"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2804,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-peregrin"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2826,7 +2826,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-proto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "sepia-core",
  "serde",
@@ -2835,7 +2835,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-session"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -2859,7 +2859,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-telemetry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "http 1.5.0",
  "opentelemetry",
@@ -2872,7 +2872,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-testkit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -3995,7 +3995,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde_json",

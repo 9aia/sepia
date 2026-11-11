@@ -36,7 +36,7 @@ notifications. That's the whole contract an orchestrator needs.
 shim over `tamias-driver-sepia`, not a cargo-installed binary:
 
 ```sh
-tamias install 9aia:sepia@0.1.0    # org registry (needs TAMIAS_REGISTRY_TOKEN)
+tamias install 9aia:sepia@0.2.0    # org registry (needs TAMIAS_REGISTRY_TOKEN)
 ```
 
 From a checkout: `cargo xtask pack` stages the driver payload, then
