@@ -18,7 +18,7 @@ use crate::registry::model_args;
 use crate::stderr::StderrTail;
 use crate::types::{
     AcpCapabilities, AcpSessionInfo, AcpSessionUpdate, AgentSpec, PermissionRequest, PromptPart,
-    SpawnOptions,
+    PromptResult, SpawnOptions,
 };
 
 const CALL_TIMEOUT_MS: u64 = 120_000;
@@ -357,18 +357,29 @@ impl AcpConnection {
         Ok(())
     }
 
-    /// `session/prompt` — send a prompt; streaming replies arrive via
-    /// [`Self::updates`].
+    /// `session/prompt` — send a prompt; the call resolves with the
+    /// turn's [`PromptResult`] when the agent finishes it (streaming
+    /// replies arrive via [`Self::updates`]).
     ///
     /// # Errors
-    /// On RPC failure.
-    pub async fn prompt(&self, session_id: &str, parts: &[PromptPart]) -> Result<(), RpcError> {
-        self.call(
-            "session/prompt",
-            json!({ "sessionId": session_id, "prompt": parts }),
-        )
-        .await?;
-        Ok(())
+    /// On RPC failure or the per-call timeout.
+    pub async fn prompt(
+        &self,
+        session_id: &str,
+        parts: &[PromptPart],
+    ) -> Result<PromptResult, RpcError> {
+        let result = self
+            .call(
+                "session/prompt",
+                json!({ "sessionId": session_id, "prompt": parts }),
+            )
+            .await?;
+        Ok(PromptResult {
+            stop_reason: result
+                .get("stopReason")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        })
     }
 
     /// `session/cancel` — fire-and-forget turn cancellation.

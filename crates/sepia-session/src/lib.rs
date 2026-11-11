@@ -1,5 +1,5 @@
 //! sepia-session — the local session plane: live-session ownership,
-//! lock probing, attach/takeover, prompt/cancel/permission,
+//! lock probing, attach/takeover, prompt/prompt_wait/cancel/permission,
 //! restore/rewind, plus [`local`], the composition that assembles it
 //! from this machine's drivers and agent CLIs. Composes `sepia-core`
 //! (IR + planners), `sepia-acp` (live agents), `sepia-host` (driver

@@ -173,6 +173,32 @@ impl SepiaPeregrin {
         self.session_op(id, "prompt", &serde_json::json!({"parts": parts}))
     }
 
+    /// `sepia.prompt_wait` — prompt and block until the turn reaches a
+    /// terminal state. Returns the `PromptWaitResult` document
+    /// (`stopReason`, `text`, `eventCount`, `durationMs`, `timedOut`,
+    /// `error`). `timeout_ms` `None`/`0` waits without limit; an
+    /// elapsed timeout cancels the turn.
+    ///
+    /// # Errors
+    /// On transport failure or non-2xx — turn-level failures arrive in
+    /// the result's `error` field instead.
+    pub fn prompt_wait(
+        &self,
+        id: &str,
+        parts: &Value,
+        timeout_ms: Option<u64>,
+    ) -> Result<Value, SepiaPeregrinError> {
+        let mut payload = serde_json::json!({"parts": parts});
+        if let Some(ms) = timeout_ms {
+            payload["timeoutMs"] = serde_json::json!(ms);
+        }
+        let body = serde_json::json!({
+            "kind": "sepia.prompt_wait",
+            "payload": payload,
+        });
+        self.send("POST", &format!("/api/entities/{id}/ops"), &body)
+    }
+
     /// `sepia.attach` / `sepia.detach` — live-driver attach/release.
     /// `takeover` asks the node to break a foreign hold.
     ///

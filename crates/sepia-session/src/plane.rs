@@ -1,6 +1,6 @@
 //! `ControlPlane` — live-session ownership, lock probing, attach/takeover,
-//! prompt/cancel/permission, restore/rewind. The state machine runs on
-//! tokio tasks, mutexes, and drop-based cleanup.
+//! prompt/prompt_wait/cancel/permission, restore/rewind. The state
+//! machine runs on tokio tasks, mutexes, and drop-based cleanup.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -25,8 +25,8 @@ use crate::translate::Translator;
 use crate::types::{
     AgentInfo, AgentRuntime, AttachResult, ControlError, ControlErrorCode, ControlPlaneOptions,
     DetachReason, HistoryMessage, HistoryOptions, HistoryPage, NodeEvent, PlaneConfig,
-    RestoreAction, RestoreExec, RestoreRequest, RestoreResult, RestoredFile, RewindRequest,
-    RewindResult, SessionRewinder, SessionSummary, SkippedFile,
+    PromptWaitResult, RestoreAction, RestoreExec, RestoreRequest, RestoreResult, RestoredFile,
+    RewindRequest, RewindResult, SessionRewinder, SessionSummary, SkippedFile,
 };
 
 const DEFAULT_HISTORY_LIMIT: usize = 500;
@@ -45,6 +45,23 @@ const TAKEOVER_RETRY_DELAY: Duration = Duration::from_millis(300);
 const PROBE_IDLE_FACTOR: u32 = 10;
 const MIN_PROBE_IDLE: Duration = Duration::from_secs(60);
 const EVENT_BUFFER: usize = 512;
+/// After a `prompt_wait` timeout fires, `session/cancel` is sent and
+/// the turn task is awaited this long for its terminal state before
+/// the caller gets `timed_out: true` and the turn is left running.
+const PROMPT_WAIT_SETTLE: Duration = Duration::from_secs(5);
+/// A timed-out turn that outlives the settle window keeps running in
+/// the background — the ACP call budget gives it this long to end on
+/// its own before the pending `session/prompt` errors out.
+const PROMPT_WAIT_TAIL: Duration = Duration::from_secs(60);
+/// The ACP call budget for an unbounded `prompt_wait` — de-facto
+/// infinite; agent death still fails the pending call via the exit
+/// watcher.
+const PROMPT_WAIT_NO_LIMIT: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+/// Once the turn settles (or the wait times out), its last updates can
+/// still be inside the forward pipeline (`conn.updates` → forward task
+/// → broadcast) when the prompt response wins the select — the wait
+/// gives the pipeline this beat, then drains the broadcast buffer.
+const PROMPT_WAIT_DRAIN: Duration = Duration::from_millis(20);
 
 /// The broadcast fan-out depth — `SEPIA_EVENT_BUFFER` shrinks it so
 /// tests surface lagged receivers deterministically.
@@ -93,6 +110,27 @@ struct CoveredFile {
     tracked: String,
     abs: PathBuf,
     backup: Option<String>,
+}
+
+/// What a `prompt_wait` collects off the session's event stream while
+/// the turn runs — the concatenated assistant `textMessageContent`
+/// deltas plus a frame count. Lagged batches are counted separately so
+/// a partial `text` is never silently reported as whole.
+#[derive(Default)]
+struct TurnCapture {
+    text: String,
+    events: usize,
+}
+
+impl TurnCapture {
+    fn absorb(&mut self, batch: &[SessionEvent]) {
+        for event in batch {
+            self.events += 1;
+            if let SessionEvent::TextMessageContent { delta, .. } = event {
+                self.text.push_str(delta);
+            }
+        }
+    }
 }
 
 /// One live (attached) session: the ACP connection plus the event fan-out
@@ -1480,7 +1518,10 @@ impl ControlPlane {
     }
 
     /// Sends one turn — `parts` is the ACP `session/prompt` content-block
-    /// list, forwarded verbatim after the capability gate.
+    /// list, forwarded verbatim after the capability gate. The call
+    /// resolves when the agent finishes the turn (its `stopReason` is
+    /// dropped here — [`Self::prompt_wait`] reports it); progress
+    /// streams on the session's event feed.
     ///
     /// # Errors
     /// `invalid`/`busy`/`internal`.
@@ -1491,6 +1532,21 @@ impl ControlPlane {
         parts: &[PromptPart],
         agent_id: Option<&str>,
     ) -> Result<(), ControlError> {
+        self.prompt_turn(id, parts, agent_id).await.map(|_| ())
+    }
+
+    /// The dispatch + await half shared by [`Self::prompt`] and
+    /// [`Self::prompt_wait`]: capability gate, busy mark, `RunStarted`,
+    /// the agent's `session/prompt` response (the turn's terminal
+    /// `stopReason`), then busy clear + `end_turn`. Turn-level
+    /// failures come back as `Err` — callers decide whether that's an
+    /// RPC error (`prompt`) or a result field (`prompt_wait`).
+    async fn prompt_turn(
+        &self,
+        id: &str,
+        parts: &[PromptPart],
+        agent_id: Option<&str>,
+    ) -> Result<Option<String>, ControlError> {
         let conn = {
             let state = self.state.lock().await;
             let live = Self::require_live(&state, id, agent_id)?;
@@ -1542,7 +1598,178 @@ impl ControlPlane {
                 self.emit(live, end);
             }
         }
-        result
+        result.map(|r| r.stop_reason)
+    }
+
+    /// Sends one turn and waits for it to reach a terminal state — the
+    /// blocking counterpart of [`Self::prompt`]. The wait subscribes to
+    /// the session's event stream internally (no frame is missed),
+    /// captures the assistant text and event count observed during the
+    /// turn, and resolves on the agent's `stopReason` or a turn-level
+    /// failure (reported in the result's `error`, not as
+    /// [`ControlError`] — pre-dispatch rejections like `busy` and
+    /// `invalid` still error). `timeout` bounds the wait; on expiry
+    /// `session/cancel` is sent and the turn is given
+    /// [`PROMPT_WAIT_SETTLE`] to report before `timed_out` is set — a
+    /// turn that outlives the grace keeps running in the background.
+    /// `None`/zero waits without limit (bounded only by agent liveness).
+    ///
+    /// # Errors
+    /// `invalid`/`busy` — the same pre-dispatch checks [`Self::prompt`]
+    /// runs, answered before the wait starts.
+    #[tracing::instrument(name = "control_prompt_wait", skip_all, fields(session = %id, agent = ?agent_id))]
+    pub async fn prompt_wait(
+        self: &Arc<Self>,
+        id: &str,
+        parts: &[PromptPart],
+        agent_id: Option<&str>,
+        timeout: Option<Duration>,
+    ) -> Result<PromptWaitResult, ControlError> {
+        let started = Instant::now();
+        let timeout = timeout.filter(|t| !t.is_zero());
+        // Subscribe before dispatching — the wait's own receiver counts
+        // as a listener for idle tracking and no turn frame is missed.
+        // It doubles as the attach check: not live → `invalid`, same
+        // as `prompt`.
+        let mut events = self.subscribe(id, agent_id).await?;
+        // Pre-flight the dispatch checks so a busy session or
+        // unsupported content fails now instead of after the timeout;
+        // `prompt_turn` re-checks under the lock — the busy mark there
+        // stays the authoritative gate.
+        let (conn, session_agent) = {
+            let state = self.state.lock().await;
+            let live = Self::require_live(&state, id, agent_id)?;
+            if live.busy {
+                return Err(control_error(
+                    ControlErrorCode::Busy,
+                    format!("Session is busy: {id}"),
+                ));
+            }
+            (Arc::clone(&live.conn), live.agent_id.clone())
+        };
+        if let Some(label) = Self::disallowed_part(&conn, parts).await {
+            return Err(control_error(
+                ControlErrorCode::Invalid,
+                format!("Agent does not accept {label} prompt content: {id}"),
+            ));
+        }
+        // The ACP call must outlive the wait: a bounded wait budgets
+        // timeout + settle + tail (the tail is the runaway turn's
+        // background window); an unbounded one gets a de-facto-infinite
+        // budget — agent death still fails the pending call via the
+        // exit watcher.
+        conn.set_call_timeout(timeout.map_or(PROMPT_WAIT_NO_LIMIT, |t| {
+            t + PROMPT_WAIT_SETTLE + PROMPT_WAIT_TAIL
+        }));
+        let plane = Arc::clone(self);
+        let id_owned = id.to_string();
+        let parts_owned = parts.to_vec();
+        let agent_owned = agent_id.map(str::to_string);
+        let mut turn = tokio::spawn(async move {
+            plane
+                .prompt_turn(&id_owned, &parts_owned, agent_owned.as_deref())
+                .await
+        });
+
+        /// How the wait ended — the turn settled, or the timeout fired.
+        enum WaitEnd {
+            Settled(Result<Option<String>, ControlError>),
+            TimedOut,
+        }
+
+        let mut capture = TurnCapture::default();
+        let mut lagged_events = 0u64;
+        let mut events_closed = false;
+        // Absolute deadline — `sleep_until` is rebuilt on every select
+        // pass but always targets the same instant, so a burst of event
+        // batches can't starve the timeout the way a fresh `sleep`
+        // would.
+        let deadline = timeout.map(|d| tokio::time::Instant::now() + d);
+        let settled = loop {
+            tokio::select! {
+                joined = &mut turn => {
+                    break WaitEnd::Settled(match joined {
+                        Ok(inner) => inner,
+                        Err(e) => Err(control_error(
+                            ControlErrorCode::Internal,
+                            format!("prompt wait task failed: {e}"),
+                        )),
+                    });
+                }
+                batch = events.recv(), if !events_closed => match batch {
+                    Ok(batch) => capture.absorb(&batch),
+                    Err(broadcast::error::RecvError::Lagged(count)) => {
+                        lagged_events += count;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => events_closed = true,
+                },
+                () = tokio::time::sleep_until(
+                    deadline.unwrap_or_else(tokio::time::Instant::now)
+                ),
+                    if timeout.is_some() =>
+                {
+                    break WaitEnd::TimedOut;
+                }
+            }
+        };
+        let (stop_reason, error, timed_out) = match settled {
+            WaitEnd::Settled(Ok(stop_reason)) => (stop_reason, None, false),
+            WaitEnd::Settled(Err(e)) => (None, Some(e), false),
+            WaitEnd::TimedOut => {
+                // Ask the agent to end the turn, then give it the
+                // settle window to report. `session/cancel` is a
+                // notification — best-effort; the session may already
+                // be gone.
+                let _ = self.cancel(id, agent_id).await;
+                match tokio::time::timeout(PROMPT_WAIT_SETTLE, &mut turn).await {
+                    Ok(Ok(Ok(stop_reason))) => (stop_reason, None, true),
+                    Ok(Ok(Err(e))) => (None, Some(e), true),
+                    Ok(Err(e)) => (
+                        None,
+                        Some(control_error(
+                            ControlErrorCode::Internal,
+                            format!("prompt wait task failed: {e}"),
+                        )),
+                        true,
+                    ),
+                    // Still running — dropping the handle detaches the
+                    // task; it clears `busy` and emits `end_turn` when
+                    // the agent finally answers (or the call budget
+                    // trips).
+                    Err(_) => (None, None, true),
+                }
+            }
+        };
+
+        // The turn's last updates can still be inside the forward
+        // pipeline (`conn.updates` → forward task → broadcast) when the
+        // join or the timeout wins the select — give it a beat, then
+        // drain whatever the broadcast buffered so `text`/`event_count`
+        // see the whole settled turn (and the timeout snapshot).
+        tokio::time::sleep(PROMPT_WAIT_DRAIN).await;
+        loop {
+            match events.try_recv() {
+                Ok(batch) => capture.absorb(&batch),
+                Err(broadcast::error::TryRecvError::Lagged(count)) => {
+                    lagged_events += count;
+                }
+                Err(
+                    broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed,
+                ) => break,
+            }
+        }
+
+        Ok(PromptWaitResult {
+            session_id: id.to_string(),
+            agent_id: session_agent,
+            stop_reason,
+            text: capture.text,
+            event_count: capture.events,
+            lagged_events,
+            duration_ms: started.elapsed().as_secs_f64() * 1000.0,
+            timed_out,
+            error,
+        })
     }
 
     /// `session/cancel` — fire-and-forget turn cancellation.

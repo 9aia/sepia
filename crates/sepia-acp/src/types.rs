@@ -219,6 +219,16 @@ pub enum PromptResource {
     },
 }
 
+/// The `session/prompt` response — resolves when the agent finishes
+/// the turn. `stop_reason` is the agent's `stopReason` (`end_turn`,
+/// `cancelled`, `max_tokens`, `refusal`, …); `None` when the agent
+/// omitted it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromptResult {
+    #[serde(rename = "stopReason", skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SpawnOptions {
     pub cwd: String,

@@ -121,6 +121,44 @@ pub struct AttachResult {
     pub capabilities: AcpCapabilities,
 }
 
+/// The settled-turn report [`ControlPlane::prompt_wait`](crate::ControlPlane::prompt_wait)
+/// returns — the blocking counterpart of `prompt`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptWaitResult {
+    /// The session the turn ran on.
+    pub session_id: String,
+    /// The agent runtime that owns the session.
+    pub agent_id: String,
+    /// The agent's terminal `stopReason` — `end_turn`, `cancelled`,
+    /// `max_tokens`, `refusal`, … `None` when the turn errored before
+    /// the agent answered or the wait timed out mid-flight.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    /// Assistant text observed during the turn — the concatenated
+    /// `textMessageContent` deltas.
+    pub text: String,
+    /// `SessionEvent` frames observed while waiting.
+    pub event_count: usize,
+    /// Event batches the waiter dropped to broadcast lag — `text` may
+    /// be incomplete when nonzero.
+    pub lagged_events: u64,
+    /// Wall-clock milliseconds the call took.
+    pub duration_ms: f64,
+    /// The `timeout` elapsed before the turn settled — `session/cancel`
+    /// was sent and the turn was given a settle window; one that
+    /// outlives it keeps running in the background (its events still
+    /// stream to subscribers).
+    pub timed_out: bool,
+    /// A turn-level failure — the agent died mid-turn, the ACP call
+    /// errored, or a same-instant `busy` race was lost. The wait
+    /// itself succeeded, so this rides the result instead of failing
+    /// the call; pre-dispatch rejections (`invalid`, `busy`,
+    /// `unknown_agent`) still return `Err`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ControlError>,
+}
+
 /// A file-level restore — `path` (+ optional `tool_call_id`) reverts
 /// through recorded diffs; `checkpoint` materializes a snapshot ref.
 /// `confirm` is mandatory.

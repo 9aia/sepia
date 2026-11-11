@@ -61,6 +61,11 @@ same framing as driver binaries (`sepia_driver::rpc`). The method
 surface is documented in `crates/sepia-cli/src/serve.rs`; `manifest`
 reports `protocol` for version negotiation. New session ops go over
 this wire — never link the session plane into an orchestrator.
+`sessions.prompt_wait` is the blocking turn primitive (prompt → await
+terminal state → `PromptWaitResult` with `stopReason`/`text`/
+`timedOut`); requests dispatch concurrently so `cancel`/`permission`
+interleave with an in-flight wait. The same capability rides the
+entity plane as the `sepia.prompt_wait` op (`sepia-peregrin`).
 
 `tamias-driver-sepia` is the CLI-as-generated-surface driver (org
 proposal P-021, bins[] pilot T-012): `ops` answers an ops manifest

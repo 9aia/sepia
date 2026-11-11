@@ -18,6 +18,7 @@
 //! | `sessions.attach` / `sessions.detach` | `attach` / `detach` |
 //! | `sessions.create` | `create_session` |
 //! | `sessions.prompt` / `sessions.cancel` | `prompt` / `cancel` |
+//! | `sessions.prompt_wait` | `prompt_wait` — prompt + await turn end → `PromptWaitResult` |
 //! | `sessions.permission` | `respond_to_permission` |
 //! | `sessions.delete` | `delete_session` |
 //! | `sessions.patch_meta` | `patch_meta` — the overlay (title/pin/archive/projects/model) |
@@ -33,6 +34,7 @@
 
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use sepia_driver::rpc::{Inbound, Request, RpcError, decode_line, encode_line};
 use sepia_session::{
@@ -100,7 +102,8 @@ fn manifest(local: &Local) -> Value {
             "sessions.list", "sessions.get", "sessions.summary",
             "sessions.export", "sessions.import", "sessions.convert",
             "sessions.history", "sessions.attach", "sessions.detach",
-            "sessions.create", "sessions.prompt", "sessions.cancel",
+            "sessions.create", "sessions.prompt", "sessions.prompt_wait",
+            "sessions.cancel",
             "sessions.permission", "sessions.delete", "sessions.patch_meta",
             "sessions.restore", "sessions.rewind", "sessions.subscribe",
             "events.subscribe",
@@ -307,6 +310,30 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
                 .await
                 .map_err(|e| control_err(&e))?;
             Ok(Value::Null)
+        }
+        "sessions.prompt_wait" => {
+            let id = id_of(&req.params)?;
+            let parts: Vec<sepia_acp::types::PromptPart> = serde_json::from_value(
+                req.params
+                    .get("parts")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            )
+            .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+            // `timeoutMs` bounds the wait; 0/absent waits until the
+            // turn settles (bounded only by agent liveness). On expiry
+            // the turn is cancelled — see `ControlPlane::prompt_wait`.
+            let timeout_ms = req
+                .params
+                .get("timeoutMs")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let timeout = (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms));
+            let result = plane
+                .prompt_wait(id, &parts, agent.as_deref(), timeout)
+                .await
+                .map_err(|e| control_err(&e))?;
+            serde_json::to_value(result).map_err(|e| RpcError::internal(e.to_string()))
         }
         "sessions.cancel" => {
             plane
@@ -541,9 +568,11 @@ pub fn serve_stdio() -> Result<(), CliError> {
         .map_err(|e| CliError(format!("failed to start runtime: {e}")))?;
     runtime.block_on(async {
         let paths = Paths::new(sepia_home());
-        let local = build(&paths, base_options())
-            .await
-            .map_err(|e| CliError(format!("failed to build session plane: {e}")))?;
+        let local = Arc::new(
+            build(&paths, base_options())
+                .await
+                .map_err(|e| CliError(format!("failed to build session plane: {e}")))?,
+        );
         let out: Out = Arc::new(Mutex::new(std::io::BufWriter::new(std::io::stdout())));
         let stdin = std::io::stdin();
         for line in stdin.lock().lines() {
@@ -557,11 +586,21 @@ pub fn serve_stdio() -> Result<(), CliError> {
                         write_line(&out, &sepia_driver::rpc::Response::ok(req.id, Value::Null));
                         break;
                     }
-                    let response = match dispatch(&local, &req, &out).await {
-                        Ok(result) => sepia_driver::rpc::Response::ok(req.id, result),
-                        Err(error) => sepia_driver::rpc::Response::err(req.id, error),
-                    };
-                    write_line(&out, &response);
+                    // Requests dispatch concurrently — a blocking call
+                    // (`sessions.prompt_wait`, a long `sessions.prompt`)
+                    // must not starve `sessions.cancel`,
+                    // `sessions.permission`, or the subscribe verbs that
+                    // interleave with it. Responses are id-correlated,
+                    // so completion order doesn't matter.
+                    let local = Arc::clone(&local);
+                    let out = Arc::clone(&out);
+                    tokio::spawn(async move {
+                        let response = match dispatch(&local, &req, &out).await {
+                            Ok(result) => sepia_driver::rpc::Response::ok(req.id, result),
+                            Err(error) => sepia_driver::rpc::Response::err(req.id, error),
+                        };
+                        write_line(&out, &response);
+                    });
                 }
                 Ok(Inbound::Notification(_) | Inbound::Response(_)) => {}
                 Err((id, error)) => {

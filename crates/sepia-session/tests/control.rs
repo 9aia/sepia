@@ -765,6 +765,215 @@ async fn busy_session_refuses_a_second_prompt() {
     plane.close_all().await;
 }
 
+// ---------- prompt_wait ----------------------------------------------
+
+#[tokio::test]
+async fn prompt_wait_returns_the_settled_turn() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let result = plane
+        .prompt_wait("s1", &[PromptPart::Text { text: "hi".into() }], None, None)
+        .await
+        .unwrap();
+    assert_eq!(result.session_id, "s1");
+    assert_eq!(result.agent_id, "devin");
+    assert_eq!(result.stop_reason.as_deref(), Some("end_turn"));
+    assert_eq!(result.text, "echo: hi");
+    assert!(result.event_count > 0);
+    assert_eq!(result.lagged_events, 0);
+    assert!(!result.timed_out);
+    assert!(result.error.is_none());
+    assert!(result.duration_ms >= 0.0);
+    // The session is idle again — a second wait works.
+    plane
+        .prompt_wait(
+            "s1",
+            &[PromptPart::Text {
+                text: "again".into(),
+            }],
+            None,
+            Some(Duration::from_secs(5)),
+        )
+        .await
+        .unwrap();
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn prompt_wait_timeout_cancels_and_reports() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                // The mock honors the cancel window: it finishes 300ms
+                // in, inside the 5s settle grace.
+                ("MOCK_PROMPT_SLOW_MS", "300"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let result = plane
+        .prompt_wait(
+            "s1",
+            &[PromptPart::Text {
+                text: "slow".into(),
+            }],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .await
+        .unwrap();
+    assert!(result.timed_out);
+    // The settle grace caught the turn's real end state.
+    assert_eq!(result.stop_reason.as_deref(), Some("end_turn"));
+    assert!(result.error.is_none());
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn prompt_wait_timeout_leaves_a_runaway_turn_running() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                // Outlives the 5s settle grace — the wait returns
+                // timed_out while the turn is still in flight.
+                ("MOCK_PROMPT_SLOW_MS", "30000"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let result = plane
+        .prompt_wait(
+            "s1",
+            &[PromptPart::Text {
+                text: "forever".into(),
+            }],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .await
+        .unwrap();
+    assert!(result.timed_out);
+    assert!(result.stop_reason.is_none());
+    // The turn is still in flight — the background task owns the
+    // cleanup until the agent answers (or the call budget trips), so
+    // a second prompt is refused busy.
+    let err = plane
+        .prompt(
+            "s1",
+            &[PromptPart::Text {
+                text: "again".into(),
+            }],
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Busy);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn prompt_wait_reports_turn_errors_in_the_result() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_PROMPT_FAIL", "agent refused the turn"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let result = plane
+        .prompt_wait("s1", &[PromptPart::Text { text: "hi".into() }], None, None)
+        .await
+        .unwrap();
+    assert!(!result.timed_out);
+    assert!(result.stop_reason.is_none());
+    let error = result.error.unwrap();
+    assert_eq!(error.code, ControlErrorCode::Internal);
+    assert!(
+        error
+            .cause
+            .as_deref()
+            .is_some_and(|c| c.contains("agent refused the turn")),
+        "{error:?}"
+    );
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn prompt_wait_rejects_unattached_and_busy_sessions() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_PROMPT_SLOW_MS", "300"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    // Not attached → invalid, same as prompt.
+    let err = plane
+        .prompt_wait("s1", &[PromptPart::Text { text: "hi".into() }], None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Invalid);
+
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    // A turn in flight → busy, answered before the wait starts.
+    let plane2 = Arc::clone(&plane);
+    let first = tokio::spawn(async move {
+        plane2
+            .prompt(
+                "s1",
+                &[PromptPart::Text {
+                    text: "slow".into(),
+                }],
+                None,
+            )
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let err = plane
+        .prompt_wait(
+            "s1",
+            &[PromptPart::Text {
+                text: "second".into(),
+            }],
+            None,
+            Some(Duration::from_secs(30)),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Busy);
+    first.await.unwrap().unwrap();
+    plane.close_all().await;
+}
+
 // ---------- delete / restore / rewind ---------------------------------
 
 #[tokio::test]

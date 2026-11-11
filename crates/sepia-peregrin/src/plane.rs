@@ -28,7 +28,8 @@ use sepia_core::Session;
 use sepia_meta::SessionMeta;
 use sepia_session::{
     AttachResult, ControlError, ControlErrorCode, CreateResult, ImportOverrides, Local,
-    RestoreRequest, RestoreResult, RewindRequest, RewindResult, SessionSummary, agent_for_backend,
+    PromptWaitResult, RestoreRequest, RestoreResult, RewindRequest, RewindResult, SessionSummary,
+    agent_for_backend,
 };
 
 use crate::doc::ENTITY_KIND;
@@ -81,6 +82,18 @@ pub trait SessionBackend: Send + Sync {
         parts: &[PromptPart],
         agent: Option<&str>,
     ) -> Result<(), ControlError>;
+
+    /// One prompt turn awaited to its terminal state — the blocking
+    /// counterpart of [`Self::prompt`]. `timeout` bounds the wait
+    /// (`None` waits until the turn settles or the agent dies); an
+    /// elapsed timeout cancels the turn.
+    async fn prompt_wait(
+        &self,
+        id: &str,
+        parts: &[PromptPart],
+        agent: Option<&str>,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<PromptWaitResult, ControlError>;
 
     /// Fire-and-forget turn cancellation.
     async fn cancel(&self, id: &str, agent: Option<&str>) -> Result<(), ControlError>;
@@ -239,6 +252,16 @@ impl SessionBackend for Local {
         agent: Option<&str>,
     ) -> Result<(), ControlError> {
         self.plane.prompt(id, parts, agent).await
+    }
+
+    async fn prompt_wait(
+        &self,
+        id: &str,
+        parts: &[PromptPart],
+        agent: Option<&str>,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<PromptWaitResult, ControlError> {
+        self.plane.prompt_wait(id, parts, agent, timeout).await
     }
 
     async fn cancel(&self, id: &str, agent: Option<&str>) -> Result<(), ControlError> {
@@ -544,6 +567,27 @@ impl SepiaEntityPlane {
                     Ok(()) => ok(),
                     Err(e) => error_response(&e),
                 }),
+                Err(message) => Some(bad_request(&message)),
+            },
+            // `sepia.prompt_wait` — the blocking turn: same parts
+            // shapes as `prompt`, plus `timeoutMs` (0/absent = no
+            // limit; expiry cancels the turn). Answers the
+            // `PromptWaitResult` doc.
+            "prompt_wait" => match prompt_parts(payload) {
+                Ok(parts) => {
+                    let timeout_ms = payload
+                        .get("timeoutMs")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    let timeout =
+                        (timeout_ms > 0).then(|| std::time::Duration::from_millis(timeout_ms));
+                    Some(
+                        match backend.prompt_wait(id, &parts, agent, timeout).await {
+                            Ok(result) => json_response(json!(result), StatusCode::OK),
+                            Err(e) => error_response(&e),
+                        },
+                    )
+                }
                 Err(message) => Some(bad_request(&message)),
             },
             "cancel" => Some(match backend.cancel(id, agent).await {
@@ -866,7 +910,8 @@ mod tests {
     use sepia_meta::SessionMeta;
     use sepia_session::{
         AttachResult, ControlError, ControlErrorCode, CreateResult, ImportOverrides,
-        RestoreRequest, RestoreResult, RewindRequest, RewindResult, SessionSummary,
+        PromptWaitResult, RestoreRequest, RestoreResult, RewindRequest, RewindResult,
+        SessionSummary,
     };
 
     /// Records every call (`"verb:id:agent"`) and serves canned data.
@@ -1022,6 +1067,33 @@ mod tests {
                 return self.fail();
             }
             Ok(())
+        }
+
+        async fn prompt_wait(
+            &self,
+            id: &str,
+            parts: &[PromptPart],
+            agent: Option<&str>,
+            timeout: Option<std::time::Duration>,
+        ) -> Result<PromptWaitResult, ControlError> {
+            self.record(format!(
+                "prompt_wait:{id}:{}:{parts:?}:{timeout:?}",
+                agent.unwrap_or("-")
+            ));
+            if self.error.is_some() {
+                return self.fail();
+            }
+            Ok(PromptWaitResult {
+                session_id: id.to_string(),
+                agent_id: "devin".into(),
+                stop_reason: Some("end_turn".into()),
+                text: "done".into(),
+                event_count: 3,
+                lagged_events: 0,
+                duration_ms: 1.5,
+                timed_out: false,
+                error: None,
+            })
         }
 
         async fn cancel(&self, id: &str, agent: Option<&str>) -> Result<(), ControlError> {
@@ -1286,6 +1358,37 @@ mod tests {
             .await;
         assert_eq!(response.status(), StatusCode::OK);
         assert!(fake.calls()[0].contains("prompt:s1:-:"));
+    }
+
+    #[tokio::test]
+    async fn op_prompt_wait_returns_the_settled_turn() {
+        let fake = Arc::new(Fake::new());
+        let p = SepiaEntityPlane::new(fake.clone());
+        let response = p
+            .op(
+                &ctx(),
+                "s1",
+                "sepia.prompt_wait",
+                json!({"text": "hi", "timeoutMs": 250}),
+                Some("agent=devin"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["stopReason"], "end_turn", "{body}");
+        assert_eq!(body["text"], "done", "{body}");
+        assert_eq!(body["timedOut"], false, "{body}");
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(
+            calls[0].starts_with("prompt_wait:s1:devin:") && calls[0].contains("250ms"),
+            "{calls:?}"
+        );
+        // Empty payloads still fail the parts parse.
+        let response = p
+            .op(&ctx(), "s1", "sepia.prompt_wait", json!({}), None)
+            .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

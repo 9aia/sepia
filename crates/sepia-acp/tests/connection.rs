@@ -74,14 +74,17 @@ async fn session_ops_round_trip() {
 async fn prompt_streams_normalized_updates() {
     let conn = Arc::new(spawn_agent(&mock_spec(), &options()).await.unwrap());
     let mut updates = conn.updates();
-    conn.prompt(
-        "s1",
-        &[PromptPart::Text {
-            text: "hi there".into(),
-        }],
-    )
-    .await
-    .unwrap();
+    let result = conn
+        .prompt(
+            "s1",
+            &[PromptPart::Text {
+                text: "hi there".into(),
+            }],
+        )
+        .await
+        .unwrap();
+    // The response resolves at turn end and carries the stop reason.
+    assert_eq!(result.stop_reason.as_deref(), Some("end_turn"));
     let update = tokio::time::timeout(Duration::from_secs(5), updates.recv())
         .await
         .unwrap()

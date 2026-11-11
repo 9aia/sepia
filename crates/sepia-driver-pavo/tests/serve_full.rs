@@ -315,6 +315,26 @@ mod serve {
         let params = serve.notification("session.event", 20);
         assert_eq!(params["sessionId"], "s1", "{params}");
 
+        // sessions.prompt_wait — the blocking turn: resolves with the
+        // stop reason + captured assistant text.
+        let res = serve.call(
+            140,
+            "sessions.prompt_wait",
+            json!({"id": "s1", "parts": [{"type": "text", "text": "wait"}]}),
+        );
+        let result = &res["result"];
+        assert_eq!(result["stopReason"], "end_turn", "{res}");
+        assert_eq!(result["text"], "echo: wait", "{res}");
+        assert_eq!(result["timedOut"], false, "{res}");
+        assert!(result["eventCount"].as_u64().unwrap() > 0, "{res}");
+        // Unknown session → the plane's invalid error.
+        let res = serve.call(
+            141,
+            "sessions.prompt_wait",
+            json!({"id": "ghost", "parts": [{"type": "text", "text": "x"}]}),
+        );
+        assert_eq!(res["error"]["data"]["code"], "invalid", "{res}");
+
         // A permission prompt round-trip: prompt "perm" → request → answer.
         let res = serve.call(
             14,
