@@ -14,7 +14,11 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio::task::JoinHandle;
 
-const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+// Driver calls cover agent spawn + ACP `session/new` — a cold
+// `devin acp` boot legitimately exceeds 30s. Long waits are already
+// bounded per-call (`prompt_wait` overrides via `set_call_timeout`),
+// so the default only needs to cover spawn-class calls.
+const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const STDERR_RING: usize = 64;
 
 type PendingMap = HashMap<u64, oneshot::Sender<Result<Value, RpcError>>>;
