@@ -9,7 +9,13 @@ Claude Code, or Cursor.
 
 The `sepia` command ships as a [tamias](https://github.com/9aia/tamias)
 pack — a generated shim that resolves `tamias-driver-sepia` at call
-time. From a checkout:
+time. With `tamias` installed:
+
+```bash
+tamias install 9aia:sepia@0.1.0    # org registry (needs TAMIAS_REGISTRY_TOKEN)
+```
+
+Or from a checkout:
 
 ```bash
 cargo xtask pack                                  # stage the driver payload
