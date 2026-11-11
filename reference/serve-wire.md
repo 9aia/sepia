@@ -44,13 +44,15 @@ override, or ten lock TTLs floored at 60s.
 | `sessions.import` | Write IR into an agent's store via `session.save` (`agent`, `session`, `id?`, `cwd?`, `title?`, `model?`) → `{id, agentId}`; mints a fresh id unless `id` is passed |
 | `sessions.convert` | Node-local copy of a stored session into another agent's store (`id`, `agent`, `from?`) → `{sessionId, agentId}` |
 | `sessions.history` | Paginated history (`id`, `limit`, `before`) |
-| `sessions.attach` | Attach (`id`, `takeover`, `model`, `fallbacks`) |
+| `sessions.attach` | Attach (`id`, `takeover`, `model`, `fallbacks`, `permissions`) |
 | `sessions.detach` | Release a held session |
-| `sessions.create` | New session (`cwd`, `agent`, `title`, `model`, `fallbacks`) |
+| `sessions.create` | New session (`cwd`, `agent`, `title`, `model`, `fallbacks`, `permissions`) |
 | `sessions.prompt` | Send a turn (`id`, `parts`, `agent`) — resolves when the agent finishes the turn, returns `null` |
 | `sessions.prompt_wait` | Prompt + await the turn's terminal state (`id`, `parts`, `agent?`, `timeoutMs?`) → `PromptWaitResult` |
 | `sessions.cancel` | Cancel a running turn |
 | `sessions.permission` | Resolve a permission request (`id`, `request`, `option`) |
+| `sessions.set_mode` | Switch the agent mode (`id`, `mode`, `agent?`) — `session/set_mode` |
+| `sessions.set_permission_policy` | Set the permission policy (`id`, `permissions`, `agent?`) |
 | `sessions.delete` | Delete from the owning store |
 | `sessions.patch_meta` | Meta overlay patch (`id`, `patch`: `title`/`pinned`/`archived`/`projectIds`/`model`) |
 | `projects.list` | Node-local projects |
@@ -101,6 +103,36 @@ Requests dispatch concurrently — a `prompt_wait` (or a long
 `sessions.prompt`) in flight does not starve `sessions.cancel`,
 `sessions.permission`, or the subscribe verbs. Responses are
 id-correlated; completion order is not guaranteed.
+
+## Permission policy
+
+Agents gate tool use behind ACP `session/request_permission` — an
+unattended `prompt_wait` deadlocks when nothing answers. Each live
+session carries a `PermissionPolicy`, default `ask` (the request
+broadcasts as an `acp:permission_request` custom event and waits for
+`sessions.permission`). Set it at create/attach time with the
+`permissions` param, or switch it live with
+`sessions.set_permission_policy`; both accept:
+
+- `"ask"` — broadcast only, manual answering (the default).
+- `"allow_all"` — auto-select the best allow option (`allow_once`
+  preferred, then `allow_always`, then any `allow*` kind).
+- `"deny_all"` — auto-select the best reject option (`reject_once`,
+  `reject_always`, `reject*`), else the cancelled outcome.
+- `{"rules": [{"kind": "execute", "allow": false}, …]}` — first
+  matching rule decides on the tool-call `kind` (`execute`, `edit`,
+  `read`, …; a rule without `kind` matches everything); unmatched
+  requests fall back to `ask`.
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"sessions.set_permission_policy","params":{"id":"<session>","permissions":{"rules":[{"kind":"execute","allow":false},{"allow":true}]}}}
+```
+
+The request event still broadcasts under every policy — subscribers
+observe asks the policy auto-settled. With no matching option kind the
+plane sends the cancelled outcome rather than guessing an option.
+`create`/`attach` echo the applied policy as `permissions` in their
+result (`"ask"` when none was given or the attach was read-only).
 
 ## Event streams
 
