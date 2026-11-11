@@ -49,11 +49,11 @@ source of truth for the IR and both wires — keep them current.
   publish order: **hypha → sepia → peregrin**.
 - crates.io names: `sepia` is taken — the engine lib publishes as
   `sepia-cli` (no bin — the `sepia` command is the tamias pack in
-  `libraries/sepia/`). `sepia-testkit` and
-  `sepia-driver-pavo` are `publish = false`.
+  `libraries/sepia/`). `sepia-testkit`, `sepia-driver-pavo` and
+  `sepia-driver-config` are `publish = false`.
 - Release binaries: run `scripts/release.sh` manually (there is no
   release CI — releases are operator-driven). It builds
-  `sepia-<target>.tar.gz` (linux x86_64, macOS aarch64/x86_64)
-  carrying `tamias-driver-sepia` + the four store drivers — the
+  `sepia-<target>.tar.gz` (linux x86_64) carrying `tamias-driver-sepia`,
+  `tamias-driver-sepia-config` + the four store drivers — the
   `sepia` command itself installs via `cargo xtask pack` +
   `tamias install ./libraries/sepia`.
