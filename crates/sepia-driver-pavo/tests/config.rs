@@ -1,7 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::pedantic)]
 
-//! `sepia config *` verbs against tempfile agent-config dirs — drives the
-//! compiled binary so clap parsing, dispatch and the four drivers' config
+//! `sepia config *` verbs against tempfile agent-config dirs — drives
+//! `tamias-driver-sepia run` (the engine entrypoint behind the `sepia`
+//! shim) so clap parsing, dispatch and the four drivers' config
 //! adapters are all what gets asserted.
 
 use std::path::Path;
@@ -10,14 +11,16 @@ use std::process::{Command, Output};
 use tempfile::TempDir;
 
 fn sepia(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_sepia"))
+    Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"))
+        .arg("run")
         .args(args)
         .output()
         .unwrap()
 }
 
 fn sepia_env(args: &[&str], envs: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_sepia"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"));
+    cmd.arg("run");
     cmd.args(args);
     for (k, v) in envs {
         cmd.env(k, v);

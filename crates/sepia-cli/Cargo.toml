@@ -1,6 +1,6 @@
 [package]
 name = "sepia-cli"
-description = "The sepia CLI — local store verbs (list/export/import/install/delete), agent config IR ops, driver discovery, and the stdio session-plane service; the engine is also a library (`Cli`/`command`/`run_from`) for drivers"
+description = "The sepia engine lib — local store verbs (list/export/import/install/delete), agent config IR ops, driver discovery, and the stdio session-plane service; the `sepia` command ships as a tamias bins[] shim over this lib"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,9 +10,11 @@ license.workspace = true
 [lints]
 workspace = true
 
-[[bin]]
-name = "sepia"
-path = "src/main.rs"
+# No `[[bin]]` — the `sepia` command ships as the tamias pack in
+# `libraries/sepia/` (a generated `bins[]` shim →
+# `tamias-driver-sepia cli` → `sepia_cli::run_from`, T-012). This
+# crate is the engine lib only; the e2e suite lives in
+# `sepia-driver-pavo/tests/` and spawns `tamias-driver-sepia run`.
 
 [dependencies]
 sepia-core.workspace = true
@@ -35,5 +37,3 @@ nix = { version = "0.29", default-features = false, features = ["fs", "user"] }
 
 [dev-dependencies]
 tempfile.workspace = true
-sepia-testkit.workspace = true
-tokio = { workspace = true, features = ["rt"] }

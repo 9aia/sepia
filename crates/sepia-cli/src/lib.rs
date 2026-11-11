@@ -1,9 +1,11 @@
 //! sepia — the CLI's library surface: the engine as a library.
 //! Everything that used to live in the binary lives here — [`Cli`],
-//! verb dispatch, `serve`. `src/main.rs` is the thin front-end;
-//! drivers (the `sepia` bin, `tamias-driver-sepia`'s `run`/ops
-//! surfaces) split it into [`parse`]/[`parse_from`] + [`command`] +
-//! [`dispatch`] — argv in, exit code out.
+//! verb dispatch, `serve`. There is no `sepia` bin: the command
+//! ships as the tamias pack in `libraries/sepia/` — a generated
+//! `bins[]` shim → `tamias-driver-sepia cli` → [`run_from`] with
+//! inherited stdio (T-012). Drivers split it into
+//! [`parse`]/[`parse_from`] + [`command`] + [`dispatch`] — argv in,
+//! exit code out.
 //!
 //! sepia — the agent-session abstraction. One canonical IR, store
 //! drivers, and an ACP client for every agent; orchestration across

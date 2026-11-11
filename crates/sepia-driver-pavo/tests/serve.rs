@@ -1,7 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::pedantic)]
 
 //! `sepia serve` — the export/import/convert methods over real ndjson,
-//! against a shell-script fake `sepia-driver-fake` so `session.save`
+//! spawned as `tamias-driver-sepia run serve` (the engine passthrough —
+//! identical to the retired `sepia serve` binary), against a
+//! shell-script fake `sepia-driver-fake` so `session.save`
 //! genuinely crosses the driver wire. Real drivers on the machine stay
 //! undiscovered: `SEPIA_DRIVER_DIR` names a dir containing only the
 //! fake and `HOME` points at scratch space.
@@ -68,8 +70,9 @@ mod serve {
 
     impl Serve {
         fn start(home: &Path, drivers: &Path, envs: &[(&str, &str)]) -> Self {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_sepia"));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"));
             command
+                .arg("run")
                 .arg("serve")
                 .env("SEPIA_HOME", home)
                 .env("SEPIA_DRIVER_DIR", drivers)

@@ -14,6 +14,12 @@
 //!   list` ≡ `sepia list`. Also the child side of `cli.*` wire
 //!   queries (`ops::run_verb` re-execs this same verb so engine
 //!   output never touches the serve stream).
+//! - `cli <sepia argv>` — the tamias `bins[]` shim verb: `tamias
+//!   bin exec` calls it with the standard `--dir`/`--name` driver
+//!   flags ahead of the user's argv; they're stripped and the rest
+//!   runs through `sepia_cli::run_from` in-process with inherited
+//!   stdio — full engine parity (`serve` streams, globals/`--json`/
+//!   `--help` all work).
 //! - `serve` — ndjson JSON-RPC on stdio: `{"op":"manifest"}`,
 //!   `{"op":"views"}`, `{"op":"view","view":…,"params":{…}}`,
 //!   `{"op":"query","query":…,"params":{…}}` →
@@ -21,12 +27,12 @@
 //!   `query:"ops"` answers the ops manifest; `query:"cli.<verb>"`
 //!   runs the engine op.
 //!
-//! Optional surfaces: features `cli`/`mcp` embed
-//! pavo-driver-kit's surface layer — `cli <op> [args]` is a
-//! generated CLI over the ops manifest, `mcp` serves the ops as
-//! MCP tools on stdio. Both are equivalent to the standalone
-//! `tamias-driver-cli`/`tamias-driver-mcp` surface drivers, minus
-//! the PATH/discovery hop.
+//! Optional surface: feature `mcp` embeds pavo-driver-kit's
+//! surface layer — `mcp` serves the ops manifest as MCP tools on
+//! stdio, equivalent to the standalone `tamias-driver-mcp` surface
+//! driver minus the PATH/discovery hop. (`cli` needs no feature:
+//! it's the bins-shim passthrough above, not a generated surface —
+//! the engine's own argv grammar is the contract.)
 //!
 //! Read path: every `view`/`query` (except `ops`/`cli.*`) proxies
 //! read-side methods of a spawned `sepia serve` (`sepia serve` is
@@ -39,7 +45,7 @@
 
 mod data;
 mod ops;
-#[cfg(any(feature = "cli", feature = "mcp"))]
+#[cfg(feature = "mcp")]
 mod surface;
 mod views;
 
@@ -105,6 +111,31 @@ fn dispatch(req: &Request) -> Response {
     }
 }
 
+/// `cli` verb argv (after the `cli` token) → engine argv (argv[0]
+/// included). `tamias bin exec`/`driver exec` prepend the standard
+/// driver flags — `--dir <payload>` `--name <pkg>` — which the
+/// engine doesn't know; consume the leading run of those two
+/// (`--flag v` and `--flag=v` forms) and pass everything else
+/// through untouched.
+fn engine_argv(args: &[String]) -> Vec<String> {
+    let mut out = vec!["sepia".to_string()];
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--dir" || a == "--name" {
+            // flag + separate value — skip both (a trailing flag
+            // with no value just ends the scan).
+            i = (i + 2).min(args.len());
+        } else if a.starts_with("--dir=") || a.starts_with("--name=") {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    out.extend(args[i..].iter().cloned());
+    out
+}
+
 fn serve() -> i32 {
     // Pre-spawn `sepia serve` so its plane build overlaps the
     // manifest/views handshake — see `data::warm`.
@@ -140,20 +171,25 @@ fn main() {
             let argv = std::iter::once("sepia".to_string()).chain(args.iter().skip(1).cloned());
             sepia_cli::run_from(argv)
         }
-        // Embedded surface verbs (feature-gated, optional): the
-        // pavo-driver-kit surface layer renders this driver's own
-        // ops manifest — `cli` = generated clap CLI (op →
-        // subcommand), `mcp` = ops → MCP tools over stdio. The
-        // standalone tamias-driver-cli/-mcp binaries do the same
-        // over process dispatch; these verbs need nothing on PATH.
-        #[cfg(feature = "cli")]
+        // The tamias `bins[]` shim verb (T-012): `tamias bin exec`
+        // runs `<driver> cli --dir <payload> --name <pkg> <sepia
+        // argv>` for a declared `shim: cli` bin. sepia's engine IS
+        // the CLI, so this is a passthrough — strip the two standard
+        // driver flags and hand the rest to `sepia_cli::run_from`
+        // with inherited stdio. That keeps full engine parity a
+        // generated ops→CLI surface can't express: globals before
+        // the verb, `--json`, `--help`, the unbounded `serve`
+        // ndjson loop, and stdin-bound verbs all behave exactly
+        // like the retired `sepia` binary.
         Some("cli") => {
-            let m = kit::surface::OpsManifest::from_value(&ops::manifest()).unwrap_or_default();
-            let argv: Vec<String> = std::iter::once("sepia".to_string())
-                .chain(args.iter().skip(1).cloned())
-                .collect();
-            kit::surface::cli::run("sepia", &m, &argv, &mut surface::Engine)
+            let argv = engine_argv(&args[1..]);
+            std::process::exit(sepia_cli::run_from(argv));
         }
+        // Optional embedded surface (feature-gated): the
+        // pavo-driver-kit surface layer renders this driver's own
+        // ops manifest as MCP tools over stdio — the same ops the
+        // `cli.*` wire queries and the standalone
+        // tamias-driver-mcp binary expose.
         #[cfg(feature = "mcp")]
         Some("mcp") => {
             let m = kit::surface::OpsManifest::from_value(&ops::manifest()).unwrap_or_default();
@@ -168,7 +204,7 @@ fn main() {
         Some("serve") | None => serve(),
         _ => {
             eprintln!(
-                "usage: tamias-driver-sepia manifest|capabilities|ops|run <argv>|serve\n       (feature `cli` adds `cli <op> [args]`; feature `mcp` adds `mcp`)"
+                "usage: tamias-driver-sepia manifest|capabilities|ops|run <argv>|cli <sepia argv>|serve\n       (feature `mcp` adds `mcp`)"
             );
             1
         }

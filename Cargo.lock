@@ -2021,7 +2021,6 @@ name = "pavo-driver-kit"
 version = "0.1.0"
 source = "git+https://github.com/9aia/pavo#1f5e37afdb0b66a1ef908c2cc2448248493399c2"
 dependencies = [
- "clap",
  "pavo-protocol",
  "serde",
  "serde_json",
@@ -2626,7 +2625,6 @@ dependencies = [
  "sepia-host",
  "sepia-session",
  "sepia-telemetry",
- "sepia-testkit",
  "serde",
  "serde_json",
  "tempfile",
@@ -2766,10 +2764,17 @@ dependencies = [
  "pavo-protocol",
  "pavo-testkit",
  "sepia-cli",
+ "sepia-core",
  "sepia-driver",
+ "sepia-driver-claude",
+ "sepia-driver-cline",
+ "sepia-driver-devin",
+ "sepia-testkit",
  "serde",
  "serde_json",
+ "tempfile",
  "time",
+ "tokio",
 ]
 
 [[package]]

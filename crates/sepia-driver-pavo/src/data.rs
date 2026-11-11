@@ -10,16 +10,21 @@
 //! orchestrator-facing ops (`attach`, `prompt`, `delete`, …) are
 //! never called, so the view driver cannot mutate session state.
 //!
-//! Which `sepia`: first hit wins —
+//! Which `serve` process: first hit wins —
 //!
-//! 1. Request params — `sepiaBin`, `sepia`, or `bin` (a path to the
-//!    `sepia` executable), e.g.
+//! 1. Request params — `sepiaBin`, `sepia`, or `bin` (a path to a
+//!    `sepia`-shaped executable — the tamias shim or a legacy
+//!    binary), e.g.
 //!    `pavo view sepia:sessions --param sepiaBin=/path/to/sepia`.
 //! 2. `$SEPIA_BIN`.
-//! 3. `sepia` on `PATH`.
-//! 4. `sepia` next to this driver's own executable — covers
+//! 3. `sepia` next to this driver's own executable — covers
 //!    `cargo build` workspace layouts where `target/debug/` holds
 //!    both binaries.
+//! 4. **This driver itself** — `<self> run serve`: the `sepia`
+//!    binary is retired (T-012 — the command is a tamias `bins[]`
+//!    shim now), so the engine's `run` passthrough is the same
+//!    entrypoint with no PATH/discovery dependency.
+//! 5. `sepia` on `PATH` — last resort when `current_exe` fails.
 //!
 //! When nothing resolves or the spawn fails, [`call`] returns `Err`
 //! and every query degrades to an `{"error": …}` payload — the wire
@@ -35,6 +40,30 @@ use std::sync::Mutex;
 use sepia_driver::rpc::{self, Inbound};
 use serde_json::{Map, Value};
 
+/// What the view client spawns for `serve`: a `sepia`-shaped
+/// executable (`<bin> serve`) or this driver's own exe through the
+/// engine passthrough (`<self> run serve`).
+#[derive(Clone, PartialEq, Eq)]
+enum Target {
+    /// A `sepia`-compatible executable — the tamias `bins[]` shim,
+    /// a legacy `sepia` build, or a test fake.
+    Bin(PathBuf),
+    /// `current_exe` + the `run` verb — the retired-binary fallback.
+    SelfRun(PathBuf),
+}
+
+impl Target {
+    fn bin(&self) -> &PathBuf {
+        match self {
+            Self::Bin(p) | Self::SelfRun(p) => p,
+        }
+    }
+
+    fn via_run(&self) -> bool {
+        matches!(self, Self::SelfRun(_))
+    }
+}
+
 /// One live `sepia serve` — requests are issued sequentially by the
 /// driver's own serve loop, and we never subscribe, so every stdout
 /// line is a response (notifications only flow after
@@ -44,24 +73,31 @@ struct Sepia {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<std::process::ChildStdout>,
-    /// The executable this client spawned — a later call whose
+    /// The target this client spawned — a later call whose
     /// params/env resolve a *different* `sepia` drops and respawns
     /// rather than answering from the wrong plane.
-    bin: PathBuf,
+    target: Target,
     next_id: u64,
 }
 
 impl Sepia {
-    /// Spawn `<bin> serve` with piped stdin/stdout; stderr inherits
-    /// (serve logs there — keeping it off the wire is the child's
-    /// job, and inheriting keeps diagnostics visible).
-    fn spawn(bin: &PathBuf) -> Result<Self, String> {
-        let mut child = Command::new(bin)
+    /// Spawn the resolved target's `serve`: a `sepia`-shaped
+    /// executable gets `<bin> serve`; `self` (the driver's own exe)
+    /// gets `<self> run serve` — the engine passthrough is the same
+    /// serve loop. stdin/stdout piped; stderr inherits (serve logs
+    /// there — keeping it off the wire is the child's job, and
+    /// inheriting keeps diagnostics visible).
+    fn spawn(target: &Target) -> Result<Self, String> {
+        let mut cmd = Command::new(target.bin());
+        if target.via_run() {
+            cmd.arg("run");
+        }
+        let mut child = cmd
             .arg("serve")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("failed to spawn `{}` serve: {e}", bin.display()))?;
+            .map_err(|e| format!("failed to spawn `{}` serve: {e}", target.bin().display()))?;
         let stdin = child
             .stdin
             .take()
@@ -74,7 +110,7 @@ impl Sepia {
             child,
             stdin,
             stdout: BufReader::new(stdout),
-            bin: bin.clone(),
+            target: target.clone(),
             next_id: 0,
         })
     }
@@ -147,7 +183,7 @@ impl Slot {
         // A warmed client may have spawned a different `sepia` than
         // this call's params/env resolve — retarget before use.
         if let Slot::Ready(sepia) = self {
-            if sepia.bin != resolve_bin(ctx) {
+            if sepia.target != resolve_target(ctx) {
                 *self = Slot::Vacant;
             }
         }
@@ -165,34 +201,42 @@ impl Slot {
     }
 }
 
-/// The `sepia` executable — see the module docs for resolution order.
-fn resolve_bin(ctx: &Map<String, Value>) -> PathBuf {
+/// The `serve` target — see the module docs for resolution order.
+fn resolve_target(ctx: &Map<String, Value>) -> Target {
     for key in ["sepiaBin", "sepia", "bin"] {
         if let Some(path) = ctx.get(key).and_then(Value::as_str) {
-            return PathBuf::from(path);
+            return Target::Bin(PathBuf::from(path));
         }
     }
     if let Ok(path) = std::env::var("SEPIA_BIN") {
         if !path.is_empty() {
-            return PathBuf::from(path);
+            return Target::Bin(PathBuf::from(path));
         }
     }
-    // A workspace-sibling build (`target/debug/sepia` next to
-    // `target/debug/tamias-driver-sepia`) is fresher than anything
-    // installed; otherwise `sepia` resolves on PATH at spawn time.
     if let Ok(exe) = std::env::current_exe() {
+        // A workspace-sibling build (`target/debug/sepia` next to
+        // `target/debug/tamias-driver-sepia`) is fresher than
+        // anything installed — it only exists while the legacy bin
+        // is still around.
         if let Some(dir) = exe.parent() {
             let sibling = dir.join("sepia");
             if sibling.is_file() {
-                return sibling;
+                return Target::Bin(sibling);
             }
         }
+        // The `sepia` binary is retired (T-012): the command ships
+        // as a tamias `bins[]` shim. This driver IS the engine's
+        // entrypoint — `run serve` reaches the same session plane
+        // with no PATH/discovery hop.
+        return Target::SelfRun(exe);
     }
-    PathBuf::from("sepia")
+    // `current_exe` failed — last resort, `sepia` on PATH (the
+    // shim or a legacy install).
+    Target::Bin(PathBuf::from("sepia"))
 }
 
 fn spawn_client(ctx: &Map<String, Value>) -> Result<Sepia, String> {
-    Sepia::spawn(&resolve_bin(ctx))
+    Sepia::spawn(&resolve_target(ctx))
 }
 
 /// Call one `sepia serve` method. On a transport-level failure of a

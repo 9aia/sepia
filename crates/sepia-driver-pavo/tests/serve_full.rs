@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::pedantic)]
 
-//! `sepia serve` over the full method surface — a shell-script
+//! `sepia serve` over the full method surface — spawned as
+//! `tamias-driver-sepia run serve` (the engine passthrough behind the
+//! `sepia` shim) — a shell-script
 //! `sepia-driver-devin` backs the store and `SEPIA_AGENT_DEVIN_COMMAND`
 //! points at the real mock ACP agent, so attach/create/prompt/subscribe
 //! run through a live ACP subprocess.
@@ -119,8 +121,9 @@ mod serve {
 
     impl Serve {
         fn start(home: &Path, drivers: &Path, envs: &[(&str, &str)]) -> Self {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_sepia"));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"));
             command
+                .arg("run")
                 .arg("serve")
                 .env("SEPIA_HOME", home)
                 .env("SEPIA_DRIVER_DIR", drivers)

@@ -5,14 +5,16 @@
 use std::process::{Command, Output};
 
 fn sepia(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_sepia"))
+    Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"))
+        .arg("run")
         .args(args)
         .output()
         .unwrap()
 }
 
 fn sepia_env(args: &[&str], envs: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_sepia"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"));
+    cmd.arg("run");
     cmd.args(args);
     for (k, v) in envs {
         cmd.env(k, v);
@@ -160,7 +162,8 @@ fn config_verbs_default_dirs_and_diff_labels() {
     std::fs::create_dir_all(&cursor).unwrap();
 
     // config write --to cline with cwd default: run inside src dir.
-    let out = Command::new(env!("CARGO_BIN_EXE_sepia"))
+    let out = Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"))
+        .arg("run")
         .args(["config", "write", "--agent", "cline"])
         .env("HOME", tmp.path().to_string_lossy().as_ref())
         .current_dir(&src)

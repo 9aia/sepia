@@ -1,5 +1,7 @@
-//! Store-verb coverage — drives the compiled `sepia` binary against
-//! tempfile stores so the clap surface (including the `--*-dir`
+//! Store-verb coverage — drives the engine through
+//! `tamias-driver-sepia run` (the same entrypoint the retired `sepia`
+//! binary's callers reach via the tamias shim) against tempfile
+//! stores so the clap surface (including the `--*-dir`
 //! flags-doubling-as-store-selectors rules) is what gets asserted, not a
 //! re-implementation.
 
@@ -13,7 +15,8 @@ use sepia_core::storage::SessionRepository;
 use tempfile::TempDir;
 
 fn sepia(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_sepia"))
+    Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"))
+        .arg("run")
         .args(args)
         .output()
         .unwrap()
@@ -553,7 +556,8 @@ fn stores_fall_back_to_home_defaults() {
     // --from X without the matching --*-dir resolves the default dir
     // under HOME — every default_*_dir arm runs.
     for store in ["cline", "claude", "cursor"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_sepia"))
+        let out = Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"))
+            .arg("run")
             .args(["list", "--from", store])
             .env("HOME", &home)
             .output()

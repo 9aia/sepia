@@ -11,7 +11,18 @@ the tamias driver contract: `tamias-driver-sepia`.
 | --- | --- |
 | `manifest` | the `DriverManifest` JSON (name `sepia`, views, contributes) |
 | `capabilities` | `{"capabilities": ["pavo"], "verbs": ["manifest","serve"], …}` |
+| `ops` | the engine ops manifest — every bounded `sepia` verb as a `cli.<verb>` query |
+| `run <argv>` | engine passthrough — `tamias-driver-sepia run list` ≡ `sepia list` |
+| `cli <argv>` | the tamias `bins[]` shim verb — strips `--dir`/`--name`, runs the engine in-process with inherited stdio (the `sepia` command itself) |
 | `serve` | ndjson JSON-RPC on stdio — `{"op":"manifest"|"views"|"view"|"query"}` → `{"ok":true,"result":…}` / `{"ok":false,"error":…}` (pavo-protocol v1 wire) |
+| `mcp` | *(feature `mcp`)* the ops manifest as MCP tools on stdio |
+
+There is no hand-rolled `sepia` binary: the command ships as the
+tamias pack in `libraries/sepia/` — `cargo xtask pack` stages this
+driver into `drivers/bin/<triple>/` and `tamias install
+--allow-drivers ./libraries/sepia` deploys the generated `sepia`
+shim → `cli` verb → `sepia_cli::run_from` (T-012, the cuora P-023
+pilot replicated).
 
 Install: `cargo build --release -p sepia-driver-pavo` and put
 `target/release/tamias-driver-sepia` on `PATH`, or into
@@ -34,7 +45,10 @@ Binary resolution, first hit wins:
 2. **`$SEPIA_BIN`**.
 3. **`sepia` next to this driver's own executable** — covers
    `cargo build` workspace layouts (`target/debug/` holds both).
-4. **`sepia` on `PATH`.**
+4. **This driver itself** — `<self> run serve`: the `sepia` binary
+   is retired (it is a tamias `bins[]` shim now), so the engine's
+   `run` passthrough is the same entrypoint with no PATH hop.
+5. **`sepia` on `PATH`** — last resort when `current_exe` fails.
 
 `manifest`/`views` never touch sepia state. When no binary resolves
 or the spawn fails, every query degrades to an `{"error": …}`
