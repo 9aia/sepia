@@ -47,11 +47,13 @@ source of truth for the IR and both wires — keep them current.
   releases are operator-run). `sepia-peregrin`'s
   `hypha-http` dep needs **hypha 0.1.0 on crates.io first** — org
   publish order: **hypha → sepia → peregrin**.
-- crates.io names: `sepia` is taken — the CLI publishes as
-  `sepia-cli` (it ships the `sepia` bin,
-  `cargo install sepia-cli`). `sepia-testkit` and
+- crates.io names: `sepia` is taken — the engine lib publishes as
+  `sepia-cli` (no bin — the `sepia` command is the tamias pack in
+  `libraries/sepia/`). `sepia-testkit` and
   `sepia-driver-pavo` are `publish = false`.
 - Release binaries: run `scripts/release.sh` manually (there is no
   release CI — releases are operator-driven). It builds
   `sepia-<target>.tar.gz` (linux x86_64, macOS aarch64/x86_64)
-  carrying `sepia` + the four store drivers.
+  carrying `tamias-driver-sepia` + the four store drivers — the
+  `sepia` command itself installs via `cargo xtask pack` +
+  `tamias install ./libraries/sepia`.

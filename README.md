@@ -71,8 +71,9 @@ assembles it all from this machine's drivers and agent CLIs.
 | `crates/sepia-convert` | store format conversion |
 | `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
 | `crates/sepia-peregrin` | entity-plane adapter — sessions as `kind="sepia-session"` entities |
-| `crates/sepia-cli` | the `sepia` binary + engine lib (`command`/`run_from`) |
-| `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo's read-only view driver over `sepia serve`, plus the engine ops surface (`ops`/`cli.*`/`run`, feature-gated `cli`/`mcp`) |
+| `crates/sepia-cli` | the `sepia` engine lib (`command`/`run_from`) — no bin; the command ships as the tamias pack |
+| `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo's read-only view driver over `sepia serve`, plus the engine ops surface (`ops`/`cli.*`/`run`, `cli` = the bins-shim engine passthrough, `mcp` feature-gated) |
+| `libraries/sepia` | the tamias pack — `tamias.yaml` declares `bins: [{name: sepia, shim: cli, driver: sepia}]`; `cargo xtask pack` stages `drivers/bin/<triple>/tamias-driver-sepia` (gitignored) |
 | `crates/sepia-testkit` | conformance suites + golden fixtures |
 
 ## Develop
@@ -80,7 +81,13 @@ assembles it all from this machine's drivers and agent CLIs.
 ```bash
 cargo xtask check    # fmt + clippy -D warnings
 cargo xtask test     # whole suite (nextest if present)
-cargo xtask install  # release-build sepia + drivers → ~/.local
+cargo xtask pack     # stage libraries/sepia driver payload
+                     # (release tamias-driver-sepia → drivers/bin/<triple>/)
+cargo xtask install  # release-build tamias-driver-sepia + store
+                     # drivers → ~/.local (the `sepia` command itself
+                     # is the tamias pack's generated bins[] shim —
+                     # `cargo xtask pack` + `tamias install
+                     # --allow-drivers ./libraries/sepia`)
 ```
 
 ## Docs

@@ -14,10 +14,10 @@
 # artifacts, `cargo-dist` (dist) + `gh`.
 #
 # crates.io note: the bare name `sepia` is taken on crates.io — the
-# CLI package publishes as `sepia-cli` (it ships the `sepia` bin);
-# `cargo install sepia-cli` works. `sepia-testkit` and
-# `sepia-driver-pavo` are publish = false (testkit is dev-only;
-# the pavo driver ships as a tamias payload).
+# engine lib package publishes as `sepia-cli` (no bin — the `sepia`
+# command ships as the tamias pack in libraries/sepia/).
+# `sepia-testkit` and `sepia-driver-pavo` are publish = false
+# (testkit is dev-only; the pavo driver ships as a tamias payload).
 set -euo pipefail
 # worktree-local secrets (gitignored); the service env file is canonical
 [ -f ./.env ] && { set -a; source ./.env; set +a; }
