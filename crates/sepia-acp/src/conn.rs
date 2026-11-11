@@ -42,6 +42,10 @@ const ALLOWED_ENV_KEYS: &[&str] = &[
     "WINDSURF_API_KEY",
     "ANTHROPIC_API_KEY",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    // Devin permission mode — unattended sessions (peregrin
+    // /api/sessions/run) have no human to answer `session/request_permission`,
+    // so the spawner must be able to pick the agent's auto-approve level.
+    "DEVIN_PERMISSION_MODE",
     // Coverage runs instrument every spawned binary; without the profile
     // path the child's profraw never lands where llvm-cov collects it.
     "LLVM_PROFILE_FILE",
@@ -753,6 +757,10 @@ mod env_tests {
             ("HOME".to_string(), "/h".to_string()),
             ("SECRET_TOKEN".to_string(), "s".to_string()),
             ("PATH".to_string(), "/p".to_string()),
+            (
+                "DEVIN_PERMISSION_MODE".to_string(),
+                "dangerous".to_string(),
+            ),
         ];
         // Inherit mode forwards everything.
         let env = build_child_env_with(&spec, &options, true, vars.clone().into_iter());
@@ -761,5 +769,8 @@ mod env_tests {
         let env = build_child_env_with(&spec, &options, false, vars.into_iter());
         assert!(!env.iter().any(|(k, _)| k == "SECRET_TOKEN"));
         assert!(env.iter().any(|(k, _)| k == "PATH"));
+        assert!(env
+            .iter()
+            .any(|(k, v)| k == "DEVIN_PERMISSION_MODE" && v == "dangerous"));
     }
 }
