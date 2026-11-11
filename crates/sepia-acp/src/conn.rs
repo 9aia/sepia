@@ -774,10 +774,7 @@ mod env_tests {
             ("HOME".to_string(), "/h".to_string()),
             ("SECRET_TOKEN".to_string(), "s".to_string()),
             ("PATH".to_string(), "/p".to_string()),
-            (
-                "DEVIN_PERMISSION_MODE".to_string(),
-                "dangerous".to_string(),
-            ),
+            ("DEVIN_PERMISSION_MODE".to_string(), "dangerous".to_string()),
         ];
         // Inherit mode forwards everything.
         let env = build_child_env_with(&spec, &options, true, vars.clone().into_iter());
@@ -786,8 +783,9 @@ mod env_tests {
         let env = build_child_env_with(&spec, &options, false, vars.into_iter());
         assert!(!env.iter().any(|(k, _)| k == "SECRET_TOKEN"));
         assert!(env.iter().any(|(k, _)| k == "PATH"));
-        assert!(env
-            .iter()
-            .any(|(k, v)| k == "DEVIN_PERMISSION_MODE" && v == "dangerous"));
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "DEVIN_PERMISSION_MODE" && v == "dangerous")
+        );
     }
 }

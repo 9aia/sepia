@@ -20,6 +20,7 @@
 //! | `sessions.prompt` / `sessions.cancel` | `prompt` / `cancel` |
 //! | `sessions.prompt_wait` | `prompt_wait` — prompt + await turn end → `PromptWaitResult` |
 //! | `sessions.permission` | `respond_to_permission` |
+//! | `sessions.set_permission_policy` | `set_permission_policy` — auto-answer `session/request_permission` |
 //! | `sessions.delete` | `delete_session` |
 //! | `sessions.patch_meta` | `patch_meta` — the overlay (title/pin/archive/projects/model) |
 //! | `projects.list` / `projects.create` | `list_projects` / `create_project` |
@@ -39,7 +40,7 @@ use std::time::Duration;
 use sepia_driver::rpc::{Inbound, Request, RpcError, decode_line, encode_line};
 use sepia_session::{
     ControlError, ControlErrorCode, HistoryOptions, ImportOverrides, Local, NodeEvent, Paths,
-    RestoreRequest, RewindRequest, base_options, build, sepia_home,
+    PermissionPolicy, RestoreRequest, RewindRequest, base_options, build, sepia_home,
 };
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -88,6 +89,20 @@ fn str_param(params: &Value, key: &str) -> Option<String> {
     params.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
+/// The `permissions` param — a [`PermissionPolicy`]: `"ask"`,
+/// `"allow_all"`, `"deny_all"`, or `{"rules": [{"kind": "execute",
+/// "allow": false}, …]}` (unmatched requests fall back to `ask`).
+/// Absent → `None` (the session keeps `ask`).
+fn policy_param(params: &Value) -> Result<Option<PermissionPolicy>, RpcError> {
+    params
+        .get("permissions")
+        .map(|v| {
+            serde_json::from_value(v.clone())
+                .map_err(|e| RpcError::invalid_params(format!("invalid permissions: {e}")))
+        })
+        .transpose()
+}
+
 fn manifest(local: &Local) -> Value {
     json!({
         "name": "sepia",
@@ -105,6 +120,7 @@ fn manifest(local: &Local) -> Value {
             "sessions.create", "sessions.prompt", "sessions.prompt_wait",
             "sessions.cancel",
             "sessions.permission", "sessions.set_mode", "sessions.delete", "sessions.patch_meta",
+            "sessions.set_permission_policy",
             "sessions.restore", "sessions.rewind", "sessions.subscribe",
             "events.subscribe",
             "projects.list", "projects.create", "projects.rename",
@@ -245,15 +261,27 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
                         .map(str::to_string)
                         .collect::<Vec<_>>()
                 });
+            // `permissions` sets the auto-answer policy for
+            // `session/request_permission` — applied only to a live
+            // attach; a read-only (`attached: false`) result keeps `ask`.
+            let policy = policy_param(&req.params)?;
             let result = plane
-                .attach(id, takeover, model, fallbacks, agent)
+                .attach(id, takeover, model, fallbacks, agent.clone())
                 .await
                 .map_err(|e| control_err(&e))?;
+            let applied = policy.clone().filter(|_| result.attached);
+            if let Some(p) = &applied {
+                plane
+                    .set_permission_policy(id, p.clone(), agent.as_deref())
+                    .await
+                    .map_err(|e| control_err(&e))?;
+            }
             Ok(json!({
                 "attached": result.attached,
                 "readOnly": result.read_only,
                 "agentId": result.agent_id,
                 "capabilities": result.capabilities,
+                "permissions": applied.unwrap_or_default(),
             }))
         }
         "sessions.detach" => {
@@ -286,14 +314,26 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
                         .map(str::to_string)
                         .collect::<Vec<_>>()
                 });
+            // `permissions` is the create-time auto-answer policy for
+            // `session/request_permission` — safe to apply after create:
+            // requests only arise during `session/prompt`, which needs
+            // the id this call returns.
+            let policy = policy_param(&req.params)?;
             let result = plane
-                .create_session(cwd, agent, title, model, fallbacks)
+                .create_session(cwd, agent.clone(), title, model, fallbacks)
                 .await
                 .map_err(|e| control_err(&e))?;
+            if let Some(policy) = &policy {
+                plane
+                    .set_permission_policy(&result.id, policy.clone(), agent.as_deref())
+                    .await
+                    .map_err(|e| control_err(&e))?;
+            }
             Ok(json!({
                 "id": result.id,
                 "agentId": result.agent_id,
                 "capabilities": result.capabilities,
+                "permissions": policy.unwrap_or_default(),
             }))
         }
         "sessions.prompt" => {
@@ -352,6 +392,16 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
             let option = req.params.get("option").and_then(Value::as_str);
             plane
                 .respond_to_permission(id, request_id, option, agent.as_deref())
+                .await
+                .map_err(|e| control_err(&e))?;
+            Ok(Value::Null)
+        }
+        "sessions.set_permission_policy" => {
+            let id = id_of(&req.params)?;
+            let policy = policy_param(&req.params)?
+                .ok_or_else(|| RpcError::invalid_params("missing permissions"))?;
+            plane
+                .set_permission_policy(id, policy, agent.as_deref())
                 .await
                 .map_err(|e| control_err(&e))?;
             Ok(Value::Null)

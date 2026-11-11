@@ -21,6 +21,7 @@ use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinSet;
 
 use crate::merged::agent_for_backend;
+use crate::policy::{PermissionAction, PermissionPolicy, settle_option};
 use crate::translate::Translator;
 use crate::types::{
     AgentInfo, AgentRuntime, AttachResult, ControlError, ControlErrorCode, ControlPlaneOptions,
@@ -154,6 +155,10 @@ struct LiveSession {
     /// When the session went live — pins `updated_at` for unflushed
     /// sessions.
     attached_at_ms: f64,
+    /// How `session/request_permission` requests are settled — shared
+    /// with the permission forward task so `set_permission_policy`
+    /// applies to requests already in flight.
+    permission_policy: Arc<StdMutex<PermissionPolicy>>,
 }
 
 /// One `session/list` fan-out across every registered agent. `merged` is
@@ -1113,8 +1118,21 @@ impl ControlPlane {
             let events = live.events.clone();
             let feed = self.node_events.clone();
             let session_id = live.id.clone();
+            let conn = Arc::clone(&live.conn);
+            let policy = Arc::clone(&live.permission_policy);
             live.forward_tasks.push(tokio::spawn(async move {
                 while let Ok(request) = permissions.recv().await {
+                    // A non-ask policy settles the request agent-side;
+                    // the event still broadcasts so subscribers see
+                    // every ask, answered or not.
+                    let action = policy
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .evaluate(&request);
+                    if action != PermissionAction::Ask {
+                        let option = settle_option(&request, action);
+                        conn.respond_to_permission(&request.request_id, option.as_deref());
+                    }
                     Self::fan_out(
                         &events,
                         &feed,
@@ -1160,6 +1178,7 @@ impl ControlPlane {
             busy: false,
             idle_since: None,
             attached_at_ms: now_ms(),
+            permission_policy: Arc::new(StdMutex::new(PermissionPolicy::Ask)),
         }
     }
 
@@ -2038,6 +2057,50 @@ impl ControlPlane {
                 format!("Unknown permission request: {request_id}"),
             ));
         }
+        Ok(())
+    }
+
+    /// The live session's permission policy — what non-`ask` policies
+    /// do to `session/request_permission` (see [`PermissionPolicy`]).
+    ///
+    /// # Errors
+    /// `invalid` when not attached, `not_found` on unknown session.
+    #[tracing::instrument(name = "control_permission_policy", skip_all, fields(session = %id, agent = ?agent_id))]
+    pub async fn permission_policy(
+        &self,
+        id: &str,
+        agent_id: Option<&str>,
+    ) -> Result<PermissionPolicy, ControlError> {
+        let state = self.state.lock().await;
+        let live = Self::require_live(&state, id, agent_id)?;
+        let policy = live
+            .permission_policy
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        Ok(policy)
+    }
+
+    /// Set the live session's permission policy — `ask` restores manual
+    /// answering via `respond_to_permission`; the other policies
+    /// auto-settle requests as they arrive. Applies to requests already
+    /// in flight.
+    ///
+    /// # Errors
+    /// `invalid` when not attached, `not_found` on unknown session.
+    #[tracing::instrument(name = "control_set_permission_policy", skip_all, fields(session = %id, agent = ?agent_id))]
+    pub async fn set_permission_policy(
+        &self,
+        id: &str,
+        policy: PermissionPolicy,
+        agent_id: Option<&str>,
+    ) -> Result<(), ControlError> {
+        let state = self.state.lock().await;
+        let live = Self::require_live(&state, id, agent_id)?;
+        *live
+            .permission_policy
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = policy;
         Ok(())
     }
 

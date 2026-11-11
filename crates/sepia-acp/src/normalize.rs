@@ -251,6 +251,7 @@ pub fn normalize_permission(params: &Value) -> PermissionRequest {
         ),
         session_id,
         tool_call_id,
+        tool_kind: as_string(field(tool_call, "kind")).map(str::to_string),
         title: as_string(field(tool_call, "title"))
             .unwrap_or_default()
             .to_string(),

@@ -225,6 +225,7 @@ fn permission_request_wraps_to_custom() {
         request_id: "r1".into(),
         session_id: "s1".into(),
         tool_call_id: Some("tc".into()),
+        tool_kind: Some("execute".into()),
         title: "Allow?".into(),
         options: vec![PermissionOption {
             option_id: "allow".into(),

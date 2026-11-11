@@ -16,7 +16,8 @@ use sepia_core::rewind::RewindPlan;
 use sepia_core::{MessageNode, Role, Session, ToolCall};
 use sepia_session::{
     AgentRuntime, ControlErrorCode, ControlPlane, ControlPlaneOptions, HistoryOptions,
-    RestoreRequest, RewindRequest, SessionRewinder, agent_for_backend,
+    PermissionPolicy, PermissionRule, RestoreRequest, RewindRequest, SessionRewinder,
+    agent_for_backend,
 };
 use sepia_testkit::contract;
 use serde_json::json;
@@ -719,6 +720,175 @@ async fn permission_response_resolves_and_unknown_ids_404() {
         .await
         .unwrap_err();
     assert_eq!(err.code, ControlErrorCode::NotFound);
+    plane.close_all().await;
+}
+
+/// Fish the next `acp:permission_request` event's `requestId` off the
+/// session's event stream.
+async fn next_permission_request(
+    events: &mut tokio::sync::broadcast::Receiver<Vec<sepia_proto::SessionEvent>>,
+) -> String {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let batch = events.recv().await.unwrap();
+            for event in batch {
+                if let sepia_proto::SessionEvent::Custom { name, value } = event {
+                    if name == "acp:permission_request" {
+                        return value["requestId"].as_str().unwrap().to_string();
+                    }
+                }
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn permission_policy_allow_all_settles_without_a_subscriber() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    assert_eq!(
+        plane.permission_policy("s1", None).await.unwrap(),
+        PermissionPolicy::Ask
+    );
+    plane
+        .set_permission_policy("s1", PermissionPolicy::AllowAll, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        plane.permission_policy("s1", None).await.unwrap(),
+        PermissionPolicy::AllowAll
+    );
+    let mut events = plane.subscribe("s1", None).await.unwrap();
+    plane
+        .prompt(
+            "s1",
+            &[PromptPart::Text {
+                text: "perm".into(),
+            }],
+            None,
+        )
+        .await
+        .unwrap();
+    // The request still broadcasts; the policy already settled it, so a
+    // manual answer finds no pending request.
+    let request_id = next_permission_request(&mut events).await;
+    let err = plane
+        .respond_to_permission("s1", &request_id, Some("allow"), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::NotFound);
+    // `ask` restores manual answering.
+    plane
+        .set_permission_policy("s1", PermissionPolicy::Ask, None)
+        .await
+        .unwrap();
+    plane
+        .prompt(
+            "s1",
+            &[PromptPart::Text {
+                text: "perm".into(),
+            }],
+            None,
+        )
+        .await
+        .unwrap();
+    let request_id = next_permission_request(&mut events).await;
+    plane
+        .respond_to_permission("s1", &request_id, Some("allow"), None)
+        .await
+        .unwrap();
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn permission_policy_rules_match_the_tool_kind() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_PERM_KIND", "execute"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let mut events = plane.subscribe("s1", None).await.unwrap();
+    // Deny `execute` — the mock's only kind — the request auto-settles.
+    plane
+        .set_permission_policy(
+            "s1",
+            PermissionPolicy::Rules(vec![PermissionRule {
+                kind: Some("execute".into()),
+                allow: false,
+            }]),
+            None,
+        )
+        .await
+        .unwrap();
+    plane
+        .prompt(
+            "s1",
+            &[PromptPart::Text {
+                text: "perm".into(),
+            }],
+            None,
+        )
+        .await
+        .unwrap();
+    let request_id = next_permission_request(&mut events).await;
+    let err = plane
+        .respond_to_permission("s1", &request_id, Some("allow"), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::NotFound);
+    // A rule that doesn't match the kind falls back to `ask` — the
+    // request stays pending for a manual answer.
+    plane
+        .set_permission_policy(
+            "s1",
+            PermissionPolicy::Rules(vec![PermissionRule {
+                kind: Some("edit".into()),
+                allow: true,
+            }]),
+            None,
+        )
+        .await
+        .unwrap();
+    plane
+        .prompt(
+            "s1",
+            &[PromptPart::Text {
+                text: "perm".into(),
+            }],
+            None,
+        )
+        .await
+        .unwrap();
+    let request_id = next_permission_request(&mut events).await;
+    plane
+        .respond_to_permission("s1", &request_id, Some("allow"), None)
+        .await
+        .unwrap();
+    // Unattached sessions reject the verbs.
+    plane.detach("s1").await;
+    let err = plane
+        .set_permission_policy("s1", PermissionPolicy::AllowAll, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Invalid);
     plane.close_all().await;
 }
 

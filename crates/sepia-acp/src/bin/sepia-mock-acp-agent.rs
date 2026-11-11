@@ -14,6 +14,8 @@
 //! - `MOCK_LOAD_FAIL_ONCE`: `session/load` fails once, then succeeds.
 //! - `MOCK_PERM_TEXT`: the prompt text that triggers a
 //!   `session/request_permission` request (default `perm`).
+//! - `MOCK_PERM_KIND`: the toolCall `kind` that request reports
+//!   (`execute`, `edit`, …) — permission-policy tests match on it.
 //! - `MOCK_EXIT_AFTER_INIT`: exit(0) right after initialize.
 //! - `MOCK_EXIT_AFTER_PROMPT`: exit(1) instead of answering the first
 //!   session/prompt — mid-run agent death.
@@ -343,7 +345,7 @@ fn main() {
                             "method": "session/request_permission",
                             "params": {
                                 "sessionId": session_id,
-                                "toolCall": { "toolCallId": "tc-1", "title": "Run it" },
+                                "toolCall": { "toolCallId": "tc-1", "title": "Run it", "kind": env("MOCK_PERM_KIND") },
                                 "options": [{ "optionId": "allow", "name": "Allow", "kind": "allow_once" }]
                             }
                         })

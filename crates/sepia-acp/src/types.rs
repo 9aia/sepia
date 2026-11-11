@@ -167,6 +167,9 @@ pub struct PermissionRequest {
     pub request_id: String,
     pub session_id: String,
     pub tool_call_id: Option<String>,
+    /// The ACP tool-call `kind` (`execute`, `edit`, `read`, …) when the
+    /// agent reported one — the handle permission policies match on.
+    pub tool_kind: Option<String>,
     pub title: String,
     pub options: Vec<PermissionOption>,
 }
