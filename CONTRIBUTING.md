@@ -43,17 +43,20 @@ source of truth for the IR and both wires — keep them current.
 
 ## Releasing
 
-- crates.io publish is dep-ordered via `scripts/release.sh` (manual —
-  releases are operator-run). `sepia-peregrin`'s
-  `hypha-http` dep needs **hypha 0.1.0 on crates.io first** — org
-  publish order: **hypha → sepia → peregrin**.
-- crates.io names: `sepia` is taken — the engine lib publishes as
-  `sepia-cli` (no bin — the `sepia` command is the tamias pack in
-  `libraries/sepia/`). `sepia-testkit`, `sepia-driver-pavo` and
-  `sepia-driver-config` are `publish = false`.
-- Release binaries: run `scripts/release.sh` manually (there is no
-  release CI — releases are operator-driven). It builds
-  `sepia-<target>.tar.gz` (linux x86_64) carrying `tamias-driver-sepia`,
-  `tamias-driver-sepia-config` + the four store drivers — the
-  `sepia` command itself installs via `cargo xtask pack` +
-  `tamias install ./libraries/sepia`.
+- Org policy (project ADR-0004): **crates.io is tamias-only** — sepia
+  does not publish there. A release is a `<unit>-v<ver>` tag plus a
+  manual `tamias publish libraries/sepia` of the pack. The release
+  plane is **tarsi** (`tarsi-serve` ops — project ADR-0005); the
+  per-repo `scripts/release.sh` is being converted to a thin shim
+  over it (PL-014 E1).
+- The current `scripts/release.sh` still carries the legacy
+  per-crate crates.io publish (`sepia-cli`, dep-ordered, `sepia`
+  name squatted on crates.io) — it predates the shim conversion.
+  `sepia-testkit`, `sepia-driver-pavo` and `sepia-driver-config` are
+  `publish = false`; the `sepia` command itself is the tamias pack's
+  `bins[]` shim, not a cargo bin.
+- Release binaries: `scripts/release.sh` can still build
+  `sepia-<target>.tar.gz` (linux x86_64) carrying
+  `tamias-driver-sepia`, `tamias-driver-sepia-config` + the store
+  drivers via `dist`/`gh` — the `sepia` command installs via
+  `cargo xtask pack` + `tamias install ./libraries/sepia`.
