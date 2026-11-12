@@ -64,7 +64,7 @@ override, or ten lock TTLs floored at 60s.
 | `config.import` | Install a config IR payload (`agent`, `dir?`, `config`) via `config.write` → `{actions}` — `config` accepts the `config export` JSON or a serialized `AgentConfig` |
 | `sessions.restore` | Restore rewindable files (`id`, `request`) |
 | `sessions.rewind` | Rewind messages/history (`id`, `request`) |
-| `sessions.subscribe` | Subscribe (`id`) → `session.event` notifications |
+| `sessions.subscribe` | Subscribe (`id`, `keepAlive?` — `false` = non-pinning watch) → `session.event` notifications |
 | `events.subscribe` | Node-wide feed → `node.event` notifications |
 | `shutdown` | Close the plane, exit 0 |
 
@@ -143,6 +143,15 @@ session spawns a second forwarder: notifications duplicate, they are not
 deduped. If the receiver falls behind the 512-event buffer, a
 `{sessionId, events: [], lagged: n}` marker reports the dropped-batch
 count.
+
+A subscriber counts as a *listener* for idle tracking: while one is
+attached the session never idle-detaches, so its agent subprocess stays
+alive. Pass `"keepAlive": false` for the non-pinning watch — the same
+`session.event` stream, but the session still idle-detaches on
+`idleTtlMs` and the stream closes with it. Background consumers
+(orchestrator busy-tracking, log mirrors, one-shot `prompt_wait`-style
+callers) should use it; an interactive viewer that wants the session
+kept warm keeps the default.
 
 `events.subscribe` returns `{subscribed, live}` — `live` is the list of
 session ids attached at subscribe time — and streams `node.event`
