@@ -140,7 +140,14 @@ struct LiveSession {
     /// The live-map key — the fan-in task tags node-feed batches with it.
     id: String,
     conn: Arc<AcpConnection>,
+    /// The pinning event channel — [`ControlPlane::subscribe`] receivers
+    /// count as listeners for idle tracking.
     events: broadcast::Sender<Vec<SessionEvent>>,
+    /// The non-pinning twin of `events` — same batches, but receivers
+    /// never count as listeners. [`ControlPlane::watch`] and the
+    /// internal `prompt_wait` receiver use it so background consumers
+    /// can't hold an agent subprocess open past the idle TTL.
+    watch: broadcast::Sender<Vec<SessionEvent>>,
     /// update/permission → event translation tasks.
     forward_tasks: Vec<tokio::task::JoinHandle<()>>,
     /// The event translator — shared between forward tasks and the ops
@@ -317,6 +324,7 @@ impl ControlPlane {
     /// fanned in by a task subscribed on `live.events`.
     fn fan_out(
         events: &broadcast::Sender<Vec<SessionEvent>>,
+        watch: &broadcast::Sender<Vec<SessionEvent>>,
         feed: &broadcast::Sender<NodeEvent>,
         session_id: &str,
         batch: Vec<SessionEvent>,
@@ -328,11 +336,18 @@ impl ControlPlane {
             session_id: session_id.to_string(),
             events: batch.clone(),
         });
-        let _ = events.send(batch);
+        let _ = events.send(batch.clone());
+        let _ = watch.send(batch);
     }
 
     fn emit(&self, live: &LiveSession, events: Vec<SessionEvent>) {
-        Self::fan_out(&live.events, &self.node_events, &live.id, events);
+        Self::fan_out(
+            &live.events,
+            &live.watch,
+            &self.node_events,
+            &live.id,
+            events,
+        );
     }
 
     /// `idle_since` tracks "no listeners and no in-flight turn".
@@ -1100,6 +1115,7 @@ impl ControlPlane {
         {
             let mut updates = live.conn.updates();
             let events = live.events.clone();
+            let watch = live.watch.clone();
             let feed = self.node_events.clone();
             let session_id = live.id.clone();
             let translator = Arc::clone(&live.translator);
@@ -1109,13 +1125,14 @@ impl ControlPlane {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .translate(&update);
-                    Self::fan_out(&events, &feed, &session_id, translated);
+                    Self::fan_out(&events, &watch, &feed, &session_id, translated);
                 }
             }));
         }
         {
             let mut permissions = live.conn.permissions();
             let events = live.events.clone();
+            let watch = live.watch.clone();
             let feed = self.node_events.clone();
             let session_id = live.id.clone();
             let conn = Arc::clone(&live.conn);
@@ -1135,6 +1152,7 @@ impl ControlPlane {
                     }
                     Self::fan_out(
                         &events,
+                        &watch,
                         &feed,
                         &session_id,
                         Translator::permission_request(&request),
@@ -1170,6 +1188,7 @@ impl ControlPlane {
             id: thread_id.to_string(),
             conn: Arc::clone(conn),
             events: broadcast::channel(event_buffer()).0,
+            watch: broadcast::channel(event_buffer()).0,
             forward_tasks: Vec::new(),
             translator: Arc::new(StdMutex::new(Translator::new(thread_id))),
             cwd,
@@ -1646,11 +1665,12 @@ impl ControlPlane {
     ) -> Result<PromptWaitResult, ControlError> {
         let started = Instant::now();
         let timeout = timeout.filter(|t| !t.is_zero());
-        // Subscribe before dispatching — the wait's own receiver counts
-        // as a listener for idle tracking and no turn frame is missed.
-        // It doubles as the attach check: not live → `invalid`, same
-        // as `prompt`.
-        let mut events = self.subscribe(id, agent_id).await?;
+        // Subscribe before dispatching — the wait's own receiver sees
+        // every turn frame (it rides the non-pinning `watch` channel:
+        // an internal consumer must not hold the session open past the
+        // idle TTL). It doubles as the attach check: not live →
+        // `invalid`, same as `prompt`.
+        let mut events = self.watch(id, agent_id).await?;
         // Pre-flight the dispatch checks so a busy session or
         // unsupported content fails now instead of after the timeout;
         // `prompt_turn` re-checks under the lock — the busy mark there
@@ -2784,6 +2804,26 @@ impl ControlPlane {
         Ok(live.events.subscribe())
     }
 
+    /// A non-pinning event stream — the same batches [`Self::subscribe`]
+    /// forwards, but the receiver never counts as a listener for idle
+    /// tracking, so a background watcher can't hold the agent subprocess
+    /// open past the idle TTL. The stream still closes when the session
+    /// detaches; `invalid` when the session isn't attached.
+    pub async fn watch(
+        &self,
+        id: &str,
+        agent_id: Option<&str>,
+    ) -> Result<broadcast::Receiver<Vec<SessionEvent>>, ControlError> {
+        let state = self.state.lock().await;
+        let live = Self::live_for(&state, id, agent_id).ok_or_else(|| {
+            control_error(
+                ControlErrorCode::Invalid,
+                format!("Session is not attached: {id}"),
+            )
+        })?;
+        Ok(live.watch.subscribe())
+    }
+
     /// Every registered agent + its last probed capability advertisement
     /// (`None` until the first spawn probes).
     pub async fn list_agents(&self) -> Vec<AgentInfo> {
@@ -2804,20 +2844,25 @@ impl ControlPlane {
     async fn sweep_idle(&self) {
         let Some(ttl) = self.idle_ttl else { return };
         let expired: Vec<String> = {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
             let now = Instant::now();
-            state
-                .live
-                .iter()
-                .filter(|(_, live)| {
-                    !live.busy
-                        && live.events.receiver_count() == 0
-                        && live
-                            .idle_since
-                            .is_some_and(|t| now.duration_since(t) >= ttl)
-                })
-                .map(|(id, _)| id.clone())
-                .collect()
+            let mut expired = Vec::new();
+            for (id, live) in &mut state.live {
+                if live.busy || live.events.receiver_count() > 0 {
+                    continue;
+                }
+                match live.idle_since {
+                    Some(t) if now.duration_since(t) >= ttl => expired.push(id.clone()),
+                    // Listenerless with no recorded idle start — a
+                    // receiver that dropped without a `touch_idle`
+                    // (a finished `prompt_wait`, a closed subscribe
+                    // forwarder). Arm the clock now; the next sweeps
+                    // expire it normally instead of never reaping.
+                    None => live.idle_since = Some(now),
+                    _ => {}
+                }
+            }
+            expired
         };
         for id in expired {
             self.detach_inner(&id, DetachReason::Idle).await;

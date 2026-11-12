@@ -28,7 +28,8 @@
 //! | `config.list` | `agent_config_summaries` — per-agent config item counts |
 //! | `config.get` / `config.import` | `agent_config` / `write_agent_config` — the config IR over `config.read`/`config.write` |
 //! | `sessions.restore` / `sessions.rewind` | `restore` / `rewind` |
-//! | `sessions.subscribe` | `subscribe` → `session.event` notifications |
+//! | `sessions.subscribe` | `subscribe` → `session.event` notifications; |
+//! | | `keepAlive:false` → non-pinning `watch` |
 //! | `events.subscribe` | `subscribe_events` → `node.event` notifications: |
 //! | | lifecycle markers + every live session's events |
 //! | `shutdown` | close the plane, exit 0 |
@@ -559,10 +560,23 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
         }
         "sessions.subscribe" => {
             let id = id_of(&req.params)?.to_string();
-            let mut rx = plane
-                .subscribe(&id, agent.as_deref())
-                .await
-                .map_err(|e| control_err(&e))?;
+            // `keepAlive` (default true) marks the receiver as a listener
+            // for idle tracking — it holds the agent subprocess open.
+            // `false` is the non-pinning watch: same `session.event`
+            // stream, but the session still idle-detaches on TTL —
+            // the shape background consumers (orchestrator busy-tracking,
+            // log mirrors) should use so they can't leak agent processes.
+            let keep_alive = req
+                .params
+                .get("keepAlive")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let mut rx = if keep_alive {
+                plane.subscribe(&id, agent.as_deref()).await
+            } else {
+                plane.watch(&id, agent.as_deref()).await
+            }
+            .map_err(|e| control_err(&e))?;
             let out = Arc::clone(out);
             let session_id = id.clone();
             // Note: repeat subscribes on one session each spawn a
