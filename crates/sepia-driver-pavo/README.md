@@ -34,9 +34,9 @@ Every `view`/`query` proxies read-side methods of one spawned
 `sepia serve` subprocess per driver `serve` process — the same
 framing driver binaries speak (`sepia_driver::rpc`). Only read ops
 are issued (`manifest`, `agents.list`, `sessions.list`,
-`sessions.summary`, `sessions.history`, `projects.list`,
-`config.list`); attach/prompt/delete and friends stay on the
-`sepia` CLI — the driver cannot mutate session state.
+`sessions.summary`, `sessions.history`, `config.list`);
+attach/prompt/delete and friends stay on the `sepia` CLI — the
+driver cannot mutate session state.
 
 Binary resolution, first hit wins:
 
@@ -62,11 +62,10 @@ budget; a dead serve process is respawned once per call.
 
 | view | serve methods | params |
 | --- | --- | --- |
-| `sepia:status` | `manifest` + `sessions/agents/projects.list` counts | — |
+| `sepia:status` | `manifest` + `sessions/agents.list` counts | — |
 | `sepia:sessions` | `sessions.list` | `agent` |
 | `sepia:session` | `sessions.list` (match) → `sessions.summary` fallback + `sessions.history` | `id` (required), `agent`, `limit` |
 | `sepia:agents` | `agents.list` + `config.list` | `agent`, `dir` |
-| `sepia:projects` | `projects.list` + `sessions.list` | — |
 
 `sessions.list` is called **without** `withLocks`: lock probing fans
 a `session/list` probe out to every registered agent and a slow

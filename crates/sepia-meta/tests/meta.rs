@@ -72,26 +72,6 @@ fn spans_dedupe_consecutive_agent_node() {
 }
 
 #[test]
-fn projects_lifecycle() {
-    let (store, _dir) = store();
-    let p = store.create_project("alpha");
-    assert!(p.id.starts_with("proj_"));
-    assert!(store.rename_project(&p.id, "beta"));
-    assert_eq!(store.list_projects()[0].name, "beta");
-    // Sessions assigned the project lose the id on delete.
-    store.patch(
-        "s1",
-        &SessionMeta {
-            project_ids: Some(vec![p.id.clone()]),
-            ..SessionMeta::default()
-        },
-    );
-    store.delete_project(&p.id);
-    assert!(store.of("s1").unwrap().project_ids.unwrap().is_empty());
-    assert!(!store.rename_project(&p.id, "x"));
-}
-
-#[test]
 fn corrupt_file_degrades_to_empty() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("meta.json");
@@ -119,29 +99,47 @@ fn v1_flat_file_migrates() {
 }
 
 #[test]
-fn ensure_project_is_idempotent() {
-    let (store, _dir) = store();
-    store.ensure_project("p1", "one");
-    let p = store.ensure_project("p1", "two"); // refreshes the name
-    assert_eq!(p.name, "two");
-    assert_eq!(store.list_projects().len(), 1);
+fn legacy_projects_and_config_keys_are_dropped_on_flush() {
+    // P-006 phase 3: meta.json v2 carried `projects`/`config` sections;
+    // the store is sessions-only now — the keys are ignored on read and
+    // gone from the file after the next mutation's flush.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("meta.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "sessions": {"s1": {"title": "T"}},
+            "projects": {"p1": {"name": "Web"}},
+            "config": {"theme": "dark"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store = MetaStore::open(&path);
+    assert_eq!(store.of("s1").unwrap().title.as_deref(), Some("T"));
+    store.patch(
+        "s2",
+        &SessionMeta {
+            pinned: Some(true),
+            ..SessionMeta::default()
+        },
+    );
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(written.get("projects").is_none());
+    assert!(written.get("config").is_none());
+    assert!(written["sessions"]["s2"]["pinned"].as_bool().unwrap());
 }
 
 #[test]
-fn config_roundtrip() {
-    let (store, _dir) = store();
-    store.set_config("sidebar", json!({"collapsed": true}));
-    assert_eq!(store.config()["sidebar"], json!({"collapsed": true}));
-}
-
-#[test]
-fn spans_projects_model_and_patch_edges() {
+fn spans_model_and_patch_edges() {
     use sepia_meta::{RunSpan, SessionMeta};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("meta.json");
     // Crafted meta file exercising normalize_session tails: model as a
-    // non-string, spans with invalid entries filtered out, projects in
-    // object and string shapes plus a dropped number.
+    // non-string, spans with invalid entries filtered out, projectIds in
+    // array and legacy singular shapes plus a dropped number. A legacy
+    // `config` section rides along — ignored since phase 3.
     std::fs::write(
         &path,
         serde_json::json!({
@@ -198,32 +196,4 @@ fn spans_projects_model_and_patch_edges() {
     std::fs::write(dir.path().join("arr.json"), "[1,2]").unwrap();
     let s = MetaStore::open(&dir.path().join("arr.json"));
     assert!(s.sessions().is_empty());
-}
-
-#[test]
-fn v2_projects_map_entries_parse_each_shape() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("meta.json");
-    std::fs::write(
-        &path,
-        serde_json::json!({
-            "sessions": {},
-            "projects": {
-                "p1": {"name": "Object"},
-                "p2": "Plain",
-                "p3": 42
-            },
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let store = MetaStore::open(&path);
-    let names = store
-        .list_projects()
-        .into_iter()
-        .map(|p| (p.id.clone(), p))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    assert_eq!(names.get("p1").map(|p| p.name.as_str()), Some("Object"));
-    assert_eq!(names.get("p2").map(|p| p.name.as_str()), Some("Plain"));
-    assert!(!names.contains_key("p3"));
 }

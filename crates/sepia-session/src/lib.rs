@@ -22,6 +22,6 @@ pub use local::{
 pub use merged::{MergedRepository, agent_for_backend};
 pub use plane::{ControlPlane, CreateResult};
 pub use policy::{PermissionAction, PermissionPolicy, PermissionRule, settle_option};
-pub use sepia_meta::{MetaStore, Project, SessionMeta};
+pub use sepia_meta::{MetaStore, SessionMeta};
 pub use translate::Translator;
 pub use types::*;

@@ -22,9 +22,7 @@
 //! | `sessions.permission` | `respond_to_permission` |
 //! | `sessions.set_permission_policy` | `set_permission_policy` — auto-answer `session/request_permission` |
 //! | `sessions.delete` | `delete_session` |
-//! | `sessions.patch_meta` | `patch_meta` — the overlay (title/pin/archive/projects/model) |
-//! | `projects.list` / `projects.create` | `list_projects` / `create_project` |
-//! | `projects.rename` / `projects.delete` | `rename_project` / `delete_project` |
+//! | `sessions.patch_meta` | `patch_meta` — the overlay (title/pin/archive/projectIds/model) |
 //! | `config.list` | `agent_config_summaries` — per-agent config item counts |
 //! | `config.get` / `config.import` | `agent_config` / `write_agent_config` — the config IR over `config.read`/`config.write` |
 //! | `sessions.restore` / `sessions.rewind` | `restore` / `rewind` |
@@ -50,7 +48,9 @@ use crate::CliError;
 
 /// Wire protocol version — bumped on any breaking change to the method
 /// surface; `manifest` reports it so spawners can negotiate.
-const PROTOCOL: u64 = 1;
+/// v2: the `projects.*` meta-overlay verbs are gone — projects/config
+/// moved to peregrin's node-local KV (P-006 phase 3).
+const PROTOCOL: u64 = 2;
 
 /// Outbound line sink shared between the dispatch loop and subscription
 /// forwarders — one lock per line keeps writes atomic.
@@ -124,8 +124,6 @@ fn manifest(local: &Local) -> Value {
             "sessions.set_permission_policy",
             "sessions.restore", "sessions.rewind", "sessions.subscribe",
             "events.subscribe",
-            "projects.list", "projects.create", "projects.rename",
-            "projects.delete",
             "config.list", "config.get", "config.import",
             "shutdown",
         ],
@@ -457,42 +455,6 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
                 .patch_meta(id, &patch)
                 .await
                 .map_err(|e| control_err(&e))?;
-            Ok(Value::Null)
-        }
-        "projects.list" => serde_json::to_value(plane.list_projects())
-            .map_err(|e| RpcError::internal(e.to_string())),
-        "projects.create" => {
-            let name = req
-                .params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| RpcError::invalid_params("missing project name"))?;
-            serde_json::to_value(plane.create_project(name).map_err(|e| control_err(&e))?)
-                .map_err(|e| RpcError::internal(e.to_string()))
-        }
-        "projects.rename" => {
-            let id = req
-                .params
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| RpcError::invalid_params("missing project id"))?;
-            let name = req
-                .params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| RpcError::invalid_params("missing project name"))?;
-            plane
-                .rename_project(id, name)
-                .map_err(|e| control_err(&e))?;
-            Ok(Value::Null)
-        }
-        "projects.delete" => {
-            let id = req
-                .params
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| RpcError::invalid_params("missing project id"))?;
-            plane.delete_project(id).map_err(|e| control_err(&e))?;
             Ok(Value::Null)
         }
         "config.list" => {

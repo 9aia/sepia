@@ -5,8 +5,8 @@
 //! spoken to with the same ndjson JSON-RPC framing driver binaries
 //! use ([`sepia_driver::rpc`]). The driver only ever issues the
 //! read-side methods (`manifest`, `agents.list`, `sessions.list`,
-//! `sessions.get`/`summary`/`history`, `projects.list`,
-//! `config.list`) — every mutation stays on the `sepia` CLI and the
+//! `sessions.get`/`summary`/`history`, `config.list`) — every
+//! mutation stays on the `sepia` CLI and the
 //! orchestrator-facing ops (`attach`, `prompt`, `delete`, …) are
 //! never called, so the view driver cannot mutate session state.
 //!

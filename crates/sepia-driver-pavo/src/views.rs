@@ -13,11 +13,10 @@
 //!
 //! | pavo view      | serve methods                          |
 //! |----------------|----------------------------------------|
-//! | `sepia:status` | `manifest` + `sessions/agents/projects.list` counts |
+//! | `sepia:status` | `manifest` + `sessions/agents.list` counts |
 //! | `sepia:sessions` | `sessions.list` (`withLocks`)        |
 //! | `sepia:session`  | `sessions.summary` + `sessions.history` |
 //! | `sepia:agents`   | `agents.list` + `config.list`        |
-//! | `sepia:projects` | `projects.list` + `sessions.list`    |
 //!
 //! Mutations (`attach`, `prompt`, `patch_meta`, `import`, …) stay on
 //! the `sepia` CLI / `sepia serve` consumers — this driver is
@@ -97,8 +96,6 @@ const AGENT_COLS: &[(&str, &str)] = &[
     ("error", "Error"),
 ];
 
-const PROJECT_COLS: &[(&str, &str)] = &[("id", "ID"), ("name", "Name"), ("sessions", "Sessions")];
-
 /// Every view the driver declares — static (no sepia state needed;
 /// `manifest`/`views` must answer anywhere).
 pub fn specs() -> Vec<ViewSpec> {
@@ -107,7 +104,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "status",
             "Status",
             "/sepia/status",
-            "Plane digest — node identity, protocol version, and live counts of sessions, agents, and projects.",
+            "Plane digest — node identity, protocol version, and live counts of sessions and agents.",
             &["summary"],
             col("Sepia status", vec![kv("Plane", "summary")]),
         ),
@@ -140,14 +137,6 @@ pub fn specs() -> Vec<ViewSpec> {
             "Runnable ACP agents plus their config-IR item counts (skills/rules/commands/hooks/MCP servers) from `config.list`.",
             &["agents"],
             table("Agents", "agents", AGENT_COLS),
-        ),
-        spec(
-            "projects",
-            "Projects",
-            "/sepia/projects",
-            "Overlay projects with the count of sessions tagged to each.",
-            &["projects"],
-            table("Projects", "projects", PROJECT_COLS),
         ),
     ]
 }
@@ -182,7 +171,7 @@ pub fn manifest() -> DriverManifest {
 pub fn known_query(name: &str) -> bool {
     matches!(
         name,
-        "summary" | "sessions" | "session" | "history" | "agents" | "projects"
+        "summary" | "sessions" | "session" | "history" | "agents"
     )
 }
 
@@ -195,7 +184,6 @@ pub fn query_data(name: &str, params: &Map<String, Value>) -> Value {
         "session" => session_detail(params),
         "history" => history_rows(params),
         "agents" => agents_rows(params),
-        "projects" => projects_rows(params),
         other => json!({"error": format!("unknown query '{other}'")}),
     }
 }
@@ -240,7 +228,6 @@ fn summary(ctx: &Map<String, Value>) -> Value {
     );
     out.insert("sessions".into(), count("sessions.list"));
     out.insert("agents".into(), count("agents.list"));
-    out.insert("projects".into(), count("projects.list"));
     Value::Object(out)
 }
 
@@ -476,42 +463,6 @@ fn agents_rows(ctx: &Map<String, Value>) -> Value {
     )
 }
 
-/// `projects` query — `projects.list` rows with session counts
-/// tallied from `sessions.list` (`projectIds` membership). A
-/// sessions failure degrades the count column to null.
-fn projects_rows(ctx: &Map<String, Value>) -> Value {
-    let projects = match serve("projects.list", json!({}), ctx) {
-        Ok(Value::Array(rows)) => rows,
-        Ok(other) => return other,
-        Err(e) => return e,
-    };
-    let sessions = serve("sessions.list", json!({}), ctx)
-        .ok()
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default();
-    Value::Array(
-        projects
-            .iter()
-            .map(|p| {
-                let id = p["id"].as_str().unwrap_or_default();
-                let count = sessions
-                    .iter()
-                    .filter(|s| {
-                        s["projectIds"]
-                            .as_array()
-                            .is_some_and(|ids| ids.iter().any(|i| i.as_str() == Some(id)))
-                    })
-                    .count();
-                json!({
-                    "id": p["id"],
-                    "name": p["name"],
-                    "sessions": count,
-                })
-            })
-            .collect(),
-    )
-}
-
 // ---------------------------------------------------------------- view op
 
 /// `{"op":"view","view":id,"params":{…}}` → [`pavo_protocol::wire::ViewResult`].
@@ -548,7 +499,7 @@ mod tests {
         assert_eq!(m.renderers.len(), 0);
         let ids: std::collections::BTreeSet<&str> = m.views.iter().map(|v| v.id.as_str()).collect();
         assert_eq!(ids.len(), m.views.len(), "duplicate view ids");
-        for want in ["status", "sessions", "session", "agents", "projects"] {
+        for want in ["status", "sessions", "session", "agents"] {
             assert!(ids.contains(want), "missing view {want}");
         }
     }

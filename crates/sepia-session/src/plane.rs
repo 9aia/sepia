@@ -1976,57 +1976,6 @@ impl ControlPlane {
         Ok(())
     }
 
-    /// Node-local projects, from the meta overlay (`[]` without one).
-    #[must_use]
-    pub fn list_projects(&self) -> Vec<sepia_meta::Project> {
-        self.meta
-            .as_ref()
-            .map_or_else(Vec::new, sepia_meta::MetaStore::list_projects)
-    }
-
-    /// Create a project — `name` must be non-empty.
-    ///
-    /// # Errors
-    /// `invalid` without a meta store or on an empty name.
-    pub fn create_project(&self, name: &str) -> Result<sepia_meta::Project, ControlError> {
-        if name.trim().is_empty() {
-            return Err(control_error(
-                ControlErrorCode::Invalid,
-                "project name must be non-empty",
-            ));
-        }
-        Ok(self.require_meta()?.create_project(name))
-    }
-
-    /// Rename a project.
-    ///
-    /// # Errors
-    /// `invalid` without a meta store or on an empty name, `not_found`
-    /// on an unknown project id.
-    pub fn rename_project(&self, id: &str, name: &str) -> Result<(), ControlError> {
-        if name.trim().is_empty() {
-            return Err(control_error(
-                ControlErrorCode::Invalid,
-                "project name must be non-empty",
-            ));
-        }
-        self.require_meta()?
-            .rename_project(id, name)
-            .then_some(())
-            .ok_or_else(|| {
-                control_error(ControlErrorCode::NotFound, format!("Unknown project: {id}"))
-            })
-    }
-
-    /// Delete a project, dropping it from every session's `projectIds`.
-    ///
-    /// # Errors
-    /// `invalid` without a meta store.
-    pub fn delete_project(&self, id: &str) -> Result<(), ControlError> {
-        self.require_meta()?.delete_project(id);
-        Ok(())
-    }
-
     /// Switches a live session's agent mode (`session/set_mode`) —
     /// the unattended-run knob: agents that gate tool use behind
     /// `session/request_permission` (devin's `accept-edits` prompts on

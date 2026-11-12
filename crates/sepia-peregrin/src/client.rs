@@ -228,7 +228,7 @@ impl SepiaPeregrin {
         self.session_op(id, "permission", answer)
     }
 
-    /// `sepia.meta` — overlay patch (title/pin/archive/project).
+    /// `sepia.meta` — overlay patch (title/pin/archive/projectIds).
     ///
     /// # Errors
     /// See [`Self::session_op`].

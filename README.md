@@ -49,7 +49,7 @@ See `## Develop` below.
 writes (`sepia-core`): messages with roles and content blocks (text,
 thinking + signature, tool calls, images, file attachments), tool calls
 with args/results/status/diffs, token usage, sub-agent lineage,
-checkpoints, and a meta overlay (title/pin/projects/spans).
+checkpoints, and a meta overlay (title/pin/projectIds/spans).
 
 **Drivers** — store adapters as separate binaries
 (`sepia-driver-devin`, `sepia-driver-cline`, `sepia-driver-claude`,
@@ -80,7 +80,7 @@ assembles it all from this machine's drivers and agent CLIs.
 | `crates/sepia-host` | driver discovery + spawn + respawn |
 | `crates/sepia-driver-{devin,cline,claude,cursor}` | store adapter binaries |
 | `crates/sepia-session` | the local session plane: attach/takeover mechanics, prompt/cancel/permission, restore/rewind, `local::build` composition |
-| `crates/sepia-meta` | overlay store (title/pin/projects/run spans) |
+| `crates/sepia-meta` | overlay store (title/pin/projectIds/run spans) |
 | `crates/sepia-convert` | store format conversion |
 | `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
 | `crates/sepia-peregrin` | entity-plane adapter — sessions as `kind="sepia-session"` entities |

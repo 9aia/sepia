@@ -970,17 +970,6 @@ async fn patch_meta_on_live_session_works() {
     plane.close_all().await;
 }
 
-#[tokio::test]
-async fn rename_project_rejects_an_empty_name() {
-    let dir = tempdir();
-    let meta = meta_store(&dir);
-    let (plane, _) = mk_plane(vec![], vec![], meta_options(meta));
-    let p = plane.create_project("work").unwrap();
-    let err = plane.rename_project(&p.id, "  ").unwrap_err();
-    assert_eq!(err.code, ControlErrorCode::Invalid);
-    plane.close_all().await;
-}
-
 // ---------- history edges ------------------------------------------------------
 
 /// A repo with a native `nodes_window`.

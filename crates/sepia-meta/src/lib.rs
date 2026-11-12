@@ -1,7 +1,12 @@
 //! sepia-meta — Sepia-owned per-session metadata (title overrides, pins,
-//! project assignments, run spans) plus the user-defined project list and
-//! server-persisted app config. Lives in a separate JSON file because the
-//! agent session stores are opened read-only.
+//! project assignments, run spans). Lives in a separate JSON file because
+//! the agent session stores are opened read-only.
+//!
+//! Sessions-only since P-006 phase 3: the v2 file's `projects`/`config`
+//! sections moved to peregrin's node-local KV (`hypha-kv`). Legacy files
+//! still carrying those keys read fine — unknown fields are ignored and
+//! the next flush rewrites the file without them (peregrin's one-shot
+//! `meta.json` → KV migration reads the raw file before that happens).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -119,26 +124,10 @@ impl SessionMeta {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Project {
-    pub id: String,
-    pub name: String,
-}
-
 #[derive(Default, Serialize, Deserialize)]
 struct MetaFile {
     #[serde(default)]
     sessions: BTreeMap<String, SessionMeta>,
-    #[serde(default)]
-    projects: BTreeMap<String, ProjectName>,
-    /// Server-persisted app/UI config (collapse state, prefs).
-    #[serde(default)]
-    config: BTreeMap<String, Value>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ProjectName {
-    name: String,
 }
 
 /// Tolerant decode of a stored `SessionMeta` — migrates older shapes:
@@ -227,8 +216,9 @@ impl MetaStore {
         let mut data = MetaFile::default();
         if let Ok(raw) = std::fs::read_to_string(path) {
             if let Ok(Value::Object(record)) = serde_json::from_str::<Value>(&raw) {
-                // v2: { sessions, projects, config } — else v1 flat
-                // Record<sessionId, SessionMeta>.
+                // v2+: `{ sessions, … }` — legacy `projects`/`config`
+                // keys are ignored (P-006 phase 3 moved them to KV);
+                // else v1 flat Record<sessionId, SessionMeta>.
                 let raw_sessions = record
                     .get("sessions")
                     .and_then(Value::as_object)
@@ -238,37 +228,7 @@ impl MetaStore {
                     .iter()
                     .map(|(id, value)| (id.clone(), normalize_session(value)))
                     .collect();
-                let projects = record
-                    .get("projects")
-                    .and_then(Value::as_object)
-                    .map(|p| {
-                        p.iter()
-                            .filter_map(|(id, v)| {
-                                v.as_object()
-                                    .and_then(|o| o["name"].as_str())
-                                    .or_else(|| v.as_str())
-                                    .map(|name| {
-                                        (
-                                            id.clone(),
-                                            ProjectName {
-                                                name: name.to_string(),
-                                            },
-                                        )
-                                    })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let config = record
-                    .get("config")
-                    .and_then(Value::as_object)
-                    .map(|c| c.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                    .unwrap_or_default();
-                data = MetaFile {
-                    sessions,
-                    projects,
-                    config,
-                };
+                data = MetaFile { sessions };
             }
             // A corrupt or half-written file degrades to empty.
         }
@@ -343,81 +303,5 @@ impl MetaStore {
         if inner.data.sessions.remove(id).is_some() {
             Self::flush(&inner);
         }
-    }
-
-    pub fn list_projects(&self) -> Vec<Project> {
-        lock_inner(&self.inner)
-            .data
-            .projects
-            .iter()
-            .map(|(id, p)| Project {
-                id: id.clone(),
-                name: p.name.clone(),
-            })
-            .collect()
-    }
-
-    pub fn create_project(&self, name: &str) -> Project {
-        let id = format!("proj_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
-        self.ensure_project(&id, name)
-    }
-
-    /// Create the project under a caller-chosen id, or refresh its name
-    /// when it already exists — the idempotent half of a project transfer.
-    pub fn ensure_project(&self, id: &str, name: &str) -> Project {
-        let mut inner = lock_inner(&self.inner);
-        let existing = inner.data.projects.get(id);
-        if existing.is_none_or(|p| p.name != name) {
-            inner.data.projects.insert(
-                id.to_string(),
-                ProjectName {
-                    name: name.to_string(),
-                },
-            );
-            Self::flush(&inner);
-        }
-        Project {
-            id: id.to_string(),
-            name: name.to_string(),
-        }
-    }
-
-    pub fn rename_project(&self, id: &str, name: &str) -> bool {
-        let mut inner = lock_inner(&self.inner);
-        let Some(entry) = inner.data.projects.get_mut(id) else {
-            return false;
-        };
-        entry.name = name.to_string();
-        Self::flush(&inner);
-        true
-    }
-
-    pub fn delete_project(&self, id: &str) {
-        let mut inner = lock_inner(&self.inner);
-        if inner.data.projects.remove(id).is_none() {
-            return;
-        }
-        for meta in inner.data.sessions.values_mut() {
-            if let Some(ids) = &mut meta.project_ids {
-                ids.retain(|p| p != id);
-            }
-        }
-        Self::flush(&inner);
-    }
-
-    /// Server-persisted app/UI config.
-    pub fn config(&self) -> BTreeMap<String, Value> {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .data
-            .config
-            .clone()
-    }
-
-    pub fn set_config(&self, key: &str, value: Value) {
-        let mut inner = lock_inner(&self.inner);
-        inner.data.config.insert(key.to_string(), value);
-        Self::flush(&inner);
     }
 }

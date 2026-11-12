@@ -1,6 +1,6 @@
 [package]
 name = "sepia-driver-pavo"
-description = "tamias-driver-sepia — pavo view driver over `sepia serve` (read-only session/agent/project surfaces) plus engine ops dispatching to the sepia-cli lib"
+description = "tamias-driver-sepia — pavo view driver over `sepia serve` (read-only session/agent surfaces) plus engine ops dispatching to the sepia-cli lib"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

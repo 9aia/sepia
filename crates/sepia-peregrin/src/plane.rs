@@ -131,7 +131,7 @@ pub trait SessionBackend: Send + Sync {
     /// agents with no runtime (cursor).
     async fn delete_session_store(&self, agent: &str, id: &str) -> Result<(), ControlError>;
 
-    /// The meta-overlay patch — title/pin/archive/projects/model.
+    /// The meta-overlay patch — title/pin/archive/projectIds/model.
     async fn patch_meta(&self, id: &str, patch: &SessionMeta) -> Result<(), ControlError>;
 
     /// Write session IR into `agent`'s store — a fresh id is minted
@@ -1252,7 +1252,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_projects_summaries_to_entity_docs() {
+    async fn list_summaries_to_entity_docs() {
         let mut fake = Fake::new();
         fake.summaries = vec![summary("s1")];
         let p = plane(fake);

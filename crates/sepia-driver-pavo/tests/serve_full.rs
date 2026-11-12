@@ -415,7 +415,7 @@ mod serve {
     }
 
     #[test]
-    fn meta_projects_and_store_ops_over_the_wire() {
+    fn meta_and_store_ops_over_the_wire() {
         let (_tmp, mut serve, _work) = rig();
 
         // patch_meta on a store-backed session — title + explicit model clear.
@@ -437,35 +437,10 @@ mod serve {
         );
         assert_eq!(res["error"]["code"], -32602, "{res}");
 
-        // Projects CRUD.
+        // projects.* left the wire in protocol v2 (P-006 phase 3 —
+        // projects/config live in peregrin's KV now).
         let res = serve.call(4, "projects.list", json!({}));
-        assert_eq!(res["result"], json!([]), "{res}");
-        let res = serve.call(5, "projects.create", json!({"name": "proj"}));
-        let pid = res["result"]["id"].as_str().unwrap().to_string();
-        assert!(!pid.is_empty(), "{res}");
-        let res = serve.call(6, "projects.list", json!({}));
-        assert_eq!(res["result"].as_array().unwrap().len(), 1, "{res}");
-        let res = serve.call(7, "projects.rename", json!({"id": pid, "name": "p2"}));
-        assert!(res["result"].is_null(), "{res}");
-        let res = serve.call(8, "projects.delete", json!({"id": pid}));
-        assert!(res["result"].is_null(), "{res}");
-        // Param validation arms.
-        let res = serve.call(9, "projects.create", json!({}));
-        assert_eq!(res["error"]["code"], -32602, "{res}");
-        let res = serve.call(10, "projects.rename", json!({"id": "x"}));
-        assert_eq!(res["error"]["code"], -32602, "{res}");
-        let res = serve.call(11, "projects.delete", json!({}));
-        assert_eq!(res["error"]["code"], -32602, "{res}");
-        // projects.delete is idempotent (no not_found arm); rename is the
-        // verb that 404s on an unknown project id.
-        let res = serve.call(
-            12,
-            "projects.rename",
-            json!({"id": "ghost", "name": "still-ghost"}),
-        );
-        assert_eq!(res["error"]["data"]["code"], "not_found", "{res}");
-        let res = serve.call(112, "projects.delete", json!({"id": "ghost"}));
-        assert!(res["result"].is_null(), "{res}");
+        assert_eq!(res["error"]["code"], -32601, "{res}");
 
         // sessions.delete hits the store and the overlay.
         let res = serve.call(13, "sessions.delete", json!({"id": "s1", "agent": "devin"}));

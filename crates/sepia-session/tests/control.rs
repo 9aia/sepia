@@ -228,51 +228,6 @@ async fn meta_verbs_fail_invalid_without_a_store() {
         .await
         .unwrap_err();
     assert_eq!(e.code, ControlErrorCode::Invalid);
-    assert!(plane.list_projects().is_empty());
-    assert_eq!(
-        plane.create_project("x").unwrap_err().code,
-        ControlErrorCode::Invalid
-    );
-    plane.close_all().await;
-}
-
-#[tokio::test]
-async fn project_crud_round_trips() {
-    let dir = tempdir();
-    let meta = meta_store(&dir);
-    let (plane, _) = mk_plane(
-        vec![session_with("devin", vec![])],
-        vec![],
-        meta_options(meta.clone()),
-    );
-    assert!(plane.list_projects().is_empty());
-    assert_eq!(
-        plane.create_project("  ").unwrap_err().code,
-        ControlErrorCode::Invalid
-    );
-    let project = plane.create_project("work").unwrap();
-    assert_eq!(project.name, "work");
-    assert_eq!(plane.list_projects().len(), 1);
-    plane.rename_project(&project.id, "renamed").unwrap();
-    assert_eq!(plane.list_projects()[0].name, "renamed");
-    assert_eq!(
-        plane.rename_project("ghost", "x").unwrap_err().code,
-        ControlErrorCode::NotFound
-    );
-    // Deleting drops the id from session memberships too.
-    plane
-        .patch_meta(
-            "s1",
-            &sepia_session::SessionMeta {
-                project_ids: Some(vec![project.id.clone()]),
-                ..sepia_session::SessionMeta::default()
-            },
-        )
-        .await
-        .unwrap();
-    plane.delete_project(&project.id).unwrap();
-    assert!(plane.list_projects().is_empty());
-    assert_eq!(meta.of("s1").unwrap().project_ids, Some(vec![]));
     plane.close_all().await;
 }
 
