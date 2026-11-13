@@ -1,38 +1,47 @@
 //! views — the driver's manifest: every ViewSpec plus the query
 //! resolvers that feed them.
 //!
-//! Read path: every query is one or two calls against `sepia serve`
-//! through [`crate::data::call`] — the session plane's own wire, so
-//! the driver sees exactly what orchestrators see and can never
-//! mutate anything (only read-side methods are issued). A failed
-//! call degrades to an `{"error": …}` payload inside an `ok:true`
-//! response, matching the sibling drivers' contract.
+//! Read path: most queries are one or two calls against `sepia
+//! serve` through [`crate::data::call`] — the session plane's own
+//! wire, so the driver sees exactly what orchestrators see and can
+//! never mutate anything (only read-side methods are issued). The
+//! `stores`/`drivers` queries are the exception: they ride the
+//! `cli.*` lane ([`crate::ops::verb_output`] — a `run` child per
+//! verb) because store listings and driver discovery are engine
+//! verbs, not serve methods. A failed call degrades to an
+//! `{"error": …}` payload inside an `ok:true` response, matching
+//! the sibling drivers' contract.
 //!
 //! Surface mapping (what `sepia serve` actually exposes — see
 //! `crates/sepia-cli/src/serve.rs` for the method table):
 //!
-//! | pavo view      | serve methods                          |
-//! |----------------|----------------------------------------|
+//! | pavo view      | data source                              |
+//! |----------------|------------------------------------------|
 //! | `sepia:status` | `manifest` + `sessions/agents.list` counts |
-//! | `sepia:sessions` | `sessions.list` (`withLocks`)        |
-//! | `sepia:session`  | `sessions.summary` + `sessions.history` |
-//! | `sepia:agents`   | `agents.list` + `config.list`        |
+//! | `sepia:sessions` | `sessions.list` (`withLocks` off)      |
+//! | `sepia:session`  | `sessions.summary`/`list` + `sessions.history`; meta form → `sessions.patch_meta` |
+//! | `sepia:agents`   | `agents.list` + `config.list`          |
+//! | `sepia:config`   | `config.list` + `config.get` (serve)   |
+//! | `sepia:stores`   | `store list` per store (`cli` lane, TSV) |
+//! | `sepia:drivers`  | `driver list --json` (`cli` lane)      |
 //!
 //! Mutations live in two places, both dispatching through the wire
 //! `invoke` op: the declared [`Action`]s below (`session.*` ids →
 //! the `sepia serve` session plane, everything else → `cli.<verb>`
 //! engine ops — see `ops.rs` for the routing), and the ops-derived
 //! actions pavo-core builds from the `ops` manifest's param
-//! schemas. This module stays read-only: every *query* still only
-//! issues read-side serve methods.
+//! schemas. This module stays read-only: every *query* issues
+//! read-side calls only — serve methods or read-only engine verbs.
+
+use std::sync::Mutex;
 
 use pavo_driver_kit as kit;
 use pavo_protocol::{
-    Action, DriverManifest, MenuEntry, ParamKind, ParamSchema, ViewNode, ViewSpec,
+    Action, DriverManifest, FormFieldKind, MenuEntry, ParamKind, ParamSchema, ViewNode, ViewSpec,
 };
 use serde_json::{Map, Value, json};
 
-use crate::data;
+use crate::{data, ops};
 
 // ---------------------------------------------------------------- helpers
 
@@ -78,6 +87,12 @@ fn table_actions(
     )
 }
 
+/// An expandable tree bound to a query — the bound result supplies
+/// `items` (see `config.detail`).
+fn tree(title: &str, query: &str) -> ViewNode {
+    kit::expandable_tree(kit::base().title(title).query(query).build(), Vec::new())
+}
+
 /// A `kv` node carrying actions — the `session` view's detail pane.
 fn kv_actions(title: &str, query: &str, actions: Vec<Action>) -> ViewNode {
     kit::kv(
@@ -88,6 +103,136 @@ fn kv_actions(title: &str, query: &str, actions: Vec<Action>) -> ViewNode {
             .build(),
         Vec::new(),
     )
+}
+
+// ------------------------------------------------------- session meta form
+//
+// The `session` view's edit form. `submit_op` names the
+// session-plane action; `ops::submit` resolves it through
+// [`form_submit_op`] and merges the view's `id`/`agent` (the wire
+// `submit` op carries no view params — see [`session_context`]).
+// Field `value`s are seeded per request by [`patch_form_values`]
+// from the `session` query data — the spec itself stays static.
+
+/// The session view's meta-edit form — fields mirror the
+/// `session.patch_meta` action's params (title/pinned/archived/
+/// model; `projectIds` stays action-only — a comma string can't
+/// express the wire's array).
+fn meta_form() -> ViewNode {
+    let mut model = kit::field("model", "Model");
+    model.hint = Some("Preferred spawn model — empty keeps the current one.".to_string());
+    kit::form_submit(
+        kit::base().id("meta").title("Edit meta").build(),
+        vec![
+            kit::field("title", "Title"),
+            kit::field_kind("pinned", "Pinned", FormFieldKind::Bool),
+            kit::field_kind("archived", "Archived", FormFieldKind::Bool),
+            model,
+        ],
+        "session.patch_meta",
+    )
+}
+
+/// The `id`/`agent` the `session` view last resolved — `ops::submit`
+/// merges them into session-scoped serve actions because the wire
+/// `submit` op carries no view params. Process-global like the serve
+/// client: one driver process, last-viewed wins.
+static SESSION_CTX: Mutex<Option<Map<String, Value>>> = Mutex::new(None);
+
+/// The session view's resolved `id`/`agent`, if it has run.
+pub(crate) fn session_context() -> Option<Map<String, Value>> {
+    SESSION_CTX.lock().ok().and_then(|g| g.clone())
+}
+
+/// Record the `session` view's `id`/`agent` params — called by
+/// [`view_result`] on every `session` view resolution.
+fn note_session_context(params: &Map<String, Value>) {
+    let mut ctx = Map::new();
+    if let Some(id) = params.get("id").and_then(Value::as_str) {
+        ctx.insert("id".to_string(), json!(id));
+    }
+    if let Some(agent) = params.get("agent").and_then(Value::as_str) {
+        ctx.insert("agent".to_string(), json!(agent));
+    }
+    if let Ok(mut slot) = SESSION_CTX.lock() {
+        *slot = (!ctx.is_empty()).then_some(ctx);
+    }
+}
+
+/// The `submit_op` of the form node `form` names on view `view`
+/// (`None` → the view's first form, per the wire contract's
+/// "default/first form" rule). `ops::submit` consults this before
+/// the verb-named-form fallback.
+pub(crate) fn form_submit_op(view: &str, form: Option<&str>) -> Option<String> {
+    let spec = specs().into_iter().find(|v| v.id == view)?;
+    let mut found = None;
+    collect_form_op(&spec.root, form, &mut found);
+    found
+}
+
+/// Depth-first search for the named (or first) form's `submit_op`.
+fn collect_form_op(node: &ViewNode, form: Option<&str>, out: &mut Option<String>) {
+    if out.is_some() {
+        return;
+    }
+    match node {
+        ViewNode::Form(f) => {
+            let matches = match form {
+                Some(id) => f.base.id.as_deref() == Some(id),
+                None => true,
+            };
+            if matches {
+                out.clone_from(&f.submit_op);
+            }
+        }
+        ViewNode::Panel(n) => {
+            for c in &n.children {
+                collect_form_op(c, form, out);
+            }
+        }
+        ViewNode::Row(n) => {
+            for c in &n.children {
+                collect_form_op(c, form, out);
+            }
+        }
+        ViewNode::Column(n) => {
+            for c in &n.children {
+                collect_form_op(c, form, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Seed a form's field `value`s from the bound session detail — the
+/// spec is static, so [`view_result`] rewrites the returned copy per
+/// request; fields the data lacks keep their declared default.
+fn patch_form_values(node: &mut ViewNode, session: &Value) {
+    match node {
+        ViewNode::Form(f) => {
+            for field in &mut f.fields {
+                if let Some(v) = session.get(field.key.as_str()) {
+                    field.value = Some(v.clone());
+                }
+            }
+        }
+        ViewNode::Panel(n) => {
+            for c in &mut n.children {
+                patch_form_values(c, session);
+            }
+        }
+        ViewNode::Row(n) => {
+            for c in &mut n.children {
+                patch_form_values(c, session);
+            }
+        }
+        ViewNode::Column(n) => {
+            for c in &mut n.children {
+                patch_form_values(c, session);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn spec(
@@ -417,8 +562,132 @@ fn table_row_actions() -> Vec<Action> {
     ]
 }
 
+/// The four store/agent ids — enum options for `from`/`to`/`agent`
+/// params (same set as `ops::STORE_IDS`).
+fn store_enum() -> Vec<String> {
+    ops::STORE_IDS.iter().map(|s| (*s).to_string()).collect()
+}
+
+/// `from` — the source store/agent selector (`--from` on the store
+/// and config verbs). Rows also carry a `from` key so an object
+/// target fills it without the form asking.
+fn from_param(required: bool) -> ParamSchema {
+    let mut p = kit::param("from")
+        .enumeration(store_enum())
+        .label("Store")
+        .doc("Source store/agent — the row's `from` fills this when a target is supplied.");
+    if required {
+        p = p.required();
+    }
+    p.build()
+}
+
+/// `to` — the target store/agent selector (`--to` on install verbs).
+fn to_param(required: bool) -> ParamSchema {
+    let mut p = kit::param("to")
+        .enumeration(store_enum())
+        .label("Target store")
+        .doc("Store/agent to write into.");
+    if required {
+        p = p.required();
+    }
+    p.build()
+}
+
+/// `session_id` — the store verbs' positional; a ref picker over the
+/// `stores` view's rows.
+fn session_id_param() -> ParamSchema {
+    kit::param("session_id")
+        .reference("stores")
+        .required()
+        .label("Session")
+        .doc("Session id on the store — the row's `session_id` fills this when a target is supplied.")
+        .build()
+}
+
+/// Actions scoped to the `stores` table — the store verbs bound to
+/// a session row. Rows carry `session_id`/`from` so an object target
+/// merges them into the verb's params; the declared params keep the
+/// auto-form usable when no row target arrives (the pinned pavo rev's
+/// TUI sends none for table rows — only tree items get targets).
+fn store_row_actions() -> Vec<Action> {
+    vec![
+        kit::action("store.export", "Export")
+            .target("row")
+            .param(session_id_param())
+            .param(from_param(true))
+            .param(str_param(
+                "out",
+                "Out",
+                "Output file (or directory); stdout when omitted.",
+            ))
+            .param(
+                kit::param("format")
+                    .enumeration(vec!["json".to_string(), "cline".to_string()])
+                    .label("Format")
+                    .doc("`json` = session IR; `cline` = Cline session files (needs `out` dir).")
+                    .build(),
+            )
+            .description("Export the session — IR JSON by default, Cline files with format=cline.")
+            .build(),
+        kit::action("store.install", "Install into…")
+            .confirm()
+            .target("row")
+            .param(session_id_param())
+            .param(from_param(true))
+            .param(to_param(false))
+            .param(str_param("id", "New id", "Install under this session id."))
+            .param(bool_param(
+                "force",
+                "Force",
+                "Replace a session that still belongs to a live owner.",
+            ))
+            .description("Copy the session into another agent's store, ready to resume.")
+            .build(),
+        kit::action("store.delete", "Delete")
+            .type_target()
+            .target("row")
+            .param(session_id_param())
+            .param(from_param(true))
+            .description("Delete the session from its store — irreversible.")
+            .build(),
+    ]
+}
+
+/// Actions scoped to the `config` agents table — the `config.*`
+/// engine verbs (cli lane) bound to an agent row. Rows carry `from`
+/// so an object target fills `--from`; `to`/`out`/`path` stay
+/// form params.
+fn config_row_actions() -> Vec<Action> {
+    vec![
+        kit::action("config.export", "Export config")
+            .target("row")
+            .param(from_param(true))
+            .param(str_param(
+                "out",
+                "Out",
+                "Output file for the config JSON; stdout when omitted.",
+            ))
+            .description("Export the agent's config IR JSON.")
+            .build(),
+        kit::action("config.diff", "Diff config")
+            .target("row")
+            .param(from_param(true))
+            .param(to_param(true))
+            .description("Compare this agent's config against another's.")
+            .build(),
+        kit::action("config.install", "Install config…")
+            .confirm()
+            .target("row")
+            .param(from_param(true))
+            .param(to_param(true))
+            .description("Copy this agent's config into another agent's store.")
+            .build(),
+    ]
+}
+
 /// `contributes.menus[]` — the command palette / quick-launch
-/// list: session actions plus routes to the four views.
+/// list: session actions plus routes to the views.
 fn menu_entries() -> Vec<MenuEntry> {
     let mut out = Vec::new();
     let mut add = |id: &str,
@@ -495,6 +764,33 @@ fn menu_entries() -> Vec<MenuEntry> {
         &["agents", "config"],
     );
     add(
+        "config-view",
+        "Agent config",
+        None,
+        Some("/sepia/config"),
+        "Views",
+        25,
+        &["config", "skills", "rules", "mcp"],
+    );
+    add(
+        "stores-view",
+        "Stores",
+        None,
+        Some("/sepia/stores"),
+        "Views",
+        26,
+        &["stores", "sessions", "list"],
+    );
+    add(
+        "drivers-view",
+        "Drivers",
+        None,
+        Some("/sepia/drivers"),
+        "Views",
+        27,
+        &["drivers", "discovery"],
+    );
+    add(
         "status-view",
         "Status",
         None,
@@ -538,6 +834,38 @@ const AGENT_COLS: &[(&str, &str)] = &[
     ("error", "Error"),
 ];
 
+const CONFIG_AGENT_COLS: &[(&str, &str)] = &[
+    ("id", "Agent"),
+    ("label", "Label"),
+    ("runtime", "Runtime"),
+    ("skills", "Skills"),
+    ("rules", "Rules"),
+    ("commands", "Commands"),
+    ("hooks", "Hooks"),
+    ("subagents", "Subagents"),
+    ("mcpServers", "MCP"),
+    ("error", "Error"),
+];
+
+const STORE_COLS: &[(&str, &str)] = &[
+    ("store", "Store"),
+    ("id", "ID"),
+    ("title", "Title"),
+    ("cwd", "Cwd"),
+    ("error", "Error"),
+];
+
+const DRIVER_COLS: &[(&str, &str)] = &[
+    ("id", "ID"),
+    ("label", "Label"),
+    ("version", "Version"),
+    ("capabilities", "Capabilities"),
+    ("agentCommand", "Agent command"),
+    ("agentCommandResolves", "Resolves"),
+    ("binary", "Binary"),
+    ("error", "Error"),
+];
+
 /// Every view the driver declares — static (no sepia state needed;
 /// `manifest`/`views` must answer anywhere).
 pub fn specs() -> Vec<ViewSpec> {
@@ -570,12 +898,13 @@ pub fn specs() -> Vec<ViewSpec> {
             "session",
             "Session",
             "/sepia/session",
-            "One session — summary fields plus the paged message history as an events timeline. Requires --param id=<session-id> (--param agent= when ids collide across stores).",
+            "One session — summary fields, a meta-edit form (`sessions.patch_meta` on submit), and the paged message history as an events timeline. Requires --param id=<session-id> (--param agent= when ids collide across stores).",
             &["session", "history"],
             col(
                 "Session",
                 vec![
                     kv_actions("Session", "session", session_actions()),
+                    meta_form(),
                     table("History", "history", HISTORY_COLS),
                 ],
             ),
@@ -587,6 +916,49 @@ pub fn specs() -> Vec<ViewSpec> {
             "Runnable ACP agents plus their config-IR item counts (skills/rules/commands/hooks/MCP servers) from `config.list`.",
             &["agents"],
             table("Agents", "agents", AGENT_COLS),
+        ),
+        spec(
+            "config",
+            "Agent config",
+            "/sepia/config",
+            "Per-agent config inventory (`config.list` counts) with the selected agent's config IR as a tree (`config.get`) — skills, rules, commands, hooks, subagents, MCP servers. Pass --param agent=<id> to pick the detail (--param dir= overrides the config dir); without it the first config-capable agent shows.",
+            &["config.agents", "config.detail"],
+            col(
+                "Agent config",
+                vec![
+                    table_actions(
+                        "Agents",
+                        "config.agents",
+                        CONFIG_AGENT_COLS,
+                        config_row_actions(),
+                    ),
+                    tree("Config detail", "config.detail"),
+                ],
+            ),
+        ),
+        spec(
+            "stores",
+            "Stores",
+            "/sepia/stores",
+            "Every agent session store (`store list` per store — the cli lane, not the serve plane) merged into one table. A failing store degrades to an error row. --param db=/data-dir=/claude-dir=/cursor-dir= forward as store flags.",
+            &["stores"],
+            col(
+                "Store sessions",
+                vec![table_actions(
+                    "Sessions",
+                    "stores",
+                    STORE_COLS,
+                    store_row_actions(),
+                )],
+            ),
+        ),
+        spec(
+            "drivers",
+            "Drivers",
+            "/sepia/drivers",
+            "Discovered `sepia-driver-*` binaries (`driver list --json` — the cli lane): manifest id/version/capabilities, agent-command resolution, and probe problems as error rows.",
+            &["drivers"],
+            col("Drivers", vec![table("Drivers", "drivers", DRIVER_COLS)]),
         ),
     ]
 }
@@ -627,7 +999,15 @@ pub fn manifest() -> DriverManifest {
 pub fn known_query(name: &str) -> bool {
     matches!(
         name,
-        "summary" | "sessions" | "session" | "history" | "agents"
+        "summary"
+            | "sessions"
+            | "session"
+            | "history"
+            | "agents"
+            | "config.agents"
+            | "config.detail"
+            | "stores"
+            | "drivers"
     )
 }
 
@@ -640,6 +1020,10 @@ pub fn query_data(name: &str, params: &Map<String, Value>) -> Value {
         "session" => session_detail(params),
         "history" => history_rows(params),
         "agents" => agents_rows(params),
+        "config.agents" => config_agent_rows(params),
+        "config.detail" => config_detail(params),
+        "stores" => stores_rows(params),
+        "drivers" => drivers_rows(params),
         other => json!({"error": format!("unknown query '{other}'")}),
     }
 }
@@ -919,6 +1303,385 @@ fn agents_rows(ctx: &Map<String, Value>) -> Value {
     )
 }
 
+// ------------------------------------------------------------- config view
+
+/// `config.agents` query — `config.list` inventory rows merged with
+/// `agents.list` labels/runtime (the `agents` query's pattern,
+/// config-first: `config.list` is authoritative, `agents.list` only
+/// decorates). `agent`/`dir` forward like the `agents` query; a
+/// `config.list` failure fails the table — there's nothing to merge
+/// into.
+fn config_agent_rows(ctx: &Map<String, Value>) -> Value {
+    let mut params = agent_params(ctx);
+    if let Some(dir) = data::dir_param(ctx) {
+        params.insert("dir".to_string(), json!(dir));
+    }
+    let configs = match serve("config.list", Value::Object(params), ctx) {
+        Ok(Value::Array(rows)) => rows,
+        Ok(other) => return other,
+        Err(e) => return e,
+    };
+    let agents = serve("agents.list", json!({}), ctx)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    Value::Array(
+        configs
+            .iter()
+            .map(|c| config_agent_row(c, &agents))
+            .collect(),
+    )
+}
+
+/// One `config.list` row + its `agents.list` twin → table row. Pure.
+/// `from` doubles as the target-merge key for `config.*` cli-lane
+/// actions — an object row target contributes it as `--from`.
+fn config_agent_row(cfg: &Value, agents: &[Value]) -> Value {
+    let id = cfg["agent"].as_str().unwrap_or_default();
+    let agent = agents.iter().find(|a| a["id"].as_str() == Some(id));
+    let counts = cfg.get("counts");
+    let count = |key: &str| counts.map_or(Value::Null, |c| c[key].clone());
+    json!({
+        "id": id,
+        "from": id,
+        "label": agent.map_or_else(|| json!(id), |a| a["label"].clone()),
+        "runtime": agent.map_or(Value::Null, |a| {
+            if a["capabilities"].is_null() { json!("—") } else { json!("acp") }
+        }),
+        "skills": count("skills"),
+        "rules": count("rules"),
+        "commands": count("commands"),
+        "hooks": count("hooks"),
+        "subagents": count("agents"),
+        "mcpServers": count("mcpServers"),
+        "error": cfg.get("error").cloned().unwrap_or(Value::Null),
+    })
+}
+
+/// `config.detail` query — `config.get` for one agent, flattened
+/// into tree `items` (kind sections → entries). `agent` selects the
+/// config; absent → the first `config.list` row's agent (the view's
+/// table shows all agents but the tree needs one). `dir` forwards
+/// to both calls.
+fn config_detail(ctx: &Map<String, Value>) -> Value {
+    let mut params = Map::new();
+    if let Some(dir) = data::dir_param(ctx) {
+        params.insert("dir".to_string(), json!(dir));
+    }
+    let agent = if let Some(a) = data::agent_param(ctx) {
+        Some(a)
+    } else {
+        let mut list_params = Map::new();
+        if let Some(dir) = params.get("dir") {
+            list_params.insert("dir".to_string(), dir.clone());
+        }
+        match serve("config.list", Value::Object(list_params), ctx) {
+            Ok(Value::Array(rows)) => rows
+                .first()
+                .and_then(|r| r["agent"].as_str().map(str::to_string)),
+            _ => None,
+        }
+    };
+    let Some(agent) = agent else {
+        return json!({"error": "no config-capable agents — pass --param agent=<id>"});
+    };
+    params.insert("agent".to_string(), json!(agent));
+    match serve("config.get", Value::Object(params), ctx) {
+        Ok(config) if config.is_object() => json!({
+            "agent": agent,
+            "items": config_items(&config),
+        }),
+        Ok(other) => other,
+        Err(e) => e,
+    }
+}
+
+/// Flatten a `config.get` AgentConfig IR into tree items — one
+/// section node per non-empty kind (skills/rules/commands/subagents/
+/// hooks/MCP servers), entries as children. Pure — unit-tested with
+/// synthetic JSON.
+fn config_items(config: &Value) -> Vec<Value> {
+    let mut items = Vec::new();
+    for (key, label) in [
+        ("skills", "Skills"),
+        ("rules", "Rules"),
+        ("commands", "Commands"),
+        ("agents", "Subagents"),
+    ] {
+        if let Some(section) = named_section(config, key, label) {
+            items.push(section);
+        }
+    }
+    if let Some(section) = hook_section(config) {
+        items.push(section);
+    }
+    if let Some(section) = mcp_section(config) {
+        items.push(section);
+    }
+    items
+}
+
+/// One named-item section (`skills`/`rules`/`commands`/`agents`) —
+/// `{name, description?, body?}` entries → `{label, detail}`
+/// children. `detail` is the description, else a flattened body
+/// snippet.
+fn named_section(config: &Value, key: &str, label: &str) -> Option<Value> {
+    let entries = config.get(key)?.as_array()?;
+    if entries.is_empty() {
+        return None;
+    }
+    let children: Vec<Value> = entries
+        .iter()
+        .map(|e| {
+            let name = e["name"].as_str().unwrap_or_default();
+            let detail = e["description"]
+                .as_str()
+                .filter(|d| !d.is_empty())
+                .map_or_else(|| cell_text(&e["body"]), str::to_string);
+            let mut item = json!({"label": name});
+            if !detail.is_empty() {
+                item["detail"] = json!(detail);
+            }
+            item
+        })
+        .collect();
+    Some(json!({
+        "label": format!("{label} ({})", entries.len()),
+        "children": children,
+    }))
+}
+
+/// The `hooks` section — `{event, matcher?, command?|prompt?}` →
+/// `event ~matcher → command` rows (the `config list` summary's
+/// spelling).
+fn hook_section(config: &Value) -> Option<Value> {
+    let hooks = config.get("hooks")?.as_array()?;
+    if hooks.is_empty() {
+        return None;
+    }
+    let children: Vec<Value> = hooks
+        .iter()
+        .map(|h| {
+            let event = h["event"].as_str().unwrap_or_default();
+            let matcher = h["matcher"]
+                .as_str()
+                .map(|m| format!(" ~{m}"))
+                .unwrap_or_default();
+            let label = format!("{event}{matcher}");
+            let detail = match (h["command"].as_str(), h["prompt"].as_str()) {
+                (Some(c), _) => c.to_string(),
+                (None, Some(p)) => format!("[prompt] {p}"),
+                (None, None) => String::new(),
+            };
+            let mut item = json!({"label": label});
+            if !detail.is_empty() {
+                item["detail"] = json!(detail);
+            }
+            item
+        })
+        .collect();
+    Some(json!({
+        "label": format!("Hooks ({})", hooks.len()),
+        "children": children,
+    }))
+}
+
+/// The `mcpServers` section — a name → server-object map →
+/// `command`/`url` details.
+fn mcp_section(config: &Value) -> Option<Value> {
+    let servers = config.get("mcpServers")?.as_object()?;
+    if servers.is_empty() {
+        return None;
+    }
+    let children: Vec<Value> = servers
+        .iter()
+        .map(|(name, s)| {
+            let detail = s["command"]
+                .as_str()
+                .or_else(|| s["url"].as_str())
+                .unwrap_or_default();
+            let mut item = json!({"label": name});
+            if !detail.is_empty() {
+                item["detail"] = json!(detail);
+            }
+            item
+        })
+        .collect();
+    Some(json!({
+        "label": format!("MCP servers ({})", servers.len()),
+        "children": children,
+    }))
+}
+
+// --------------------------------------------------------------- stores view
+
+/// `stores` query — `store list` per agent store through the cli
+/// lane ([`ops::verb_output`] → `run store list --from <id>`),
+/// merged into one table with a `store` column. A failing store
+/// degrades to an error row, not a failed query. Store flags
+/// (`db`, `data-dir`/`dataDir`, `claude-dir`/`claudeDir`,
+/// `cursor-dir`/`cursorDir`) forward from view params.
+fn stores_rows(ctx: &Map<String, Value>) -> Value {
+    let mut rows = Vec::new();
+    for store in ops::STORE_IDS {
+        let mut params = Map::new();
+        params.insert("from".to_string(), json!(store));
+        for (view_key, flag) in [
+            ("db", "db"),
+            ("data-dir", "data-dir"),
+            ("dataDir", "data-dir"),
+            ("claude-dir", "claude-dir"),
+            ("claudeDir", "claude-dir"),
+            ("cursor-dir", "cursor-dir"),
+            ("cursorDir", "cursor-dir"),
+        ] {
+            if let Some(v) = ctx.get(view_key).and_then(Value::as_str) {
+                params.insert(flag.to_string(), json!(v));
+            }
+        }
+        match ops::verb_output("store.list", &params) {
+            Ok(out) if out.code == 0 => rows.extend(store_listing(store, &out.stdout)),
+            Ok(out) => rows.push(store_error_row(store, &out.stderr, &out.stdout)),
+            Err(e) => rows.push(store_error_row(store, &e, "")),
+        }
+    }
+    Value::Array(rows)
+}
+
+/// `store list` TSV (`id\ttitle\tworkingDirectory` rows, or the
+/// `No sessions found` line) → table rows. `session_id`/`from` ride
+/// along as target-merge keys: an object row target contributes
+/// them as the store verbs' positional/`--from` params. Pure.
+fn store_listing(store: &str, stdout: &str) -> Vec<Value> {
+    stdout
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.is_empty() && *l != "No sessions found")
+        .filter_map(|line| {
+            let mut cols = line.split('\t');
+            let id = cols.next()?.trim();
+            if id.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "store": store,
+                "id": id,
+                "session_id": id,
+                "title": cols.next().unwrap_or_default(),
+                "cwd": cols.next().unwrap_or_default(),
+                "from": store,
+            }))
+        })
+        .collect()
+}
+
+/// A failed store's placeholder row — `session_id` stays empty so
+/// required-param gating rejects row actions on it. Pure.
+fn store_error_row(store: &str, stderr: &str, stdout: &str) -> Value {
+    let msg = stderr
+        .lines()
+        .chain(stdout.lines())
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("store list failed");
+    json!({
+        "store": store,
+        "id": "(error)",
+        "session_id": "",
+        "title": msg,
+        "cwd": "",
+        "from": store,
+        "error": msg,
+    })
+}
+
+// -------------------------------------------------------------- drivers view
+
+/// `drivers` query — `driver list --json` through the cli lane →
+/// one row per discovered `sepia-driver-*` plus probe problems as
+/// error rows. Non-zero exit or unparsable output degrades to
+/// `{"error": …}`.
+fn drivers_rows(_ctx: &Map<String, Value>) -> Value {
+    let params = Map::from_iter([("json".to_string(), json!(true))]);
+    match ops::verb_output("driver.list", &params) {
+        Ok(out) if out.code == 0 => match serde_json::from_str::<Value>(&out.stdout) {
+            Ok(v) => drivers_payload(&v),
+            Err(e) => json!({"error": format!("driver list --json: unparsable output: {e}")}),
+        },
+        Ok(out) => {
+            let msg = out
+                .stderr
+                .lines()
+                .chain(out.stdout.lines())
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or("driver list failed");
+            json!({"error": msg})
+        }
+        Err(e) => json!({"error": e}),
+    }
+}
+
+/// The `driver list --json` payload → row array: `drivers` entries
+/// shaped by [`driver_row`], `problems` appended as error rows.
+/// Pure.
+fn drivers_payload(v: &Value) -> Value {
+    let mut rows: Vec<Value> = v["drivers"]
+        .as_array()
+        .map(|ds| ds.iter().map(driver_row).collect())
+        .unwrap_or_default();
+    for p in v["problems"].as_array().into_iter().flatten() {
+        rows.push(json!({
+            "id": "(problem)",
+            "label": p.as_str().unwrap_or_default(),
+            "error": "probe failed",
+        }));
+    }
+    Value::Array(rows)
+}
+
+/// One `driver list --json` entry → table row. Pure.
+fn driver_row(d: &Value) -> Value {
+    let caps = d["capabilities"]
+        .as_array()
+        .map(|cs| {
+            cs.iter()
+                .map(capability_label)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    json!({
+        "id": d["id"],
+        "label": d["label"],
+        "version": d["version"],
+        "capabilities": caps,
+        "agentCommand": d["agentCommand"],
+        "agentCommandResolves": d["agentCommandResolves"],
+        "binary": d["binary"],
+        "error": Value::Null,
+    })
+}
+
+/// A `Capability` wire value → the compact label `driver list`'s
+/// table prints: the camelCase name for unit variants,
+/// `convert:{from}->{to}` for a conversion pair. Pure.
+fn capability_label(c: &Value) -> String {
+    if let Some(s) = c.as_str() {
+        return s.to_string();
+    }
+    let pair = &c["convert"];
+    if pair.is_object() {
+        format!(
+            "convert:{}->{}",
+            pair["from"].as_str().unwrap_or_default(),
+            pair["to"].as_str().unwrap_or_default()
+        )
+    } else {
+        c.to_string()
+    }
+}
+
 // ---------------------------------------------------------------- view op
 
 /// `{"op":"view","view":id,"params":{…}}` → [`pavo_protocol::wire::ViewResult`].
@@ -936,6 +1699,22 @@ pub fn view_result(
         data_map.insert(b.name.clone(), query_data(&b.name, params));
     }
 
+    // The session view is stateful in two small ways: its resolved
+    // `id`/`agent` become the submit context (the wire `submit` op
+    // carries no view params), and the returned spec's form fields
+    // get seeded from the `session` detail so the meta form edits
+    // current values, not blanks.
+    let mut spec = spec;
+    if view_id == "session" {
+        note_session_context(params);
+        if let Some(session) = data_map
+            .get("session")
+            .filter(|v| v.is_object() && v.get("error").is_none())
+        {
+            patch_form_values(&mut spec.root, session);
+        }
+    }
+
     Ok(pavo_protocol::wire::ViewResult {
         view: spec,
         data: data_map,
@@ -943,7 +1722,7 @@ pub fn view_result(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::many_single_char_names)]
 mod tests {
     use super::*;
 
@@ -955,7 +1734,9 @@ mod tests {
         assert_eq!(m.renderers.len(), 0);
         let ids: std::collections::BTreeSet<&str> = m.views.iter().map(|v| v.id.as_str()).collect();
         assert_eq!(ids.len(), m.views.len(), "duplicate view ids");
-        for want in ["status", "sessions", "session", "agents"] {
+        for want in [
+            "status", "sessions", "session", "agents", "config", "stores", "drivers",
+        ] {
             assert!(ids.contains(want), "missing view {want}");
         }
     }
@@ -1083,5 +1864,150 @@ mod tests {
             panic!("session child is not a kv");
         };
         assert_ne!(kv.base.actions.len(), 0, "session kv has no actions");
+        // the meta form sits between the kv and the history table
+        let ViewNode::Form(f) = &c.children[1] else {
+            panic!("session child[1] is not a form");
+        };
+        assert_eq!(f.base.id.as_deref(), Some("meta"));
+        assert_eq!(f.submit_op.as_deref(), Some("session.patch_meta"));
+        // the new views carry their row actions
+        for (view, idx) in [("stores", 0usize), ("config", 0usize)] {
+            let v = specs().into_iter().find(|v| v.id == view).unwrap();
+            let ViewNode::Column(c) = &v.root else {
+                panic!("{view} root is not a column");
+            };
+            let ViewNode::Table(t) = &c.children[idx] else {
+                panic!("{view} child is not a table");
+            };
+            assert_ne!(t.base.actions.len(), 0, "{view} table has no actions");
+        }
+    }
+
+    #[test]
+    fn config_agent_row_merges_counts_and_label() {
+        let cfg = json!({
+            "agent": "fake",
+            "counts": {"skills": 2, "rules": 1, "commands": 0, "hooks": 3, "agents": 4, "mcpServers": 5},
+        });
+        let agents = vec![json!({"id": "fake", "label": "Fake", "capabilities": {"x": 1}})];
+        let row = config_agent_row(&cfg, &agents);
+        assert_eq!(row["id"], "fake");
+        assert_eq!(row["from"], "fake"); // target-merge key for config.* actions
+        assert_eq!(row["label"], "Fake");
+        assert_eq!(row["runtime"], "acp");
+        assert_eq!(row["skills"], 2);
+        assert_eq!(row["subagents"], 4);
+        assert_eq!(row["mcpServers"], 5);
+        // no agents.list twin → label falls back to the id, runtime null
+        let row = config_agent_row(&cfg, &[]);
+        assert_eq!(row["label"], "fake");
+        assert!(row["runtime"].is_null());
+    }
+
+    #[test]
+    fn config_items_flattens_every_kind() {
+        let config = json!({
+            "skills": [{"name": "tidy", "description": "clean code"}],
+            "rules": [{"name": "house", "body": "be nice"}],
+            "commands": [{"name": "ship", "body": "deploy it"}],
+            "agents": [{"name": "scout", "description": "look around"}],
+            "hooks": [
+                {"event": "PreToolUse", "matcher": "Write", "command": "lint.sh"},
+                {"event": "Stop", "prompt": "review?"}
+            ],
+            "mcpServers": {"docs": {"command": "mcp-docs"}},
+        });
+        let items = config_items(&config);
+        let labels: Vec<&str> = items.iter().map(|i| i["label"].as_str().unwrap()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Skills (1)",
+                "Rules (1)",
+                "Commands (1)",
+                "Subagents (1)",
+                "Hooks (2)",
+                "MCP servers (1)"
+            ]
+        );
+        // description wins over body; body flattens when no description
+        assert_eq!(items[0]["children"][0]["detail"], "clean code");
+        assert_eq!(items[1]["children"][0]["detail"], "be nice");
+        // hook label carries event+matcher, detail the command/prompt
+        assert_eq!(items[4]["children"][0]["label"], "PreToolUse ~Write");
+        assert_eq!(items[4]["children"][0]["detail"], "lint.sh");
+        assert_eq!(items[4]["children"][1]["detail"], "[prompt] review?");
+        assert_eq!(items[5]["children"][0]["detail"], "mcp-docs");
+        // empty kinds emit no section
+        assert_eq!(config_items(&json!({})), Vec::<Value>::new());
+        assert_eq!(config_items(&json!({"skills": []})), Vec::<Value>::new());
+    }
+
+    #[test]
+    fn store_listing_parses_tsv_and_skips_empty() {
+        let rows = store_listing(
+            "devin",
+            "s1\tFirst\t/work/one\ns2\tSecond\t/work/two\nNo sessions found\n",
+        );
+        // the `No sessions found` sentinel is filtered, not a row
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[0]["store"], "devin");
+        assert_eq!(rows[0]["id"], "s1");
+        assert_eq!(rows[0]["session_id"], "s1"); // target-merge key
+        assert_eq!(rows[0]["title"], "First");
+        assert_eq!(rows[0]["cwd"], "/work/one");
+        assert_eq!(rows[0]["from"], "devin"); // target-merge key
+        let clean = store_listing("cline", "No sessions found\n\n");
+        assert!(clean.is_empty(), "{clean:?}");
+    }
+
+    #[test]
+    fn store_error_row_disables_row_actions() {
+        let row = store_error_row("claude", "boom: no such dir\n", "");
+        assert_eq!(row["store"], "claude");
+        assert_eq!(row["error"], "boom: no such dir");
+        assert_eq!(row["session_id"], "", "required-param gate must reject");
+        // falls back to stdout when stderr is empty
+        let row = store_error_row("cursor", "", "weird output\n");
+        assert_eq!(row["title"], "weird output");
+    }
+
+    #[test]
+    fn driver_row_and_caps_shaping() {
+        let row = driver_row(&json!({
+            "id": "fake", "label": "Fake", "version": "0.0.1",
+            "capabilities": ["sessionStore", {"convert": {"from": "cline", "to": "devin"}}],
+            "agentCommand": "fake-acp", "agentCommandResolves": false,
+            "binary": "/bin/fake",
+        }));
+        assert_eq!(row["id"], "fake");
+        assert_eq!(row["capabilities"], "sessionStore, convert:cline->devin");
+        assert_eq!(row["agentCommandResolves"], false);
+        // problems append as error rows
+        let rows = drivers_payload(&json!({
+            "drivers": [{"id": "fake"}],
+            "problems": ["sepia-driver-bad: probe failed"],
+        }));
+        let arr = rows.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[1]["id"], "(problem)");
+        assert_eq!(arr[1]["error"], "probe failed");
+    }
+
+    #[test]
+    fn form_submit_op_resolves_declared_forms() {
+        assert_eq!(
+            form_submit_op("session", Some("meta")).as_deref(),
+            Some("session.patch_meta")
+        );
+        // absent form → the view's first (only) form
+        assert_eq!(
+            form_submit_op("session", None).as_deref(),
+            Some("session.patch_meta")
+        );
+        // unknown form/view → None (the verb-named fallback applies)
+        assert!(form_submit_op("session", Some("bogus")).is_none());
+        assert!(form_submit_op("sessions", Some("meta")).is_none());
+        assert!(form_submit_op("bogus", None).is_none());
     }
 }

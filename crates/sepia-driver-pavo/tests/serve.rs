@@ -15,6 +15,7 @@ mod serve {
     use std::path::{Path, PathBuf};
     use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+    use sepia_core::storage::SessionRepository;
     use serde_json::{Value, json};
 
     /// The canned session the fake driver serves for `session.get` /
@@ -46,6 +47,7 @@ mod serve {
              \t\t*'\"method\":\"session.save\"'*) printf '%s\\n' \"$line\" >> '{log}'; result='null' ;;\n\
              \t\t*'\"method\":\"session.list\"'*) result='[{SESSION}]' ;;\n\
              \t\t*'\"method\":\"session.get\"'*) result='{SESSION}' ;;\n\
+             \t\t*'\"method\":\"session.summary\"'*) result='{SESSION}' ;;\n\
              \t\t*'\"method\":\"config.read\"'*) printf '%s\\n' \"$line\" >> '{config_log}'; result='{CONFIG}' ;;\n\
              \t\t*'\"method\":\"config.write\"'*) printf '%s\\n' \"$line\" >> '{config_log}'; result='{{\"actions\":[{{\"path\":\"/out/r.md\",\"action\":\"wrote\"}}]}}' ;;\n\
              \t\t*) result='null' ;;\n\
@@ -519,5 +521,147 @@ mod serve {
         );
         let res = drv.call_raw(9, r#"{"op":"submit","view":"bogus","values":{}}"#);
         assert_eq!(res["ok"], false, "{res}");
+    }
+
+    /// The P2 views over the wire: `config.*` queries hit the fake
+    /// driver's `config.read`, `stores`/`drivers` degrade to honest
+    /// rows/output under the test env, and the session meta form
+    /// submits through `sessions.patch_meta` with the view's
+    /// resolved id/agent.
+    #[test]
+    fn p2_views_and_meta_form_submit() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let drivers = tmp.path().join("drivers");
+        std::fs::create_dir_all(&drivers).unwrap();
+        fake_driver(&drivers);
+        let mut drv = Serve::start_driver(&home, &drivers, &[]);
+
+        // `config.agents` — config.list row merged into the table shape.
+        let res = drv.call_raw(1, r#"{"op":"query","query":"config.agents","params":{}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let rows = res["result"]["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{res}");
+        assert_eq!(rows[0]["id"], "fake");
+        assert_eq!(rows[0]["from"], "fake");
+        assert_eq!(rows[0]["rules"], 1);
+        assert_eq!(rows[0]["mcpServers"], 1);
+
+        // `config.detail` — config.get flattened into tree items.
+        let res = drv.call_raw(
+            2,
+            r#"{"op":"query","query":"config.detail","params":{"agent":"fake"}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        let items = res["result"]["data"]["items"].as_array().unwrap();
+        let labels: Vec<&str> = items.iter().map(|i| i["label"].as_str().unwrap()).collect();
+        assert!(labels.contains(&"Rules (1)"), "{labels:?}");
+        assert!(labels.contains(&"MCP servers (1)"), "{labels:?}");
+        let rules = items.iter().find(|i| i["label"] == "Rules (1)").unwrap();
+        assert_eq!(rules["children"][0]["label"], "house");
+
+        // The `config` view binds both queries; the detail defaults to
+        // the first config-capable agent when `agent` is absent.
+        let res = drv.call_raw(3, r#"{"op":"view","view":"config","params":{}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        assert!(
+            res["result"]["data"]["config.detail"]["items"]
+                .as_array()
+                .is_some_and(|i| !i.is_empty()),
+            "{res}"
+        );
+
+        // `stores` — `store list` per store through the cli lane.
+        // Seed a devin db and pass `--param db=` (forwarded to every
+        // store's flags; only devin reads it); the other stores hit
+        // missing default dirs under the test HOME → error rows or
+        // empty. The devin row must parse out of the TSV.
+        let db = tmp.path().join("sessions.db");
+        {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let store = sepia_driver_devin::DevinStore::open(&db, false).unwrap();
+                store
+                    .save(&sepia_testkit::contract::session(
+                        "store-s1",
+                        "store session",
+                        2.0,
+                    ))
+                    .await
+                    .unwrap();
+            });
+        }
+        let res = drv.call_raw(
+            4,
+            &format!(
+                r#"{{"op":"query","query":"stores","params":{{"db":"{}"}}}}"#,
+                db.display()
+            ),
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        let rows = res["result"]["data"].as_array().unwrap();
+        assert!(!rows.is_empty(), "{res}");
+        let devin = rows.iter().find(|r| r["store"] == "devin");
+        assert!(devin.is_some(), "no devin row in {rows:?}");
+        let devin = devin.unwrap();
+        assert_eq!(devin["id"], "store-s1", "{devin}");
+        assert_eq!(devin["session_id"], "store-s1");
+        assert_eq!(devin["from"], "devin");
+        assert_eq!(devin["title"], "store session");
+        for row in rows {
+            assert!(
+                ["devin", "cline", "claude", "cursor"].contains(&row["store"].as_str().unwrap()),
+                "{row}"
+            );
+        }
+
+        // `drivers` — `driver list --json` through the cli lane; the
+        // run children inherit SEPIA_DRIVER_DIR, so the fake driver
+        // shows up as a row.
+        let res = drv.call_raw(5, r#"{"op":"query","query":"drivers","params":{}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let rows = res["result"]["data"].as_array().unwrap();
+        assert!(
+            rows.iter().any(|r| r["id"] == "fake"),
+            "fake driver missing from {rows:?}"
+        );
+
+        // The meta form: resolve the session view (sets the submit
+        // context), then submit form "meta" — values carry only the
+        // editable fields; id/agent come from the view resolution.
+        let res = drv.call_raw(
+            6,
+            r#"{"op":"view","view":"session","params":{"id":"s1","agent":"fake"}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        // the returned spec's form fields are seeded from the detail
+        assert!(
+            res["result"]["data"]["session"]["title"].is_string(),
+            "session detail missing title: {}",
+            res["result"]["data"]["session"]
+        );
+        let form = res["result"]["view"]["root"]["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["kind"] == "form")
+            .unwrap();
+        assert_eq!(form["id"], "meta");
+        assert_eq!(form["submit_op"], "session.patch_meta");
+        assert_eq!(form["fields"][0]["key"], "title");
+        assert_eq!(form["fields"][0]["value"], "Hello");
+
+        let res = drv.call_raw(
+            7,
+            r#"{"op":"submit","view":"session","form":"meta","values":{"title":"Renamed via form","pinned":true}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(
+            res["result"]["data"]["method"], "sessions.patch_meta",
+            "{res}"
+        );
     }
 }

@@ -32,8 +32,11 @@
 //!   attach`, `sessions.prompt`, `sessions.patch_meta`, …); bare
 //!   verb names / `cli.`-prefixed spellings ride the same
 //!   argv/exec path `cli.*` queries use → `ActionResult`.
-//!   `{"op":"submit"}` is a thin verb/action-named adapter (the
-//!   driver declares no form nodes).
+//!   `{"op":"submit"}` resolves a declared form node's `submit_op`
+//!   first (the session view's meta form → `session.patch_meta`,
+//!   with `id`/`agent` merged from the last-resolved session view —
+//!   the wire op carries no view params), then falls back to
+//!   verb/action-named forms.
 //!
 //! Optional surface: feature `mcp` embeds pavo-driver-kit's
 //! surface layer — `mcp` serves the ops manifest as MCP tools on

@@ -146,8 +146,9 @@ fn kind(a: &Arg) -> &'static str {
 
 /// The four store/agent ids every `--from`/`--to` flag accepts —
 /// `StoreId` and `AgentId` spell the same set, so one enum covers
-/// both the store and config verbs.
-const STORE_IDS: &[&str] = &["devin", "cline", "claude", "cursor"];
+/// both the store and config verbs. `pub(crate)` — the `stores`
+/// view query iterates it.
+pub(crate) const STORE_IDS: &[&str] = &["devin", "cline", "claude", "cursor"];
 
 /// `ExportFormat` tokens (`store.export --format`).
 const EXPORT_FORMATS: &[&str] = &["json", "cline"];
@@ -495,6 +496,31 @@ pub fn run_verb(name: &str, params: &Map<String, Value>) -> Response {
     })
 }
 
+/// Captured engine-verb output for *view queries* — the same
+/// argv/exec path `cli.<verb>` uses, minus the wire envelope:
+/// callers parse `stdout` themselves (`store list` is TSV,
+/// `driver list --json` is JSON). A nonzero `code` is the engine's
+/// own exit status — honest data the query shaper degrades on.
+pub(crate) struct VerbOutput {
+    pub code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Run one engine verb by name for a view query. `Err` is reserved
+/// for unknown verbs and spawn failures, same as [`run_verb`].
+pub(crate) fn verb_output(name: &str, params: &Map<String, Value>) -> Result<VerbOutput, String> {
+    let Some(cmd) = op_cmd(name) else {
+        return Err(format!("unknown op: {name}"));
+    };
+    let (_args, o) = capture(&cmd, name, params)?;
+    Ok(VerbOutput {
+        code: o.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+    })
+}
+
 /// Params → argv → `run` child with captured output — the shared
 /// tail of `cli.<verb>` queries and `invoke`. The child's stdin is
 /// null: no sepia op needs it — `serve` is a surface, and prompts
@@ -692,7 +718,11 @@ fn meta_patch(params: &Map<String, Value>) -> Value {
         }
     }
     let mut patch = Map::new();
-    put(&mut patch, &["title"], "title", params);
+    // `title`/`model` only take non-empty strings from flat params —
+    // a form's untouched optional field arrives as null/"" and must
+    // not clear the stored value (the wire maps `model: null` to an
+    // explicit clear; that stays reachable through `patch`).
+    put_text(&mut patch, &["title"], "title", params);
     put(&mut patch, &["pinned"], "pinned", params);
     put(&mut patch, &["archived"], "archived", params);
     put(
@@ -701,8 +731,18 @@ fn meta_patch(params: &Map<String, Value>) -> Value {
         "projectIds",
         params,
     );
-    put(&mut patch, &["model"], "model", params);
+    put_text(&mut patch, &["model"], "model", params);
     Value::Object(patch)
+}
+
+/// [`put`] for string-valued patch fields — copies only a non-empty
+/// string, so null/"" (an untouched form field) means "keep".
+fn put_text(out: &mut Map<String, Value>, keys: &[&str], to: &str, params: &Map<String, Value>) {
+    if let Some(v) = get(params, keys)
+        && v.as_str().is_some_and(|s| !s.is_empty())
+    {
+        out.insert(to.to_string(), v.clone());
+    }
 }
 
 /// `restore`'s `request` — `RestoreRequest` wire shape
@@ -906,20 +946,37 @@ fn serve_invoke(method: &str, target: Option<&Value>, params: &Map<String, Value
     }
 }
 
-/// `{"op":"submit"}` — thin adapter, same contract as the cli
-/// lane's: this driver declares no form nodes, so a submit only
-/// dispatches when `form` (or the view id itself) names a known
-/// action — a serve action (`session.*`) or an engine verb —
-/// with `values` as its params. Anything else is `ok:false`: there
-/// is no form to validate against.
+/// `{"op":"submit"}` — the form-interaction adapter. Resolution
+/// order: a declared `form` node's `submit_op` names the action
+/// first (the session view's meta form submits
+/// `session.patch_meta` — see `views::form_submit_op`); failing
+/// that, the `form`/view id itself names a known action — a serve
+/// action (`session.*`) or an engine verb — with `values` as its
+/// params. Anything else is `ok:false`.
+///
+/// The wire `submit` op carries no view params, so a session-scoped
+/// serve action picks up `id`/`agent` from the session view's
+/// last-resolved context ([`crate::views::session_context`]) when
+/// `values` doesn't supply them — the meta form's editable fields
+/// are title/pinned/archived/model only.
 pub fn submit(view: &str, form: Option<&str>, values: &Map<String, Value>) -> Response {
-    let candidate = form.unwrap_or(view);
-    if serve_method(candidate).is_none() && action_verb(candidate).is_none() {
+    let candidate = crate::views::form_submit_op(view, form)
+        .unwrap_or_else(|| form.unwrap_or(view).to_string());
+    if serve_method(&candidate).is_none() && action_verb(&candidate).is_none() {
         return Response::err(format!(
-            "no form '{candidate}' on view '{view}' — this driver declares no forms"
+            "unknown submit target '{candidate}' on view '{view}'"
         ));
     }
-    match invoke(candidate, None, values) {
+    // Session-scoped serve actions merge the view's resolved
+    // id/agent when values don't carry them.
+    let owned;
+    let values = if serve_method(&candidate).is_some() {
+        owned = merge_session_ctx(values);
+        &owned
+    } else {
+        values
+    };
+    match invoke(&candidate, None, values) {
         Ok(r) => Response::ok_typed(&SubmitResult {
             message: r.message,
             errors: r.errors,
@@ -929,6 +986,27 @@ pub fn submit(view: &str, form: Option<&str>, values: &Map<String, Value>) -> Re
         }),
         Err(e) => Response::err(e),
     }
+}
+
+/// `values` + the session view's last-resolved `id`/`agent` —
+/// explicit values win; the context only fills what they lack
+/// (`id`/`session_id`/`sessionId` count as present for `id`).
+fn merge_session_ctx(values: &Map<String, Value>) -> Map<String, Value> {
+    let mut out = values.clone();
+    let Some(ctx) = crate::views::session_context() else {
+        return out;
+    };
+    if session_id(&out).is_none()
+        && let Some(id) = ctx.get("id").and_then(Value::as_str)
+    {
+        out.insert("id".to_string(), json!(id));
+    }
+    if !present(out.get("agent"))
+        && let Some(agent) = ctx.get("agent").and_then(Value::as_str)
+    {
+        out.insert("agent".to_string(), json!(agent));
+    }
+    out
 }
 
 #[cfg(test)]
