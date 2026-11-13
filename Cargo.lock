@@ -840,7 +840,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2019,7 +2019,7 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 [[package]]
 name = "pavo-driver-kit"
 version = "0.1.0"
-source = "git+https://github.com/9aia/pavo?rev=9397efb98a6dd96632696effe9d6c7df8648acf4#9397efb98a6dd96632696effe9d6c7df8648acf4"
+source = "git+https://github.com/9aia/pavo?rev=7523dcb862dd2339917250f7489311cda27f0552#7523dcb862dd2339917250f7489311cda27f0552"
 dependencies = [
  "pavo-protocol",
  "serde",
@@ -2029,7 +2029,7 @@ dependencies = [
 [[package]]
 name = "pavo-protocol"
 version = "0.1.0"
-source = "git+https://github.com/9aia/pavo?rev=9397efb98a6dd96632696effe9d6c7df8648acf4#9397efb98a6dd96632696effe9d6c7df8648acf4"
+source = "git+https://github.com/9aia/pavo?rev=7523dcb862dd2339917250f7489311cda27f0552#7523dcb862dd2339917250f7489311cda27f0552"
 dependencies = [
  "serde",
  "serde_json",
@@ -2039,7 +2039,7 @@ dependencies = [
 [[package]]
 name = "pavo-testkit"
 version = "0.1.0"
-source = "git+https://github.com/9aia/pavo?rev=9397efb98a6dd96632696effe9d6c7df8648acf4#9397efb98a6dd96632696effe9d6c7df8648acf4"
+source = "git+https://github.com/9aia/pavo?rev=7523dcb862dd2339917250f7489311cda27f0552#7523dcb862dd2339917250f7489311cda27f0552"
 dependencies = [
  "pavo-protocol",
  "serde",
@@ -2492,7 +2492,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3223,10 +3223,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

@@ -25,6 +25,11 @@
 //! | `sepia:stores`   | `store list` per store (`cli` lane, TSV) |
 //! | `sepia:drivers`  | `driver list --json` (`cli` lane)      |
 //!
+//! Every view also declares `refresh_ms` — the host's auto-refresh
+//! hint (TUI timer, web polling; CLI ignores it). The cadence
+//! constants by [`spec`] record the per-view rationale: feed-buffer
+//! views tick fastest, `cli.*`-lane and discovery views slowly.
+//!
 //! Mutations live in two places, both dispatching through the wire
 //! `invoke` op: the declared [`Action`]s below (`session.*` ids →
 //! the `sepia serve` session plane, everything else → `cli.<verb>`
@@ -255,15 +260,49 @@ fn patch_form_values(node: &mut ViewNode, session: &Value) {
     }
 }
 
+// ---------------------------------------------------------- refresh
+//
+// `refresh_ms` arms the host's auto-refresh (`ViewSpec::refresh_ms`
+// — TUI timer, web polling; the CLI ignores it; hosts drop values
+// under 1s or over 5min). Cadence tracks how fast each view's data
+// actually moves and what a tick costs:
+//
+// - `permissions` is buffer-only (the feed already holds the asks)
+//   so it ticks fastest; `live`/`stream` merge serve calls
+//   (`sessions.list` titles, `sessions.history` tail) and sit at
+//   the session cadence with `sessions`/`session`;
+// - `status` is three cheap serve calls but its counts move
+//   slowly — 5s;
+// - `stores` fans `store list` out over the `cli.*` lane — one
+//   spawned `run` child per store — so it polls slowly;
+// - `drivers`/`agents`/`config` are near-static discovery/config
+//   views; `config.detail` alone fans out to `config.get`, so the
+//   whole view stays on the slow cadence.
+
+/// Buffer-only feed views — the asks live in `feed.rs`, no serve call per tick.
+const REFRESH_FEED_MS: u64 = 2_000;
+/// Session-plane views — `sessions.list`/`sessions.summary`/`sessions.history` per tick.
+const REFRESH_SESSION_MS: u64 = 3_000;
+/// Plane digest — counts move slowly.
+const REFRESH_STATUS_MS: u64 = 5_000;
+/// `cli.*` lane views — a spawned `run` child per query.
+const REFRESH_CLI_MS: u64 = 10_000;
+/// Discovery/config views — near-static, heaviest queries.
+const REFRESH_SLOW_MS: u64 = 30_000;
+
 fn spec(
     id: &str,
     title: &str,
     route: &str,
     description: &str,
     queries: &[&str],
+    refresh_ms: Option<u64>,
     root: ViewNode,
 ) -> ViewSpec {
     let mut view = kit::view(id, title, route, root).description(description);
+    if let Some(ms) = refresh_ms {
+        view = view.refresh_ms(ms);
+    }
     for q in queries {
         view = view.query(kit::binding(q, "query"));
     }
@@ -1021,6 +1060,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/status",
             "Plane digest — node identity, protocol version, and live counts of sessions and agents.",
             &["summary"],
+            Some(REFRESH_STATUS_MS),
             col("Sepia status", vec![kv("Plane", "summary")]),
         ),
         spec(
@@ -1029,6 +1069,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/sessions",
             "Every session the plane knows — store rows plus live attaches — with busy/overlay flags. Lock-holder probing stays off (`sessions.list` without `withLocks`) so the view answers inside a host's request budget; the probe path can hit a store driver's call timeout. Filter with --param agent=.",
             &["sessions"],
+            Some(REFRESH_SESSION_MS),
             col(
                 "Sepia sessions",
                 vec![table_actions(
@@ -1045,6 +1086,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/session",
             "One session — summary fields, a meta-edit form (`sessions.patch_meta` on submit), and the paged message history as an events timeline. Requires --param id=<session-id> (--param agent= when ids collide across stores).",
             &["session", "history"],
+            Some(REFRESH_SESSION_MS),
             col(
                 "Session",
                 vec![
@@ -1060,6 +1102,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/agents",
             "Runnable ACP agents plus their config-IR item counts (skills/rules/commands/hooks/MCP servers) from `config.list`.",
             &["agents"],
+            Some(REFRESH_SLOW_MS),
             table("Agents", "agents", AGENT_COLS),
         ),
         spec(
@@ -1068,6 +1111,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/config",
             "Per-agent config inventory (`config.list` counts) with the selected agent's config IR as a tree (`config.get`) — skills, rules, commands, hooks, subagents, MCP servers. Pass --param agent=<id> to pick the detail (--param dir= overrides the config dir); without it the first config-capable agent shows.",
             &["config.agents", "config.detail"],
+            Some(REFRESH_SLOW_MS),
             col(
                 "Agent config",
                 vec![
@@ -1087,6 +1131,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/stores",
             "Every agent session store (`store list` per store — the cli lane, not the serve plane) merged into one table. A failing store degrades to an error row. --param db=/data-dir=/claude-dir=/cursor-dir= forward as store flags.",
             &["stores"],
+            Some(REFRESH_CLI_MS),
             col(
                 "Store sessions",
                 vec![table_actions(
@@ -1103,6 +1148,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/drivers",
             "Discovered `sepia-driver-*` binaries (`driver list --json` — the cli lane): manifest id/version/capabilities, agent-command resolution, and probe problems as error rows.",
             &["drivers"],
+            Some(REFRESH_SLOW_MS),
             col("Drivers", vec![table("Drivers", "drivers", DRIVER_COLS)]),
         ),
         spec(
@@ -1111,6 +1157,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/live",
             "Sessions the event feed sees — attach/create/detach lifecycle plus run state (busy/attached/detached), last activity, and pending permission counts, merged with `sessions.list` for titles. Data comes from the feed child's `events.subscribe` stream; feed health is the `feed.status` kv. Row action opens the stream.",
             &["feed.status", "live"],
+            Some(REFRESH_SESSION_MS),
             col(
                 "Live sessions",
                 vec![
@@ -1125,6 +1172,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/stream",
             "One session's merged transcript — the paged `sessions.history` head plus the live event-feed tail flattened to rows (text/reasoning deltas coalesced per message, tool calls, permission asks). Requires --param id=<session-id> (--param agent= when ids collide across stores); session actions dispatch with the view's resolved id.",
             &["session", "stream"],
+            Some(REFRESH_SESSION_MS),
             col(
                 "Stream",
                 vec![
@@ -1139,6 +1187,7 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/permissions",
             "Pending `session/request_permission` asks the feed has seen and not yet resolved — `sessions.permission` answers them (the row supplies session id + request id; pick an option id from the row's options column). Feed health is the `feed.status` kv.",
             &["feed.status", "permissions"],
+            Some(REFRESH_FEED_MS),
             col(
                 "Permissions",
                 vec![
@@ -2137,6 +2186,32 @@ mod tests {
             "status", "sessions", "session", "agents", "config", "stores", "drivers",
         ] {
             assert!(ids.contains(want), "missing view {want}");
+        }
+    }
+
+    #[test]
+    fn views_arm_auto_refresh_at_their_cadence() {
+        let refresh = |id: &str| {
+            specs()
+                .into_iter()
+                .find(|v| v.id == id)
+                .unwrap_or_else(|| panic!("missing view {id}"))
+                .refresh_ms
+        };
+        // buffer-only feed view — fastest tick
+        assert_eq!(refresh("permissions"), Some(REFRESH_FEED_MS));
+        // session-plane views — serve call per tick
+        for id in ["sessions", "session", "live", "stream"] {
+            assert_eq!(refresh(id), Some(REFRESH_SESSION_MS), "{id}");
+        }
+        assert_eq!(refresh("status"), Some(REFRESH_STATUS_MS));
+        assert_eq!(refresh("stores"), Some(REFRESH_CLI_MS));
+        for id in ["agents", "config", "drivers"] {
+            assert_eq!(refresh(id), Some(REFRESH_SLOW_MS), "{id}");
+        }
+        // every declared view is armed — no silent manual-only views
+        for v in specs() {
+            assert!(v.refresh_ms.is_some(), "{} has no refresh_ms", v.id);
         }
     }
 
