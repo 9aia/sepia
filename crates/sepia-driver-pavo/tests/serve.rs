@@ -69,11 +69,21 @@ mod serve {
     }
 
     impl Serve {
+        /// The engine wire — `run serve` is `sepia serve`.
         fn start(home: &Path, drivers: &Path, envs: &[(&str, &str)]) -> Self {
+            Self::launch(home, drivers, envs, &["run", "serve"])
+        }
+
+        /// The pavo driver wire — bare `serve` is the ndjson
+        /// `{"op":…}` loop (`invoke`/`submit`/`query`/…).
+        fn start_driver(home: &Path, drivers: &Path, envs: &[(&str, &str)]) -> Self {
+            Self::launch(home, drivers, envs, &["serve"])
+        }
+
+        fn launch(home: &Path, drivers: &Path, envs: &[(&str, &str)], argv: &[&str]) -> Self {
             let mut command = Command::new(env!("CARGO_BIN_EXE_tamias-driver-sepia"));
             command
-                .arg("run")
-                .arg("serve")
+                .args(argv)
                 .env("SEPIA_HOME", home)
                 .env("SEPIA_DRIVER_DIR", drivers)
                 .env("HOME", home)
@@ -90,6 +100,19 @@ mod serve {
                 stdout: BufReader::new(child.stdout.take().unwrap()),
                 child,
             }
+        }
+
+        /// A raw request line — the pavo driver's wire uses
+        /// `{"op":…}` shapes `call`'s method/params framing can't
+        /// express. The pavo wire carries no request ids: one
+        /// request → exactly one response line.
+        fn call_raw(&mut self, _id: u64, request: &str) -> Value {
+            let stdin = self.stdin.as_mut().unwrap();
+            writeln!(stdin, "{request}").unwrap();
+            stdin.flush().unwrap();
+            let mut line = String::new();
+            assert!(self.stdout.read_line(&mut line).unwrap() > 0, "eof");
+            serde_json::from_str(&line).unwrap()
         }
 
         fn call(&mut self, id: u64, method: &str, params: Value) -> Value {
@@ -401,5 +424,100 @@ mod serve {
         assert_eq!(res["result"]["live"], json!([]), "{res}");
 
         serve.call(3, "shutdown", json!({}));
+    }
+
+    /// The pavo `invoke`/`submit` ops end-to-end: `session.*` action
+    /// ids ride the driver's own `sepia serve` child (spawned as
+    /// `<self> run serve` — the engine passthrough), `cli.*`-style
+    /// ids ride the `run` argv path. Same fake-driver plane as the
+    /// engine-wire tests.
+    #[test]
+    fn invoke_routes_session_and_cli_lanes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let drivers = tmp.path().join("drivers");
+        std::fs::create_dir_all(&drivers).unwrap();
+        fake_driver(&drivers);
+        let mut drv = Serve::start_driver(&home, &drivers, &[]);
+
+        // The manifest advertises the declared actions + menus.
+        let res = drv.call_raw(1, r#"{"op":"manifest"}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let actions = res["result"]["actions"].as_array().unwrap();
+        assert!(
+            actions.iter().any(|a| a["id"] == "session.prompt"),
+            "manifest missing session.prompt: {res}"
+        );
+        assert!(
+            res["result"]["contributes"]["menus"]
+                .as_array()
+                .is_some_and(|m| !m.is_empty()),
+            "manifest missing menus: {res}"
+        );
+
+        // Serve lane — `session.export` answers the session IR.
+        let res = drv.call_raw(
+            2,
+            r#"{"op":"invoke","action":"session.export","params":{"id":"s1","agent":"fake"}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["result"]["data"]["method"], "sessions.export", "{res}");
+        assert_eq!(
+            res["result"]["data"]["result"]["session"]["id"], "s1",
+            "{res}"
+        );
+
+        // Serve lane — `session.patch_meta` writes the overlay.
+        let res = drv.call_raw(
+            3,
+            r#"{"op":"invoke","action":"session.patch_meta","params":{"id":"s1","title":"Renamed"}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(
+            res["result"]["data"]["method"], "sessions.patch_meta",
+            "{res}"
+        );
+
+        // Required-param gating — no id, no wire call.
+        let res = drv.call_raw(
+            4,
+            r#"{"op":"invoke","action":"session.delete","params":{}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["result"]["errors"]["id"], "required", "{res}");
+
+        // Scalar target fills `id` — a tree-item/row selection shape.
+        let res = drv.call_raw(
+            5,
+            r#"{"op":"invoke","action":"session.export","target":"s1"}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(
+            res["result"]["data"]["result"]["session"]["id"], "s1",
+            "{res}"
+        );
+
+        // Cli lane — `version` is an engine verb, not a serve method.
+        let res = drv.call_raw(6, r#"{"op":"invoke","action":"version"}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["result"]["data"]["op"], "version", "{res}");
+        assert_eq!(res["result"]["data"]["code"], 0, "{res}");
+
+        // Unknown action → wire ok:false.
+        let res = drv.call_raw(7, r#"{"op":"invoke","action":"session.bogus"}"#);
+        assert_eq!(res["ok"], false, "{res}");
+
+        // Submit adapter — a view/form naming an action dispatches.
+        let res = drv.call_raw(
+            8,
+            r#"{"op":"submit","view":"session.export","values":{"id":"s1","agent":"fake"}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(
+            res["result"]["data"]["result"]["session"]["id"], "s1",
+            "{res}"
+        );
+        let res = drv.call_raw(9, r#"{"op":"submit","view":"bogus","values":{}}"#);
+        assert_eq!(res["ok"], false, "{res}");
     }
 }
