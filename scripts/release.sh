@@ -1,85 +1,50 @@
 #!/usr/bin/env bash
-# Run manually: `./scripts/release.sh` from the repo root (needs
-# `.env` with CARGO_REGISTRY_TOKEN; dist + gh for binary artifacts).
-# bupha is deprecated — no watch registration; releases are operator-run.
-# The leading sleep is the debounce window: a newer push kills this
-# run via cancel_running, so only the last push in a quiet window
-# releases. Runs inside a detached worktree — commits/tags are pushed
-# from here, not from the main checkout.
+# sepia release — thin shim over tarsi-serve (the org release plane,
+# project ADR-0005; repo config: ./tarsi.toml). One call runs
+# plan → changelog → bump → tag → push; publish targets are off
+# (ADR-0004: crates.io is tamias-only — the `sepia` name on
+# crates.io is taken anyway — and GitHub Releases are unused).
+# Operator-run on main — `tarsi-serve release` is dry-run by
+# default; --yes is the explicit opt-in.
 #
-# Publishes to crates.io in dependency order (a crate's path deps must
-# already be on the registry — and `sepia-peregrin`'s `hypha-http` dep
-# needs hypha 0.1.0 published FIRST; org order: hypha → sepia →
-# peregrin). Needs: `cargo-edit` (cargo set-version) and, for binary
-# artifacts, `cargo-dist` (dist) + `gh`.
+# crates.io publish is GONE: the old per-crate `cargo publish`
+# loop (and its crates.io ordering constraints — hypha → sepia →
+# peregrin) is retired; every sepia crate is an internal lib-only
+# engine behind `tamias-driver-sepia`, and the `sepia` command
+# ships as the tamias pack in `libraries/sepia`.
+# `sepia-testkit`, `sepia-driver-config`, `sepia-driver-pavo` are
+# publish = false.
 #
-# crates.io note: the bare name `sepia` is taken on crates.io — the
-# engine lib package publishes as `sepia-cli` (no bin — the `sepia`
-# command ships as the tamias pack in libraries/sepia/).
-# `sepia-testkit` and `sepia-driver-pavo` are publish = false
-# (testkit is dev-only; the pavo driver ships as a tamias payload).
+# Preserved repo step: the tamias pack manifest + README install
+# ref are synced to the new version *before* the release commit
+# lands, so the tagged tree carries consistent versions. The pack
+# publish itself stays manual (`tamias publish libraries/sepia`).
 set -euo pipefail
-# worktree-local secrets (gitignored); the service env file is canonical
+cd "$(git rev-parse --show-toplevel)"
+# worktree-local env (gitignored); the service env file is canonical
 [ -f ./.env ] && { set -a; source ./.env; set +a; }
-sleep "${SEPIA_RELEASE_DEBOUNCE:-300}"
 
-git fetch origin --tags -q
-last="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-if [ -z "$last" ]; then
-    echo "no tags yet — tag the first release manually to seed the flow"; exit 0
-fi
-changed="$(git diff --name-only "${last}..HEAD")"
+ws_version() { grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2; }
 
-# Publish order — dependencies first (workspace dep edges).
-# sepia-testkit / sepia-driver-pavo are publish = false — excluded.
-order="sepia-core sepia-meta sepia-proto sepia-telemetry sepia-driver \
-       sepia-acp sepia-host sepia-driver-cline sepia-driver-claude \
-       sepia-driver-cursor sepia-driver-devin sepia-session \
-       sepia-convert sepia-peregrin sepia-cli"
-
-touched=""
-for c in $order; do
-    grep -q "^crates/$c/" <<<"$changed" && touched="$touched $c"
-done
-if [ -z "$touched" ]; then echo "no crate changes since $last"; exit 0; fi
-
-published=""
-tags=""
-for c in $order; do
-    grep -qw "$c" <<<"$touched" || continue
-    cargo set-version -p "$c" --bump patch
-    # crates.io rate-limits *new* crates (a time window per push); retry
-    # through it rather than failing the release.
-    for i in $(seq 1 60); do
-        out="$(cargo publish -p "$c" --allow-dirty 2>&1)" && break
-        if grep -q '429\|too many new crates' <<<"$out"; then
-            echo "rate-limited on $c — sleeping 60s"; sleep 60
-        elif grep -q 'already exists\|already uploaded' <<<"$out"; then
-            break
-        else
-            echo "$out" | tail -3; sleep 30
-        fi
-    done
-    published="$published $c"
-    # Per-crate tag — versions diverge independently in a monorepo.
-    ver_c="$(grep -m1 '^version' "crates/$c/Cargo.toml" | cut -d'"' -f2)"
-    tags="$tags $c-v$ver_c"
-done
-
-git commit -aqm "release: bump crate versions" || true
-for t in $tags; do git tag "$t"; done
-ver="$(grep -m1 '^version' crates/sepia-cli/Cargo.toml | cut -d'"' -f2)"
-git push -q origin HEAD:main --tags
-
-# binaries: releases are manual — GHA workflows were removed org-wide.
-# This script bumps, publishes, and tags; the `dist build` path below
-# produces release tarballs (host arch). To ship:
-#   git tag sepia-v${ver} && git push origin sepia-v${ver}
-if command -v dist >/dev/null && command -v gh >/dev/null; then
-    dist build --output-format=json > /tmp/dist-manifest.json 2>&1 || true
-    for f in target/distrib/*; do
-        [ -f "$f" ] && echo "dist artifact: $f"
-    done
+# Learn the version tarsi will bump to (all releasing units share one
+# workspace version — empty output means "don't sync").
+new="$(tarsi-serve plan --dir . | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+if not d.get("ok"): sys.exit(0)
+units=[u for u in d["result"]["plan"]["units"] if u.get("releases")]
+vs={u["new_version"] for u in units}
+print(vs.pop() if len(vs)==1 else "")
+')"
+old="$(ws_version)"
+if [ -n "$new" ] && [ "$new" != "$old" ]; then
+    sed -i "s/^version: \"${old}\"/version: \"${new}\"/" libraries/sepia/tamias.yaml
+    sed -i "s|sepia@${old}|sepia@${new}|g" README.md
+    git add libraries/sepia/tamias.yaml README.md
+    git commit -qm "chore(release): sync sepia@${new} version refs ahead of tarsi bump"
 fi
 
-echo "released:${published} (tags:${tags})"
+tarsi-serve release --dir . --yes
+
+echo "released: sepia ${new:-$old} (tag sepia-v${new:-$old}, per-unit tags for the rest)"
+echo "next: cargo xtask pack && tamias publish libraries/sepia  # ship 9aia:sepia@${new:-$old} to the org registry"
