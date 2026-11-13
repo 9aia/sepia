@@ -18,12 +18,18 @@
 //! | `sepia:session`  | `sessions.summary` + `sessions.history` |
 //! | `sepia:agents`   | `agents.list` + `config.list`        |
 //!
-//! Mutations (`attach`, `prompt`, `patch_meta`, `import`, …) stay on
-//! the `sepia` CLI / `sepia serve` consumers — this driver is
-//! strictly read-only.
+//! Mutations live in two places, both dispatching through the wire
+//! `invoke` op: the declared [`Action`]s below (`session.*` ids →
+//! the `sepia serve` session plane, everything else → `cli.<verb>`
+//! engine ops — see `ops.rs` for the routing), and the ops-derived
+//! actions pavo-core builds from the `ops` manifest's param
+//! schemas. This module stays read-only: every *query* still only
+//! issues read-side serve methods.
 
 use pavo_driver_kit as kit;
-use pavo_protocol::{DriverManifest, ViewNode, ViewSpec};
+use pavo_protocol::{
+    Action, DriverManifest, MenuEntry, ParamKind, ParamSchema, ViewNode, ViewSpec,
+};
 use serde_json::{Map, Value, json};
 
 use crate::data;
@@ -49,6 +55,41 @@ fn table(title: &str, query: &str, columns: &[(&str, &str)]) -> ViewNode {
     )
 }
 
+/// A table whose node carries actions — row context travels as the
+/// invoke `target` where the host supplies it (object targets merge
+/// per `ops::merge_serve_target`/`merge_target`).
+fn table_actions(
+    title: &str,
+    query: &str,
+    columns: &[(&str, &str)],
+    actions: Vec<Action>,
+) -> ViewNode {
+    kit::sortable_table(
+        kit::base()
+            .title(title)
+            .query(query)
+            .actions(actions)
+            .build(),
+        columns
+            .iter()
+            .map(|(key, t)| kit::table_column(key, t))
+            .collect(),
+        Vec::new(),
+    )
+}
+
+/// A `kv` node carrying actions — the `session` view's detail pane.
+fn kv_actions(title: &str, query: &str, actions: Vec<Action>) -> ViewNode {
+    kit::kv(
+        kit::base()
+            .title(title)
+            .query(query)
+            .actions(actions)
+            .build(),
+        Vec::new(),
+    )
+}
+
 fn spec(
     id: &str,
     title: &str,
@@ -62,6 +103,407 @@ fn spec(
         view = view.query(kit::binding(q, "query"));
     }
     view.build()
+}
+
+// ---------------------------------------------------------------- actions
+//
+// Interaction actions — the pavo `invoke` layer. `session.*` ids
+// dispatch to `sepia serve` methods (the session plane — see
+// `ops::serve_method`); engine verbs (`store.*`, `config.*`, …)
+// ride the `cli.<verb>` argv path and are already reachable as
+// ops-derived actions, so nothing here duplicates them.
+//
+// Danger mapping (myco-driver's convention): ordinary mutations
+// get `confirm`; irreversible-ish ones (`delete`, `restore`,
+// `rewind`) get `type-target`; reads and trivially-recoverable ops
+// (`export`, `cancel`, `permission` answers, `create`) get `none`.
+
+/// The shared `id` param — a ref picker over the `sessions` view's
+/// query binding.
+fn id_param() -> ParamSchema {
+    kit::param("id")
+        .reference("sessions")
+        .required()
+        .label("Session")
+        .doc("Session id — the picker lists `sessions.list` rows.")
+        .build()
+}
+
+/// `agent` — optional store/agent disambiguator, ref picker over
+/// the `agents` view's query binding.
+fn agent_param() -> ParamSchema {
+    kit::param("agent")
+        .reference("agents")
+        .label("Agent")
+        .doc("Agent/store id — pass when session ids collide across stores.")
+        .build()
+}
+
+/// `permissions` — the auto-answer policy enum; the wire also
+/// accepts a `{"rules":[…]}` object which the enum can't express,
+/// so the doc says so.
+fn permissions_param() -> ParamSchema {
+    kit::param("permissions")
+        .enumeration(vec![
+            "ask".to_string(),
+            "allow_all".to_string(),
+            "deny_all".to_string(),
+        ])
+        .label("Permissions")
+        .doc("Auto-answer policy for `session/request_permission` — a `{\"rules\":[…]}` object passes through too.")
+        .build()
+}
+
+/// A plain labelled string param.
+fn str_param(name: &str, label: &str, doc: &str) -> ParamSchema {
+    kit::param(name).label(label).doc(doc).build()
+}
+
+/// A labelled multi-line text param.
+fn text_param(name: &str, label: &str, doc: &str) -> ParamSchema {
+    kit::param(name).text().label(label).doc(doc).build()
+}
+
+/// A labelled bool param.
+fn bool_param(name: &str, label: &str, doc: &str) -> ParamSchema {
+    kit::param(name)
+        .kind(ParamKind::Bool)
+        .label(label)
+        .doc(doc)
+        .build()
+}
+
+/// Mark a built [`ParamSchema`] required — the helpers return
+/// finished schemas, so required-ness is a field flip.
+fn req(mut s: ParamSchema) -> ParamSchema {
+    s.required = true;
+    s
+}
+
+/// The session-scoped action set — `target("session")` marks the
+/// needed context; every action still declares `id` because node
+/// actions carry no automatic row target (only tree items do).
+fn session_actions() -> Vec<Action> {
+    vec![
+        kit::action("session.attach", "Attach")
+            .icon("plug")
+            .confirm()
+            .key("a")
+            .target("session")
+            .param(id_param())
+            .param(agent_param())
+            .param(bool_param("takeover", "Takeover", "Detach the current owner and attach anyway."))
+            .param(str_param("model", "Model", "Preferred spawn model for this attach."))
+            .param(permissions_param())
+            .description("Attach the session plane to a live agent session (read-write unless the store is read-only).")
+            .build(),
+        kit::action("session.detach", "Detach")
+            .confirm()
+            .key("d")
+            .target("session")
+            .param(id_param())
+            .description("Detach the live attach — the agent keeps running, events stop streaming to this plane.")
+            .build(),
+        kit::action("session.prompt", "Prompt")
+            .icon("send")
+            .confirm()
+            .key("p")
+            .target("session")
+            .param(id_param())
+            .param(agent_param())
+            .param(req(text_param(
+                "text",
+                "Prompt",
+                "Message text — sent as one `text` PromptPart.",
+            )))
+            .description("Send a prompt to the session's agent — starts or continues a turn.")
+            .build(),
+        kit::action("session.cancel", "Cancel turn")
+            .key("x")
+            .target("session")
+            .param(id_param())
+            .description("Cancel the in-flight turn, if any.")
+            .build(),
+        kit::action("session.permission", "Answer permission")
+            .target("session")
+            .param(id_param())
+            .param(req(str_param(
+                "request",
+                "Request",
+                "Pending `session/request_permission` request id.",
+            )))
+            .param(str_param(
+                "option",
+                "Option",
+                "Option id to select — absent picks the agent's preferred option.",
+            ))
+            .description("Answer a pending permission request on the session.")
+            .build(),
+        kit::action("session.set_mode", "Set mode")
+            .confirm()
+            .target("session")
+            .param(id_param())
+            .param(req(str_param(
+                "mode",
+                "Mode",
+                "Agent session mode id (e.g. `ask`, `code` — agent-defined).",
+            )))
+            .description("Switch the session's agent mode.")
+            .build(),
+        kit::action("session.set_permission_policy", "Set permission policy")
+            .confirm()
+            .target("session")
+            .param(id_param())
+            .param(req(permissions_param()))
+            .description("Set the session's auto-answer policy for permission requests.")
+            .build(),
+        kit::action("session.patch_meta", "Edit session meta")
+            .confirm()
+            .target("session")
+            .param(id_param())
+            .param(str_param("title", "Title", "New display title."))
+            .param(bool_param("pinned", "Pinned", "Pin/unpin the session."))
+            .param(bool_param("archived", "Archived", "Archive/unarchive the session."))
+            .param(str_param("model", "Model", "Preferred spawn model — empty string clears."))
+            .description("Patch the session overlay — title, pin, archive, project tags, model.")
+            .build(),
+        kit::action("session.export", "Export session")
+            .target("session")
+            .param(id_param())
+            .description("Export the session IR — the transfer bundle `sessions.import` consumes.")
+            .build(),
+        kit::action("session.restore", "Restore files")
+            .type_target()
+            .target("session")
+            .param(id_param())
+            .param(str_param("path", "Path", "File to restore (with recorded diffs)."))
+            .param(str_param("checkpoint", "Checkpoint", "Snapshot ref to materialize instead."))
+            .param(kit::param("paths").kind(ParamKind::StringList).label("Paths").doc("Multiple paths to restore.").build())
+            .description("Revert files through recorded diffs or materialize a checkpoint — the plane requires `confirm`, sent automatically.")
+            .build(),
+        kit::action("session.rewind", "Rewind")
+            .type_target()
+            .target("session")
+            .param(id_param())
+            .param(kit::param("turns").kind(ParamKind::Integer).label("Turns").doc("Drop this many trailing turns.").build())
+            .param(kit::param("nodeId").kind(ParamKind::Integer).label("Node").doc("Cut at this node id instead.").build())
+            .param(str_param("checkpoint", "Checkpoint", "Or cut at this checkpoint ref."))
+            .description("Rewind the conversation — drops nodes after the selector; `confirm` is sent automatically.")
+            .build(),
+        kit::action("session.delete", "Delete session")
+            .type_target()
+            .key("D")
+            .target("session")
+            .param(id_param())
+            .description("Delete the session — store-level delete, irreversible.")
+            .build(),
+    ]
+}
+
+/// Manifest-global actions — the session-lifecycle verbs offered on
+/// every view (ids are `session.<verb>`; the serve lane resolves
+/// them). `session.import`/`session.convert`/`session.create` take
+/// no `id`, so they live here rather than in the scoped set.
+fn global_actions() -> Vec<Action> {
+    let mut out = session_actions();
+    out.extend([
+        kit::action("session.create", "New session")
+            .icon("plus")
+            .key("n")
+            .param(req(str_param(
+                "cwd",
+                "Working dir",
+                "Directory the session runs in.",
+            )))
+            .param(agent_param())
+            .param(str_param("title", "Title", "Display title."))
+            .param(str_param("model", "Model", "Preferred spawn model."))
+            .param(permissions_param())
+            .description("Create a session on an agent's store.")
+            .build(),
+        kit::action("session.import", "Import session")
+            .confirm()
+            .param(req(agent_param()))
+            .param(req(str_param(
+                "path",
+                "Session JSON",
+                "Path to a session-IR JSON file (e.g. from `session.export`).",
+            )))
+            .param(str_param(
+                "id",
+                "New id",
+                "Override the imported session id.",
+            ))
+            .param(str_param(
+                "cwd",
+                "Working dir",
+                "Override the working directory.",
+            ))
+            .param(str_param("title", "Title", "Override the title."))
+            .description("Write a session IR into an agent's store.")
+            .build(),
+        kit::action("session.convert", "Convert session")
+            .confirm()
+            .target("session")
+            .param(id_param())
+            .param(
+                kit::param("agent")
+                    .enumeration(vec![
+                        "devin".to_string(),
+                        "cline".to_string(),
+                        "claude".to_string(),
+                        "cursor".to_string(),
+                    ])
+                    .required()
+                    .label("Target agent")
+                    .doc("Store/agent to convert into.")
+                    .build(),
+            )
+            .param(
+                kit::param("from")
+                    .enumeration(vec![
+                        "devin".to_string(),
+                        "cline".to_string(),
+                        "claude".to_string(),
+                        "cursor".to_string(),
+                    ])
+                    .label("Source store")
+                    .doc("Source store when it differs from the merged view's.")
+                    .build(),
+            )
+            .description("Copy the session into another agent's store, node-local.")
+            .build(),
+    ]);
+    out
+}
+
+/// Actions scoped to the `sessions` table node — the frequent
+/// session ops. `target("row")` hints hosts may pass the selected
+/// row; `id` stays declared because only tree items get automatic
+/// targets.
+fn table_row_actions() -> Vec<Action> {
+    vec![
+        kit::action("session.prompt", "Prompt")
+            .confirm()
+            .key("p")
+            .target("row")
+            .param(id_param())
+            .param(req(text_param("text", "Prompt", "Message text.")))
+            .build(),
+        kit::action("session.attach", "Attach")
+            .confirm()
+            .target("row")
+            .param(id_param())
+            .param(bool_param(
+                "takeover",
+                "Takeover",
+                "Detach the current owner.",
+            ))
+            .build(),
+        kit::action("session.detach", "Detach")
+            .confirm()
+            .target("row")
+            .param(id_param())
+            .build(),
+        kit::action("session.cancel", "Cancel turn")
+            .target("row")
+            .param(id_param())
+            .build(),
+        kit::action("session.delete", "Delete")
+            .type_target()
+            .target("row")
+            .param(id_param())
+            .build(),
+    ]
+}
+
+/// `contributes.menus[]` — the command palette / quick-launch
+/// list: session actions plus routes to the four views.
+fn menu_entries() -> Vec<MenuEntry> {
+    let mut out = Vec::new();
+    let mut add = |id: &str,
+                   title: &str,
+                   action: Option<&str>,
+                   route: Option<&str>,
+                   section: &str,
+                   priority: i32,
+                   keywords: &[&str]| {
+        let mut e = kit::menu(id, title).section(section).priority(priority);
+        if let Some(a) = action {
+            e = e.action(a);
+        }
+        if let Some(r) = route {
+            e = e.route(r);
+        }
+        out.push(
+            e.keywords(keywords.iter().map(|s| (*s).to_string()).collect())
+                .build(),
+        );
+    };
+    add(
+        "new-session",
+        "New session",
+        Some("session.create"),
+        None,
+        "Sessions",
+        10,
+        &["create", "spawn", "session"],
+    );
+    add(
+        "import-session",
+        "Import session",
+        Some("session.import"),
+        None,
+        "Sessions",
+        20,
+        &["import", "restore", "load"],
+    );
+    add(
+        "prompt-session",
+        "Prompt session",
+        Some("session.prompt"),
+        None,
+        "Sessions",
+        30,
+        &["prompt", "send", "message"],
+    );
+    add(
+        "delete-session",
+        "Delete session",
+        Some("session.delete"),
+        None,
+        "Sessions",
+        40,
+        &["delete", "remove", "destroy"],
+    );
+    add(
+        "sessions-view",
+        "Sessions",
+        None,
+        Some("/sepia/sessions"),
+        "Views",
+        10,
+        &["list", "sessions"],
+    );
+    add(
+        "agents-view",
+        "Agents",
+        None,
+        Some("/sepia/agents"),
+        "Views",
+        20,
+        &["agents", "config"],
+    );
+    add(
+        "status-view",
+        "Status",
+        None,
+        Some("/sepia/status"),
+        "Views",
+        30,
+        &["digest", "summary"],
+    );
+    out
 }
 
 // ---------------------------------------------------------------- manifest
@@ -114,7 +556,15 @@ pub fn specs() -> Vec<ViewSpec> {
             "/sepia/sessions",
             "Every session the plane knows — store rows plus live attaches — with busy/overlay flags. Lock-holder probing stays off (`sessions.list` without `withLocks`) so the view answers inside a host's request budget; the probe path can hit a store driver's call timeout. Filter with --param agent=.",
             &["sessions"],
-            table("Sessions", "sessions", SESSION_COLS),
+            col(
+                "Sepia sessions",
+                vec![table_actions(
+                    "Sessions",
+                    "sessions",
+                    SESSION_COLS,
+                    table_row_actions(),
+                )],
+            ),
         ),
         spec(
             "session",
@@ -125,7 +575,7 @@ pub fn specs() -> Vec<ViewSpec> {
             col(
                 "Session",
                 vec![
-                    kv("Session", "session"),
+                    kv_actions("Session", "session", session_actions()),
                     table("History", "history", HISTORY_COLS),
                 ],
             ),
@@ -158,6 +608,12 @@ pub fn manifest() -> DriverManifest {
         .navbar(navbar)
         .dashboard(dashboard)
         .statusbar(statusbar);
+    for a in global_actions() {
+        m = m.action(a);
+    }
+    for e in menu_entries() {
+        m = m.menu(e);
+    }
     for spec in specs() {
         m = m.view(spec);
     }
@@ -566,5 +1022,66 @@ mod tests {
             let v = query_data(name, &params);
             assert!(v["error"].as_str().unwrap().contains("'id'"), "{name}");
         }
+    }
+
+    #[test]
+    fn manifest_declares_actions_and_menus() {
+        let m = manifest();
+        assert_ne!(m.actions.len(), 0);
+        assert_ne!(m.contributes.menus.len(), 0);
+        let ids: std::collections::BTreeSet<&str> =
+            m.actions.iter().map(|a| a.id.as_str()).collect();
+        // the curated session-plane set — every id must resolve on
+        // the invoke lanes (serve method or engine verb)
+        for want in [
+            "session.create",
+            "session.attach",
+            "session.detach",
+            "session.prompt",
+            "session.cancel",
+            "session.permission",
+            "session.set_mode",
+            "session.set_permission_policy",
+            "session.delete",
+            "session.patch_meta",
+            "session.restore",
+            "session.rewind",
+            "session.export",
+            "session.import",
+            "session.convert",
+        ] {
+            assert!(ids.contains(want), "missing action {want}");
+            let a = m.actions.iter().find(|a| a.id == want).unwrap();
+            assert!(
+                crate::ops::serve_method(&a.id).is_some(),
+                "{want} doesn't route to a serve method"
+            );
+        }
+        // danger sanity — irreversible ops never `none`
+        for a in &m.actions {
+            if matches!(
+                a.id.as_str(),
+                "session.delete" | "session.restore" | "session.rewind"
+            ) {
+                assert_eq!(a.danger, pavo_protocol::DangerLevel::TypeTarget, "{}", a.id);
+            }
+        }
+        // node-scoped actions ride the view specs
+        let sessions = specs().into_iter().find(|v| v.id == "sessions").unwrap();
+        let ViewNode::Column(c) = &sessions.root else {
+            panic!("sessions root is not a column");
+        };
+        let ViewNode::Table(t) = &c.children[0] else {
+            panic!("sessions child is not a table");
+        };
+        assert_ne!(t.base.actions.len(), 0, "sessions table has no actions");
+        let session = specs().into_iter().find(|v| v.id == "session").unwrap();
+        let ViewNode::Column(c) = &session.root else {
+            panic!("session root is not a column");
+        };
+        let ViewNode::Kv(kv) = &c.children[0] else {
+            panic!("session child is not a kv");
+        };
+        assert_ne!(kv.base.actions.len(), 0, "session kv has no actions");
     }
 }
