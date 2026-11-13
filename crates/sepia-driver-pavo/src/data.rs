@@ -1,14 +1,17 @@
-//! data — a read-only client for `sepia serve`.
+//! data — a client for `sepia serve`.
 //!
-//! The driver's whole read path is the service wire: one spawned
-//! `sepia serve` subprocess per `tamias-driver-sepia serve` process,
-//! spoken to with the same ndjson JSON-RPC framing driver binaries
-//! use ([`sepia_driver::rpc`]). The driver only ever issues the
+//! The driver's read path *and* its session-plane mutation lane are
+//! the service wire: one spawned `sepia serve` subprocess per
+//! `tamias-driver-sepia serve` process, spoken to with the same
+//! ndjson JSON-RPC framing driver binaries use
+//! ([`sepia_driver::rpc`]). View queries only ever issue the
 //! read-side methods (`manifest`, `agents.list`, `sessions.list`,
-//! `sessions.get`/`summary`/`history`, `config.list`) — every
-//! mutation stays on the `sepia` CLI and the
-//! orchestrator-facing ops (`attach`, `prompt`, `delete`, …) are
-//! never called, so the view driver cannot mutate session state.
+//! `sessions.get`/`summary`/`history`, `config.list`); the `invoke`
+//! op's `session.*` actions are the one mutation caller — they go
+//! through [`mutate`], the same child, so a session-plane write
+//! sees exactly the plane an orchestrator would. Engine/store/
+//! config mutations never touch this client: they ride the
+//! `cli.<verb>` argv/exec path in `ops.rs`.
 //!
 //! Which `serve` process: first hit wins —
 //!
@@ -44,7 +47,7 @@ use serde_json::{Map, Value};
 /// executable (`<bin> serve`) or this driver's own exe through the
 /// engine passthrough (`<self> run serve`).
 #[derive(Clone, PartialEq, Eq)]
-enum Target {
+pub(crate) enum Target {
     /// A `sepia`-compatible executable — the tamias `bins[]` shim,
     /// a legacy `sepia` build, or a test fake.
     Bin(PathBuf),
@@ -80,36 +83,60 @@ struct Sepia {
     next_id: u64,
 }
 
+/// A spawned `serve` child split into its halves — the request
+/// lane ([`Sepia`]) and the event-feed lane (`crate::feed`) spawn
+/// through the same [`spawn_serve`] so target resolution and
+/// process setup stay in one place.
+pub(crate) struct ServeProc {
+    pub child: Child,
+    pub stdin: ChildStdin,
+    pub stdout: BufReader<std::process::ChildStdout>,
+}
+
+/// Spawn the resolved target's `serve`: a `sepia`-shaped
+/// executable gets `<bin> serve`; `self` (the driver's own exe)
+/// gets `<self> run serve` — the engine passthrough is the same
+/// serve loop. stdin/stdout piped; stderr inherits (serve logs
+/// there — keeping it off the wire is the child's job, and
+/// inheriting keeps diagnostics visible).
+pub(crate) fn spawn_serve(target: &Target) -> Result<ServeProc, String> {
+    let mut cmd = Command::new(target.bin());
+    if target.via_run() {
+        cmd.arg("run");
+    }
+    let mut child = cmd
+        .arg("serve")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn `{}` serve: {e}", target.bin().display()))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "sepia serve: no stdin pipe".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "sepia serve: no stdout pipe".to_string())?;
+    Ok(ServeProc {
+        child,
+        stdin,
+        stdout: BufReader::new(stdout),
+    })
+}
+
 impl Sepia {
-    /// Spawn the resolved target's `serve`: a `sepia`-shaped
-    /// executable gets `<bin> serve`; `self` (the driver's own exe)
-    /// gets `<self> run serve` — the engine passthrough is the same
-    /// serve loop. stdin/stdout piped; stderr inherits (serve logs
-    /// there — keeping it off the wire is the child's job, and
-    /// inheriting keeps diagnostics visible).
+    /// Spawn the resolved target's `serve` — see [`spawn_serve`].
     fn spawn(target: &Target) -> Result<Self, String> {
-        let mut cmd = Command::new(target.bin());
-        if target.via_run() {
-            cmd.arg("run");
-        }
-        let mut child = cmd
-            .arg("serve")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("failed to spawn `{}` serve: {e}", target.bin().display()))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "sepia serve: no stdin pipe".to_string())?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "sepia serve: no stdout pipe".to_string())?;
+        let ServeProc {
+            child,
+            stdin,
+            stdout,
+        } = spawn_serve(target)?;
         Ok(Self {
             child,
             stdin,
-            stdout: BufReader::new(stdout),
+            stdout,
             target: target.clone(),
             next_id: 0,
         })
@@ -202,7 +229,7 @@ impl Slot {
 }
 
 /// The `serve` target — see the module docs for resolution order.
-fn resolve_target(ctx: &Map<String, Value>) -> Target {
+pub(crate) fn resolve_target(ctx: &Map<String, Value>) -> Target {
     for key in ["sepiaBin", "sepia", "bin"] {
         if let Some(path) = ctx.get(key).and_then(Value::as_str) {
             return Target::Bin(PathBuf::from(path));
@@ -261,6 +288,19 @@ pub fn call(method: &str, params: Value, ctx: &Map<String, Value>) -> Result<Val
         }
         Err(e) => Err(e),
     }
+}
+
+/// The mutation lane — same transport as [`call`], named for the
+/// `invoke` op's `session.*` actions (`sessions.attach`,
+/// `sessions.prompt`, `sessions.patch_meta`, …). Kept as a distinct
+/// entry point so call sites declare intent: view queries use
+/// [`call`], only `ops::serve_invoke` uses this.
+///
+/// # Errors
+/// Same contract as [`call`] — the serve wire's error text, or a
+/// spawn/transport failure string.
+pub fn mutate(method: &str, params: Value, ctx: &Map<String, Value>) -> Result<Value, String> {
+    call(method, params, ctx)
 }
 
 /// Spawn `sepia serve` in the background at `serve` start — the

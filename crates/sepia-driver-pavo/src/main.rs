@@ -26,6 +26,17 @@
 //!   `{"ok":true,"result":…}` / `{"ok":false,"error":…}`.
 //!   `query:"ops"` answers the ops manifest; `query:"cli.<verb>"`
 //!   runs the engine op.
+//! - `{"op":"invoke","action":…}` dispatches an action id —
+//!   `session.<verb>`/`sessions.<verb>` ids are the curated
+//!   session-plane actions over the `sepia serve` wire (`sessions.
+//!   attach`, `sessions.prompt`, `sessions.patch_meta`, …); bare
+//!   verb names / `cli.`-prefixed spellings ride the same
+//!   argv/exec path `cli.*` queries use → `ActionResult`.
+//!   `{"op":"submit"}` resolves a declared form node's `submit_op`
+//!   first (the session view's meta form → `session.patch_meta`,
+//!   with `id`/`agent` merged from the last-resolved session view —
+//!   the wire op carries no view params), then falls back to
+//!   verb/action-named forms.
 //!
 //! Optional surface: feature `mcp` embeds pavo-driver-kit's
 //! surface layer — `mcp` serves the ops manifest as MCP tools on
@@ -37,13 +48,15 @@
 //! Read path: every `view`/`query` (except `ops`/`cli.*`) proxies
 //! read-side methods of a spawned `sepia serve` (`sepia serve` is
 //! the session plane's embedding surface — see `data.rs` for
-//! binary resolution). The view side stays strictly read-only:
-//! attach/prompt/delete and friends are engine *ops* now — they
-//! run through `cli.*`/`run` with the engine's own semantics, never
-//! through the view queries. `--param sepiaBin=` (or `$SEPIA_BIN`)
-//! pins which `sepia` executable serves the views.
+//! binary resolution). Mutations split by lane: `session.*`
+//! actions (`invoke`) write through the same serve child — the
+//! session plane's own wire — while engine/store/config verbs
+//! (`cli.*`/`run`/`invoke`) keep the engine's own semantics and
+//! never touch the serve child. `--param sepiaBin=` (or
+//! `$SEPIA_BIN`) pins which `sepia` executable serves both lanes.
 
 mod data;
+mod feed;
 mod ops;
 #[cfg(feature = "mcp")]
 mod surface;
@@ -101,13 +114,31 @@ fn dispatch(req: &Request) -> Response {
                 Response::err(format!("unknown query: {query}"))
             }
         }
-        // `submit`/`jobs`/`notifications` — the manifest declares no
-        // `contributes` feed slots and mutations go through
-        // `cli.<verb>`/`run`, never `submit`, so they answer the same
-        // unsupported-op error hosts read as "no feed".
-        Request::Submit { .. } | Request::Jobs | Request::Notifications => {
-            Response::err("tamias-driver-sepia implements no submit/jobs/notifications ops")
-        }
+        // `invoke` dispatches action ids through two lanes:
+        // `session.<verb>`/`sessions.<verb>` are the curated
+        // session-plane actions → `sepia serve` methods over the
+        // shared data child; bare verb names (`store.import`,
+        // `driver.list`, …, `cli.`-prefix tolerated) ride the same
+        // argv/exec path `cli.*` queries use. Both return an
+        // ActionResult; `view` is resolution context only.
+        Request::Invoke {
+            action,
+            view,
+            target,
+            params,
+            ..
+        } => match ops::invoke(action, view.as_deref(), target.as_ref(), params) {
+            Ok(r) => Response::ok_typed(&r),
+            Err(e) => Response::err(e),
+        },
+        // `submit` is a thin adapter: with no form nodes declared,
+        // only a `form`/view naming a known action dispatches.
+        Request::Submit { view, form, values } => ops::submit(view, form.as_deref(), values),
+        // Platform feeds (P3): `contributes.jobs`/`notifications`
+        // are declared — busy sessions and pending permission asks
+        // plus feed health ride these ops (see views.rs).
+        Request::Jobs => Response::ok_typed(&views::job_items()),
+        Request::Notifications => Response::ok_typed(&views::notification_items()),
     }
 }
 
@@ -138,8 +169,10 @@ fn engine_argv(args: &[String]) -> Vec<String> {
 
 fn serve() -> i32 {
     // Pre-spawn `sepia serve` so its plane build overlaps the
-    // manifest/views handshake — see `data::warm`.
+    // manifest/views handshake — see `data::warm`; the feed child
+    // (`events.subscribe`) warms alongside — see `feed::warm`.
     data::warm();
+    feed::warm();
     // The kit loop answers every line (parse failures become
     // `ok:false`), ends quietly on stdin EOF or a dead client.
     let _ = kit::serve_stdio(dispatch);
