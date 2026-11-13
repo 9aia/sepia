@@ -34,7 +34,7 @@
 //! file, not engine state.
 
 use clap::{Arg, ArgAction, Command};
-use pavo_protocol::wire::{QueryResult, Response};
+use pavo_protocol::wire::{ActionResult, QueryResult, Response};
 use serde_json::{Map, Value, json};
 
 /// Unbounded surfaces — verbs that never return (`serve`). They can
@@ -179,6 +179,146 @@ pub fn op_of(query: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+// ------------------------------------------------------------- invoke
+//
+// The interaction protocol's `invoke` op (pavo-protocol
+// `Request::Invoke`). Action ids ARE verb names — the ops-derived
+// actions `pavo-core` builds from this manifest spell ids as the
+// verb (`store.import`, `driver.list`, …); a `cli.` prefix is
+// tolerated for symmetry with the query spelling. Dispatch rides
+// the exact `cli.<verb>` path: params → argv → `run` child →
+// engine semantics unchanged. `view` is context only (node/item
+// resolution is a host concern).
+
+/// Resolve an action id to an engine verb name — bare names and
+/// the `cli.`-prefixed ops spelling both work; surfaces are not
+/// actions.
+fn action_verb(action: &str) -> Option<String> {
+    op_of(&format!(
+        "cli.{}",
+        action.strip_prefix("cli.").unwrap_or(action)
+    ))
+}
+
+/// A param value counts as present when it's a non-empty scalar or
+/// a non-empty array — `{"session":""}` is as missing as absent.
+fn present(v: Option<&Value>) -> bool {
+    match v {
+        None | Some(Value::Null) => false,
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Array(a)) => !a.is_empty(),
+        Some(_) => true,
+    }
+}
+
+/// The `invoke` target→params merge rule (same shape as
+/// myco-driver's): an object target contributes keys the params
+/// lack (explicit params win — the form's answers override row
+/// context); a scalar target fills the verb's first positional
+/// param when params don't (tree-item actions send the row id
+/// this way). Anything else is ignored.
+fn merge_target(
+    cmd: &Command,
+    params: &Map<String, Value>,
+    target: Option<&Value>,
+) -> Map<String, Value> {
+    let mut out = params.clone();
+    match target {
+        Some(Value::Object(t)) => {
+            for (k, val) in t {
+                out.entry(k.clone()).or_insert_with(|| val.clone());
+            }
+        }
+        Some(t) => {
+            if let Some(pos) = cmd.get_positionals().find(|a| !skipped(a)) {
+                let id = pos.get_id().as_str();
+                let ok = present(out.get(id)) || present(out.get(id.replace('_', "-").as_str()));
+                if !ok {
+                    if let Some(s) = scalar(t) {
+                        out.insert(id.to_string(), json!(s));
+                    }
+                }
+            }
+        }
+        None => {}
+    }
+    out
+}
+
+/// Required positionals the verb can't run without — `arg`-kind
+/// params (required clap positionals). Flag/opt params are all
+/// optional by construction, so only positionals gate.
+fn missing_required(cmd: &Command, params: &Map<String, Value>) -> Map<String, Value> {
+    let mut errors = Map::new();
+    for a in cmd.get_positionals() {
+        if skipped(a) || !a.is_required_set() {
+            continue;
+        }
+        let id = a.get_id().as_str();
+        let ok = present(params.get(id)) || present(params.get(id.replace('_', "-").as_str()));
+        if !ok {
+            errors.insert(id.to_string(), json!("required"));
+        }
+    }
+    errors
+}
+
+/// First non-empty line — the human-facing message for an
+/// [`ActionResult`].
+fn first_line(s: &str) -> Option<String> {
+    s.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
+}
+
+/// `{"op":"invoke"}` — dispatch `action` (a verb id) through the
+/// same argv/exec path `cli.<verb>` queries use. Unknown actions
+/// and spawn failures are `Err` (wire `ok:false`); verb outcomes —
+/// including nonzero exits — come back `Ok` with `{code, stdout,
+/// stderr}` in `data`, mirroring how `cli.*` queries report the
+/// engine's own exit status as honest data.
+pub fn invoke(
+    action: &str,
+    target: Option<&Value>,
+    params: &Map<String, Value>,
+) -> Result<ActionResult, String> {
+    let Some(name) = action_verb(action) else {
+        return Err(format!("unknown action: {action}"));
+    };
+    let Some(cmd) = op_cmd(&name) else {
+        return Err(format!("unknown action: {action}"));
+    };
+    let merged = merge_target(&cmd, params, target);
+    let errors = missing_required(&cmd, &merged);
+    if !errors.is_empty() {
+        return Ok(ActionResult {
+            errors,
+            ..ActionResult::default()
+        });
+    }
+    let (args, o) = capture(&cmd, &name, &merged)?;
+    let code = o.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+    let message = if code == 0 {
+        first_line(&stdout).unwrap_or_else(|| format!("{name} ok"))
+    } else {
+        first_line(&stderr).unwrap_or_else(|| format!("{name} failed (exit {code})"))
+    };
+    Ok(ActionResult {
+        message: Some(message),
+        data: Some(json!({
+            "op": name,
+            "argv": args,
+            "code": code,
+            "stdout": stdout,
+            "stderr": stderr,
+        })),
+        ..ActionResult::default()
+    })
+}
+
 /// A wire scalar → its argv token (numbers/bools stringify).
 fn scalar(v: &Value) -> Option<String> {
     match v {
@@ -266,22 +406,13 @@ pub fn run_op(op: &str, params: &Map<String, Value>) -> Response {
 /// captured output, and hand back `{op, argv, code, stdout,
 /// stderr}` as the query payload. `ok:false` is reserved for spawn
 /// failures — a nonzero `code` is the engine's own exit status
-/// (e.g. a missing session id), honest data. The child's stdin is
-/// null: no sepia op needs it — `serve` is a surface, and prompts
-/// never ride argv.
+/// (e.g. a missing session id), honest data.
 pub fn run_verb(name: &str, params: &Map<String, Value>) -> Response {
     let Some(cmd) = op_cmd(name) else {
         return Response::err(format!("unknown op: {name}"));
     };
-    let args = argv(&cmd, name, params);
-    let out = std::env::current_exe().and_then(|exe| {
-        std::process::Command::new(exe)
-            .arg("run")
-            .args(&args)
-            .output()
-    });
-    let data = match out {
-        Ok(o) => json!({
+    let data = match capture(&cmd, name, params) {
+        Ok((args, o)) => json!({
             "op": name,
             "argv": args,
             "code": o.status.code().unwrap_or(-1),
@@ -294,6 +425,25 @@ pub fn run_verb(name: &str, params: &Map<String, Value>) -> Response {
         query: format!("cli.{name}"),
         data,
     })
+}
+
+/// Params → argv → `run` child with captured output — the shared
+/// tail of `cli.<verb>` queries and `invoke`. The child's stdin is
+/// null: no sepia op needs it — `serve` is a surface, and prompts
+/// never ride argv.
+fn capture(
+    cmd: &Command,
+    name: &str,
+    params: &Map<String, Value>,
+) -> Result<(Vec<String>, std::process::Output), String> {
+    let args = argv(cmd, name, params);
+    let out = std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .arg("run")
+            .args(&args)
+            .output()
+    });
+    out.map(|o| (args, o)).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

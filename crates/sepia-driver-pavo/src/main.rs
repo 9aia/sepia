@@ -101,10 +101,26 @@ fn dispatch(req: &Request) -> Response {
                 Response::err(format!("unknown query: {query}"))
             }
         }
+        // `invoke` dispatches action ids — which ARE verb names
+        // (`store.import`, `driver.list`, …, `cli.`-prefix
+        // tolerated) — through the same argv/exec path `cli.*`
+        // queries use, returning an ActionResult. `view` is
+        // resolution context only; sepia declares no forms, so
+        // `submit` stays unsupported.
+        Request::Invoke {
+            action,
+            target,
+            params,
+            ..
+        } => match ops::invoke(action, target.as_ref(), params) {
+            Ok(r) => Response::ok_typed(&r),
+            Err(e) => Response::err(e),
+        },
         // `submit`/`jobs`/`notifications` — the manifest declares no
-        // `contributes` feed slots and mutations go through
-        // `cli.<verb>`/`run`, never `submit`, so they answer the same
-        // unsupported-op error hosts read as "no feed".
+        // `contributes` feed slots and no form nodes, and mutations
+        // go through `cli.<verb>`/`invoke`/`run`, never `submit`, so
+        // they answer the same unsupported-op error hosts read as
+        // "no feed".
         Request::Submit { .. } | Request::Jobs | Request::Notifications => {
             Response::err("tamias-driver-sepia implements no submit/jobs/notifications ops")
         }
