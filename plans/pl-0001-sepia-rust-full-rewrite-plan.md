@@ -1,7 +1,7 @@
 +++
 id = "PL-001"
 title = "Sepia → Rust: full rewrite plan"
-status = "in-progress"
+status = "done"
 priority = "med"
 +++
 
