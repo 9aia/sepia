@@ -21,6 +21,7 @@ export default defineConfig({
         text: 'How-to',
         items: [
           { text: 'Convert a session', link: '/how-to/convert-a-session' },
+          { text: 'Use sepia in pavo', link: '/how-to/pavo' },
           { text: 'Write a store driver', link: '/how-to/write-a-driver' },
           { text: 'Drive sepia serve', link: '/how-to/drive-serve' },
         ],
