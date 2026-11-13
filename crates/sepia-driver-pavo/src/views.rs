@@ -33,15 +33,18 @@
 //! schemas. This module stays read-only: every *query* issues
 //! read-side calls only — serve methods or read-only engine verbs.
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::fmt::Write as _;
+use std::sync::{LazyLock, Mutex};
 
 use pavo_driver_kit as kit;
 use pavo_protocol::{
-    Action, DriverManifest, FormFieldKind, MenuEntry, ParamKind, ParamSchema, ViewNode, ViewSpec,
+    Action, DriverManifest, FormFieldKind, JobItem, MenuEntry, NotificationItem, ParamKind,
+    ParamSchema, ViewNode, ViewSpec,
 };
 use serde_json::{Map, Value, json};
 
-use crate::{data, ops};
+use crate::{data, feed, ops};
 
 // ---------------------------------------------------------------- helpers
 
@@ -133,20 +136,27 @@ fn meta_form() -> ViewNode {
     )
 }
 
-/// The `id`/`agent` the `session` view last resolved — `ops::submit`
-/// merges them into session-scoped serve actions because the wire
-/// `submit` op carries no view params. Process-global like the serve
-/// client: one driver process, last-viewed wins.
-static SESSION_CTX: Mutex<Option<Map<String, Value>>> = Mutex::new(None);
+/// Per-view resolved `id`/`agent` — recorded by [`view_result`] for
+/// every view whose params carry `id` (`session`, `stream`, …).
+/// `ops::invoke` merges the *invoking* view's context into
+/// session-scoped serve actions because the wire `invoke` op's
+/// params don't automatically carry view params (same gap the
+/// `submit` op has — see [`session_context`]). Process-global like
+/// the serve client: one driver process, last-viewed wins per view.
+static VIEW_CTX: LazyLock<Mutex<HashMap<String, Value>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// The session view's resolved `id`/`agent`, if it has run.
-pub(crate) fn session_context() -> Option<Map<String, Value>> {
-    SESSION_CTX.lock().ok().and_then(|g| g.clone())
+/// The `id`/`agent` view `view` last resolved, if it has run.
+pub(crate) fn view_context(view: &str) -> Option<Map<String, Value>> {
+    VIEW_CTX
+        .lock()
+        .ok()
+        .and_then(|g| g.get(view).and_then(Value::as_object).cloned())
 }
 
-/// Record the `session` view's `id`/`agent` params — called by
-/// [`view_result`] on every `session` view resolution.
-fn note_session_context(params: &Map<String, Value>) {
+/// Record a view's resolved `id`/`agent` — called by
+/// [`view_result`] on every resolution whose params carry `id`.
+fn note_view_context(view: &str, params: &Map<String, Value>) {
     let mut ctx = Map::new();
     if let Some(id) = params.get("id").and_then(Value::as_str) {
         ctx.insert("id".to_string(), json!(id));
@@ -154,9 +164,19 @@ fn note_session_context(params: &Map<String, Value>) {
     if let Some(agent) = params.get("agent").and_then(Value::as_str) {
         ctx.insert("agent".to_string(), json!(agent));
     }
-    if let Ok(mut slot) = SESSION_CTX.lock() {
-        *slot = (!ctx.is_empty()).then_some(ctx);
+    if ctx.is_empty() {
+        return;
     }
+    if let Ok(mut g) = VIEW_CTX.lock() {
+        g.insert(view.to_string(), Value::Object(ctx));
+    }
+}
+
+/// The session view's resolved `id`/`agent`, if it has run —
+/// `view_context("session")` kept under its old name for the
+/// `submit` path.
+pub(crate) fn session_context() -> Option<Map<String, Value>> {
+    view_context("session")
 }
 
 /// The `submit_op` of the form node `form` names on view `view`
@@ -654,6 +674,91 @@ fn store_row_actions() -> Vec<Action> {
     ]
 }
 
+/// The "open the stream" row action — a route action (P-033): the
+/// host interpolates `{target.id}` over the invoke context and
+/// navigates locally, no wire round-trip. Rows on `live`/
+/// `permissions` carry `id` = session id.
+fn open_stream_action() -> Action {
+    kit::action("live.open", "Open stream")
+        .route("/sepia/stream?id={target.id}")
+        .description("Open the session's live stream view.")
+        .build()
+}
+
+/// Actions scoped to the `live` table — open the stream plus the
+/// frequent session ops bound to the row (`id` merges from an
+/// object target).
+fn live_row_actions() -> Vec<Action> {
+    vec![
+        open_stream_action(),
+        kit::action("session.prompt", "Prompt")
+            .confirm()
+            .key("p")
+            .target("row")
+            .param(id_param())
+            .param(req(text_param("text", "Prompt", "Message text.")))
+            .build(),
+        kit::action("session.cancel", "Cancel turn")
+            .target("row")
+            .param(id_param())
+            .build(),
+        kit::action("session.attach", "Attach")
+            .confirm()
+            .target("row")
+            .param(id_param())
+            .build(),
+        kit::action("session.detach", "Detach")
+            .confirm()
+            .target("row")
+            .param(id_param())
+            .build(),
+    ]
+}
+
+/// Actions scoped to the `permissions` table — `session.permission`
+/// with row context: the row's `id`/`request` merge into the serve
+/// params; `option` stays a form param (option ids are
+/// agent-defined — the row's `options` column lists them).
+fn perm_row_actions() -> Vec<Action> {
+    vec![
+        kit::action("session.permission", "Answer")
+            .target("row")
+            .param(id_param())
+            .param(req(str_param(
+                "request",
+                "Request",
+                "Pending request id — the row's `request` fills this.",
+            )))
+            .param(str_param(
+                "option",
+                "Option",
+                "Option id to select — see the row's `options` column; absent picks the agent's preferred option.",
+            ))
+            .description("Answer the pending permission request on the session.")
+            .build(),
+        open_stream_action(),
+    ]
+}
+
+/// The `stream` view's kv actions — the session-plane subset that
+/// makes sense mid-transcript (prompt/cancel/policy/mode/lifecycle).
+fn stream_actions() -> Vec<Action> {
+    session_actions()
+        .into_iter()
+        .filter(|a| {
+            matches!(
+                a.id.as_str(),
+                "session.attach"
+                    | "session.detach"
+                    | "session.prompt"
+                    | "session.cancel"
+                    | "session.set_mode"
+                    | "session.set_permission_policy"
+            )
+        })
+        .collect()
+}
+
 /// Actions scoped to the `config` agents table — the `config.*`
 /// engine verbs (cli lane) bound to an agent row. Rows carry `from`
 /// so an object target fills `--from`; `to`/`out`/`path` stay
@@ -799,6 +904,24 @@ fn menu_entries() -> Vec<MenuEntry> {
         30,
         &["digest", "summary"],
     );
+    add(
+        "live-view",
+        "Live sessions",
+        None,
+        Some("/sepia/live"),
+        "Views",
+        28,
+        &["live", "events", "feed", "busy"],
+    );
+    add(
+        "permissions-view",
+        "Permissions",
+        None,
+        Some("/sepia/permissions"),
+        "Views",
+        29,
+        &["permissions", "asks", "approve"],
+    );
     out
 }
 
@@ -864,6 +987,28 @@ const DRIVER_COLS: &[(&str, &str)] = &[
     ("agentCommandResolves", "Resolves"),
     ("binary", "Binary"),
     ("error", "Error"),
+];
+
+const LIVE_COLS: &[(&str, &str)] = &[
+    ("id", "ID"),
+    ("title", "Title"),
+    ("agent", "Agent"),
+    ("status", "Status"),
+    ("cwd", "Cwd"),
+    ("lastEvent", "Last event"),
+    ("pending", "Pending"),
+    ("lagged", "Lagged"),
+];
+
+const PERM_COLS: &[(&str, &str)] = &[
+    ("id", "Session"),
+    ("agent", "Agent"),
+    ("request", "Request"),
+    ("title", "Title"),
+    ("tool", "Tool"),
+    ("options", "Options"),
+    ("age", "Age (s)"),
+    ("since", "Since"),
 ];
 
 /// Every view the driver declares — static (no sepia state needed;
@@ -960,6 +1105,53 @@ pub fn specs() -> Vec<ViewSpec> {
             &["drivers"],
             col("Drivers", vec![table("Drivers", "drivers", DRIVER_COLS)]),
         ),
+        spec(
+            "live",
+            "Live sessions",
+            "/sepia/live",
+            "Sessions the event feed sees — attach/create/detach lifecycle plus run state (busy/attached/detached), last activity, and pending permission counts, merged with `sessions.list` for titles. Data comes from the feed child's `events.subscribe` stream; feed health is the `feed.status` kv. Row action opens the stream.",
+            &["feed.status", "live"],
+            col(
+                "Live sessions",
+                vec![
+                    kv("Event feed", "feed.status"),
+                    table_actions("Sessions", "live", LIVE_COLS, live_row_actions()),
+                ],
+            ),
+        ),
+        spec(
+            "stream",
+            "Stream",
+            "/sepia/stream",
+            "One session's merged transcript — the paged `sessions.history` head plus the live event-feed tail flattened to rows (text/reasoning deltas coalesced per message, tool calls, permission asks). Requires --param id=<session-id> (--param agent= when ids collide across stores); session actions dispatch with the view's resolved id.",
+            &["session", "stream"],
+            col(
+                "Stream",
+                vec![
+                    kv_actions("Session", "session", stream_actions()),
+                    table("Transcript", "stream", HISTORY_COLS),
+                ],
+            ),
+        ),
+        spec(
+            "permissions",
+            "Permissions",
+            "/sepia/permissions",
+            "Pending `session/request_permission` asks the feed has seen and not yet resolved — `sessions.permission` answers them (the row supplies session id + request id; pick an option id from the row's options column). Feed health is the `feed.status` kv.",
+            &["feed.status", "permissions"],
+            col(
+                "Permissions",
+                vec![
+                    kv("Event feed", "feed.status"),
+                    table_actions(
+                        "Pending permissions",
+                        "permissions",
+                        PERM_COLS,
+                        perm_row_actions(),
+                    ),
+                ],
+            ),
+        ),
     ]
 }
 
@@ -973,13 +1165,21 @@ pub fn manifest() -> DriverManifest {
     dashboard.priority = 30;
     let mut statusbar = kit::contribution("status", "Sepia sessions", "/sepia/status");
     statusbar.priority = 40;
+    // Platform feeds (P3): busy sessions ride `jobs`, pending
+    // permission asks + feed health ride `notifications`.
+    let mut jobs_feed = kit::contribution("live", "Sepia live sessions", "/sepia/live");
+    jobs_feed.priority = 30;
+    let mut notif_feed = kit::contribution("alerts", "Sepia alerts", "/sepia/permissions");
+    notif_feed.priority = 30;
 
     let mut m = kit::Manifest::new("sepia", "Sepia")
         .version(env!("CARGO_PKG_VERSION"))
         .icon("🐙")
         .navbar(navbar)
         .dashboard(dashboard)
-        .statusbar(statusbar);
+        .statusbar(statusbar)
+        .jobs(jobs_feed)
+        .notifications(notif_feed);
     for a in global_actions() {
         m = m.action(a);
     }
@@ -1008,6 +1208,10 @@ pub fn known_query(name: &str) -> bool {
             | "config.detail"
             | "stores"
             | "drivers"
+            | "live"
+            | "stream"
+            | "permissions"
+            | "feed.status"
     )
 }
 
@@ -1024,6 +1228,10 @@ pub fn query_data(name: &str, params: &Map<String, Value>) -> Value {
         "config.detail" => config_detail(params),
         "stores" => stores_rows(params),
         "drivers" => drivers_rows(params),
+        "live" => live_rows(params),
+        "stream" => stream_rows(params),
+        "permissions" => permissions_rows(params),
+        "feed.status" => feed::status(),
         other => json!({"error": format!("unknown query '{other}'")}),
     }
 }
@@ -1212,10 +1420,11 @@ fn fmt_time(ms: &Value) -> Value {
 }
 
 /// Collapse a message body to one table cell — newlines become `⏎`,
-/// long transcripts truncate.
+/// long transcripts truncate. `pub(crate)` — the feed module's
+/// stream-row flattener shares it.
 const CELL_MAX: usize = 200;
 
-fn cell_text(content: &Value) -> String {
+pub(crate) fn cell_text(content: &Value) -> String {
     let raw = content.as_str().unwrap_or_default();
     let flat = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() > CELL_MAX {
@@ -1682,6 +1891,195 @@ fn capability_label(c: &Value) -> String {
     }
 }
 
+// ------------------------------------------------------------- event feed
+//
+// The P3 live-event surface: `live`/`stream`/`permissions`/
+// `feed.status` queries read the feed child's buffer
+// ([`crate::feed`]); `job_items`/`notification_items` back the
+// `jobs`/`notifications` wire ops declared via `contributes`.
+
+/// `live` query — feed sessions merged with `sessions.list` rows
+/// (title/cwd/plane flags). Feed state wins for the status word
+/// (`busy`/`attached`/`detached`); `sessions.list` is best-effort —
+/// feed rows stand alone on its failure.
+fn live_rows(ctx: &Map<String, Value>) -> Value {
+    let feed_rows = feed::live();
+    if feed_rows.is_empty() {
+        return Value::Array(Vec::new());
+    }
+    let list = serve("sessions.list", json!({}), ctx)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    Value::Array(
+        feed_rows
+            .iter()
+            .map(|f| {
+                let id = f["id"].as_str().unwrap_or_default();
+                let agent = f["agent"].as_str();
+                let row = list.iter().find(|s| {
+                    s["id"].as_str() == Some(id)
+                        && agent.is_none_or(|a| {
+                            s["agent"].as_str() == Some(a) || s["agentId"].as_str() == Some(a)
+                        })
+                });
+                json!({
+                    "id": id,
+                    "title": row.map_or(Value::Null, |r| r["title"].clone()),
+                    "agent": row.map_or_else(|| f["agent"].clone(), |r| r["agent"].clone()),
+                    "status": f["status"],
+                    "cwd": row.map_or(Value::Null, |r| r["cwd"].clone()),
+                    "lastEvent": f["lastEvent"],
+                    "pending": f["pending"],
+                    "lagged": f["lagged"],
+                    "attached": f["attached"],
+                    "running": f["running"],
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Trailing history rows kept ahead of the live tail — the stream
+/// view shows recent context, not the whole backlog (paging stays
+/// on the `history` query).
+const STREAM_HEAD_ROWS: usize = 200;
+
+/// `stream` query — `sessions.history` head (same shaping as the
+/// `history` query) + the feed's buffered `SessionEvent` tail
+/// flattened to rows. A history failure degrades to a marker row +
+/// the live tail rather than failing the whole transcript.
+fn stream_rows(ctx: &Map<String, Value>) -> Value {
+    let Some(id) = ctx.get("id").and_then(Value::as_str) else {
+        return json!({"error": "missing required param 'id' (e.g. --param id=<session-id>)"});
+    };
+    let mut rows: Vec<Value> = Vec::new();
+    match history_rows(ctx) {
+        Value::Array(h) => {
+            let n = h.len();
+            rows.extend(h.into_iter().skip(n.saturating_sub(STREAM_HEAD_ROWS)));
+        }
+        other => {
+            let msg = other["error"].as_str().unwrap_or("history unavailable");
+            rows.push(json!({
+                "role": "system",
+                "time": "",
+                "node": Value::Null,
+                "tool": "",
+                "content": format!("history: {msg}"),
+            }));
+        }
+    }
+    rows.extend(feed::stream_tail(id));
+    Value::Array(rows)
+}
+
+/// `permissions` query — pending asks from the feed buffer,
+/// `agent`-filtered when the param is supplied (asks whose agent
+/// the feed doesn't know stay visible).
+fn permissions_rows(ctx: &Map<String, Value>) -> Value {
+    let agent = data::agent_param(ctx);
+    Value::Array(
+        feed::permissions()
+            .into_iter()
+            .filter(|r| {
+                agent
+                    .as_deref()
+                    .is_none_or(|a| r["agent"].as_str() == Some(a) || r["agent"].is_null())
+            })
+            .collect(),
+    )
+}
+
+/// RFC 3339 now — the platform feeds' timestamp shape.
+fn now_rfc3339() -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default()
+}
+
+/// `{"op":"jobs"}` — mid-turn sessions as [`JobItem`]s: the feed's
+/// busy set enriched with `sessions.list` titles. Empty feed →
+/// empty list (still `ok:true`).
+pub fn job_items() -> Vec<JobItem> {
+    let busy = feed::busy();
+    if busy.is_empty() {
+        return Vec::new();
+    }
+    let titles = serve("sessions.list", json!({}), &Map::new())
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    let now = now_rfc3339();
+    busy.into_iter()
+        .map(|(id, agent)| {
+            let title = titles
+                .iter()
+                .find(|s| s["id"].as_str() == Some(id.as_str()))
+                .and_then(|s| s["title"].as_str())
+                .unwrap_or(id.as_str());
+            let mut j = kit::job(id.clone(), title, "running");
+            j.detail = (!agent.is_empty()).then(|| format!("agent {agent}"));
+            j.route = Some(format!("/sepia/stream?id={id}"));
+            j.updated_at = Some(now.clone());
+            j
+        })
+        .collect()
+}
+
+/// `{"op":"notifications"}` — pending permission asks (warning,
+/// route to `sepia:permissions`) plus feed-health alerts: `down`
+/// (error) and cumulative `lagged` drops (warning). Empty buffer →
+/// empty list (still `ok:true`).
+pub fn notification_items() -> Vec<NotificationItem> {
+    let mut out = Vec::new();
+    for p in feed::permissions() {
+        let sid = p["id"].as_str().unwrap_or_default();
+        let rid = p["request"].as_str().unwrap_or_default();
+        let title = p["title"].as_str().unwrap_or("permission requested");
+        let mut body = format!("session {sid}");
+        if let Some(a) = p["agent"].as_str() {
+            let _ = write!(body, " · agent {a}");
+        }
+        if let Some(t) = p["tool"].as_str().filter(|t| !t.is_empty()) {
+            let _ = write!(body, " · {t}");
+        }
+        if let Some(o) = p["options"].as_str().filter(|o| !o.is_empty()) {
+            let _ = write!(body, " — options: {o}");
+        }
+        let mut n = kit::notification(
+            format!("perm:{sid}:{rid}"),
+            format!("Permission requested — {title}"),
+        );
+        n.body = Some(body);
+        n.severity = Some("warning".to_string());
+        n.route = Some("/sepia/permissions".to_string());
+        n.created_at = p["since"].as_str().map(str::to_string);
+        out.push(n);
+    }
+    let status = feed::status();
+    if status["status"].as_str() == Some("down") {
+        let mut n = kit::notification("feed-down", "Sepia event feed disconnected");
+        n.body = status["detail"]
+            .as_str()
+            .map(|d| format!("events.subscribe failing: {d}"));
+        n.severity = Some("error".to_string());
+        n.route = Some("/sepia/live".to_string());
+        out.push(n);
+    }
+    let lagged = status["lagged"].as_u64().unwrap_or(0);
+    if lagged > 0 {
+        let mut n = kit::notification(
+            "feed-lagged",
+            format!("Sepia event feed lagged — {lagged} events dropped"),
+        );
+        n.severity = Some("warning".to_string());
+        n.route = Some("/sepia/live".to_string());
+        out.push(n);
+    }
+    out
+}
+
 // ---------------------------------------------------------------- view op
 
 /// `{"op":"view","view":id,"params":{…}}` → [`pavo_protocol::wire::ViewResult`].
@@ -1699,14 +2097,15 @@ pub fn view_result(
         data_map.insert(b.name.clone(), query_data(&b.name, params));
     }
 
-    // The session view is stateful in two small ways: its resolved
-    // `id`/`agent` become the submit context (the wire `submit` op
-    // carries no view params), and the returned spec's form fields
-    // get seeded from the `session` detail so the meta form edits
-    // current values, not blanks.
+    // Every id-scoped view records its resolved `id`/`agent` — the
+    // invoke lane merges the *invoking* view's context into
+    // session-scoped serve actions (the wire carries no view params).
+    note_view_context(view_id, params);
+    // The session view is additionally stateful: the returned spec's
+    // form fields get seeded from the `session` detail so the meta
+    // form edits current values, not blanks.
     let mut spec = spec;
     if view_id == "session" {
-        note_session_context(params);
         if let Some(session) = data_map
             .get("session")
             .filter(|v| v.is_object() && v.get("error").is_none())

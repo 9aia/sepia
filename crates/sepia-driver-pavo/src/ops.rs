@@ -343,6 +343,7 @@ fn first_line(s: &str) -> Option<String> {
 /// engine's own exit status as honest data.
 pub fn invoke(
     action: &str,
+    view: Option<&str>,
     target: Option<&Value>,
     params: &Map<String, Value>,
 ) -> Result<ActionResult, String> {
@@ -350,7 +351,7 @@ pub fn invoke(
     // no engine verb shares the `session(s).` prefix, so the lanes
     // can't collide.
     if let Some(method) = serve_method(action) {
-        return Ok(serve_invoke(&method, target, params));
+        return Ok(serve_invoke(&method, view, target, params));
     }
     let Some(name) = action_verb(action) else {
         return Err(format!("unknown action: {action}"));
@@ -912,21 +913,59 @@ fn serve_message(method: &str, result: &Value) -> String {
 /// (control failures, invalid params) come back as `message` +
 /// `data.error`, the same honesty convention the cli lane uses for
 /// nonzero exits; validation failures stay in `errors`.
-fn serve_invoke(method: &str, target: Option<&Value>, params: &Map<String, Value>) -> ActionResult {
-    let merged = merge_serve_target(params, target);
+fn serve_invoke(
+    method: &str,
+    view: Option<&str>,
+    target: Option<&Value>,
+    params: &Map<String, Value>,
+) -> ActionResult {
+    let mut merged = merge_serve_target(params, target);
+    // The invoke wire op carries no view params — fill `id`/`agent`
+    // gaps from the *invoking* view's last-resolved context
+    // (`session`/`stream` views record theirs; a view-less invoke
+    // guesses the session view's, the "current session").
+    if session_id(&merged).is_none() || !present(merged.get("agent")) {
+        let ctx = match view {
+            Some(v) => crate::views::view_context(v),
+            None => crate::views::session_context(),
+        };
+        if let Some(ctx) = ctx {
+            for key in ["id", "agent"] {
+                if !present(merged.get(key))
+                    && let Some(v) = ctx.get(key)
+                {
+                    merged.insert(key.to_string(), v.clone());
+                }
+            }
+        }
+    }
     let mut errors = serve_missing(method, &merged);
     if errors.is_empty() {
         match serve_params(method, &merged) {
             Ok(p) => {
                 return match data::mutate(method, p, &merged) {
-                    Ok(result) => ActionResult {
-                        message: Some(serve_message(method, &result)),
-                        data: Some(json!({
-                            "method": method,
-                            "result": result,
-                        })),
-                        ..ActionResult::default()
-                    },
+                    Ok(result) => {
+                        // A successful permission answer retires the
+                        // ask in the feed buffer — the `permissions`
+                        // query and notifications clear on the next
+                        // poll (see feed.rs's resolution rule).
+                        if method == "sessions.permission"
+                            && let (Some(sid), Some(rid)) = (
+                                merged.get("id").and_then(Value::as_str),
+                                merged.get("request").and_then(Value::as_str),
+                            )
+                        {
+                            crate::feed::resolve_permission(sid, rid);
+                        }
+                        ActionResult {
+                            message: Some(serve_message(method, &result)),
+                            data: Some(json!({
+                                "method": method,
+                                "result": result,
+                            })),
+                            ..ActionResult::default()
+                        }
+                    }
                     Err(e) => ActionResult {
                         message: Some(first_line(&e).unwrap_or_else(|| e.clone())),
                         data: Some(json!({
@@ -976,7 +1015,7 @@ pub fn submit(view: &str, form: Option<&str>, values: &Map<String, Value>) -> Re
     } else {
         values
     };
-    match invoke(&candidate, None, values) {
+    match invoke(&candidate, Some(view), None, values) {
         Ok(r) => Response::ok_typed(&SubmitResult {
             message: r.message,
             errors: r.errors,

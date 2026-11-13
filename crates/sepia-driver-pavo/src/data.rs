@@ -47,7 +47,7 @@ use serde_json::{Map, Value};
 /// executable (`<bin> serve`) or this driver's own exe through the
 /// engine passthrough (`<self> run serve`).
 #[derive(Clone, PartialEq, Eq)]
-enum Target {
+pub(crate) enum Target {
     /// A `sepia`-compatible executable — the tamias `bins[]` shim,
     /// a legacy `sepia` build, or a test fake.
     Bin(PathBuf),
@@ -83,36 +83,60 @@ struct Sepia {
     next_id: u64,
 }
 
+/// A spawned `serve` child split into its halves — the request
+/// lane ([`Sepia`]) and the event-feed lane (`crate::feed`) spawn
+/// through the same [`spawn_serve`] so target resolution and
+/// process setup stay in one place.
+pub(crate) struct ServeProc {
+    pub child: Child,
+    pub stdin: ChildStdin,
+    pub stdout: BufReader<std::process::ChildStdout>,
+}
+
+/// Spawn the resolved target's `serve`: a `sepia`-shaped
+/// executable gets `<bin> serve`; `self` (the driver's own exe)
+/// gets `<self> run serve` — the engine passthrough is the same
+/// serve loop. stdin/stdout piped; stderr inherits (serve logs
+/// there — keeping it off the wire is the child's job, and
+/// inheriting keeps diagnostics visible).
+pub(crate) fn spawn_serve(target: &Target) -> Result<ServeProc, String> {
+    let mut cmd = Command::new(target.bin());
+    if target.via_run() {
+        cmd.arg("run");
+    }
+    let mut child = cmd
+        .arg("serve")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn `{}` serve: {e}", target.bin().display()))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "sepia serve: no stdin pipe".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "sepia serve: no stdout pipe".to_string())?;
+    Ok(ServeProc {
+        child,
+        stdin,
+        stdout: BufReader::new(stdout),
+    })
+}
+
 impl Sepia {
-    /// Spawn the resolved target's `serve`: a `sepia`-shaped
-    /// executable gets `<bin> serve`; `self` (the driver's own exe)
-    /// gets `<self> run serve` — the engine passthrough is the same
-    /// serve loop. stdin/stdout piped; stderr inherits (serve logs
-    /// there — keeping it off the wire is the child's job, and
-    /// inheriting keeps diagnostics visible).
+    /// Spawn the resolved target's `serve` — see [`spawn_serve`].
     fn spawn(target: &Target) -> Result<Self, String> {
-        let mut cmd = Command::new(target.bin());
-        if target.via_run() {
-            cmd.arg("run");
-        }
-        let mut child = cmd
-            .arg("serve")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("failed to spawn `{}` serve: {e}", target.bin().display()))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "sepia serve: no stdin pipe".to_string())?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "sepia serve: no stdout pipe".to_string())?;
+        let ServeProc {
+            child,
+            stdin,
+            stdout,
+        } = spawn_serve(target)?;
         Ok(Self {
             child,
             stdin,
-            stdout: BufReader::new(stdout),
+            stdout,
             target: target.clone(),
             next_id: 0,
         })
@@ -205,7 +229,7 @@ impl Slot {
 }
 
 /// The `serve` target — see the module docs for resolution order.
-fn resolve_target(ctx: &Map<String, Value>) -> Target {
+pub(crate) fn resolve_target(ctx: &Map<String, Value>) -> Target {
     for key in ["sepiaBin", "sepia", "bin"] {
         if let Some(path) = ctx.get(key).and_then(Value::as_str) {
             return Target::Bin(PathBuf::from(path));

@@ -34,19 +34,20 @@ time.workspace = true
 # `cargo xtask install` work without a sibling ../pavo checkout
 # (path deps break workspace resolution on a fresh clone; sepia's
 # CI has no pavo checkout). `version` is the crates.io fallback.
-# `rev` tracks pavo main — the interaction-protocol merge commit
-# f42f177 (invoke op + Action/ParamSchema types, P-032/PL-021).
-pavo-protocol = { git = "https://github.com/9aia/pavo", rev = "f42f17735321fd4e7afab7a2c1c3b8b24c145876", version = "0.1.0" }
+# `rev` tracks pavo main — the P-033 navigate/commands merge
+# 9397efb (Action.route + item_route + jobs/notifications feeds,
+# on top of the f42f177 interaction protocol).
+pavo-protocol = { git = "https://github.com/9aia/pavo", rev = "9397efb98a6dd96632696effe9d6c7df8648acf4", version = "0.1.0" }
 # Driver-authoring kit — the ndjson `serve` loop, manifest/ViewSpec/
 # QueryBinding/ViewNode builders, and (feature-gated) the surface
 # layer this driver's `ops`/`cli`/`mcp` surface is built on. Same git
 # source as pavo-protocol (they resolve to one rev).
-pavo-driver-kit = { git = "https://github.com/9aia/pavo", rev = "f42f17735321fd4e7afab7a2c1c3b8b24c145876", version = "0.1.0" }
+pavo-driver-kit = { git = "https://github.com/9aia/pavo", rev = "9397efb98a6dd96632696effe9d6c7df8648acf4", version = "0.1.0" }
 
 [dev-dependencies]
 # Conformance gate — `cargo test` runs pavo's wire-contract suite
 # against this crate's own `tamias-driver-sepia serve` binary.
-pavo-testkit = { git = "https://github.com/9aia/pavo", rev = "f42f17735321fd4e7afab7a2c1c3b8b24c145876" }
+pavo-testkit = { git = "https://github.com/9aia/pavo", rev = "9397efb98a6dd96632696effe9d6c7df8648acf4" }
 # The engine CLI e2e suite lives here now (tests/{cli,config,
 # serve,serve_full,store_verbs}.rs): the `sepia` command is a tamias
 # shim → this binary's `run`/`cli` verbs, so the spawned surface

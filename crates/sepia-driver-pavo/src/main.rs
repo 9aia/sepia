@@ -56,6 +56,7 @@
 //! `$SEPIA_BIN`) pins which `sepia` executable serves both lanes.
 
 mod data;
+mod feed;
 mod ops;
 #[cfg(feature = "mcp")]
 mod surface;
@@ -122,22 +123,22 @@ fn dispatch(req: &Request) -> Response {
         // ActionResult; `view` is resolution context only.
         Request::Invoke {
             action,
+            view,
             target,
             params,
             ..
-        } => match ops::invoke(action, target.as_ref(), params) {
+        } => match ops::invoke(action, view.as_deref(), target.as_ref(), params) {
             Ok(r) => Response::ok_typed(&r),
             Err(e) => Response::err(e),
         },
         // `submit` is a thin adapter: with no form nodes declared,
         // only a `form`/view naming a known action dispatches.
-        // `jobs`/`notifications` stay unsupported — the manifest
-        // declares no `contributes` feed slots (P3's event feed is
-        // future work).
         Request::Submit { view, form, values } => ops::submit(view, form.as_deref(), values),
-        Request::Jobs | Request::Notifications => {
-            Response::err("tamias-driver-sepia implements no jobs/notifications ops")
-        }
+        // Platform feeds (P3): `contributes.jobs`/`notifications`
+        // are declared — busy sessions and pending permission asks
+        // plus feed health ride these ops (see views.rs).
+        Request::Jobs => Response::ok_typed(&views::job_items()),
+        Request::Notifications => Response::ok_typed(&views::notification_items()),
     }
 }
 
@@ -168,8 +169,10 @@ fn engine_argv(args: &[String]) -> Vec<String> {
 
 fn serve() -> i32 {
     // Pre-spawn `sepia serve` so its plane build overlaps the
-    // manifest/views handshake — see `data::warm`.
+    // manifest/views handshake — see `data::warm`; the feed child
+    // (`events.subscribe`) warms alongside — see `feed::warm`.
     data::warm();
+    feed::warm();
     // The kit loop answers every line (parse failures become
     // `ok:false`), ends quietly on stdin EOF or a dead client.
     let _ = kit::serve_stdio(dispatch);

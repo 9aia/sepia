@@ -664,4 +664,51 @@ mod serve {
             "{res}"
         );
     }
+
+    /// P3 — the live event feed: `serve` warms a second `sepia
+    /// serve` child on `events.subscribe` (self-resolution →
+    /// `run serve`, same scratch env). `feed.status`/`live`/
+    /// `permissions` queries and the `jobs`/`notifications` ops
+    /// answer honestly on an empty plane.
+    #[test]
+    fn live_feed_queries_and_platform_ops_over_the_wire() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let drivers = tmp.path().join("drivers");
+        std::fs::create_dir_all(&drivers).unwrap();
+        fake_driver(&drivers);
+        let mut drv = Serve::start_driver(&home, &drivers, &[]);
+
+        // The feed child's plane build overlaps the handshake —
+        // poll `feed.status` until the subscribe ack lands.
+        let mut status = Value::Null;
+        for _ in 0..100 {
+            let res = drv.call_raw(1, r#"{"op":"query","query":"feed.status","params":{}}"#);
+            assert_eq!(res["ok"], true, "{res}");
+            status = res["result"]["data"].clone();
+            if status["status"].as_str() == Some("live") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        assert_eq!(status["status"], "live", "{status}");
+        assert!(status["sessions"].is_u64(), "{status}");
+
+        // `live`/`permissions` — empty feed rows, still `ok:true`.
+        let res = drv.call_raw(2, r#"{"op":"query","query":"live","params":{}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["result"]["data"], json!([]), "{res}");
+        let res = drv.call_raw(3, r#"{"op":"query","query":"permissions","params":{}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["result"]["data"], json!([]), "{res}");
+
+        // Platform feeds — no busy sessions, no pending asks, feed
+        // healthy → both ops return empty vectors.
+        let res = drv.call_raw(4, r#"{"op":"jobs"}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["result"], json!([]), "{res}");
+        let res = drv.call_raw(5, r#"{"op":"notifications"}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["result"], json!([]), "{res}");
+    }
 }
