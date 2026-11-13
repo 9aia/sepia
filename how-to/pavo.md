@@ -106,6 +106,11 @@ markers; a `down` feed re-arms lazily on the next feed query.
 - `agent`, `dir` — forwarded to `agents.list`/`config.*` calls.
 - Store flags on `stores`/store verbs: `db`, `data-dir`,
   `claude-dir`, `cursor-dir`.
+- `$SEPIA_DRIVER_DIR` (env, inherited — not a param) — the spawned
+  `sepia serve` plane resolves its `sepia-driver-*` store drivers
+  `$SEPIA_DRIVER_DIR` → `<data dir>/sepia/drivers` →
+  `/usr/local/lib/sepia/drivers` → `PATH`; the driver's `drivers`
+  view reports whatever that scan finds.
 
 ## Degraded mode
 

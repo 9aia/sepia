@@ -55,10 +55,6 @@ override, or ten lock TTLs floored at 60s.
 | `sessions.set_permission_policy` | Set the permission policy (`id`, `permissions`, `agent?`) |
 | `sessions.delete` | Delete from the owning store |
 | `sessions.patch_meta` | Meta overlay patch (`id`, `patch`: `title`/`pinned`/`archived`/`projectIds`/`model`) |
-| `projects.list` | Node-local projects |
-| `projects.create` | New project (`name`) |
-| `projects.rename` | Rename (`id`, `name`) |
-| `projects.delete` | Delete (`id`) — dropped from every session's `projectIds` |
 | `config.list` | Per-agent config inventory (`agent?`, `dir?`) → `[{agent, counts}]` for every `AgentConfig`-capable driver; a failing driver yields `{agent, error}` |
 | `config.get` | Agent-config IR (`agent`, `dir?`) via the driver's `config.read` — the serialized `AgentConfig` (per-item + config `metadata` included) |
 | `config.import` | Install a config IR payload (`agent`, `dir?`, `config`) via `config.write` → `{actions}` — `config` accepts the `config export` JSON or a serialized `AgentConfig` |
@@ -187,9 +183,9 @@ session from the store by id (`not_found` when absent) and answers
 malformed `config` payload. `dir` is the config root the driver's
 adapter expects — `.claude`/`.cursor`/devin config dirs, or a Cline
 *workspace root*; absent, the driver resolves its own default
-(`SEPIA_*_DIR` envs, user dir, or the driver's cwd for Cline). Meta
-verbs (`sessions.patch_meta`, `projects.*`) answer
-`invalid` on a plane built without a meta store. A spawner that
+(`SEPIA_*_DIR` envs, user dir, or the driver's cwd for Cline). The
+meta verb (`sessions.patch_meta`) answers `invalid` on a plane built
+without a meta store. A spawner that
 respawns the process should treat a dead child as retryable for
 idempotent reads; peregrin respawns once per call.
 

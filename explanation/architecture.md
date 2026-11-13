@@ -89,7 +89,7 @@ views proxy `sepia serve` read-only on top of that. See
 ## The service wire
 
 `sepia serve` is the embedding contract. `manifest` negotiates protocol
-versions; `sessions.*`, `agents.*`, `projects.*`, `config.*`, and the
+versions; `sessions.*`, `agents.*`, `config.*`, and the
 two `*.subscribe` feeds cover the plane's surface; `session.event` and
 `node.event` notifications stream live events. The full method table
 lives in [serve-wire](../reference/serve-wire.md) and
