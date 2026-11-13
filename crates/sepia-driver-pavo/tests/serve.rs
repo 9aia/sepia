@@ -711,4 +711,213 @@ mod serve {
         assert_eq!(res["ok"], true, "{res}");
         assert_eq!(res["result"], json!([]), "{res}");
     }
+
+    /// A fake `sepia` executable for the live-feed e2e — `SEPIA_BIN`
+    /// steers both serve children (data + feed) to it; it is spawned
+    /// as `<bin> serve` and speaks the session-plane wire:
+    ///
+    /// - `events.subscribe` → ack (`live: [s1,s2,s3]`) then a canned
+    ///   `node.event` stream from `events.ndjson`: s1 mid-turn
+    ///   (runStarted, text deltas, a tool call, an
+    ///   `acp:permission_request` — deliberately *no* runFinished so
+    ///   the ask stays pending), s2 attached-idle, s3 detached.
+    /// - `sessions.list`/`sessions.history` → canned reads so the
+    ///   `live`/`stream`/`jobs` merges have plane rows.
+    /// - `sessions.permission` → logged to `perm.log`, `result:null`
+    ///   — the pending-ask state lives in the driver's feed buffer,
+    ///   so the wire-ok reply alone is what `resolve_permission`
+    ///   needs to retire it.
+    ///
+    /// Returns the script path.
+    fn fake_sepia(dir: &Path) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let events = dir.join("events.ndjson");
+        let sessions = dir.join("sessions.json");
+        let perms = dir.join("perm.log");
+        std::fs::write(
+            &events,
+            concat!(
+                r#"{"jsonrpc":"2.0","method":"node.event","params":{"type":"attached","sessionId":"s1","agentId":"devin"}}"#,
+                "\n",
+                r#"{"jsonrpc":"2.0","method":"node.event","params":{"type":"attached","sessionId":"s2","agentId":"claude"}}"#,
+                "\n",
+                r#"{"jsonrpc":"2.0","method":"node.event","params":{"type":"sessionEvents","sessionId":"s1","events":[{"type":"runStarted","threadId":"t1","runId":"r1"},{"type":"textMessageStart","messageId":"m1","role":"assistant"},{"type":"textMessageContent","messageId":"m1","delta":"Hello "},{"type":"textMessageContent","messageId":"m1","delta":"world"},{"type":"textMessageEnd","messageId":"m1"},{"type":"toolCallStart","toolCallId":"tc1","toolCallName":"edit"},{"type":"toolCallArgs","toolCallId":"tc1","delta":"{\"path\":\"f.txt\"}"},{"type":"toolCallResult","messageId":"m2","toolCallId":"tc1","content":"edited f.txt"},{"type":"toolCallEnd","toolCallId":"tc1","status":"completed","toolCallName":"edit"},{"type":"custom","name":"acp:permission_request","value":{"requestId":"req-1","sessionId":"s1","title":"Write f.txt","toolKind":"edit","toolCallId":"tc1","options":[{"optionId":"allow","name":"Allow once","kind":"allow_once"},{"optionId":"reject","name":"Reject","kind":"reject_once"}]}}]}}"#,
+                "\n",
+                r#"{"jsonrpc":"2.0","method":"node.event","params":{"type":"sessionEvents","sessionId":"s2","events":[{"type":"runStarted","threadId":"t2","runId":"r2"},{"type":"runFinished","threadId":"t2","runId":"r2"}]}}"#,
+                "\n",
+                r#"{"jsonrpc":"2.0","method":"node.event","params":{"type":"sessionEvents","sessionId":"s3","events":[{"type":"textMessageStart","messageId":"m9","role":"assistant"},{"type":"textMessageContent","messageId":"m9","delta":"stored only"},{"type":"textMessageEnd","messageId":"m9"}]}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            &sessions,
+            r#"[{"id":"s1","title":"Live session","agent":"devin","agentId":"devin","cwd":"/work","updatedAt":"2025-01-01T00:00:00Z","source":"store","locked":false,"busy":true,"pinned":false,"archived":false},{"id":"s2","title":"Idle session","agent":"claude","agentId":"claude","cwd":"/work2","updatedAt":"2025-01-01T00:00:00Z","source":"store","locked":false,"busy":false,"pinned":false,"archived":false},{"id":"s3","title":"Stored session","agent":"devin","agentId":"devin","cwd":"/work3","updatedAt":"2025-01-01T00:00:00Z","source":"store","locked":false,"busy":false,"pinned":false,"archived":false}]"#,
+        )
+        .unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\),"method".*/\1/p')
+  case "$line" in
+    *'"method":"events.subscribe"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"subscribed":true,"live":["s1","s2"]}}}}\n' "$id"
+      cat '{events}'
+      continue
+      ;;
+    *'"method":"sessions.list"'*) result=$(cat '{sessions}') ;;
+    *'"method":"sessions.history"'*) result='{{"messages":[],"total":0,"start":0}}' ;;
+    *'"method":"sessions.permission"'*) printf '%s\n' "$line" >> '{perms}'; result='null' ;;
+    *) result='null' ;;
+  esac
+  printf '{{"jsonrpc":"2.0","id":%s,"result":%s}}\n' "$id" "$result"
+done
+"#,
+            events = events.display(),
+            sessions = sessions.display(),
+            perms = perms.display(),
+        );
+        let bin = dir.join("sepia");
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        bin
+    }
+
+    /// P5 — the deferred live e2e: the feed child speaks
+    /// `events.subscribe` to a fake `sepia serve` (SEPIA_BIN) that
+    /// streams canned `node.event`s; `live`/`stream`/`permissions`/
+    /// `feed.status` queries and the `jobs`/`notifications` ops
+    /// answer from the buffered frames, then a `session.permission`
+    /// invoke clears the pending ask.
+    #[test]
+    fn live_feed_streams_canned_events_end_to_end() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let drivers = tmp.path().join("drivers");
+        std::fs::create_dir_all(&drivers).unwrap();
+        let fake = fake_sepia(&tmp.path().join("fake"));
+        let mut drv = Serve::start_driver(
+            &home,
+            &drivers,
+            &[("SEPIA_BIN", fake.to_string_lossy().as_ref())],
+        );
+
+        // The feed child's plane build + subscribe + ingest overlaps
+        // the handshake — poll `feed.status` until the canned ask
+        // lands in the buffer.
+        let mut status = Value::Null;
+        for _ in 0..100 {
+            let res = drv.call_raw(1, r#"{"op":"query","query":"feed.status","params":{}}"#);
+            assert_eq!(res["ok"], true, "{res}");
+            status = res["result"]["data"].clone();
+            if status["pendingPermissions"].as_u64() == Some(1) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        assert_eq!(status["status"], "live", "{status}");
+        assert_eq!(status["sessions"], 3, "{status}");
+        assert_eq!(status["pendingPermissions"], 1, "{status}");
+
+        // `live` — feed rows merged with `sessions.list`: s1 busy
+        // with a pending ask, s2 attached-idle, s3 detached.
+        let res = drv.call_raw(2, r#"{"op":"query","query":"live","params":{}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let rows = res["result"]["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        let s1 = rows.iter().find(|r| r["id"] == "s1").unwrap();
+        assert_eq!(s1["status"], "busy", "{s1}");
+        assert_eq!(s1["title"], "Live session", "{s1}");
+        assert_eq!(s1["pending"], 1, "{s1}");
+        let s2 = rows.iter().find(|r| r["id"] == "s2").unwrap();
+        assert_eq!(s2["status"], "attached", "{s2}");
+        let s3 = rows.iter().find(|r| r["id"] == "s3").unwrap();
+        assert_eq!(s3["status"], "detached", "{s3}");
+
+        // `stream` — history head (empty) + the feed tail flattened:
+        // coalesced text, the tool call, the permission ask.
+        let res = drv.call_raw(3, r#"{"op":"query","query":"stream","params":{"id":"s1"}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let rows = res["result"]["data"].as_array().unwrap();
+        assert!(
+            rows.iter().any(|r| r["content"]
+                .as_str()
+                .is_some_and(|c| c.contains("Hello world"))),
+            "no assistant text in {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|r| r["tool"] == "edit"),
+            "no tool row in {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|r| r["role"] == "permission"),
+            "no permission row in {rows:?}"
+        );
+
+        // `permissions` — the pending ask with its wire fields.
+        let res = drv.call_raw(4, r#"{"op":"query","query":"permissions","params":{}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let asks = res["result"]["data"].as_array().unwrap();
+        assert_eq!(asks.len(), 1, "{asks:?}");
+        assert_eq!(asks[0]["id"], "s1", "{asks:?}");
+        assert_eq!(asks[0]["agent"], "devin", "{asks:?}");
+        assert_eq!(asks[0]["request"], "req-1", "{asks:?}");
+        assert_eq!(asks[0]["title"], "Write f.txt", "{asks:?}");
+        assert_eq!(asks[0]["tool"], "edit", "{asks:?}");
+        let options = asks[0]["options"].as_str().unwrap();
+        assert!(
+            options.contains("allow") && options.contains("reject"),
+            "{options}"
+        );
+
+        // Platform feeds — s1 is mid-turn → one job; the pending
+        // ask → one warning notification routed at the view.
+        let res = drv.call_raw(5, r#"{"op":"jobs"}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let jobs = res["result"].as_array().unwrap();
+        assert_eq!(jobs.len(), 1, "{jobs:?}");
+        assert_eq!(jobs[0]["id"], "s1", "{jobs:?}");
+        assert_eq!(jobs[0]["title"], "Live session", "{jobs:?}");
+        assert_eq!(jobs[0]["status"], "running", "{jobs:?}");
+        assert_eq!(jobs[0]["route"], "/sepia/stream?id=s1", "{jobs:?}");
+        let res = drv.call_raw(6, r#"{"op":"notifications"}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let notes = res["result"].as_array().unwrap();
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert_eq!(notes[0]["id"], "perm:s1:req-1", "{notes:?}");
+        assert_eq!(notes[0]["severity"], "warning", "{notes:?}");
+        assert_eq!(notes[0]["route"], "/sepia/permissions", "{notes:?}");
+
+        // Answer the ask through the serve lane — the wire-ok reply
+        // retires it in the feed buffer.
+        let res = drv.call_raw(
+            7,
+            r#"{"op":"invoke","action":"session.permission","params":{"id":"s1","request":"req-1","option":"allow"}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(
+            res["result"]["data"]["method"], "sessions.permission",
+            "{res}"
+        );
+
+        // The ask cleared — permissions/notifications empty, s1
+        // still busy (no runFinished was streamed), feed healthy.
+        let res = drv.call_raw(8, r#"{"op":"query","query":"permissions","params":{}}"#);
+        assert_eq!(res["result"]["data"], json!([]), "{res}");
+        let res = drv.call_raw(9, r#"{"op":"notifications"}"#);
+        assert_eq!(res["result"], json!([]), "{res}");
+        let res = drv.call_raw(10, r#"{"op":"query","query":"feed.status","params":{}}"#);
+        assert_eq!(res["result"]["data"]["pendingPermissions"], 0, "{res}");
+        assert_eq!(res["result"]["data"]["status"], "live", "{res}");
+        let res = drv.call_raw(11, r#"{"op":"query","query":"live","params":{}}"#);
+        let rows = res["result"]["data"].as_array().unwrap();
+        let s1 = rows.iter().find(|r| r["id"] == "s1").unwrap();
+        assert_eq!(s1["pending"], 0, "{s1}");
+        assert_eq!(s1["status"], "busy", "{s1}");
+
+        // The permission rode the serve wire verbatim.
+        let logged = std::fs::read_to_string(tmp.path().join("fake/perm.log")).unwrap();
+        assert!(logged.contains("\"request\":\"req-1\""), "{logged}");
+        assert!(logged.contains("\"option\":\"allow\""), "{logged}");
+    }
 }
