@@ -26,6 +26,14 @@
 //!   `{"ok":true,"result":…}` / `{"ok":false,"error":…}`.
 //!   `query:"ops"` answers the ops manifest; `query:"cli.<verb>"`
 //!   runs the engine op.
+//! - `{"op":"invoke","action":…}` dispatches an action id —
+//!   `session.<verb>`/`sessions.<verb>` ids are the curated
+//!   session-plane actions over the `sepia serve` wire (`sessions.
+//!   attach`, `sessions.prompt`, `sessions.patch_meta`, …); bare
+//!   verb names / `cli.`-prefixed spellings ride the same
+//!   argv/exec path `cli.*` queries use → `ActionResult`.
+//!   `{"op":"submit"}` is a thin verb/action-named adapter (the
+//!   driver declares no form nodes).
 //!
 //! Optional surface: feature `mcp` embeds pavo-driver-kit's
 //! surface layer — `mcp` serves the ops manifest as MCP tools on
@@ -37,11 +45,12 @@
 //! Read path: every `view`/`query` (except `ops`/`cli.*`) proxies
 //! read-side methods of a spawned `sepia serve` (`sepia serve` is
 //! the session plane's embedding surface — see `data.rs` for
-//! binary resolution). The view side stays strictly read-only:
-//! attach/prompt/delete and friends are engine *ops* now — they
-//! run through `cli.*`/`run` with the engine's own semantics, never
-//! through the view queries. `--param sepiaBin=` (or `$SEPIA_BIN`)
-//! pins which `sepia` executable serves the views.
+//! binary resolution). Mutations split by lane: `session.*`
+//! actions (`invoke`) write through the same serve child — the
+//! session plane's own wire — while engine/store/config verbs
+//! (`cli.*`/`run`/`invoke`) keep the engine's own semantics and
+//! never touch the serve child. `--param sepiaBin=` (or
+//! `$SEPIA_BIN`) pins which `sepia` executable serves both lanes.
 
 mod data;
 mod ops;
@@ -101,12 +110,13 @@ fn dispatch(req: &Request) -> Response {
                 Response::err(format!("unknown query: {query}"))
             }
         }
-        // `invoke` dispatches action ids — which ARE verb names
-        // (`store.import`, `driver.list`, …, `cli.`-prefix
-        // tolerated) — through the same argv/exec path `cli.*`
-        // queries use, returning an ActionResult. `view` is
-        // resolution context only; sepia declares no forms, so
-        // `submit` stays unsupported.
+        // `invoke` dispatches action ids through two lanes:
+        // `session.<verb>`/`sessions.<verb>` are the curated
+        // session-plane actions → `sepia serve` methods over the
+        // shared data child; bare verb names (`store.import`,
+        // `driver.list`, …, `cli.`-prefix tolerated) ride the same
+        // argv/exec path `cli.*` queries use. Both return an
+        // ActionResult; `view` is resolution context only.
         Request::Invoke {
             action,
             target,
@@ -116,13 +126,14 @@ fn dispatch(req: &Request) -> Response {
             Ok(r) => Response::ok_typed(&r),
             Err(e) => Response::err(e),
         },
-        // `submit`/`jobs`/`notifications` — the manifest declares no
-        // `contributes` feed slots and no form nodes, and mutations
-        // go through `cli.<verb>`/`invoke`/`run`, never `submit`, so
-        // they answer the same unsupported-op error hosts read as
-        // "no feed".
-        Request::Submit { .. } | Request::Jobs | Request::Notifications => {
-            Response::err("tamias-driver-sepia implements no submit/jobs/notifications ops")
+        // `submit` is a thin adapter: with no form nodes declared,
+        // only a `form`/view naming a known action dispatches.
+        // `jobs`/`notifications` stay unsupported — the manifest
+        // declares no `contributes` feed slots (P3's event feed is
+        // future work).
+        Request::Submit { view, form, values } => ops::submit(view, form.as_deref(), values),
+        Request::Jobs | Request::Notifications => {
+            Response::err("tamias-driver-sepia implements no jobs/notifications ops")
         }
     }
 }

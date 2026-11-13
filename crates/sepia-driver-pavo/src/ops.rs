@@ -32,10 +32,24 @@
 //! config dirs. `export`/`list`/`diff`/`driver list`/`version` only
 //! read — an export's `--out`-style positional writes an artifact
 //! file, not engine state.
+//!
+//! `invoke` has two lanes. `cli.<verb>`-style ids (bare verb names,
+//! `store.*`, `config.*`, `driver.*`, `cli.` prefix tolerated) ride
+//! the argv/exec path above — engine/store/config mutations keep
+//! the CLI's own semantics. `session.<verb>`/`sessions.<verb>` ids
+//! are the curated session-plane actions: they dispatch to `sepia
+//! serve` methods (`sessions.attach`, `sessions.prompt`, …) through
+//! the same persistent child the view queries use
+//! ([`crate::data::call`]) — the plane operations that have no CLI
+//! verb at all. See the "serve lane" section by [`invoke`].
 
 use clap::{Arg, ArgAction, Command};
-use pavo_protocol::wire::{ActionResult, QueryResult, Response};
+use pavo_driver_kit as kit;
+use pavo_protocol::wire::{ActionResult, QueryResult, Response, SubmitResult};
+use pavo_protocol::{ParamKind, ParamSchema};
 use serde_json::{Map, Value, json};
+
+use crate::data;
 
 /// Unbounded surfaces — verbs that never return (`serve`). They can
 /// never be request/response ops.
@@ -130,6 +144,53 @@ fn kind(a: &Arg) -> &'static str {
     }
 }
 
+/// The four store/agent ids every `--from`/`--to` flag accepts —
+/// `StoreId` and `AgentId` spell the same set, so one enum covers
+/// both the store and config verbs.
+const STORE_IDS: &[&str] = &["devin", "cline", "claude", "cursor"];
+
+/// `ExportFormat` tokens (`store.export --format`).
+const EXPORT_FORMATS: &[&str] = &["json", "cline"];
+
+/// A clap arg → the typed [`ParamSchema`] the ops manifest carries
+/// on each param's `schema` field — hosts auto-generate action
+/// forms from it (enum pickers, ref pickers, bool toggles), and
+/// pavo-core's ops→actions derivation prefers it over the
+/// `arg`/`opt`/`flag` kind. Name-driven upgrades on top of the
+/// argv kind: store/agent selectors → enum, session ids → ref
+/// picker over the `sessions` view query, formats → enum,
+/// long-text fields → text, counts → integer. Anything not
+/// statically knowable stays `string` — honest degradation.
+fn param_schema(a: &Arg) -> ParamSchema {
+    // Same wire-name rule as `param_json`: positionals keep their
+    // id, flags spell their `--long`.
+    let id = a.get_id().as_str();
+    let name = if a.is_positional() {
+        id
+    } else {
+        a.get_long().unwrap_or(id)
+    };
+    let mut b = kit::param(name).doc(a.get_help().map(ToString::to_string).unwrap_or_default());
+    if a.is_required_set() {
+        b = b.required();
+    }
+    let b = if matches!(kind(a), "flag") {
+        b.kind(ParamKind::Bool)
+    } else {
+        match name {
+            "from" | "to" => b.enumeration(STORE_IDS.iter().map(|s| (*s).to_string()).collect()),
+            "format" => b.enumeration(EXPORT_FORMATS.iter().map(|s| (*s).to_string()).collect()),
+            "session_id" | "id" => b.kind(ParamKind::Ref).ref_query("sessions"),
+            "title" | "note" | "text" | "body" => b.text(),
+            "limit" | "delta" | "count" | "before" | "turns" | "node_id" => {
+                b.kind(ParamKind::Integer)
+            }
+            _ => b,
+        }
+    };
+    b.build()
+}
+
 fn param_json(a: &Arg) -> Value {
     // Wire name = the flag name (`--claude-dir` → `claude-dir`), not
     // the field id (`claude_dir`) — generated surfaces spell params
@@ -144,6 +205,7 @@ fn param_json(a: &Arg) -> Value {
         "name": name,
         "kind": kind(a),
         "doc": a.get_help().map(ToString::to_string).unwrap_or_default(),
+        "schema": serde_json::to_value(param_schema(a)).unwrap_or(Value::Null),
     })
 }
 
@@ -283,6 +345,12 @@ pub fn invoke(
     target: Option<&Value>,
     params: &Map<String, Value>,
 ) -> Result<ActionResult, String> {
+    // Session-plane actions dispatch over the serve wire first —
+    // no engine verb shares the `session(s).` prefix, so the lanes
+    // can't collide.
+    if let Some(method) = serve_method(action) {
+        return Ok(serve_invoke(&method, target, params));
+    }
     let Some(name) = action_verb(action) else {
         return Err(format!("unknown action: {action}"));
     };
@@ -446,6 +514,423 @@ fn capture(
     out.map(|o| (args, o)).map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------- serve lane
+//
+// The session-plane half of `invoke`. Action ids `session.<verb>`
+// (the `sessions.<verb>` spelling works too) name `sepia serve`
+// methods — the plane operations that have no CLI verb:
+// `sessions.attach`, `sessions.prompt`, `sessions.patch_meta`, …
+// They ride [`data::call`], the same persistent `sepia serve`
+// child the view queries use, so a mutation sees exactly the plane
+// an orchestrator would. `sessions.subscribe` stays off the action
+// surface (an unbounded notification feed, not a request op), as do
+// `manifest`/`agents.*`/`config.*`/`shutdown` — `config.*` in
+// particular has a different meaning on each wire (serve's
+// agent-config IR vs the engine's file verbs), so only the
+// `cli.config.*` spelling reaches the engine lane.
+//
+// Params are the serve wire's camelCase JSON, mostly verbatim —
+// the translations are the ergonomic ones: `text` becomes
+// `parts: [{"type":"text",…}]` for prompt/prompt_wait, flat
+// selectors become the `request`/`patch` objects restore/rewind/
+// patch_meta expect, and `path` reads a session-IR JSON file for
+// `sessions.import`. `id` aliases (`session_id`, `sessionId`)
+// normalize to the wire's `id`; `agent`/`sepiaBin` in params also
+// steer the serve child itself (data::call's ctx is the merged
+// param map).
+
+/// The `sessions.*` verbs exposed as actions — everything bounded
+/// on the method table except the subscribe feeds.
+const SERVE_ACTIONS: &[&str] = &[
+    "list",
+    "get",
+    "summary",
+    "export",
+    "history",
+    "attach",
+    "detach",
+    "create",
+    "prompt",
+    "prompt_wait",
+    "cancel",
+    "permission",
+    "set_mode",
+    "set_permission_policy",
+    "delete",
+    "patch_meta",
+    "restore",
+    "rewind",
+    "import",
+    "convert",
+];
+
+/// `session.<verb>` / `sessions.<verb>` → the serve method name.
+/// Anything else returns `None` and falls through to the `cli.*`
+/// lane.
+pub(crate) fn serve_method(action: &str) -> Option<String> {
+    let verb = action
+        .strip_prefix("session.")
+        .or_else(|| action.strip_prefix("sessions."))?;
+    SERVE_ACTIONS
+        .contains(&verb)
+        .then(|| format!("sessions.{verb}"))
+}
+
+/// First present value among `keys` — param aliases (`session_id`,
+/// `sessionId`, `project_ids`, `tool_call_id`, …) resolve to the
+/// wire's canonical camelCase name at translation time.
+fn get<'a>(params: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a Value> {
+    keys.iter().find_map(|k| params.get(*k))
+}
+
+/// Copy the first present alias into `out` under the wire name.
+fn put(out: &mut Map<String, Value>, keys: &[&str], to: &str, params: &Map<String, Value>) {
+    if let Some(v) = get(params, keys) {
+        out.insert(to.to_string(), v.clone());
+    }
+}
+
+/// The session id — `id` canonical, `session_id`/`sessionId`
+/// tolerated (scalar targets and hand-written params land either).
+fn session_id(params: &Map<String, Value>) -> Option<&Value> {
+    get(params, &["id", "session_id", "sessionId"])
+}
+
+/// Params a serve method can't run without, beyond the shared `id`
+/// rule (every session-scoped method needs it; `list`/`create`/
+/// `import` don't). `import`'s `session` is satisfied by the
+/// `session` object *or* a `path` to a session-IR JSON file —
+/// checked in [`serve_missing`] rather than here.
+fn serve_required(method: &str) -> &'static [&'static str] {
+    match method {
+        "sessions.create" => &["cwd"],
+        "sessions.import" | "sessions.convert" => &["agent"],
+        "sessions.permission" => &["request"],
+        "sessions.set_mode" => &["mode"],
+        "sessions.set_permission_policy" => &["permissions"],
+        _ => &[],
+    }
+}
+
+/// Required-param gating for the serve lane — same honesty as the
+/// cli lane's `missing_required`: absent/empty required params come
+/// back keyed by name in `errors`, never as a wire call.
+fn serve_missing(method: &str, params: &Map<String, Value>) -> Map<String, Value> {
+    let mut errors = Map::new();
+    let needs_id = !matches!(
+        method,
+        "sessions.list" | "sessions.create" | "sessions.import"
+    );
+    if needs_id && !present(session_id(params)) {
+        errors.insert("id".to_string(), json!("required"));
+    }
+    for key in serve_required(method) {
+        if !present(params.get(*key)) {
+            errors.insert((*key).to_string(), json!("required"));
+        }
+    }
+    if method == "sessions.import"
+        && !present(params.get("session"))
+        && !present(params.get("path"))
+        && !present(params.get("file"))
+    {
+        errors.insert("session".to_string(), json!("required (object or path)"));
+    }
+    if matches!(method, "sessions.prompt" | "sessions.prompt_wait")
+        && get(params, &["parts", "text", "prompt", "message"]).is_none_or(|v| !present(Some(v)))
+    {
+        errors.insert("text".to_string(), json!("required"));
+    }
+    errors
+}
+
+/// The serve lane's target→params merge — same rule as the cli
+/// lane's `merge_target`: an object target contributes keys the
+/// params lack (a selected table row lands `{"id": …}` this way);
+/// a scalar target fills `id` when params don't.
+fn merge_serve_target(params: &Map<String, Value>, target: Option<&Value>) -> Map<String, Value> {
+    let mut out = params.clone();
+    match target {
+        Some(Value::Object(t)) => {
+            for (k, val) in t {
+                out.entry(k.clone()).or_insert_with(|| val.clone());
+            }
+        }
+        Some(t) if session_id(&out).is_none() => {
+            if let Some(s) = scalar(t) {
+                out.insert("id".to_string(), json!(s));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// `text`/`prompt`/`message`/`parts` → the wire's `parts` array.
+/// A `parts` array passes through verbatim (multi-part prompts);
+/// a string becomes one `{"type":"text","text":…}` PromptPart —
+/// the serde shape `sepia_acp::types::PromptPart` expects
+/// (`#[serde(tag = "type", rename_all = "camelCase")]`).
+fn parts_param(params: &Map<String, Value>) -> Option<Value> {
+    if let Some(parts) = get(params, &["parts"]) {
+        if parts.is_array() {
+            return Some(parts.clone());
+        }
+    }
+    get(params, &["text", "prompt", "message"])
+        .and_then(Value::as_str)
+        .map(|t| json!([{"type": "text", "text": t}]))
+}
+
+/// `patch_meta`'s `patch` — a `patch` object passes through; flat
+/// params (`title`, `pinned`, `archived`, `projectIds`, `model`)
+/// assemble the `SessionMeta` wire shape instead.
+fn meta_patch(params: &Map<String, Value>) -> Value {
+    if let Some(patch) = get(params, &["patch"]) {
+        if patch.is_object() {
+            return patch.clone();
+        }
+    }
+    let mut patch = Map::new();
+    put(&mut patch, &["title"], "title", params);
+    put(&mut patch, &["pinned"], "pinned", params);
+    put(&mut patch, &["archived"], "archived", params);
+    put(
+        &mut patch,
+        &["projectIds", "project_ids"],
+        "projectIds",
+        params,
+    );
+    put(&mut patch, &["model"], "model", params);
+    Value::Object(patch)
+}
+
+/// `restore`'s `request` — `RestoreRequest` wire shape
+/// (`confirm` mandatory on the wire; the action's danger level is
+/// the host-side gate, so an unset `confirm` param defaults true).
+fn restore_request(params: &Map<String, Value>) -> Value {
+    let mut request = Map::new();
+    request.insert(
+        "confirm".to_string(),
+        get(params, &["confirm"]).cloned().unwrap_or(json!(true)),
+    );
+    put(&mut request, &["path"], "path", params);
+    put(
+        &mut request,
+        &["toolCallId", "tool_call_id"],
+        "toolCallId",
+        params,
+    );
+    put(&mut request, &["checkpoint"], "checkpoint", params);
+    put(&mut request, &["paths"], "paths", params);
+    Value::Object(request)
+}
+
+/// `rewind`'s `request` — `RewindRequest` wire shape; exactly one
+/// of `nodeId`/`turns`/`checkpoint` is the caller's job (the plane
+/// validates), `confirm` defaults true like [`restore_request`].
+fn rewind_request(params: &Map<String, Value>) -> Value {
+    let mut request = Map::new();
+    request.insert(
+        "confirm".to_string(),
+        get(params, &["confirm"]).cloned().unwrap_or(json!(true)),
+    );
+    put(&mut request, &["nodeId", "node_id"], "nodeId", params);
+    put(&mut request, &["turns"], "turns", params);
+    put(&mut request, &["checkpoint"], "checkpoint", params);
+    Value::Object(request)
+}
+
+/// `sessions.import`'s `session` — an inline session-IR object, or
+/// `path`/`file` naming a JSON file to read and parse. Read/parse
+/// failures come back as param-keyed errors, not wire calls.
+fn import_session(params: &Map<String, Value>) -> Result<Value, Map<String, Value>> {
+    if let Some(session) = get(params, &["session"]) {
+        return Ok(session.clone());
+    }
+    let Some(path) = get(params, &["path", "file"]).and_then(Value::as_str) else {
+        return Err(Map::from_iter([(
+            "session".to_string(),
+            json!("required (object or path)"),
+        )]));
+    };
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        Map::from_iter([(
+            "path".to_string(),
+            json!(format!("cannot read '{path}': {e}")),
+        )])
+    })?;
+    serde_json::from_str(&text).map_err(|e| {
+        Map::from_iter([(
+            "path".to_string(),
+            json!(format!("'{path}' is not session IR JSON: {e}")),
+        )])
+    })
+}
+
+/// Invoke params → the serve method's wire params. Explicit per
+/// method — the wire is camelCase and mostly 1:1, so each arm is a
+/// short `put` list plus the documented translations.
+fn serve_params(method: &str, params: &Map<String, Value>) -> Result<Value, Map<String, Value>> {
+    let mut out = Map::new();
+    // `id` + `agent` are shared by nearly every method.
+    let scoped = !matches!(
+        method,
+        "sessions.list" | "sessions.create" | "sessions.import"
+    );
+    if scoped {
+        if let Some(id) = session_id(params) {
+            out.insert("id".to_string(), id.clone());
+        }
+    }
+    put(&mut out, &["agent"], "agent", params);
+    match method {
+        "sessions.list" => {
+            put(&mut out, &["withLocks", "with_locks"], "withLocks", params);
+        }
+        "sessions.history" => {
+            put(&mut out, &["limit"], "limit", params);
+            put(&mut out, &["before"], "before", params);
+        }
+        "sessions.attach" => {
+            put(&mut out, &["takeover"], "takeover", params);
+            put(&mut out, &["model"], "model", params);
+            put(&mut out, &["fallbacks"], "fallbacks", params);
+            put(&mut out, &["permissions"], "permissions", params);
+        }
+        "sessions.create" => {
+            put(&mut out, &["cwd"], "cwd", params);
+            put(&mut out, &["title"], "title", params);
+            put(&mut out, &["model"], "model", params);
+            put(&mut out, &["fallbacks"], "fallbacks", params);
+            put(&mut out, &["permissions"], "permissions", params);
+        }
+        "sessions.prompt" | "sessions.prompt_wait" => {
+            if let Some(parts) = parts_param(params) {
+                out.insert("parts".to_string(), parts);
+            }
+            if method == "sessions.prompt_wait" {
+                put(
+                    &mut out,
+                    &["timeoutMs", "timeout_ms", "timeout"],
+                    "timeoutMs",
+                    params,
+                );
+            }
+        }
+        "sessions.permission" => {
+            put(&mut out, &["request"], "request", params);
+            put(&mut out, &["option"], "option", params);
+        }
+        "sessions.set_mode" => {
+            put(&mut out, &["mode"], "mode", params);
+        }
+        "sessions.set_permission_policy" => {
+            put(&mut out, &["permissions"], "permissions", params);
+        }
+        "sessions.patch_meta" => {
+            out.insert("patch".to_string(), meta_patch(params));
+        }
+        "sessions.restore" => {
+            out.insert("request".to_string(), restore_request(params));
+        }
+        "sessions.rewind" => {
+            out.insert("request".to_string(), rewind_request(params));
+        }
+        "sessions.import" => {
+            out.insert("session".to_string(), import_session(params)?);
+            for key in ["id", "cwd", "title", "model"] {
+                put(&mut out, &[key], key, params);
+            }
+        }
+        "sessions.convert" => {
+            put(&mut out, &["from"], "from", params);
+        }
+        // get/summary/export/history/detach/cancel/delete need
+        // nothing beyond id+agent (+history's own keys above).
+        _ => {}
+    }
+    Ok(Value::Object(out))
+}
+
+/// The human-facing [`ActionResult::message`] for a serve reply —
+/// methods that mint an id name it, the rest report ok.
+fn serve_message(method: &str, result: &Value) -> String {
+    let short = method.trim_start_matches("sessions.");
+    if let Some(id) = result["id"]
+        .as_str()
+        .or_else(|| result["sessionId"].as_str())
+    {
+        format!("{short}: {id}")
+    } else {
+        format!("{short} ok")
+    }
+}
+
+/// The serve lane's [`invoke`] tail — merged params → wire params →
+/// [`data::mutate`] on the shared `sepia serve` child. Wire errors
+/// (control failures, invalid params) come back as `message` +
+/// `data.error`, the same honesty convention the cli lane uses for
+/// nonzero exits; validation failures stay in `errors`.
+fn serve_invoke(method: &str, target: Option<&Value>, params: &Map<String, Value>) -> ActionResult {
+    let merged = merge_serve_target(params, target);
+    let mut errors = serve_missing(method, &merged);
+    if errors.is_empty() {
+        match serve_params(method, &merged) {
+            Ok(p) => {
+                return match data::mutate(method, p, &merged) {
+                    Ok(result) => ActionResult {
+                        message: Some(serve_message(method, &result)),
+                        data: Some(json!({
+                            "method": method,
+                            "result": result,
+                        })),
+                        ..ActionResult::default()
+                    },
+                    Err(e) => ActionResult {
+                        message: Some(first_line(&e).unwrap_or_else(|| e.clone())),
+                        data: Some(json!({
+                            "method": method,
+                            "error": e,
+                        })),
+                        ..ActionResult::default()
+                    },
+                };
+            }
+            Err(e) => errors = e,
+        }
+    }
+    ActionResult {
+        errors,
+        ..ActionResult::default()
+    }
+}
+
+/// `{"op":"submit"}` — thin adapter, same contract as the cli
+/// lane's: this driver declares no form nodes, so a submit only
+/// dispatches when `form` (or the view id itself) names a known
+/// action — a serve action (`session.*`) or an engine verb —
+/// with `values` as its params. Anything else is `ok:false`: there
+/// is no form to validate against.
+pub fn submit(view: &str, form: Option<&str>, values: &Map<String, Value>) -> Response {
+    let candidate = form.unwrap_or(view);
+    if serve_method(candidate).is_none() && action_verb(candidate).is_none() {
+        return Response::err(format!(
+            "no form '{candidate}' on view '{view}' — this driver declares no forms"
+        ));
+    }
+    match invoke(candidate, None, values) {
+        Ok(r) => Response::ok_typed(&SubmitResult {
+            message: r.message,
+            errors: r.errors,
+            data: r.data,
+            view: r.view,
+            extra: r.extra,
+        }),
+        Err(e) => Response::err(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -541,5 +1026,160 @@ mod tests {
             argv(&cmd, "store.delete", &p),
             vec!["store", "delete", "--from", "devin", "abc"]
         );
+    }
+
+    #[test]
+    fn ops_params_carry_typed_schemas() {
+        let m = manifest();
+        let ops = m["ops"].as_array().unwrap();
+        let find = |query: &str| {
+            ops.iter()
+                .find(|o| o["query"] == json!(query))
+                .unwrap_or_else(|| panic!("{query} missing"))
+        };
+        // store/agent selectors → enum over the four store ids
+        let export = find("cli.store.export");
+        let from = export["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "from")
+            .unwrap();
+        assert_eq!(from["schema"]["kind"], "enum");
+        assert_eq!(
+            from["schema"]["options"],
+            json!(["devin", "cline", "claude", "cursor"])
+        );
+        // session ids → ref picker over the sessions view query
+        let del = find("cli.store.delete");
+        let sid = del["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "session_id")
+            .unwrap();
+        assert_eq!(sid["schema"]["kind"], "ref");
+        assert_eq!(sid["schema"]["ref_query"], "sessions");
+        assert_eq!(sid["schema"]["required"], json!(true));
+        // export format → enum; flags → bool
+        let fmt = export["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "format")
+            .unwrap();
+        assert_eq!(fmt["schema"]["kind"], "enum");
+        assert_eq!(fmt["schema"]["options"], json!(["json", "cline"]));
+        let drv = find("cli.driver.list");
+        let json_flag = drv["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "json")
+            .unwrap();
+        assert_eq!(json_flag["schema"]["kind"], "bool");
+    }
+
+    #[test]
+    fn serve_method_routes_session_ids_only() {
+        assert_eq!(serve_method("session.prompt").unwrap(), "sessions.prompt");
+        assert_eq!(
+            serve_method("sessions.patch_meta").unwrap(),
+            "sessions.patch_meta"
+        );
+        assert!(serve_method("session.bogus").is_none());
+        assert!(serve_method("sessions.subscribe").is_none()); // unbounded feed
+        assert!(serve_method("store.delete").is_none()); // cli lane
+        assert!(serve_method("session").is_none());
+        assert!(serve_method("prompt").is_none());
+    }
+
+    #[test]
+    fn serve_params_translates_prompt_text_to_parts() {
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        p.insert("text".into(), json!("fix the bug"));
+        p.insert("agent".into(), json!("devin"));
+        let v = serve_params("sessions.prompt", &p).unwrap();
+        assert_eq!(v["id"], "s1");
+        assert_eq!(v["agent"], "devin");
+        assert_eq!(v["parts"], json!([{"type": "text", "text": "fix the bug"}]));
+        // parts passthrough wins over text
+        p.insert("parts".into(), json!([{"type": "text", "text": "a"}]));
+        let v = serve_params("sessions.prompt", &p).unwrap();
+        assert_eq!(v["parts"][0]["text"], "a");
+        // id aliases normalize
+        let mut p2 = Map::new();
+        p2.insert("session_id".into(), json!("s2"));
+        p2.insert("text".into(), json!("hi"));
+        let v = serve_params("sessions.prompt_wait", &p2).unwrap();
+        assert_eq!(v["id"], "s2");
+        assert!(v.get("timeoutMs").is_none());
+    }
+
+    #[test]
+    fn serve_params_builds_request_and_patch_objects() {
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        p.insert("turns".into(), json!(2));
+        p.insert("tool_call_id".into(), json!("tc-9"));
+        let v = serve_params("sessions.rewind", &p).unwrap();
+        assert_eq!(v["request"]["confirm"], json!(true));
+        assert_eq!(v["request"]["turns"], 2);
+        // restore aliases land camelCase
+        let v = serve_params("sessions.restore", &p).unwrap();
+        assert_eq!(v["request"]["toolCallId"], "tc-9");
+        // flat patch_meta params assemble the SessionMeta shape
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        p.insert("title".into(), json!("renamed"));
+        p.insert("pinned".into(), json!(true));
+        p.insert("project_ids".into(), json!(["p1"]));
+        let v = serve_params("sessions.patch_meta", &p).unwrap();
+        assert_eq!(v["patch"]["title"], "renamed");
+        assert_eq!(v["patch"]["pinned"], true);
+        assert_eq!(v["patch"]["projectIds"], json!(["p1"]));
+    }
+
+    #[test]
+    fn serve_missing_gates_required_params() {
+        // every session-scoped method needs id
+        let mut p = Map::new();
+        assert!(serve_missing("sessions.delete", &p).contains_key("id"));
+        p.insert("id".into(), json!("s1"));
+        assert!(serve_missing("sessions.delete", &p).is_empty());
+        // create needs cwd, not id
+        let mut p = Map::new();
+        p.insert("cwd".into(), json!("/tmp"));
+        assert!(serve_missing("sessions.create", &p).is_empty());
+        // import needs agent + session|path
+        let mut p = Map::new();
+        p.insert("agent".into(), json!("fake"));
+        let e = serve_missing("sessions.import", &p);
+        assert!(e.contains_key("session"), "{e:?}");
+        p.insert("path".into(), json!("/tmp/s.json"));
+        assert!(serve_missing("sessions.import", &p).is_empty());
+        // prompt needs text|parts
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        assert!(serve_missing("sessions.prompt", &p).contains_key("text"));
+        p.insert("text".into(), json!("go"));
+        assert!(serve_missing("sessions.prompt", &p).is_empty());
+    }
+
+    #[test]
+    fn merge_serve_target_fills_id() {
+        let mut p = Map::new();
+        p.insert("agent".into(), json!("devin"));
+        // scalar target → id
+        let m = merge_serve_target(&p, Some(&json!("sess-1")));
+        assert_eq!(m["id"], "sess-1");
+        // explicit param wins
+        let m = merge_serve_target(&m, Some(&json!("other")));
+        assert_eq!(m["id"], "sess-1");
+        // object target contributes missing keys only
+        let m = merge_serve_target(&Map::new(), Some(&json!({"id": "row-1", "title": "T"})));
+        assert_eq!(m["id"], "row-1");
+        assert_eq!(m["title"], "T");
     }
 }

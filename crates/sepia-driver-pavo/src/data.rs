@@ -1,14 +1,17 @@
-//! data — a read-only client for `sepia serve`.
+//! data — a client for `sepia serve`.
 //!
-//! The driver's whole read path is the service wire: one spawned
-//! `sepia serve` subprocess per `tamias-driver-sepia serve` process,
-//! spoken to with the same ndjson JSON-RPC framing driver binaries
-//! use ([`sepia_driver::rpc`]). The driver only ever issues the
+//! The driver's read path *and* its session-plane mutation lane are
+//! the service wire: one spawned `sepia serve` subprocess per
+//! `tamias-driver-sepia serve` process, spoken to with the same
+//! ndjson JSON-RPC framing driver binaries use
+//! ([`sepia_driver::rpc`]). View queries only ever issue the
 //! read-side methods (`manifest`, `agents.list`, `sessions.list`,
-//! `sessions.get`/`summary`/`history`, `config.list`) — every
-//! mutation stays on the `sepia` CLI and the
-//! orchestrator-facing ops (`attach`, `prompt`, `delete`, …) are
-//! never called, so the view driver cannot mutate session state.
+//! `sessions.get`/`summary`/`history`, `config.list`); the `invoke`
+//! op's `session.*` actions are the one mutation caller — they go
+//! through [`mutate`], the same child, so a session-plane write
+//! sees exactly the plane an orchestrator would. Engine/store/
+//! config mutations never touch this client: they ride the
+//! `cli.<verb>` argv/exec path in `ops.rs`.
 //!
 //! Which `serve` process: first hit wins —
 //!
@@ -261,6 +264,19 @@ pub fn call(method: &str, params: Value, ctx: &Map<String, Value>) -> Result<Val
         }
         Err(e) => Err(e),
     }
+}
+
+/// The mutation lane — same transport as [`call`], named for the
+/// `invoke` op's `session.*` actions (`sessions.attach`,
+/// `sessions.prompt`, `sessions.patch_meta`, …). Kept as a distinct
+/// entry point so call sites declare intent: view queries use
+/// [`call`], only `ops::serve_invoke` uses this.
+///
+/// # Errors
+/// Same contract as [`call`] — the serve wire's error text, or a
+/// spawn/transport failure string.
+pub fn mutate(method: &str, params: Value, ctx: &Map<String, Value>) -> Result<Value, String> {
+    call(method, params, ctx)
 }
 
 /// Spawn `sepia serve` in the background at `serve` start — the
