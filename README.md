@@ -71,24 +71,7 @@ assembles it all from this machine's drivers and agent CLIs.
 
 ## Layout
 
-| Crate | Role |
-| --- | --- |
-| `crates/sepia-core` | Session IR, `SessionRepository` port, agent-config IR, restore/rewind planners (pure) |
-| `crates/sepia-proto` | `SessionEvent` enum + wire types |
-| `crates/sepia-acp` | tolerant ACP client over ndjson stdio |
-| `crates/sepia-driver` | driver manifest + ndjson JSON-RPC serve loop |
-| `crates/sepia-host` | driver discovery + spawn + respawn |
-| `crates/sepia-driver-{devin,cline,claude,cursor}` | store adapter binaries |
-| `crates/sepia-session` | the local session plane: attach/takeover mechanics, prompt/cancel/permission, restore/rewind, `local::build` composition |
-| `crates/sepia-meta` | overlay store (title/pin/projectIds/run spans) |
-| `crates/sepia-convert` | store format conversion |
-| `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
-| `crates/sepia-peregrin` | entity-plane adapter — sessions as `kind="sepia-session"` entities |
-| `crates/sepia-cli` | the `sepia` engine lib (`command`/`run_from`) — no bin; the command ships as the tamias pack |
-| `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo's read-only view driver over `sepia serve`, plus the engine ops surface (`ops`/`cli.*`/`run`, `cli` = the bins-shim engine passthrough, `mcp` feature-gated) |
-| `crates/sepia-driver-config` | `tamias-driver-sepia-config` — `type: sepia-config` content driver: AgentConfig IR packs → per-agent config dirs |
-| `libraries/sepia` | the tamias pack — `tamias.yaml` declares `bins: [{name: sepia, shim: cli, driver: sepia}]`; `cargo xtask pack` stages `drivers/bin/<triple>/tamias-driver-sepia` (gitignored) |
-| `crates/sepia-testkit` | conformance suites + golden fixtures |
+The crate map is generated from the workspace Cargo.tomls — see [AGENTS.md](AGENTS.md) for the dev map and [the docs site](https://9aia.com/sepia/) for depth.
 
 ## Develop
 
