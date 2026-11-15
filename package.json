@@ -9,8 +9,8 @@
     "docs:dev": "bun run docs:gen && vitepress dev",
     "docs:gen": "bun run docs:cli && bun run docs:crates",
     "docs:check": "bun run docs:gen && git diff --exit-code",
-    "docs:cli": "cargo run -q --manifest-path ../../cypera/Cargo.toml -p cypera -- gen cli --repo ..",
-    "docs:crates": "cargo run -q --manifest-path ../../cypera/Cargo.toml -p cypera -- gen crate-map --repo ..",
+    "docs:cli": "cypera gen cli --repo ..",
+    "docs:crates": "cypera gen crate-map --repo ..",
     "docs:deploy": "bun run build && bunx gh-pages -d .vitepress/dist"
   },
   "devDependencies": {
