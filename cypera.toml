@@ -1,0 +1,37 @@
+# sepia — docs/reference generation contract for `cypera`
+# (`cypera gen crate-map|cli`, discovered upward from --repo).
+# Replaces the retired docs/gen-*.py wrappers; schema lives in
+# ../cypera crates/cypera-core/src/repo_config.rs.
+
+[crate_map]
+
+[crate_map.layers]
+"sepia-core" = "domain"
+"sepia-proto" = "domain"
+"sepia-acp" = "adapter"
+"sepia-driver" = "adapter"
+"sepia-driver-claude" = "adapter"
+"sepia-driver-cline" = "adapter"
+"sepia-driver-config" = "adapter"
+"sepia-driver-cursor" = "adapter"
+"sepia-driver-devin" = "adapter"
+"sepia-host" = "adapter"
+"sepia-peregrin" = "adapter"
+"sepia-telemetry" = "adapter"
+"sepia-session" = "service"
+"sepia-meta" = "service"
+"sepia-convert" = "service"
+"sepia-cli" = "engine"
+"sepia-driver-pavo" = "driver"
+"sepia-testkit" = "testkit"
+"xtask" = "tooling"
+
+[[crate_map.splices]]
+target = "docs/explanation/architecture.md"
+marker = "<!-- crate-map -->"
+
+[cli]
+package = "sepia-driver-pavo"
+bin = "tamias-driver-sepia"
+prefix = ["run"]
+out = "docs/reference/cli.md"
