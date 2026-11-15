@@ -407,7 +407,7 @@ fn values(v: &Value) -> Vec<String> {
     }
 }
 
-/// `cli.<verb>` params → sepia argv (no argv[0] — `run` prepends
+/// `cli.<verb>` params → sepia argv (no argv\[0\] — `run` prepends
 /// it). Declared params map by kind — positionals land last, in
 /// schema order, whether the manifest spelled them `arg` (required)
 /// or `opt` (optional, e.g. `export`'s `out`).

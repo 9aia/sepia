@@ -1648,7 +1648,7 @@ impl ControlPlane {
     /// [`ControlError`] — pre-dispatch rejections like `busy` and
     /// `invalid` still error). `timeout` bounds the wait; on expiry
     /// `session/cancel` is sent and the turn is given
-    /// [`PROMPT_WAIT_SETTLE`] to report before `timed_out` is set — a
+    /// `PROMPT_WAIT_SETTLE` to report before `timed_out` is set — a
     /// turn that outlives the grace keeps running in the background.
     /// `None`/zero waits without limit (bounded only by agent liveness).
     ///

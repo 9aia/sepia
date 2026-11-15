@@ -31,7 +31,7 @@ fn data_dir() -> Option<PathBuf> {
     data_dir_from(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
 }
 
-/// The env-free half of [`data_dir`] — tests inject the vars.
+/// The env-free half of `data_dir` — tests inject the vars.
 pub fn data_dir_from(
     xdg: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,

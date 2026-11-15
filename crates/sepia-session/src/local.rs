@@ -602,7 +602,7 @@ impl Local {
 
     /// Delete `id` from `agent`'s store via `session.delete` over the
     /// driver wire — the fallback for agents with no runtime (cursor),
-    /// where [`crate::plane::Plane::delete_session`] can't spawn an ACP
+    /// where [`crate::plane::ControlPlane::delete_session`] can't spawn an ACP
     /// `session/delete`. Callers should prefer the plane path first:
     /// it detaches live handles instead of just erasing store rows.
     ///

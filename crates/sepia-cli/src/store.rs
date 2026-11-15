@@ -42,7 +42,7 @@ fn default_cursor_dir() -> PathBuf {
 }
 
 /// The shared store flags — `--db` is always the Devin sessions DB; the
-/// `--*-dir` flags double as store selectors (see [`dir_store`]).
+/// `--*-dir` flags double as store selectors (see `dir_store`).
 #[derive(Clone, clap::Args)]
 pub struct StoreFlags {
     /// Path to the Devin sessions SQLite database
