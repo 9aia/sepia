@@ -86,7 +86,7 @@ def tidy(text):
         return text
     cut = text[:200]
     dot = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
-    return (cut[:dot + 1] if dot > 60 else cut.rstrip() + "…")
+    return ((cut[:dot + 1] if dot > 60 else cut.rstrip() + "…").rstrip(" ,;:"))
 
 rows = []
 for rel in members:
