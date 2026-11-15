@@ -107,9 +107,10 @@ concern), so nothing needs the pending `params-stdin` channel
 
 ## Docs
 
-- `docs/session-formats.md`, `docs/protocol.md`,
-  `docs/agent-configs.md` — domain references (IR, driver wire, agent
-  config IR). Keep them accurate — they feed the docs site.
+- `docs/reference/session-formats.md`, `docs/reference/protocol.md`,
+  `docs/reference/agent-configs.md` — domain references (IR, driver
+  wire, agent config IR; `serve-wire.md` covers `sepia serve`).
+  Keep them accurate — they feed the docs site.
 
 <!-- myco:agent-awareness -->
 

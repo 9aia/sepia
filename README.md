@@ -86,6 +86,7 @@ assembles it all from this machine's drivers and agent CLIs.
 | `crates/sepia-peregrin` | entity-plane adapter — sessions as `kind="sepia-session"` entities |
 | `crates/sepia-cli` | the `sepia` engine lib (`command`/`run_from`) — no bin; the command ships as the tamias pack |
 | `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo's read-only view driver over `sepia serve`, plus the engine ops surface (`ops`/`cli.*`/`run`, `cli` = the bins-shim engine passthrough, `mcp` feature-gated) |
+| `crates/sepia-driver-config` | `tamias-driver-sepia-config` — `type: sepia-config` content driver: AgentConfig IR packs → per-agent config dirs |
 | `libraries/sepia` | the tamias pack — `tamias.yaml` declares `bins: [{name: sepia, shim: cli, driver: sepia}]`; `cargo xtask pack` stages `drivers/bin/<triple>/tamias-driver-sepia` (gitignored) |
 | `crates/sepia-testkit` | conformance suites + golden fixtures |
 
