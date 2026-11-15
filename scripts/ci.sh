@@ -3,6 +3,9 @@
 # sha via bupha. Rust floor + org docs contract.
 set -euo pipefail
 
+# 16 cores / ~11 GiB RAM — uncapped cargo jobs OOM under earlyoom.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+
 cargo xtask check
 cargo xtask test
 
