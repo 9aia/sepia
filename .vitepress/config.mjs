@@ -21,6 +21,7 @@ export default defineConfig({
         text: 'How-to',
         items: [
           { text: 'Convert a session', link: '/how-to/convert-a-session' },
+          { text: 'Distribute agent configs', link: '/how-to/distribute-agent-configs' },
           { text: 'Use sepia in pavo', link: '/how-to/pavo' },
           { text: 'Write a store driver', link: '/how-to/write-a-driver' },
           { text: 'Drive sepia serve', link: '/how-to/drive-serve' },
@@ -39,7 +40,12 @@ export default defineConfig({
       },
       {
         text: 'Explanation',
-        items: [{ text: 'Architecture', link: '/explanation/architecture' }],
+        items: [
+          { text: 'Architecture', link: '/explanation/architecture' },
+          { text: 'Concepts', link: '/explanation/concepts' },
+          { text: 'Boundaries', link: '/explanation/boundaries' },
+          { text: 'Decisions', link: '/explanation/decisions' },
+        ],
       },
     ],
     socialLinks: [{ icon: 'github', link: 'https://github.com/9aia/sepia' }],

@@ -101,3 +101,19 @@ two `*.subscribe` feeds cover the plane's surface; `session.event` and
 `node.event` notifications stream live events. The full method table
 lives in [serve-wire](../reference/serve-wire.md) and
 `crates/sepia-cli/src/serve.rs`.
+
+## Where it sits
+
+In the org's layering — **tamias** (package & content manager) →
+**engines** (myco records, kuda code maps, mimus proofs, sturn
+coordination, hypha substrate, tarsi releases, cicada schedules,
+cypera docs, scarab config/templates) → **orchestration**
+(**peregrin** campaigns over engines) → **surfaces** (pavo views,
+MCP fronts).
+
+Sepia is an **engine** — the session mechanism every orchestrator
+and surface builds on. Peregrin (orchestration) spawns `sepia
+serve`; pavo and the ops manifest (surfaces) read through it;
+`sepia-peregrin` projects sessions onto hypha's entity plane as
+`kind="sepia-session"` entities. The `sepia` command itself ships
+as a tamias pack.
