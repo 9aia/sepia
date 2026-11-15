@@ -1,3 +1,5 @@
+//! sepia-xtask — workspace automation: check / test / coverage / pack / install / fmt.
+
 use std::process::{Command, Stdio};
 
 fn run(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
