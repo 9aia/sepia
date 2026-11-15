@@ -51,21 +51,28 @@ daemon. Adding an agent is dropping a binary in a discovery dir; see
 
 ## Crates
 
-| Crate | Role |
-| --- | --- |
-| `sepia-core` | Session IR, `SessionRepository` port, agent-config IR, restore/rewind planners — pure, no I/O |
-| `sepia-proto` | `SessionEvent` enum and wire types |
-| `sepia-acp` | Tolerant ACP client over ndjson stdio |
-| `sepia-driver` | Driver manifest + the serve loop drivers run |
-| `sepia-host` | Driver discovery, spawn, respawn |
-| `sepia-driver-{devin,cline,claude,cursor}` | The per-agent adapter binaries |
-| `sepia-session` | The local session plane — attach modes, lock probes, prompt/cancel/permission, restore/rewind |
-| `sepia-meta`, `sepia-convert` | Overlay store; cross-store conversion/import |
-| `sepia-telemetry` | Opt-in OTEL layer over `tracing` |
-| `sepia-peregrin` | The entity-plane adapter — sessions as `kind="sepia-session"` entities (`/api/entities*` client + server side) |
-| `sepia-cli` | The `sepia` engine lib (`command`/`run_from`) — **no bin**: the command ships as the tamias pack |
-| `sepia-driver-pavo` | `tamias-driver-sepia` — pavo's view driver over `sepia serve`, plus the engine ops surface (`ops` manifest, `cli.*` queries, `run`/`cli` passthroughs) |
-| `sepia-testkit` | Conformance suites, golden fixtures, mock ACP agent |
+<!-- crate-map -->
+| crate | layer | purpose |
+|---|---|---|
+| `sepia-core` | domain | Sepia session IR and domain ports — pure domain, zero I/O deps |
+| `sepia-proto` | domain | Protocol v2 wire types — REST payloads, SSE events, shared models |
+| `sepia-acp` | adapter | ACP client — spawn agents over stdio, typed session ops, tolerant update normalization |
+| `sepia-driver` | adapter | SDK for sepia store drivers — manifest, ndjson JSON-RPC serve loop, fs helpers |
+| `sepia-driver-claude` | adapter | Claude Code store driver — ~/.claude/projects/*.jsonl transcripts as a SessionRepository over the driver-wire protocol |
+| `sepia-driver-cline` | adapter | Cline store driver — ~/.cline/data session dirs as a SessionRepository over the driver-wire protocol |
+| `sepia-driver-config` | adapter | tamias-driver-sepia-config — `type: sepia-config` content driver: agent-config IR packs deployed to agent config dirs. |
+| `sepia-driver-cursor` | adapter | Cursor store driver — ~/.cursor chats store.db + agent-transcripts as a SessionRepository over the driver-wire protocol |
+| `sepia-driver-devin` | adapter | Devin store driver — sessions.db (sqlite) SessionRepository over the driver-wire protocol |
+| `sepia-host` | adapter | Daemon side of the sepia driver protocol — discovery, spawn, registry, remote SessionRepository |
+| `sepia-peregrin` | adapter | Sepia's first-class peregrin adapter — sessions as `sepia-session` entities over the entity plane |
+| `sepia-telemetry` | adapter | Opt-in OpenTelemetry layer over the tracing stack — OTLP export, W3C context propagation |
+| `sepia-convert` | service | Cross-store session conversion — history→IR rebuild, Devin-store import with cog grafting |
+| `sepia-meta` | service | Sepia-owned per-session overlay metadata (title/pin/projectIds/spans) — a JSON file beside the read-only session stores |
+| `sepia-session` | service | Sepia session plane — live-session ownership, lock probes, attach/takeover, prompt/cancel/permission, restore/rewind, and the machine-local composition |
+| `sepia-cli` | engine | The sepia engine lib — local store verbs (list/export/import/install/delete), agent config IR ops, driver discovery, and the stdio session-plane service; the `sepia` command ships as a tamias bins[] shim over this lib |
+| `sepia-driver-pavo` | driver | tamias-driver-sepia — pavo view driver over `sepia serve` (read-only session/agent surfaces) plus engine ops dispatching to the sepia-cli lib |
+| `sepia-testkit` | testkit | Sepia test backbone — conformance suites, golden fixtures, mock drivers/agents |
+| `xtask` | tooling | sepia-xtask — workspace automation: check / test / coverage / pack / install / fmt. |
 
 ## Distribution: the tamias pack
 
