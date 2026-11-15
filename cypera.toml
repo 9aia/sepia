@@ -35,3 +35,6 @@ package = "sepia-driver-pavo"
 bin = "tamias-driver-sepia"
 prefix = ["run"]
 out = "docs/reference/cli.md"
+
+[check]
+profile = "engine"
