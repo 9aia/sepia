@@ -5,6 +5,7 @@ export default defineConfig({
   description: 'Agent sessions, agnostically — canonical IR, store drivers, ACP client.',
   base: '/sepia/',
   themeConfig: {
+    search: { provider: 'local' },
     nav: [
       { text: '9aia', link: 'https://9aia.com', target: '_blank' },
       { text: 'Tutorials', link: '/tutorials/getting-started' },
