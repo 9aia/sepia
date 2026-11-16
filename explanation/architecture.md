@@ -104,16 +104,16 @@ lives in [serve-wire](../reference/serve-wire.md) and
 
 ## Where it sits
 
-In the org's layering — **tamias** (package & content manager) →
-**engines** (myco records, kuda code maps, mimus proofs, sturn
-coordination, hypha substrate, tarsi releases, cicada schedules,
-cypera docs, scarab config/templates) → **orchestration**
-(**peregrin** campaigns over engines) → **surfaces** (pavo views,
-MCP fronts).
+In the org's layering — **delivery** (tamias distribution, scarab
+config/templates, tarsi releases, bupha CI) → **memory** (myco
+records, kuda code maps, sturn coordination, hypha substrate) →
+**process** (cuora secrets, mimus proofs, cicada schedules, lasius
+workspace, **sepia** sessions) → **agency** (peregrin campaigns,
+pavo views, MCP fronts).
 
-Sepia is an **engine** — the session mechanism every orchestrator
-and surface builds on. Peregrin (orchestration) spawns `sepia
-serve`; pavo and the ops manifest (surfaces) read through it;
+Sepia is a **process-layer engine** — the session mechanism every
+orchestrator and surface builds on. Peregrin (agency) spawns
+`sepia serve`; pavo and the ops manifest read through it;
 `sepia-peregrin` projects sessions onto hypha's entity plane as
 `kind="sepia-session"` entities. The `sepia` command itself ships
 as a tamias pack.
