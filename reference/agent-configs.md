@@ -4,7 +4,7 @@ Reference for the on-disk **configuration layer** the four agents load before
 a session starts — skills, rules, commands, hooks, subagents and MCP servers —
 and what the config IR (`packages/sepia/src/AgentConfig.ts`) normalizes.
 Verified against the real files on this machine (Oct 2026); the session-side
-formats live in `docs/session-formats.md`.
+formats live in [session-formats](session-formats.md).
 
 > **Note (Rust rewrite).** The `packages/sepia/src/AgentConfig.ts` reference
 > describes the deleted TypeScript tree. The config IR and on-disk formats it
