@@ -46,16 +46,15 @@ source of truth for the IR and both wires — keep them current.
 - Org policy (project ADR-0004): **crates.io is tamias-only** — sepia
   does not publish there. A release is a `<unit>-v<ver>` tag plus a
   manual `tamias publish libraries/sepia` of the pack. The release
-  plane is **tarsi** (`tarsi-serve` ops — project ADR-0005); the
-  per-repo `scripts/release.sh` is being converted to a thin shim
-  over it (PL-014 E1).
-- The current `scripts/release.sh` still carries the legacy
-  per-crate crates.io publish (`sepia-cli`, dep-ordered, `sepia`
-  name squatted on crates.io) — it predates the shim conversion.
-  `sepia-testkit`, `sepia-driver-pavo` and `sepia-driver-config` are
+  plane is **tarsi** (`tarsi-serve` ops — project ADR-0005);
+  operators run `tarsi-serve release --dir . --yes` directly — the
+  per-repo `scripts/release.sh` shims were removed org-wide
+  (PL-014 E1).
+- `sepia-testkit`, `sepia-driver-pavo` and `sepia-driver-config` are
   `publish = false`; the `sepia` command itself is the tamias pack's
   `bins[]` shim, not a cargo bin.
-- Release binaries: `scripts/release.sh` can still build
+- Release binaries: `cargo build --profile dist` + `dist`/`gh`
+  can still build
   `sepia-<target>.tar.gz` (linux x86_64) carrying
   `tamias-driver-sepia`, `tamias-driver-sepia-config` + the store
   drivers via `dist`/`gh` — the `sepia` command installs via

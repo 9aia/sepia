@@ -114,8 +114,8 @@ debug = "line-tables-only"
 debug = false
 
 [profile.release]
-# Thin LTO for local `cargo xtask install` — shipped binaries go
-# through `cargo build --profile dist` (scripts/release.sh).
+# Thin LTO for local `cargo xtask install` — release binaries are
+# built on demand (`cargo build --profile dist`).
 lto = "thin"
 strip = true
 panic = "unwind" # keep unwind: tests + tokio supervise panics
