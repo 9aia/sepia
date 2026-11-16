@@ -105,14 +105,14 @@ lives in [serve-wire](../reference/serve-wire.md) and
 ## Where it sits
 
 In the org's layering — **delivery** (tamias distribution, scarab
-config/templates, tarsi releases, bupha CI) → **memory** (myco
-records, kuda code maps, sturn coordination, hypha substrate) →
-**process** (cuora secrets, mimus proofs, cicada schedules, lasius
-workspace, **sepia** sessions) → **agency** (peregrin campaigns,
-pavo views, MCP fronts).
+config/templates, tarsi releases, bupha CI, hypha entity sync) →
+**memory** (myco records, kuda code maps) → **process** (sturn
+coordination, cuora secrets, mimus proofs, cicada schedules, lasius
+workspace, **sepia** sessions, peregrin campaigns) → **interface**
+(pavo views, MCP fronts).
 
-Sepia is a **process-layer engine** — the session mechanism every
-orchestrator and surface builds on. Peregrin (agency) spawns
+Sepia is a **process-layer organism** — the session mechanism every
+orchestrator and surface builds on. Peregrin (process) spawns
 `sepia serve`; pavo and the ops manifest read through it;
 `sepia-peregrin` projects sessions onto hypha's entity plane as
 `kind="sepia-session"` entities. The `sepia` command itself ships
