@@ -1,11 +1,12 @@
 +++
 id = "P-001"
 title = "sessions.commands + sessions.command — agent slash-command surface"
-status = "in-progress"
+status = "done"
 created = "2026-11-18"
 owner = "devin"
 priority = "med"
 labels = ["acp", "sepia"]
+done = "2026-11-18"
 +++
 
 ## Context
