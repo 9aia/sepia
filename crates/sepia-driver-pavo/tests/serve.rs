@@ -523,6 +523,97 @@ mod serve {
         assert_eq!(res["ok"], false, "{res}");
     }
 
+    /// The `sessions.*` query ops end-to-end: bounded `sepia serve`
+    /// methods as typed request/response queries — the lane
+    /// orchestrators (peregrin `driver: ops` → `tamias serve`
+    /// `driver.query`) consume. Same fake-driver plane as the
+    /// invoke-lane test; `sessions.subscribe` stays surface-only.
+    #[test]
+    fn sessions_query_ops_over_the_wire() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let drivers = tmp.path().join("drivers");
+        std::fs::create_dir_all(&drivers).unwrap();
+        fake_driver(&drivers);
+        let mut drv = Serve::start_driver(&home, &drivers, &[]);
+
+        // The ops manifest advertises every bounded sessions.* op —
+        // and not the subscribe feed.
+        let res = drv.call_raw(1, r#"{"op":"query","query":"ops","params":{}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let queries: Vec<&str> = res["result"]["data"]["ops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|o| o["query"].as_str())
+            .collect();
+        for q in [
+            "sessions.list",
+            "sessions.get",
+            "sessions.summary",
+            "sessions.export",
+            "sessions.history",
+            "sessions.attach",
+            "sessions.detach",
+            "sessions.create",
+            "sessions.prompt",
+            "sessions.prompt_wait",
+            "sessions.cancel",
+            "sessions.permission",
+            "sessions.set_mode",
+            "sessions.set_permission_policy",
+            "sessions.delete",
+            "sessions.patch_meta",
+            "sessions.restore",
+            "sessions.rewind",
+            "sessions.import",
+            "sessions.convert",
+        ] {
+            assert!(queries.contains(&q), "ops manifest missing {q}");
+        }
+        assert!(!queries.contains(&"sessions.subscribe"), "{queries:?}");
+
+        // sessions.export — the serve result is the QueryResult data.
+        let res = drv.call_raw(
+            2,
+            r#"{"op":"query","query":"sessions.export","params":{"id":"s1","agent":"fake"}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["result"]["query"], "sessions.export", "{res}");
+        assert_eq!(res["result"]["data"]["session"]["id"], "s1", "{res}");
+
+        // sessions.list — the plane's session array.
+        let res = drv.call_raw(3, r#"{"op":"query","query":"sessions.list","params":{}}"#);
+        assert_eq!(res["ok"], true, "{res}");
+        let rows = res["result"]["data"].as_array().unwrap();
+        assert!(
+            rows.iter().any(|r| r["id"] == "s1"),
+            "s1 missing from {rows:?}"
+        );
+
+        // sessions.patch_meta — flat params assemble the patch.
+        let res = drv.call_raw(
+            4,
+            r#"{"op":"query","query":"sessions.patch_meta","params":{"id":"s1","title":"Queried"}}"#,
+        );
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["result"]["query"], "sessions.patch_meta", "{res}");
+
+        // Required-param gating — no wire call, ok:false.
+        let res = drv.call_raw(5, r#"{"op":"query","query":"sessions.get","params":{}}"#);
+        assert_eq!(res["ok"], false, "{res}");
+        assert!(res["error"].as_str().unwrap().contains("id"), "{res}");
+
+        // Unknown sessions.* name and non-op queries still fail clean.
+        let res = drv.call_raw(6, r#"{"op":"query","query":"sessions.bogus","params":{}}"#);
+        assert_eq!(res["ok"], false, "{res}");
+        let res = drv.call_raw(
+            7,
+            r#"{"op":"query","query":"sessions.subscribe","params":{"id":"s1"}}"#,
+        );
+        assert_eq!(res["ok"], false, "{res}");
+    }
+
     /// The P2 views over the wire: `config.*` queries hit the fake
     /// driver's `config.read`, `stores`/`drivers` degrade to honest
     /// rows/output under the test env, and the session meta form

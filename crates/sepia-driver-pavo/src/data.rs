@@ -7,11 +7,11 @@
 //! ([`sepia_driver::rpc`]). View queries only ever issue the
 //! read-side methods (`manifest`, `agents.list`, `sessions.list`,
 //! `sessions.get`/`summary`/`history`, `config.list`); the `invoke`
-//! op's `session.*` actions are the one mutation caller — they go
-//! through [`mutate`], the same child, so a session-plane write
-//! sees exactly the plane an orchestrator would. Engine/store/
-//! config mutations never touch this client: they ride the
-//! `cli.<verb>` argv/exec path in `ops.rs`.
+//! op's `session.*` actions and the `sessions.*` query ops are the
+//! mutation callers — they go through [`mutate`], the same child,
+//! so a session-plane write sees exactly the plane an orchestrator
+//! would. Engine/store/config mutations never touch this client:
+//! they ride the `cli.<verb>` argv/exec path in `ops.rs`.
 //!
 //! Which `serve` process: first hit wins —
 //!
@@ -291,10 +291,11 @@ pub fn call(method: &str, params: Value, ctx: &Map<String, Value>) -> Result<Val
 }
 
 /// The mutation lane — same transport as [`call`], named for the
-/// `invoke` op's `session.*` actions (`sessions.attach`,
-/// `sessions.prompt`, `sessions.patch_meta`, …). Kept as a distinct
-/// entry point so call sites declare intent: view queries use
-/// [`call`], only `ops::serve_invoke` uses this.
+/// `invoke` op's `session.*` actions and `sessions.*` query ops
+/// (`sessions.attach`, `sessions.prompt`, `sessions.patch_meta`,
+/// …). Kept as a distinct entry point so call sites declare intent:
+/// view queries use [`call`], only `ops::serve_invoke` and
+/// `ops::run_serve_query` use this.
 ///
 /// # Errors
 /// Same contract as [`call`] — the serve wire's error text, or a

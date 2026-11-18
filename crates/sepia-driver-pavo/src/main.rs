@@ -25,7 +25,11 @@
 //!   `{"op":"query","query":…,"params":{…}}` →
 //!   `{"ok":true,"result":…}` / `{"ok":false,"error":…}`.
 //!   `query:"ops"` answers the ops manifest; `query:"cli.<verb>"`
-//!   runs the engine op.
+//!   runs the engine op; `query:"sessions.<method>"` runs the
+//!   bounded session-plane methods (`sepia serve`'s method table —
+//!   list/get/create/attach/prompt/prompt_wait/cancel/permission/
+//!   set_mode/set_permission_policy/delete/patch_meta/restore/
+//!   rewind/export/import/convert/history/summary/detach).
 //! - `{"op":"invoke","action":…}` dispatches an action id —
 //!   `session.<verb>`/`sessions.<verb>` ids are the curated
 //!   session-plane actions over the `sepia serve` wire (`sessions.
@@ -45,15 +49,16 @@
 //! it's the bins-shim passthrough above, not a generated surface —
 //! the engine's own argv grammar is the contract.)
 //!
-//! Read path: every `view`/`query` (except `ops`/`cli.*`) proxies
-//! read-side methods of a spawned `sepia serve` (`sepia serve` is
-//! the session plane's embedding surface — see `data.rs` for
-//! binary resolution). Mutations split by lane: `session.*`
-//! actions (`invoke`) write through the same serve child — the
-//! session plane's own wire — while engine/store/config verbs
-//! (`cli.*`/`run`/`invoke`) keep the engine's own semantics and
-//! never touch the serve child. `--param sepiaBin=` (or
-//! `$SEPIA_BIN`) pins which `sepia` executable serves both lanes.
+//! Read path: every `view`/`query` (except `ops`/`cli.*`/`sessions.*`)
+//! proxies read-side methods of a spawned `sepia serve` (`sepia
+//! serve` is the session plane's embedding surface — see `data.rs`
+//! for binary resolution). Mutations split by lane: `session.*`
+//! actions (`invoke`) and `sessions.*` query ops write through the
+//! same serve child — the session plane's own wire — while
+//! engine/store/config verbs (`cli.*`/`run`/`invoke`) keep the
+//! engine's own semantics and never touch the serve child.
+//! `--param sepiaBin=` (or `$SEPIA_BIN`) pins which `sepia`
+//! executable serves both lanes.
 
 mod data;
 mod feed;
@@ -104,6 +109,12 @@ fn dispatch(req: &Request) -> Response {
                 })
             } else if let Some(v) = ops::op_of(query) {
                 ops::run_verb(&v, params)
+            } else if ops::serve_method(query).is_some() {
+                // `sessions.<method>`/`session.<method>` — the
+                // session-plane ops lane (bounded `sepia serve`
+                // methods as typed queries; `sessions.subscribe`
+                // stays surface-only).
+                ops::run_serve_query(query, params)
             } else if views::known_query(query) {
                 let payload = views::query_data(query, params);
                 Response::ok_typed(&wire::QueryResult {
