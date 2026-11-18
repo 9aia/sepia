@@ -17,8 +17,8 @@ use crate::normalize::as_record;
 use crate::registry::model_args;
 use crate::stderr::StderrTail;
 use crate::types::{
-    AcpCapabilities, AcpSessionInfo, AcpSessionUpdate, AgentSpec, PermissionRequest, PromptPart,
-    PromptResult, SpawnOptions,
+    AcpCapabilities, AcpSessionInfo, AcpSessionUpdate, AgentSpec, AvailableCommand,
+    PermissionRequest, PromptPart, PromptResult, SpawnOptions,
 };
 
 const CALL_TIMEOUT_MS: u64 = 120_000;
@@ -105,6 +105,10 @@ struct Inner {
     updates: broadcast::Sender<AcpSessionUpdate>,
     permissions_tx: broadcast::Sender<PermissionRequest>,
     broker: PermissionBroker,
+    /// Last `available_commands_update` per session id — the agent's
+    /// slash-command advertisement, retained so `commands()` can
+    /// answer without replaying the update stream. Last write wins.
+    commands: RwLock<HashMap<String, Vec<AvailableCommand>>>,
     exit_error: OnceCell<RpcError>,
     exited: AtomicBool,
     call_timeout_ms: AtomicU64,
@@ -126,6 +130,18 @@ impl Inner {
             Ok(Inbound::Notification(note)) => {
                 if note.method == METHOD_UPDATE {
                     let update = crate::normalize::normalize_update(&note.params["update"]);
+                    if let AcpSessionUpdate::AvailableCommandsUpdate { commands } = &update {
+                        let session_id = note
+                            .params
+                            .get("sessionId")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        self.commands
+                            .write()
+                            .await
+                            .insert(session_id, commands.clone());
+                    }
                     let _ = self.updates.send(update);
                 }
             }
@@ -208,6 +224,19 @@ impl AcpConnection {
     /// advertised" before that resolves.
     pub async fn capabilities(&self) -> AcpCapabilities {
         self.capabilities.read().await.clone()
+    }
+
+    /// The agent's last `available_commands_update` advertisement for
+    /// `session_id` — empty when the agent never sent one (many
+    /// agents don't advertise commands at all; that is not an error).
+    pub async fn commands(&self, session_id: &str) -> Vec<AvailableCommand> {
+        self.inner
+            .commands
+            .read()
+            .await
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Bounded, prefixed tail of the agent's stderr for error reporting.
@@ -500,6 +529,7 @@ pub async fn spawn_agent(
         updates,
         permissions_tx,
         broker: PermissionBroker::new(),
+        commands: RwLock::new(HashMap::new()),
         exit_error: OnceCell::new(),
         exited: AtomicBool::new(false),
         call_timeout_ms: AtomicU64::new(CALL_TIMEOUT_MS),
@@ -617,6 +647,7 @@ mod tests {
                 updates,
                 permissions_tx,
                 broker: PermissionBroker::new(),
+                commands: RwLock::new(HashMap::new()),
                 exit_error: OnceCell::new(),
                 exited: AtomicBool::new(false),
                 call_timeout_ms: AtomicU64::new(CALL_TIMEOUT_MS),

@@ -22,6 +22,9 @@
 //! - `MOCK_BAD_UPDATES=1`: send a garbage update line + a truncated
 //!   JSON line before answering the first session/prompt.
 //! - `MOCK_LOAD_SLOW_MS` / `MOCK_LIST_SLOW_MS`: per-call delay.
+//! - `MOCK_COMMANDS`: `;`-separated `name|description` rows the agent
+//!   advertises via `available_commands_update` after `session/new`
+//!   and `session/load` (absent → no advertisement).
 
 use std::io::{BufRead, Write};
 
@@ -101,6 +104,35 @@ fn sleep_ms(env_key: &str) {
     }
 }
 
+/// The `available_commands_update` notification for a session, when
+/// `MOCK_COMMANDS` is set — `name|description` rows, `;`-separated.
+fn commands_update(session_id: &str) -> Option<String> {
+    let raw = env("MOCK_COMMANDS")?;
+    let commands: Vec<Value> = raw
+        .split(';')
+        .filter(|row| !row.is_empty())
+        .map(|row| {
+            let mut cols = row.splitn(2, '|');
+            let name = cols.next().unwrap_or_default().trim();
+            let description = cols.next().map(str::trim).filter(|d| !d.is_empty());
+            match description {
+                Some(d) => json!({ "name": name, "description": d }),
+                None => json!({ "name": name }),
+            }
+        })
+        .collect();
+    Some(notify(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": commands
+            }
+        }),
+    ))
+}
+
 fn main() {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -165,6 +197,15 @@ fn main() {
                         json!({ "sessionId": env("MOCK_SESSION_ID").unwrap_or_else(|| "mock-session".into()) }),
                     ),
                 };
+                // The command advertisement precedes the response —
+                // like a real agent announcing commands during load —
+                // so a caller that awaits the response already sees it.
+                if !line.contains("\"error\"") {
+                    let sid = env("MOCK_SESSION_ID").unwrap_or_else(|| "mock-session".into());
+                    if let Some(note) = commands_update(&sid) {
+                        let _ = writeln!(out, "{note}");
+                    }
+                }
                 let _ = writeln!(out, "{line}");
             }
             ("session/load", Some(id)) => {
@@ -179,6 +220,15 @@ fn main() {
                     (None, Some(message)) => error(id, &message),
                     _ => respond(id, json!({})),
                 };
+                if !line.contains("\"error\"") {
+                    let sid = msg["params"]["sessionId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    if let Some(note) = commands_update(&sid) {
+                        let _ = writeln!(out, "{note}");
+                    }
+                }
                 let _ = writeln!(out, "{line}");
             }
             ("session/delete", Some(id)) => {

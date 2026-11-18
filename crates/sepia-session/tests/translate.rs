@@ -205,6 +205,8 @@ fn remaining_variants_become_custom_events() {
         commands: vec![AvailableCommand {
             name: "x".into(),
             description: None,
+            input: None,
+            meta: None,
         }],
     });
     assert!(

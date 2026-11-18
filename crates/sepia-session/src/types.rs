@@ -339,6 +339,9 @@ pub enum ControlErrorCode {
     UnknownAgent,
     Conflict,
     Busy,
+    /// The request names something the agent/session doesn't offer —
+    /// e.g. a slash command it never advertised.
+    Unsupported,
     Internal,
 }
 
@@ -351,6 +354,7 @@ impl ControlErrorCode {
             Self::UnknownAgent => "unknown_agent",
             Self::Conflict => "conflict",
             Self::Busy => "busy",
+            Self::Unsupported => "unsupported",
             Self::Internal => "internal",
         }
     }

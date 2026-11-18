@@ -218,9 +218,15 @@ pub fn normalize_update(update: &Value) -> AcpSessionUpdate {
                 .iter()
                 .map(|command| {
                     let c = as_record(command);
+                    let input = field(c, "input");
+                    let meta = field(c, "_meta");
                     AvailableCommand {
                         name: as_string(field(c, "name")).unwrap_or_default().to_string(),
                         description: as_string(field(c, "description")).map(str::to_string),
+                        input: (!input.is_null())
+                            .then(|| serde_json::from_value(input.clone()).ok())
+                            .flatten(),
+                        meta: (!meta.is_null()).then(|| meta.clone()),
                     }
                 })
                 .collect(),

@@ -23,7 +23,7 @@ use axum::response::{IntoResponse, Response};
 use hypha_http::{EntityContext, EntityPlane};
 use serde_json::{Value, json};
 
-use sepia_acp::PromptPart;
+use sepia_acp::{AvailableCommand, PromptPart};
 use sepia_core::Session;
 use sepia_meta::SessionMeta;
 use sepia_session::{
@@ -93,6 +93,27 @@ pub trait SessionBackend: Send + Sync {
         parts: &[PromptPart],
         agent: Option<&str>,
         timeout: Option<std::time::Duration>,
+    ) -> Result<PromptWaitResult, ControlError>;
+
+    /// The live session's advertised slash commands — the agent's
+    /// last `available_commands_update`; empty when it never sent one.
+    async fn commands(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+    ) -> Result<Vec<AvailableCommand>, ControlError>;
+
+    /// Invoke one advertised slash command as a prompt turn —
+    /// `name` must be advertised (`unsupported` otherwise); `args`
+    /// appends to the `/{name}` line, `text` overrides it verbatim.
+    async fn command(
+        &self,
+        id: &str,
+        name: &str,
+        args: Option<&str>,
+        text: Option<&str>,
+        timeout: Option<std::time::Duration>,
+        agent: Option<&str>,
     ) -> Result<PromptWaitResult, ControlError>;
 
     /// Fire-and-forget turn cancellation.
@@ -264,6 +285,28 @@ impl SessionBackend for Local {
         self.plane.prompt_wait(id, parts, agent, timeout).await
     }
 
+    async fn commands(
+        &self,
+        id: &str,
+        agent: Option<&str>,
+    ) -> Result<Vec<AvailableCommand>, ControlError> {
+        self.plane.session_commands(id, agent).await
+    }
+
+    async fn command(
+        &self,
+        id: &str,
+        name: &str,
+        args: Option<&str>,
+        text: Option<&str>,
+        timeout: Option<std::time::Duration>,
+        agent: Option<&str>,
+    ) -> Result<PromptWaitResult, ControlError> {
+        self.plane
+            .session_command(id, name, args, text, timeout, agent)
+            .await
+    }
+
     async fn cancel(&self, id: &str, agent: Option<&str>) -> Result<(), ControlError> {
         self.plane.cancel(id, agent).await
     }
@@ -341,7 +384,9 @@ fn json_response(body: Value, status: StatusCode) -> Response {
 fn code_status(code: ControlErrorCode) -> StatusCode {
     match code {
         ControlErrorCode::NotFound => StatusCode::NOT_FOUND,
-        ControlErrorCode::Invalid | ControlErrorCode::UnknownAgent => StatusCode::BAD_REQUEST,
+        ControlErrorCode::Invalid
+        | ControlErrorCode::UnknownAgent
+        | ControlErrorCode::Unsupported => StatusCode::BAD_REQUEST,
         ControlErrorCode::Locked | ControlErrorCode::Conflict | ControlErrorCode::Busy => {
             StatusCode::CONFLICT
         }
@@ -590,6 +635,43 @@ impl SepiaEntityPlane {
                 }
                 Err(message) => Some(bad_request(&message)),
             },
+            // `sepia.commands` — the agent's advertised slash commands;
+            // an empty list is the honest "agent doesn't advertise".
+            "commands" => Some(match backend.commands(id, agent).await {
+                Ok(commands) => json_response(json!(commands), StatusCode::OK),
+                Err(e) => error_response(&e),
+            }),
+            // `sepia.command` — invoke an advertised command as a
+            // prompt turn; `name` is required, `args`/`text` shape the
+            // command line, `timeoutMs` bounds the wait like
+            // `prompt_wait`.
+            "command" => {
+                let Some(name) = str_field(payload, "name") else {
+                    return Some(bad_request("name is required"));
+                };
+                let timeout_ms = payload
+                    .get("timeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let timeout =
+                    (timeout_ms > 0).then(|| std::time::Duration::from_millis(timeout_ms));
+                Some(
+                    match backend
+                        .command(
+                            id,
+                            name,
+                            opt_str(payload, "args").as_deref(),
+                            opt_str(payload, "text").as_deref(),
+                            timeout,
+                            agent,
+                        )
+                        .await
+                    {
+                        Ok(result) => json_response(json!(result), StatusCode::OK),
+                        Err(e) => error_response(&e),
+                    },
+                )
+            }
             "cancel" => Some(match backend.cancel(id, agent).await {
                 Ok(()) => ok(),
                 Err(e) => error_response(&e),
@@ -905,7 +987,7 @@ mod tests {
     use std::sync::Mutex;
 
     use hypha_http::KindRegistry;
-    use sepia_acp::PromptPart;
+    use sepia_acp::{AvailableCommand, PromptPart};
     use sepia_core::Session;
     use sepia_meta::SessionMeta;
     use sepia_session::{
@@ -1078,6 +1160,60 @@ mod tests {
         ) -> Result<PromptWaitResult, ControlError> {
             self.record(format!(
                 "prompt_wait:{id}:{}:{parts:?}:{timeout:?}",
+                agent.unwrap_or("-")
+            ));
+            if self.error.is_some() {
+                return self.fail();
+            }
+            Ok(PromptWaitResult {
+                session_id: id.to_string(),
+                agent_id: "devin".into(),
+                stop_reason: Some("end_turn".into()),
+                text: "done".into(),
+                event_count: 3,
+                lagged_events: 0,
+                duration_ms: 1.5,
+                timed_out: false,
+                error: None,
+            })
+        }
+
+        async fn commands(
+            &self,
+            id: &str,
+            agent: Option<&str>,
+        ) -> Result<Vec<AvailableCommand>, ControlError> {
+            self.record(format!("commands:{id}:{}", agent.unwrap_or("-")));
+            if self.error.is_some() {
+                return self.fail();
+            }
+            Ok(vec![
+                AvailableCommand {
+                    name: "compact".into(),
+                    description: Some("Compact the conversation".into()),
+                    input: None,
+                    meta: None,
+                },
+                AvailableCommand {
+                    name: "review".into(),
+                    description: None,
+                    input: None,
+                    meta: None,
+                },
+            ])
+        }
+
+        async fn command(
+            &self,
+            id: &str,
+            name: &str,
+            args: Option<&str>,
+            text: Option<&str>,
+            timeout: Option<std::time::Duration>,
+            agent: Option<&str>,
+        ) -> Result<PromptWaitResult, ControlError> {
+            self.record(format!(
+                "command:{id}:{name}:{args:?}:{text:?}:{timeout:?}:{}",
                 agent.unwrap_or("-")
             ));
             if self.error.is_some() {
@@ -1389,6 +1525,39 @@ mod tests {
             .op(&ctx(), "s1", "sepia.prompt_wait", json!({}), None)
             .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn op_commands_and_command() {
+        let fake = Arc::new(Fake::new());
+        let p = SepiaEntityPlane::new(fake.clone());
+        let r = p.op(&ctx(), "s1", "sepia.commands", json!({}), None).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let body = body_json(r).await;
+        assert_eq!(body[0]["name"], "compact", "{body}");
+        // `name` is required; args/text/timeoutMs thread through.
+        let r = p.op(&ctx(), "s1", "sepia.command", json!({}), None).await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let r = p
+            .op(
+                &ctx(),
+                "s1",
+                "sepia.command",
+                json!({"name": "compact", "args": "now", "timeoutMs": 250}),
+                Some("agent=devin"),
+            )
+            .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let body = body_json(r).await;
+        assert_eq!(body["stopReason"], "end_turn", "{body}");
+        let calls = fake.calls();
+        assert_eq!(calls[0], "commands:s1:-", "{calls:?}");
+        assert!(
+            calls[1].starts_with("command:s1:compact:Some(\"now\")")
+                && calls[1].contains("250ms")
+                && calls[1].ends_with("devin"),
+            "{calls:?}"
+        );
     }
 
     #[tokio::test]

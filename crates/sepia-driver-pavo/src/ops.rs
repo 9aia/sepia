@@ -603,6 +603,8 @@ const SERVE_ACTIONS: &[&str] = &[
     "create",
     "prompt",
     "prompt_wait",
+    "commands",
+    "command",
     "cancel",
     "permission",
     "set_mode",
@@ -680,6 +682,10 @@ fn serve_op_doc(verb: &str) -> &'static str {
         "prompt_wait" => {
             "prompt and await turn end → PromptWaitResult (`timeoutMs` bounds the wait)"
         }
+        "commands" => "the agent's advertised slash commands (`available_commands_update`)",
+        "command" => {
+            "invoke an advertised slash command as a prompt turn → PromptWaitResult (`name`, `args?`/`text?`, `timeoutMs?`)"
+        }
         "cancel" => "cancel the session's in-flight turn",
         "permission" => "answer a pending `session/request_permission` (`request` id + `option`)",
         "set_mode" => "set the session's mode (`mode` id)",
@@ -699,7 +705,10 @@ fn serve_op_doc(verb: &str) -> &'static str {
 /// Read-only serve methods — everything else mutates plane state
 /// (locks, stores, checkpoints, the meta overlay).
 fn serve_op_mutates(verb: &str) -> bool {
-    !matches!(verb, "list" | "get" | "summary" | "export" | "history")
+    !matches!(
+        verb,
+        "list" | "get" | "summary" | "export" | "history" | "commands"
+    )
 }
 
 /// A sessions-op param → the manifest's `{name,kind,doc,schema}`
@@ -807,6 +816,25 @@ fn serve_op_params(verb: &str) -> Vec<ParamSchema> {
                 ));
             }
         }
+        "commands" => v.extend([id(), agent(false), bin()]),
+        "command" => v.extend([
+            id(),
+            agent(false),
+            bin(),
+            kit::param("name")
+                .required()
+                .doc("advertised slash-command name (a leading '/' is tolerated)")
+                .build(),
+            string("args", "arguments appended to the `/{name}` command line"),
+            text(
+                "text",
+                "verbatim command line (e.g. '/compact now') — overrides `args`; `name` still gates on the advertisement",
+            ),
+            int(
+                "timeoutMs",
+                "wait bound in ms — 0/absent waits until the turn settles; on expiry the turn is cancelled",
+            ),
+        ]),
         "permission" => v.extend([
             id(),
             agent(false),
@@ -957,6 +985,7 @@ fn serve_required(method: &str) -> &'static [&'static str] {
         "sessions.import" | "sessions.convert" => &["agent"],
         "sessions.permission" => &["request"],
         "sessions.set_mode" => &["mode"],
+        "sessions.command" => &["name"],
         "sessions.set_permission_policy" => &["permissions"],
         _ => &[],
     }
@@ -1193,6 +1222,17 @@ fn serve_params(method: &str, params: &Map<String, Value>) -> Result<Value, Map<
                     params,
                 );
             }
+        }
+        "sessions.command" => {
+            put(&mut out, &["name"], "name", params);
+            put(&mut out, &["args"], "args", params);
+            put(&mut out, &["text"], "text", params);
+            put(
+                &mut out,
+                &["timeoutMs", "timeout_ms", "timeout"],
+                "timeoutMs",
+                params,
+            );
         }
         "sessions.permission" => {
             put(&mut out, &["request"], "request", params);
@@ -1651,11 +1691,13 @@ mod tests {
             "sessions.summary",
             "sessions.export",
             "sessions.history",
+            "sessions.commands",
         ] {
             assert_eq!(find(q)["mutates"], json!(false), "{q}");
         }
         for q in [
             "sessions.create",
+            "sessions.command",
             "sessions.prompt",
             "sessions.prompt_wait",
             "sessions.delete",
@@ -1751,6 +1793,37 @@ mod tests {
         assert_eq!(v["request"]["confirm"], json!(true));
         let v = serve_params("sessions.restore", &p).unwrap();
         assert_eq!(v["request"]["toolCallId"], "tc-1");
+    }
+
+    #[test]
+    fn serve_params_maps_command_fields() {
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        p.insert("name".into(), json!("compact"));
+        p.insert("args".into(), json!("now"));
+        p.insert("timeout_ms".into(), json!(5000));
+        let v = serve_params("sessions.command", &p).unwrap();
+        assert_eq!(v["id"], "s1");
+        assert_eq!(v["name"], "compact");
+        assert_eq!(v["args"], "now");
+        assert_eq!(v["timeoutMs"], 5000);
+        assert!(v.get("text").is_none());
+        // `text` passes through verbatim; commands needs nothing but id.
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        p.insert("name".into(), json!("review"));
+        p.insert("text".into(), json!("/review the diff"));
+        let v = serve_params("sessions.command", &p).unwrap();
+        assert_eq!(v["text"], "/review the diff");
+        let v = serve_params("sessions.commands", &p).unwrap();
+        assert_eq!(v["id"], "s1");
+        assert!(v.get("name").is_none());
+        // `name` is required on the invoke/query lanes.
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        assert!(serve_missing("sessions.command", &p).contains_key("name"));
+        p.insert("name".into(), json!("compact"));
+        assert!(serve_missing("sessions.command", &p).is_empty());
     }
 
     #[test]

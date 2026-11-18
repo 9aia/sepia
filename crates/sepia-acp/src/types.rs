@@ -147,10 +147,24 @@ pub struct PlanEntry {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AvailableCommandInput {
+    /// Placeholder hint for the command's arguments (`<file>`, `[msg]`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AvailableCommand {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// `input` — argument shape the command accepts (hint only today).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<AvailableCommandInput>,
+    /// Vendor extension payload (`_meta`) — retained verbatim.
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

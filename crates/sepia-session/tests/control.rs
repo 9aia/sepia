@@ -1099,6 +1099,200 @@ async fn prompt_wait_rejects_unattached_and_busy_sessions() {
     plane.close_all().await;
 }
 
+// ---------- slash commands ---------------------------------------------
+
+#[tokio::test]
+async fn session_commands_lists_the_advertised_commands() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_COMMANDS", "compact|Compact the conversation;review"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let commands = plane.session_commands("s1", None).await.unwrap();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].name, "compact");
+    assert_eq!(
+        commands[0].description.as_deref(),
+        Some("Compact the conversation")
+    );
+    assert_eq!(commands[1].name, "review");
+    assert_eq!(commands[1].description, None);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn session_commands_is_empty_when_the_agent_never_advertises() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    assert!(plane.session_commands("s1", None).await.unwrap().is_empty());
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn session_commands_requires_a_live_session() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new("devin", &[])],
+        ControlPlaneOptions::default(),
+    );
+    let err = plane.session_commands("s1", None).await.unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Invalid);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn session_command_invokes_an_advertised_command() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_COMMANDS", "compact|Compact;review"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let result = plane
+        .session_command("s1", "compact", Some("now"), None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(result.stop_reason.as_deref(), Some("end_turn"));
+    assert_eq!(result.session_id, "s1");
+    // The command line rides session/prompt as text — the mock echoes it.
+    assert!(
+        result.text.contains("/compact now"),
+        "unexpected turn text: {}",
+        result.text
+    );
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn session_command_text_overrides_args_and_slash_is_tolerated() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_COMMANDS", "compact|Compact"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let result = plane
+        .session_command(
+            "s1",
+            "/compact",
+            Some("ignored"),
+            Some("/compact verbatim"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        result.text.contains("/compact verbatim"),
+        "unexpected turn text: {}",
+        result.text
+    );
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn session_command_rejects_unadvertised_commands() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_COMMANDS", "compact|Compact"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let err = plane
+        .session_command("s1", "bogus", None, None, None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Unsupported);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn session_command_is_unsupported_when_nothing_was_advertised() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[("MOCK_SESSIONS", "s1|/work|S1|now")],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let err = plane
+        .session_command("s1", "compact", None, None, None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Unsupported);
+    plane.close_all().await;
+}
+
+#[tokio::test]
+async fn session_command_rejects_empty_name_and_unattached() {
+    let session = session_with("devin", vec![node(1, Role::User, "hi")]);
+    let (plane, _) = mk_plane(
+        vec![session],
+        vec![MockRuntime::new(
+            "devin",
+            &[
+                ("MOCK_SESSIONS", "s1|/work|S1|now"),
+                ("MOCK_COMMANDS", "compact|Compact"),
+            ],
+        )],
+        ControlPlaneOptions::default(),
+    );
+    plane.attach("s1", false, None, None, None).await.unwrap();
+    let err = plane
+        .session_command("s1", "  ", None, None, None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Invalid);
+    plane.detach("s1").await;
+    let err = plane
+        .session_command("s1", "compact", None, None, None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ControlErrorCode::Invalid);
+    plane.close_all().await;
+}
+
 // ---------- delete / restore / rewind ---------------------------------
 
 #[tokio::test]
