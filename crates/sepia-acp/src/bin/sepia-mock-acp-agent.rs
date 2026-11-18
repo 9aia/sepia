@@ -22,6 +22,9 @@
 //! - `MOCK_BAD_UPDATES=1`: send a garbage update line + a truncated
 //!   JSON line before answering the first session/prompt.
 //! - `MOCK_LOAD_SLOW_MS` / `MOCK_LIST_SLOW_MS`: per-call delay.
+//! - `MOCK_SET_MODE_LOG`: path a `session/set_mode` call appends
+//!   `sessionId|modeId` lines to (the mode itself is accepted and
+//!   forgotten otherwise).
 //! - `MOCK_COMMANDS`: `;`-separated `name|description` rows the agent
 //!   advertises via `available_commands_update` after `session/new`
 //!   and `session/load` (absent → no advertisement).
@@ -230,6 +233,21 @@ fn main() {
                     }
                 }
                 let _ = writeln!(out, "{line}");
+            }
+            ("session/set_mode", Some(id)) => {
+                let session_id = msg["params"]["sessionId"].as_str().unwrap_or_default();
+                let mode_id = msg["params"]["modeId"].as_str().unwrap_or_default();
+                if let Some(log) = env("MOCK_SET_MODE_LOG") {
+                    use std::io::Write as _;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(log)
+                    {
+                        let _ = writeln!(f, "{session_id}|{mode_id}");
+                    }
+                }
+                let _ = writeln!(out, "{}", respond(id, json!({})));
             }
             ("session/delete", Some(id)) => {
                 let line = match env("MOCK_DELETE_FAIL") {

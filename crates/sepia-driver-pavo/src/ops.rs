@@ -603,6 +603,7 @@ const SERVE_ACTIONS: &[&str] = &[
     "create",
     "prompt",
     "prompt_wait",
+    "run",
     "commands",
     "command",
     "cancel",
@@ -681,6 +682,9 @@ fn serve_op_doc(verb: &str) -> &'static str {
         "prompt" => "send prompt `parts`/`text` to a session (no wait)",
         "prompt_wait" => {
             "prompt and await turn end → PromptWaitResult (`timeoutMs` bounds the wait)"
+        }
+        "run" => {
+            "one-call turn: attach `id` or create from `cwd`+`agent`, optional `mode`, prompt `text`/`parts`, await → PromptWaitResult"
         }
         "commands" => "the agent's advertised slash commands (`available_commands_update`)",
         "command" => {
@@ -816,6 +820,41 @@ fn serve_op_params(verb: &str) -> Vec<ParamSchema> {
                 ));
             }
         }
+        "run" => v.extend([
+            // `id` is optional on this op alone — absent means create
+            // from `cwd`+`agent` (the schema can't express the
+            // conditional; `serve_missing` enforces it).
+            kit::param("id")
+                .kind(ParamKind::Ref)
+                .ref_query("sessions")
+                .doc("existing session id — absent creates one from `cwd`+`agent`")
+                .build(),
+            agent(false),
+            bin(),
+            string(
+                "cwd",
+                "working directory — required with `agent` when `id` is absent",
+            ),
+            string("title", "session title (create path)"),
+            string("model", "model id — attach override or create preference"),
+            string_list("fallbacks", "fallback model ids"),
+            string(
+                "mode",
+                "session mode id — applied after ensure, before the prompt",
+            ),
+            text(
+                "text",
+                "prompt text — shorthand for one text PromptPart (`parts` wins when both are given)",
+            ),
+            text(
+                "parts",
+                "JSON array of ACP PromptPart objects — the verbatim wire form",
+            ),
+            int(
+                "timeoutMs",
+                "wait bound in ms — 0/absent waits until the turn settles; on expiry the turn is cancelled",
+            ),
+        ]),
         "commands" => v.extend([id(), agent(false), bin()]),
         "command" => v.extend([
             id(),
@@ -998,10 +1037,19 @@ fn serve_missing(method: &str, params: &Map<String, Value>) -> Map<String, Value
     let mut errors = Map::new();
     let needs_id = !matches!(
         method,
-        "sessions.list" | "sessions.create" | "sessions.import"
+        "sessions.list" | "sessions.create" | "sessions.import" | "sessions.run"
     );
     if needs_id && !present(session_id(params)) {
         errors.insert("id".to_string(), json!("required"));
+    }
+    // `sessions.run`'s create path — no `id` means `cwd`+`agent`
+    // must be there (the schema can't express the conditional).
+    if method == "sessions.run" && session_id(params).is_none() {
+        for key in ["cwd", "agent"] {
+            if !present(params.get(key)) {
+                errors.insert(key.to_string(), json!("required when `id` is absent"));
+            }
+        }
     }
     for key in serve_required(method) {
         if !present(params.get(*key)) {
@@ -1015,8 +1063,10 @@ fn serve_missing(method: &str, params: &Map<String, Value>) -> Map<String, Value
     {
         errors.insert("session".to_string(), json!("required (object or path)"));
     }
-    if matches!(method, "sessions.prompt" | "sessions.prompt_wait")
-        && get(params, &["parts", "text", "prompt", "message"]).is_none_or(|v| !present(Some(v)))
+    if matches!(
+        method,
+        "sessions.prompt" | "sessions.prompt_wait" | "sessions.run"
+    ) && get(params, &["parts", "text", "prompt", "message"]).is_none_or(|v| !present(Some(v)))
     {
         errors.insert("text".to_string(), json!("required"));
     }
@@ -1222,6 +1272,22 @@ fn serve_params(method: &str, params: &Map<String, Value>) -> Result<Value, Map<
                     params,
                 );
             }
+        }
+        "sessions.run" => {
+            put(&mut out, &["cwd"], "cwd", params);
+            put(&mut out, &["title"], "title", params);
+            put(&mut out, &["model"], "model", params);
+            put(&mut out, &["fallbacks"], "fallbacks", params);
+            put(&mut out, &["mode"], "mode", params);
+            if let Some(parts) = parts_param(params) {
+                out.insert("parts".to_string(), parts);
+            }
+            put(
+                &mut out,
+                &["timeoutMs", "timeout_ms", "timeout"],
+                "timeoutMs",
+                params,
+            );
         }
         "sessions.command" => {
             put(&mut out, &["name"], "name", params);
