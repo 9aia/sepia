@@ -12,7 +12,7 @@ tamias driver contract: `tamias-driver-sepia`.
 | --- | --- |
 | `manifest` | the `DriverManifest` JSON (name `sepia`, views, contributes) |
 | `capabilities` | `{"capabilities": ["pavo"], "verbs": ["manifest","serve"], …}` |
-| `ops` | the engine ops manifest — every bounded `sepia` verb as a `cli.<verb>` query, `run`/`cli` passthroughs, session-plane actions |
+| `ops` | the ops manifest — every bounded `sepia` verb as a `cli.<verb>` query plus every bounded `sepia serve` session method as a `sessions.<method>` query; `run`/`cli` passthroughs, session-plane actions |
 | `run <argv>` | engine passthrough — `tamias-driver-sepia run list` ≡ `sepia list` |
 | `cli <argv>` | the tamias `bins[]` shim verb — strips `--dir`/`--name`, runs the engine in-process with inherited stdio (the `sepia` command itself) |
 | `serve` | ndjson JSON-RPC on stdio — `{"op":"manifest"|"views"|"view"|"query"|"invoke"|"submit"|"jobs"|"notifications"}` → `{"ok":true,"result":…}` / `{"ok":false,"error":…}` (pavo-protocol v1 wire) |
@@ -40,6 +40,21 @@ go through the `invoke`/`submit` interaction ops, which dispatch
 `session.*` actions over the same serve wire and `cli.*` actions
 through the engine argv path — a mutation sees exactly the plane an
 orchestrator would.
+
+The ops manifest also carries `sessions.<method>` **query** ops —
+the same bounded serve methods (`list`, `get`, `summary`, `export`,
+`history`, `attach`, `detach`, `create`, `prompt`, `prompt_wait`,
+`cancel`, `permission`, `set_mode`, `set_permission_policy`,
+`delete`, `patch_meta`, `restore`, `rewind`, `import`, `convert`)
+as typed request/response queries, so orchestrators driving
+`tamias serve`'s `driver.query` (e.g. peregrin `driver: ops`
+campaign nodes) can drive the session plane without shell+curl.
+Params are the serve wire's camelCase JSON — the method table in
+`crates/sepia-cli/src/serve.rs` — plus the invoke lane's aliases
+(`text`→`parts`, flat `title`/`pinned`/…→`patch`, flat
+restore/rewind fields→`request`). `sessions.subscribe` stays
+surface-only (unbounded feed); `sepiaBin`/`sepia`/`bin` params (or
+`$SEPIA_BIN`) pin which `sepia serve` child answers.
 
 Binary resolution, first hit wins:
 

@@ -42,6 +42,19 @@
 //! the same persistent child the view queries use
 //! ([`crate::data::call`]) — the plane operations that have no CLI
 //! verb at all. See the "serve lane" section by [`invoke`].
+//!
+//! The same session-plane methods are also exposed as *query* ops —
+//! `sessions.<method>` (e.g. `{"op":"query","query":"sessions.
+//! prompt_wait","params":{…}}`) — so orchestrators driving
+//! `tamias serve`'s `driver.query` (peregrin `driver: ops` campaign
+//! nodes) get typed request/response ops instead of shell+curl.
+//! Every bounded serve method is a query op; `sessions.subscribe`
+//! stays surface-only (an unbounded notification feed). Query
+//! params are the serve wire's camelCase JSON — the same fields the
+//! method table in `sepia-cli/src/serve.rs` documents — plus the
+//! invoke lane's ergonomic aliases (`text`→`parts`, flat
+//! `title`/`pinned`/…→`patch`, `request` objects pass through
+//! verbatim for restore/rewind). See [`run_serve_query`].
 
 use clap::{Arg, ArgAction, Command};
 use pavo_driver_kit as kit;
@@ -215,12 +228,11 @@ fn param_json(a: &Arg) -> Value {
 /// sepia's clap tree carries no globals — every flag is per-verb,
 /// so there is no `globals` section.
 pub fn manifest() -> Value {
-    json!({
-        "engine": "sepia",
-        "invoke": "query `cli.<verb>` with the listed params, or argv `tamias-driver-sepia run <sepia argv>`",
-        "ops": verbs().iter()
-            .filter(|(n, _)| !SURFACES.contains(&n.as_str()))
-            .map(|(n, c)| json!({
+    let mut ops: Vec<Value> = verbs()
+        .iter()
+        .filter(|(n, _)| !SURFACES.contains(&n.as_str()))
+        .map(|(n, c)| {
+            json!({
                 "query": format!("cli.{n}"),
                 "doc": c.get_about().map(ToString::to_string).unwrap_or_default(),
                 "params": c.get_arguments()
@@ -228,8 +240,14 @@ pub fn manifest() -> Value {
                     .map(param_json)
                     .collect::<Vec<_>>(),
                 "mutates": MUTATES.contains(&n.as_str()),
-            }))
-            .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    ops.extend(serve_manifest_ops());
+    json!({
+        "engine": "sepia",
+        "invoke": "query `cli.<verb>` (engine verbs) or `sessions.<method>` (session plane) with the listed params, or argv `tamias-driver-sepia run <sepia argv>`",
+        "ops": ops,
         "surfaces": SURFACES,
     })
 }
@@ -466,6 +484,12 @@ fn argv(cmd: &Command, name: &str, params: &Map<String, Value>) -> Vec<String> {
 /// `cli.`-stripped); the wire path goes `op_of` → `run_verb`.
 #[cfg(feature = "mcp")]
 pub fn run_op(op: &str, params: &Map<String, Value>) -> Response {
+    // `sessions.<method>`/`session.<method>` names route to the
+    // session-plane query lane; everything else is a `cli.<verb>`
+    // engine op (`OpSpec.name` is already `cli.`-stripped).
+    if serve_method(op).is_some() {
+        return run_serve_query(op, params);
+    }
     match op_of(&format!("cli.{}", op.strip_prefix("cli.").unwrap_or(op))) {
         Some(name) => run_verb(&name, params),
         None => Response::err(format!("unknown op: {op}")),
@@ -601,6 +625,305 @@ pub(crate) fn serve_method(action: &str) -> Option<String> {
     SERVE_ACTIONS
         .contains(&verb)
         .then(|| format!("sessions.{verb}"))
+}
+
+// ------------------------------------------------- sessions query ops
+//
+// `sessions.<method>` wire *queries* — the same bounded serve
+// methods the invoke lane's `session.*` actions dispatch, exposed
+// as request/response ops so `tamias serve`'s `driver.query` (and
+// any ops-manifest consumer) can drive the session plane as typed
+// ops. `sessions.subscribe` is deliberately absent — it is an
+// unbounded notification feed, not a request/response op.
+//
+// Params are the serve wire's camelCase JSON (the method table in
+// `sepia-cli/src/serve.rs`), translated by the same [`serve_params`]
+// the invoke lane uses — so wire-native fields pass through and the
+// ergonomic aliases (`text`, flat `patch`/`request` fields,
+// `session_id`/`sessionId` for `id`) work identically on both
+// lanes. `sepiaBin` (also `sepia`/`bin`, `$SEPIA_BIN`) steers which
+// `sepia serve` child answers — it is a transport param, never sent
+// to the plane.
+
+/// One manifest row per [`SERVE_ACTIONS`] verb — `sessions.<verb>`
+/// query ops appended to the `cli.*` ops in [`manifest`].
+fn serve_manifest_ops() -> Vec<Value> {
+    SERVE_ACTIONS
+        .iter()
+        .map(|verb| {
+            json!({
+                "query": format!("sessions.{verb}"),
+                "doc": serve_op_doc(verb),
+                "params": serve_op_params(verb)
+                    .iter()
+                    .map(serve_param_json)
+                    .collect::<Vec<_>>(),
+                "mutates": serve_op_mutates(verb),
+            })
+        })
+        .collect()
+}
+
+/// The sessions ops' one-line docs — what the method does on the
+/// plane, not how the wire spells it.
+fn serve_op_doc(verb: &str) -> &'static str {
+    match verb {
+        "list" => "list sessions across agent stores (`withLocks` adds lock holders)",
+        "get" => "full session IR for one session",
+        "summary" => "session summary row for one session",
+        "export" => "session IR wrapped as `{session}` — the transfer bundle",
+        "history" => "paginated session history (`limit`/`before` cursor)",
+        "attach" => "attach to a session's agent runtime (lock, model, permissions)",
+        "detach" => "detach from a session's agent runtime",
+        "create" => "create a session in `cwd` under an agent",
+        "prompt" => "send prompt `parts`/`text` to a session (no wait)",
+        "prompt_wait" => {
+            "prompt and await turn end → PromptWaitResult (`timeoutMs` bounds the wait)"
+        }
+        "cancel" => "cancel the session's in-flight turn",
+        "permission" => "answer a pending `session/request_permission` (`request` id + `option`)",
+        "set_mode" => "set the session's mode (`mode` id)",
+        "set_permission_policy" => "set the auto-answer policy for permission requests",
+        "delete" => "delete a session",
+        "patch_meta" => {
+            "patch the meta overlay (`patch` object or flat title/pinned/archived/projectIds/model)"
+        }
+        "restore" => "restore a checkpoint/file state (`request` object or flat fields)",
+        "rewind" => "rewind to a node/turn/checkpoint (`request` object or flat fields)",
+        "import" => "write a session IR object into an agent's store (`session` or `path`/`file`)",
+        "convert" => "copy a session into another agent's store (`from`)",
+        _ => "session plane method",
+    }
+}
+
+/// Read-only serve methods — everything else mutates plane state
+/// (locks, stores, checkpoints, the meta overlay).
+fn serve_op_mutates(verb: &str) -> bool {
+    !matches!(verb, "list" | "get" | "summary" | "export" | "history")
+}
+
+/// A sessions-op param → the manifest's `{name,kind,doc,schema}`
+/// row. `kind` is always `"opt"` — these are named wire params, not
+/// argv; the typed [`ParamSchema`] in `schema` carries the real
+/// widget hints (hosts prefer it, per pavo-core's ops→actions
+/// derivation).
+fn serve_param_json(p: &ParamSchema) -> Value {
+    json!({
+        "name": p.name,
+        "kind": "opt",
+        "doc": p.doc.clone().unwrap_or_default(),
+        "schema": serde_json::to_value(p).unwrap_or(Value::Null),
+    })
+}
+
+/// The typed params each `sessions.*` op advertises — the serve
+/// wire's own field names (camelCase), with `id` ref-picked over
+/// the `sessions` view query and `agent` enumerated over the four
+/// store ids. Requiredness mirrors [`serve_missing`]'s gate.
+fn serve_op_params(verb: &str) -> Vec<ParamSchema> {
+    // Shared builders.
+    let id = || -> ParamSchema {
+        kit::param("id")
+            .kind(ParamKind::Ref)
+            .ref_query("sessions")
+            .required()
+            .doc("session id")
+            .build()
+    };
+    let agent = |required: bool| -> ParamSchema {
+        let b = kit::param("agent")
+            .enumeration(STORE_IDS.iter().map(|s| (*s).to_string()).collect())
+            .doc("agent id — session ids collide across agent stores");
+        (if required { b.required() } else { b }).build()
+    };
+    let bin = || -> ParamSchema {
+        kit::param("sepiaBin")
+            .doc("path to a `sepia`-shaped executable — pins the serve child for this call (else $SEPIA_BIN, a sibling `sepia`, or this driver's own `run serve`)")
+            .build()
+    };
+    let flag = |name: &str, doc: &str| kit::param(name).kind(ParamKind::Bool).doc(doc).build();
+    let int = |name: &str, doc: &str| kit::param(name).kind(ParamKind::Integer).doc(doc).build();
+    let text = |name: &str, doc: &str| kit::param(name).kind(ParamKind::Text).doc(doc).build();
+    let string_list = |name: &str, doc: &str| {
+        kit::param(name)
+            .kind(ParamKind::StringList)
+            .doc(doc)
+            .build()
+    };
+    let string = |name: &str, doc: &str| kit::param(name).doc(doc).build();
+
+    let mut v = Vec::new();
+    match verb {
+        "list" => v.extend([flag("withLocks", "include per-session lock holders"), bin()]),
+        "get" | "summary" | "export" | "cancel" | "delete" => {
+            v.extend([id(), agent(false), bin()]);
+        }
+        "history" => v.extend([
+            id(),
+            agent(false),
+            bin(),
+            int("limit", "max entries to return"),
+            int("before", "sequence cursor — entries before this seq"),
+        ]),
+        "attach" => v.extend([
+            id(),
+            agent(false),
+            bin(),
+            flag("takeover", "take the lock from another holder"),
+            string("model", "model override for the attach"),
+            string_list("fallbacks", "fallback model ids"),
+            text(
+                "permissions",
+                "PermissionPolicy JSON — 'ask'/'allow_all'/'deny_all'/'{\"rules\":[…]}'; applied only on a live attach",
+            ),
+        ]),
+        "detach" => v.extend([id(), bin()]),
+        "create" => v.extend([
+            kit::param("cwd")
+                .required()
+                .doc("working directory for the new session")
+                .build(),
+            agent(false),
+            bin(),
+            string("title", "session title"),
+            string("model", "model id"),
+            string_list("fallbacks", "fallback model ids"),
+            text("permissions", "create-time PermissionPolicy JSON"),
+        ]),
+        "prompt" | "prompt_wait" => {
+            v.extend([id(), agent(false), bin()]);
+            v.push(text(
+                "text",
+                "prompt text — shorthand for one text PromptPart (`parts` wins when both are given)",
+            ));
+            v.push(text(
+                "parts",
+                "JSON array of ACP PromptPart objects — the verbatim wire form",
+            ));
+            if verb == "prompt_wait" {
+                v.push(int(
+                    "timeoutMs",
+                    "wait bound in ms — 0/absent waits until the turn settles; on expiry the turn is cancelled",
+                ));
+            }
+        }
+        "permission" => v.extend([
+            id(),
+            agent(false),
+            bin(),
+            kit::param("request")
+                .required()
+                .doc("pending permission request id")
+                .build(),
+            string("option", "selected option id — absent picks the wire default"),
+        ]),
+        "set_mode" => v.extend([
+            id(),
+            agent(false),
+            bin(),
+            kit::param("mode")
+                .required()
+                .doc("session mode id")
+                .build(),
+        ]),
+        "set_permission_policy" => v.extend([
+            id(),
+            agent(false),
+            bin(),
+            kit::param("permissions")
+                .kind(ParamKind::Text)
+                .required()
+                .doc("PermissionPolicy JSON — 'ask'/'allow_all'/'deny_all'/'{\"rules\":[…]}'")
+                .build(),
+        ]),
+        "patch_meta" => v.extend([
+            id(),
+            bin(),
+            text(
+                "patch",
+                "SessionMeta JSON object — `title`/`pinned`/`archived`/`projectIds`/`model`; flat params of the same names also work",
+            ),
+        ]),
+        "restore" => v.extend([
+            id(),
+            agent(false),
+            bin(),
+            text(
+                "request",
+                "RestoreRequest JSON — `confirm`/`path`/`toolCallId`/`checkpoint`/`paths`; flat aliases also work",
+            ),
+        ]),
+        "rewind" => v.extend([
+            id(),
+            agent(false),
+            bin(),
+            text(
+                "request",
+                "RewindRequest JSON — `confirm`/`nodeId`/`turns`/`checkpoint`; flat aliases also work",
+            ),
+        ]),
+        "import" => v.extend([
+            agent(true),
+            bin(),
+            text(
+                "session",
+                "session IR JSON object — or pass `path`/`file` to read one from disk",
+            ),
+            string("path", "path to a session-IR JSON file (alternative to `session`)"),
+            string("id", "override: imported session id"),
+            string("cwd", "override: working directory"),
+            string("title", "override: title"),
+            string("model", "override: model"),
+        ]),
+        "convert" => v.extend([
+            id(),
+            agent(true),
+            bin(),
+            kit::param("from")
+                .enumeration(STORE_IDS.iter().map(|s| (*s).to_string()).collect())
+                .doc("source store the session is read from before the copy")
+                .build(),
+        ]),
+        _ => {}
+    }
+    v
+}
+
+/// `{"op":"query","query":"sessions.<method>"}` — the session
+/// plane as typed request/response ops. Params go through the same
+/// [`serve_missing`]/[`serve_params`] translation the invoke lane
+/// uses, then [`data::mutate`] on the shared `sepia serve` child —
+/// one transport, one set of lock/attach semantics (the plane
+/// itself enforces them; nothing here bypasses it). The serve
+/// result becomes the [`QueryResult`]'s `data` verbatim, so
+/// `sessions.list` answers the session array and `sessions.create`
+/// the `{id, agentId, capabilities}` object.
+///
+/// # Errors
+/// `ok:false` for an unknown `sessions.*` name, missing/invalid
+/// params (keyed detail in the message), or a serve-wire/transport
+/// failure — the honest signal a campaign's failure branch keys on.
+pub fn run_serve_query(query: &str, params: &Map<String, Value>) -> Response {
+    let Some(method) = serve_method(query) else {
+        return Response::err(format!("unknown op: {query}"));
+    };
+    let mut errors = serve_missing(&method, params);
+    if errors.is_empty() {
+        match serve_params(&method, params) {
+            Ok(p) => {
+                return match data::mutate(&method, p, params) {
+                    Ok(result) => Response::ok_typed(&QueryResult {
+                        query: query.to_string(),
+                        data: result,
+                    }),
+                    Err(e) => Response::err(e),
+                };
+            }
+            Err(e) => errors = e,
+        }
+    }
+    let keys = errors.keys().cloned().collect::<Vec<_>>().join(", ");
+    Response::err(format!("{query}: missing/invalid params: {keys}"))
 }
 
 /// First present value among `keys` — param aliases (`session_id`,
@@ -750,6 +1073,13 @@ fn put_text(out: &mut Map<String, Value>, keys: &[&str], to: &str, params: &Map<
 /// (`confirm` mandatory on the wire; the action's danger level is
 /// the host-side gate, so an unset `confirm` param defaults true).
 fn restore_request(params: &Map<String, Value>) -> Value {
+    // Wire-native `request` object passes through verbatim — the
+    // same convention `patch_meta`'s `patch` already follows.
+    if let Some(request) = get(params, &["request"])
+        && request.is_object()
+    {
+        return request.clone();
+    }
     let mut request = Map::new();
     request.insert(
         "confirm".to_string(),
@@ -771,6 +1101,11 @@ fn restore_request(params: &Map<String, Value>) -> Value {
 /// of `nodeId`/`turns`/`checkpoint` is the caller's job (the plane
 /// validates), `confirm` defaults true like [`restore_request`].
 fn rewind_request(params: &Map<String, Value>) -> Value {
+    if let Some(request) = get(params, &["request"])
+        && request.is_object()
+    {
+        return request.clone();
+    }
     let mut request = Map::new();
     request.insert(
         "confirm".to_string(),
@@ -1086,11 +1421,14 @@ mod tests {
                 assert!(!SKIP_PARAMS.contains(&p["name"].as_str().unwrap()));
             }
         }
-        // mutates honesty — the side-effect set is exactly these
+        // mutates honesty — the cli side-effect set is exactly
+        // these (sessions.* mutators are covered by
+        // manifest_lists_sessions_ops)
         let mutators: Vec<&str> = ops
             .iter()
             .filter(|o| o["mutates"] == json!(true))
             .filter_map(|o| o["query"].as_str())
+            .filter(|q| q.starts_with("cli."))
             .collect();
         assert_eq!(
             mutators,
@@ -1282,6 +1620,137 @@ mod tests {
         assert!(serve_missing("sessions.prompt", &p).contains_key("text"));
         p.insert("text".into(), json!("go"));
         assert!(serve_missing("sessions.prompt", &p).is_empty());
+    }
+
+    #[test]
+    fn manifest_lists_sessions_ops() {
+        let m = manifest();
+        let ops = m["ops"].as_array().unwrap();
+        let queries: Vec<&str> = ops.iter().filter_map(|o| o["query"].as_str()).collect();
+        // Every bounded serve method is a `sessions.*` query op;
+        // the subscribe feed stays surface-only.
+        for verb in SERVE_ACTIONS {
+            let q = format!("sessions.{verb}");
+            assert!(queries.contains(&q.as_str()), "{q} missing from ops");
+        }
+        assert!(!queries.contains(&"sessions.subscribe"));
+        assert!(!queries.contains(&"sessions.bogus"));
+        // No name collisions with the cli lane or view queries.
+        assert!(queries.contains(&"cli.version"));
+        assert!(!queries.contains(&"sessions"));
+
+        let find = |q: &str| {
+            ops.iter()
+                .find(|o| o["query"] == json!(q))
+                .unwrap_or_else(|| panic!("{q} missing"))
+        };
+        // mutates honesty — reads vs plane writes.
+        for q in [
+            "sessions.list",
+            "sessions.get",
+            "sessions.summary",
+            "sessions.export",
+            "sessions.history",
+        ] {
+            assert_eq!(find(q)["mutates"], json!(false), "{q}");
+        }
+        for q in [
+            "sessions.create",
+            "sessions.prompt",
+            "sessions.prompt_wait",
+            "sessions.delete",
+            "sessions.patch_meta",
+            "sessions.restore",
+            "sessions.rewind",
+            "sessions.import",
+            "sessions.convert",
+            "sessions.attach",
+            "sessions.detach",
+            "sessions.cancel",
+            "sessions.permission",
+            "sessions.set_mode",
+            "sessions.set_permission_policy",
+        ] {
+            assert_eq!(find(q)["mutates"], json!(true), "{q}");
+        }
+        // Typed schemas — id ref-picks over the sessions view query.
+        let del = find("sessions.delete");
+        let idp = del["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "id")
+            .unwrap();
+        assert_eq!(idp["kind"], "opt");
+        assert_eq!(idp["schema"]["kind"], "ref");
+        assert_eq!(idp["schema"]["ref_query"], "sessions");
+        assert_eq!(idp["schema"]["required"], json!(true));
+        // agent enumerates the store ids; sepiaBin steers the child.
+        let agent = del["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "agent")
+            .unwrap();
+        assert_eq!(agent["schema"]["kind"], "enum");
+        assert!(
+            del["params"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == "sepiaBin")
+        );
+        // prompt advertises both the wire `parts` and the `text`
+        // shorthand; prompt_wait adds timeoutMs.
+        let prompt = find("sessions.prompt");
+        let names: Vec<&str> = prompt["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p["name"].as_str())
+            .collect();
+        assert!(
+            names.contains(&"parts") && names.contains(&"text"),
+            "{names:?}"
+        );
+        assert!(!names.contains(&"timeoutMs"));
+        let wait = find("sessions.prompt_wait");
+        assert!(
+            wait["params"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == "timeoutMs")
+        );
+    }
+
+    #[test]
+    fn serve_params_passes_request_objects_through() {
+        // Wire-native `request` objects ride verbatim — restore and
+        // rewind accept the serve wire's own shape.
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        p.insert(
+            "request".into(),
+            json!({"confirm": false, "turns": 3, "nodeId": "n9"}),
+        );
+        let v = serve_params("sessions.rewind", &p).unwrap();
+        assert_eq!(
+            v["request"],
+            json!({"confirm": false, "turns": 3, "nodeId": "n9"})
+        );
+        let v = serve_params("sessions.restore", &p).unwrap();
+        assert_eq!(v["request"]["confirm"], json!(false));
+        assert_eq!(v["request"]["turns"], 3);
+        // Flat aliases still assemble the request (invoke lane).
+        let mut p = Map::new();
+        p.insert("turns".into(), json!(2));
+        p.insert("tool_call_id".into(), json!("tc-1"));
+        let v = serve_params("sessions.rewind", &p).unwrap();
+        assert_eq!(v["request"]["turns"], 2);
+        assert_eq!(v["request"]["confirm"], json!(true));
+        let v = serve_params("sessions.restore", &p).unwrap();
+        assert_eq!(v["request"]["toolCallId"], "tc-1");
     }
 
     #[test]
