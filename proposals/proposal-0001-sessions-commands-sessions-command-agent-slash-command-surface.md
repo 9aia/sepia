@@ -1,7 +1,7 @@
 +++
 id = "P-001"
 title = "sessions.commands + sessions.command — agent slash-command surface"
-status = "open"
+status = "in-progress"
 created = "2026-11-18"
 owner = "devin"
 priority = "med"
