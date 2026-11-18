@@ -64,6 +64,150 @@ mod serve {
         (bin, log, config_log)
     }
 
+    /// A `sepia-driver-devin` fake: sessionStore+sessionWrite plus
+    /// `agentCommand`, so the plane advertises the `devin` agent —
+    /// pair it with `SEPIA_AGENT_DEVIN_COMMAND` pointing at the mock
+    /// ACP agent and `SEPIA_INHERIT_ENV=1` (agent children get a
+    /// cleared env otherwise) to drive real attach/create/prompt
+    /// turns over `sessions.run`. The canned session's
+    /// `workingDirectory` is `workdir` — attach spawns the agent
+    /// there, so it must exist.
+    fn fake_devin_driver(dir: &Path, workdir: &Path) -> PathBuf {
+        let session = format!(
+            concat!(
+                r#"{{"id":"s1","title":"Devin session","workingDirectory":"{workdir}","#,
+                r#""backendType":"devin","model":"m","createdAt":1700000000,"#,
+                r#""lastActivityAt":1700000001,"mainChainId":0,"nodes":[],"promptHistory":[]}}"#
+            ),
+            workdir = workdir.display(),
+        );
+        let bin = dir.join("sepia-driver-devin");
+        let script = format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = \"--manifest\" ]; then\n\
+             \tprintf '%s\\n' '{{\"id\":\"devin\",\"label\":\"Devin\",\"version\":\"0.0.1\",\"protocol\":1,\"capabilities\":[\"sessionStore\",\"sessionWrite\"],\"agentCommand\":\"devin acp\",\"backendType\":\"devin\"}}'\n\
+             \texit 0\n\
+             fi\n\
+             while IFS= read -r line; do\n\
+             \tid=$(printf '%s' \"$line\" | sed -n 's/.*\"id\":\\([0-9][0-9]*\\),\"method\".*/\\1/p')\n\
+             \tcase \"$line\" in\n\
+             \t\t*'\"method\":\"session.save\"'*) result='null' ;;\n\
+             \t\t*'\"method\":\"session.list\"'*) result='[{session}]' ;;\n\
+             \t\t*'\"method\":\"session.get\"'*) result='{session}' ;;\n\
+             \t\t*'\"method\":\"session.summary\"'*) result='{session}' ;;\n\
+             \t\t*) result='null' ;;\n\
+             \tesac\n\
+             \tprintf '{{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":%s}}\\n' \"$id\" \"$result\"\n\
+             done\n",
+            session = session,
+        );
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        bin
+    }
+
+    /// `sessions.run` end-to-end: the one-call ensure→mode→prompt_wait
+    /// turn against a real spawned mock ACP agent. The create path
+    /// (`cwd`+`agent`, no `id`) mints the id the attach path
+    /// (`id`+`mode`) then reuses — the shape peregrin's per-query
+    /// `driver: ops` spawns need because sessions are only live
+    /// inside one serve process.
+    #[test]
+    fn sessions_run_over_the_wire() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let drivers = tmp.path().join("drivers");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&drivers).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        fake_devin_driver(&drivers, &work);
+        let mode_log = tmp.path().join("modes.log");
+        let mock = sepia_testkit::ensure_mock_acp_agent();
+        let mock_cmd = mock.to_string_lossy().to_string();
+        let mode_log_path = mode_log.to_string_lossy().to_string();
+        let work_path = work.to_string_lossy().to_string();
+        let mut serve = Serve::start(
+            &home,
+            &drivers,
+            &[
+                ("SEPIA_AGENT_DEVIN_COMMAND", mock_cmd.as_str()),
+                ("SEPIA_INHERIT_ENV", "1"),
+                ("MOCK_SESSION_ID", "run-s1"),
+                ("MOCK_SET_MODE_LOG", mode_log_path.as_str()),
+            ],
+        );
+
+        // manifest advertises the method.
+        let res = serve.call(1, "manifest", json!({}));
+        assert!(
+            res["result"]["methods"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("sessions.run")),
+            "manifest missing sessions.run: {res}"
+        );
+
+        // Create path — cwd+agent+text, no id: the turn runs and the
+        // result carries the minted id.
+        let res = serve.call(
+            2,
+            "sessions.run",
+            json!({
+                "cwd": work_path.as_str(),
+                "agent": "devin",
+                "title": "Run session",
+                "text": "hi",
+                "timeoutMs": 15000,
+            }),
+        );
+        assert!(
+            res.get("error").is_none() || res["error"].is_null(),
+            "{res}"
+        );
+        let result = &res["result"];
+        assert_eq!(result["id"], "run-s1", "{res}");
+        assert_eq!(result["sessionId"], "run-s1", "{res}");
+        assert_eq!(result["agentId"], "devin", "{res}");
+        assert_eq!(result["stopReason"], "end_turn", "{res}");
+        assert_eq!(result["text"], "echo: hi", "{res}");
+        assert_eq!(result["timedOut"], false, "{res}");
+
+        // Attach path — `id`+`mode`: set_mode lands before the prompt.
+        let res = serve.call(
+            3,
+            "sessions.run",
+            json!({
+                "id": "s1",
+                "agent": "devin",
+                "mode": "bypass",
+                "text": "again",
+                "timeoutMs": 15000,
+            }),
+        );
+        assert!(
+            res.get("error").is_none() || res["error"].is_null(),
+            "{res}"
+        );
+        assert_eq!(res["result"]["id"], "s1", "{res}");
+        assert_eq!(res["result"]["text"], "echo: again", "{res}");
+        let modes = std::fs::read_to_string(&mode_log).unwrap();
+        assert!(modes.contains("s1|bypass"), "{modes}");
+
+        // Missing params → invalid params, not a wire call.
+        for (id, params) in [
+            (4, json!({})),
+            // id path still needs content.
+            (5, json!({"id": "s1"})),
+            // create path missing agent.
+            (6, json!({"cwd": work_path.as_str(), "text": "hi"})),
+        ] {
+            let res = serve.call(id, "sessions.run", params);
+            assert_eq!(res["error"]["code"], -32602, "{res}");
+        }
+
+        serve.call(7, "shutdown", json!({}));
+    }
+
     struct Serve {
         child: Child,
         stdin: Option<ChildStdin>,
@@ -558,6 +702,7 @@ mod serve {
             "sessions.create",
             "sessions.prompt",
             "sessions.prompt_wait",
+            "sessions.run",
             "sessions.cancel",
             "sessions.permission",
             "sessions.set_mode",
@@ -612,6 +757,13 @@ mod serve {
             r#"{"op":"query","query":"sessions.subscribe","params":{"id":"s1"}}"#,
         );
         assert_eq!(res["ok"], false, "{res}");
+
+        // sessions.run — `id` is optional (the create path), but
+        // content is always required and no-id needs cwd+agent:
+        // empty params → ok:false before any wire call.
+        let res = drv.call_raw(8, r#"{"op":"query","query":"sessions.run","params":{}}"#);
+        assert_eq!(res["ok"], false, "{res}");
+        assert!(res["error"].as_str().unwrap().contains("cwd"), "{res}");
     }
 
     /// The P2 views over the wire: `config.*` queries hit the fake

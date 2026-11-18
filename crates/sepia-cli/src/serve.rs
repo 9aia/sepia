@@ -19,6 +19,7 @@
 //! | `sessions.create` | `create_session` |
 //! | `sessions.prompt` / `sessions.cancel` | `prompt` / `cancel` |
 //! | `sessions.prompt_wait` | `prompt_wait` — prompt + await turn end → `PromptWaitResult` |
+//! | `sessions.run` | ensure (attach `id` or create from `cwd`+`agent`) → `set_mode`? → `prompt_wait` → `PromptWaitResult` + `id` |
 //! | `sessions.commands` | `session_commands` — the agent's advertised slash commands |
 //! | `sessions.command` | `session_command` — invoke one as a prompt turn → `PromptWaitResult` |
 //! | `sessions.permission` | `respond_to_permission` |
@@ -92,6 +93,24 @@ fn str_param(params: &Value, key: &str) -> Option<String> {
     params.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
+/// The prompt content `sessions.run` sends — `parts` is the verbatim
+/// ACP `PromptPart` array; `text` is the shorthand for one text part.
+/// One of the two is required.
+fn prompt_parts(params: &Value) -> Result<Vec<sepia_acp::types::PromptPart>, RpcError> {
+    if let Some(parts) = params.get("parts") {
+        return serde_json::from_value(parts.clone())
+            .map_err(|e| RpcError::invalid_params(e.to_string()));
+    }
+    if let Some(text) = params.get("text").and_then(Value::as_str) {
+        return Ok(vec![sepia_acp::types::PromptPart::Text {
+            text: text.to_string(),
+        }]);
+    }
+    Err(RpcError::invalid_params(
+        "missing prompt content (parts or text)",
+    ))
+}
+
 /// The `permissions` param — a [`PermissionPolicy`]: `"ask"`,
 /// `"allow_all"`, `"deny_all"`, or `{"rules": [{"kind": "execute",
 /// "allow": false}, …]}` (unmatched requests fall back to `ask`).
@@ -121,7 +140,7 @@ fn manifest(local: &Local) -> Value {
             "sessions.export", "sessions.import", "sessions.convert",
             "sessions.history", "sessions.attach", "sessions.detach",
             "sessions.create", "sessions.prompt", "sessions.prompt_wait",
-            "sessions.cancel", "sessions.commands", "sessions.command",
+            "sessions.run", "sessions.cancel", "sessions.commands", "sessions.command",
             "sessions.permission", "sessions.set_mode", "sessions.delete", "sessions.patch_meta",
             "sessions.set_permission_policy",
             "sessions.restore", "sessions.rewind", "sessions.subscribe",
@@ -375,6 +394,84 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
                 .await
                 .map_err(|e| control_err(&e))?;
             serde_json::to_value(result).map_err(|e| RpcError::internal(e.to_string()))
+        }
+        "sessions.run" => {
+            // The one-call turn orchestrators need: sessions are only
+            // "live" inside this serve process, so a spawner that gets
+            // a fresh `sepia serve` per query (peregrin `driver: ops`)
+            // cannot compose create→prompt_wait across calls. `run`
+            // does ensure → optional `set_mode` → `prompt_wait` in one
+            // dispatch. `id` attaches an existing session (takeover
+            // stays false — a held session degrades to read-only and
+            // the wait reports not-attached); absent, `cwd`+`agent`
+            // create one. `title`/`model`/`fallbacks` pass through to
+            // create/attach like `sessions.create`/`sessions.attach`.
+            let model = req
+                .params
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let fallbacks = req
+                .params
+                .get("fallbacks")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                });
+            let id = if let Some(id) = str_param(&req.params, "id").filter(|s| !s.is_empty()) {
+                plane
+                    .attach(&id, false, model, fallbacks, agent.clone())
+                    .await
+                    .map_err(|e| control_err(&e))?;
+                id
+            } else {
+                let cwd = req
+                    .params
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        RpcError::invalid_params(
+                            "missing cwd (required with agent when id is absent)",
+                        )
+                    })?;
+                let create_agent = agent.clone().ok_or_else(|| {
+                    RpcError::invalid_params("missing agent (required with cwd when id is absent)")
+                })?;
+                let title = str_param(&req.params, "title");
+                plane
+                    .create_session(cwd, Some(create_agent), title, model, fallbacks)
+                    .await
+                    .map_err(|e| control_err(&e))?
+                    .id
+            };
+            if let Some(mode) = str_param(&req.params, "mode") {
+                plane
+                    .set_mode(&id, &mode, agent.as_deref())
+                    .await
+                    .map_err(|e| control_err(&e))?;
+            }
+            let parts = prompt_parts(&req.params)?;
+            let timeout_ms = req
+                .params
+                .get("timeoutMs")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let timeout = (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms));
+            let result = plane
+                .prompt_wait(&id, &parts, agent.as_deref(), timeout)
+                .await
+                .map_err(|e| control_err(&e))?;
+            let mut value =
+                serde_json::to_value(result).map_err(|e| RpcError::internal(e.to_string()))?;
+            // `id` aliases `sessionId` — callers learn the minted id on
+            // the create path without a second lookup.
+            if let Value::Object(map) = &mut value {
+                map.insert("id".to_string(), json!(id));
+            }
+            Ok(value)
         }
         "sessions.commands" => {
             let id = id_of(&req.params)?;

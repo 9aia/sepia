@@ -603,6 +603,7 @@ const SERVE_ACTIONS: &[&str] = &[
     "create",
     "prompt",
     "prompt_wait",
+    "run",
     "commands",
     "command",
     "cancel",
@@ -681,6 +682,9 @@ fn serve_op_doc(verb: &str) -> &'static str {
         "prompt" => "send prompt `parts`/`text` to a session (no wait)",
         "prompt_wait" => {
             "prompt and await turn end → PromptWaitResult (`timeoutMs` bounds the wait)"
+        }
+        "run" => {
+            "one-call turn: attach `id` or create from `cwd`+`agent`, optional `mode`, prompt `text`/`parts`, await → PromptWaitResult"
         }
         "commands" => "the agent's advertised slash commands (`available_commands_update`)",
         "command" => {
@@ -816,6 +820,41 @@ fn serve_op_params(verb: &str) -> Vec<ParamSchema> {
                 ));
             }
         }
+        "run" => v.extend([
+            // `id` is optional on this op alone — absent means create
+            // from `cwd`+`agent` (the schema can't express the
+            // conditional; `serve_missing` enforces it).
+            kit::param("id")
+                .kind(ParamKind::Ref)
+                .ref_query("sessions")
+                .doc("existing session id — absent creates one from `cwd`+`agent`")
+                .build(),
+            agent(false),
+            bin(),
+            string(
+                "cwd",
+                "working directory — required with `agent` when `id` is absent",
+            ),
+            string("title", "session title (create path)"),
+            string("model", "model id — attach override or create preference"),
+            string_list("fallbacks", "fallback model ids"),
+            string(
+                "mode",
+                "session mode id — applied after ensure, before the prompt",
+            ),
+            text(
+                "text",
+                "prompt text — shorthand for one text PromptPart (`parts` wins when both are given)",
+            ),
+            text(
+                "parts",
+                "JSON array of ACP PromptPart objects — the verbatim wire form",
+            ),
+            int(
+                "timeoutMs",
+                "wait bound in ms — 0/absent waits until the turn settles; on expiry the turn is cancelled",
+            ),
+        ]),
         "commands" => v.extend([id(), agent(false), bin()]),
         "command" => v.extend([
             id(),
@@ -998,10 +1037,19 @@ fn serve_missing(method: &str, params: &Map<String, Value>) -> Map<String, Value
     let mut errors = Map::new();
     let needs_id = !matches!(
         method,
-        "sessions.list" | "sessions.create" | "sessions.import"
+        "sessions.list" | "sessions.create" | "sessions.import" | "sessions.run"
     );
     if needs_id && !present(session_id(params)) {
         errors.insert("id".to_string(), json!("required"));
+    }
+    // `sessions.run`'s create path — no `id` means `cwd`+`agent`
+    // must be there (the schema can't express the conditional).
+    if method == "sessions.run" && session_id(params).is_none() {
+        for key in ["cwd", "agent"] {
+            if !present(params.get(key)) {
+                errors.insert(key.to_string(), json!("required when `id` is absent"));
+            }
+        }
     }
     for key in serve_required(method) {
         if !present(params.get(*key)) {
@@ -1015,8 +1063,10 @@ fn serve_missing(method: &str, params: &Map<String, Value>) -> Map<String, Value
     {
         errors.insert("session".to_string(), json!("required (object or path)"));
     }
-    if matches!(method, "sessions.prompt" | "sessions.prompt_wait")
-        && get(params, &["parts", "text", "prompt", "message"]).is_none_or(|v| !present(Some(v)))
+    if matches!(
+        method,
+        "sessions.prompt" | "sessions.prompt_wait" | "sessions.run"
+    ) && get(params, &["parts", "text", "prompt", "message"]).is_none_or(|v| !present(Some(v)))
     {
         errors.insert("text".to_string(), json!("required"));
     }
@@ -1222,6 +1272,22 @@ fn serve_params(method: &str, params: &Map<String, Value>) -> Result<Value, Map<
                     params,
                 );
             }
+        }
+        "sessions.run" => {
+            put(&mut out, &["cwd"], "cwd", params);
+            put(&mut out, &["title"], "title", params);
+            put(&mut out, &["model"], "model", params);
+            put(&mut out, &["fallbacks"], "fallbacks", params);
+            put(&mut out, &["mode"], "mode", params);
+            if let Some(parts) = parts_param(params) {
+                out.insert("parts".to_string(), parts);
+            }
+            put(
+                &mut out,
+                &["timeoutMs", "timeout_ms", "timeout"],
+                "timeoutMs",
+                params,
+            );
         }
         "sessions.command" => {
             put(&mut out, &["name"], "name", params);
@@ -1663,6 +1729,53 @@ mod tests {
     }
 
     #[test]
+    fn serve_run_gating_and_params() {
+        // Attach path — `id` + content is enough (no cwd/agent).
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        p.insert("text".into(), json!("go"));
+        assert!(serve_missing("sessions.run", &p).is_empty());
+        // Create path — no `id` means `cwd`+`agent` are required.
+        let mut p = Map::new();
+        p.insert("text".into(), json!("go"));
+        let e = serve_missing("sessions.run", &p);
+        assert!(e.contains_key("cwd") && e.contains_key("agent"), "{e:?}");
+        p.insert("cwd".into(), json!("/tmp"));
+        let e = serve_missing("sessions.run", &p);
+        assert!(e.contains_key("agent") && !e.contains_key("cwd"), "{e:?}");
+        p.insert("agent".into(), json!("devin"));
+        assert!(serve_missing("sessions.run", &p).is_empty());
+        // Content is required on both paths.
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        assert!(serve_missing("sessions.run", &p).contains_key("text"));
+        // Create-path params translate: text → parts, aliases land.
+        let mut p = Map::new();
+        p.insert("cwd".into(), json!("/w"));
+        p.insert("agent".into(), json!("devin"));
+        p.insert("mode".into(), json!("bypass"));
+        p.insert("title".into(), json!("t"));
+        p.insert("text".into(), json!("hi"));
+        p.insert("timeout_ms".into(), json!(5000));
+        let v = serve_params("sessions.run", &p).unwrap();
+        assert_eq!(v["cwd"], "/w");
+        assert_eq!(v["agent"], "devin");
+        assert_eq!(v["mode"], "bypass");
+        assert_eq!(v["title"], "t");
+        assert_eq!(v["parts"], json!([{"type": "text", "text": "hi"}]));
+        assert_eq!(v["timeoutMs"], 5000);
+        assert!(v.get("id").is_none());
+        // `id` aliases pass through when present; parts wins over text.
+        let mut p = Map::new();
+        p.insert("session_id".into(), json!("s9"));
+        p.insert("text".into(), json!("ignored"));
+        p.insert("parts".into(), json!([{"type": "text", "text": "x"}]));
+        let v = serve_params("sessions.run", &p).unwrap();
+        assert_eq!(v["id"], "s9");
+        assert_eq!(v["parts"][0]["text"], "x");
+    }
+
+    #[test]
     fn manifest_lists_sessions_ops() {
         let m = manifest();
         let ops = m["ops"].as_array().unwrap();
@@ -1700,6 +1813,7 @@ mod tests {
             "sessions.command",
             "sessions.prompt",
             "sessions.prompt_wait",
+            "sessions.run",
             "sessions.delete",
             "sessions.patch_meta",
             "sessions.restore",
@@ -1764,6 +1878,21 @@ mod tests {
                 .iter()
                 .any(|p| p["name"] == "timeoutMs")
         );
+        // sessions.run — `id` is the one optional session id (the
+        // create path takes cwd+agent instead); mode/text/parts/
+        // timeoutMs all advertised.
+        let run = find("sessions.run");
+        let run_params = run["params"].as_array().unwrap();
+        let run_id = run_params.iter().find(|p| p["name"] == "id").unwrap();
+        assert_eq!(run_id["schema"]["kind"], "ref");
+        assert_ne!(run_id["schema"]["required"], json!(true));
+        let names: Vec<&str> = run_params
+            .iter()
+            .filter_map(|p| p["name"].as_str())
+            .collect();
+        for want in ["cwd", "agent", "mode", "text", "parts", "timeoutMs"] {
+            assert!(names.contains(&want), "{want} missing from {names:?}");
+        }
     }
 
     #[test]
