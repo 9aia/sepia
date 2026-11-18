@@ -1729,6 +1729,53 @@ mod tests {
     }
 
     #[test]
+    fn serve_run_gating_and_params() {
+        // Attach path — `id` + content is enough (no cwd/agent).
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        p.insert("text".into(), json!("go"));
+        assert!(serve_missing("sessions.run", &p).is_empty());
+        // Create path — no `id` means `cwd`+`agent` are required.
+        let mut p = Map::new();
+        p.insert("text".into(), json!("go"));
+        let e = serve_missing("sessions.run", &p);
+        assert!(e.contains_key("cwd") && e.contains_key("agent"), "{e:?}");
+        p.insert("cwd".into(), json!("/tmp"));
+        let e = serve_missing("sessions.run", &p);
+        assert!(e.contains_key("agent") && !e.contains_key("cwd"), "{e:?}");
+        p.insert("agent".into(), json!("devin"));
+        assert!(serve_missing("sessions.run", &p).is_empty());
+        // Content is required on both paths.
+        let mut p = Map::new();
+        p.insert("id".into(), json!("s1"));
+        assert!(serve_missing("sessions.run", &p).contains_key("text"));
+        // Create-path params translate: text → parts, aliases land.
+        let mut p = Map::new();
+        p.insert("cwd".into(), json!("/w"));
+        p.insert("agent".into(), json!("devin"));
+        p.insert("mode".into(), json!("bypass"));
+        p.insert("title".into(), json!("t"));
+        p.insert("text".into(), json!("hi"));
+        p.insert("timeout_ms".into(), json!(5000));
+        let v = serve_params("sessions.run", &p).unwrap();
+        assert_eq!(v["cwd"], "/w");
+        assert_eq!(v["agent"], "devin");
+        assert_eq!(v["mode"], "bypass");
+        assert_eq!(v["title"], "t");
+        assert_eq!(v["parts"], json!([{"type": "text", "text": "hi"}]));
+        assert_eq!(v["timeoutMs"], 5000);
+        assert!(v.get("id").is_none());
+        // `id` aliases pass through when present; parts wins over text.
+        let mut p = Map::new();
+        p.insert("session_id".into(), json!("s9"));
+        p.insert("text".into(), json!("ignored"));
+        p.insert("parts".into(), json!([{"type": "text", "text": "x"}]));
+        let v = serve_params("sessions.run", &p).unwrap();
+        assert_eq!(v["id"], "s9");
+        assert_eq!(v["parts"][0]["text"], "x");
+    }
+
+    #[test]
     fn manifest_lists_sessions_ops() {
         let m = manifest();
         let ops = m["ops"].as_array().unwrap();
@@ -1766,6 +1813,7 @@ mod tests {
             "sessions.command",
             "sessions.prompt",
             "sessions.prompt_wait",
+            "sessions.run",
             "sessions.delete",
             "sessions.patch_meta",
             "sessions.restore",
@@ -1830,6 +1878,21 @@ mod tests {
                 .iter()
                 .any(|p| p["name"] == "timeoutMs")
         );
+        // sessions.run — `id` is the one optional session id (the
+        // create path takes cwd+agent instead); mode/text/parts/
+        // timeoutMs all advertised.
+        let run = find("sessions.run");
+        let run_params = run["params"].as_array().unwrap();
+        let run_id = run_params.iter().find(|p| p["name"] == "id").unwrap();
+        assert_eq!(run_id["schema"]["kind"], "ref");
+        assert_ne!(run_id["schema"]["required"], json!(true));
+        let names: Vec<&str> = run_params
+            .iter()
+            .filter_map(|p| p["name"].as_str())
+            .collect();
+        for want in ["cwd", "agent", "mode", "text", "parts", "timeoutMs"] {
+            assert!(names.contains(&want), "{want} missing from {names:?}");
+        }
     }
 
     #[test]

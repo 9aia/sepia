@@ -64,7 +64,11 @@ this wire — never link the session plane into an orchestrator.
 `sessions.prompt_wait` is the blocking turn primitive (prompt → await
 terminal state → `PromptWaitResult` with `stopReason`/`text`/
 `timedOut`); requests dispatch concurrently so `cancel`/`permission`
-interleave with an in-flight wait. The same capability rides the
+interleave with an in-flight wait. `sessions.run` is the one-call
+turn for per-query spawners (sessions are only live inside one serve
+process): ensure (`id` attach or `cwd`+`agent` create) → optional
+`mode` → prompt `text`/`parts` → await → `PromptWaitResult` + `id`.
+The same capability rides the
 entity plane as the `sepia.prompt_wait` op (`sepia-peregrin`).
 
 `tamias-driver-sepia` is the CLI-as-generated-surface driver (org

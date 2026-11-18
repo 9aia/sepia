@@ -421,36 +421,31 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
                         .map(str::to_string)
                         .collect::<Vec<_>>()
                 });
-            let id = match str_param(&req.params, "id").filter(|s| !s.is_empty()) {
-                Some(id) => {
-                    plane
-                        .attach(&id, false, model, fallbacks, agent.clone())
-                        .await
-                        .map_err(|e| control_err(&e))?;
-                    id.to_string()
-                }
-                None => {
-                    let cwd = req
-                        .params
-                        .get("cwd")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| {
-                            RpcError::invalid_params(
-                                "missing cwd (required with agent when id is absent)",
-                            )
-                        })?;
-                    let create_agent = agent.clone().ok_or_else(|| {
+            let id = if let Some(id) = str_param(&req.params, "id").filter(|s| !s.is_empty()) {
+                plane
+                    .attach(&id, false, model, fallbacks, agent.clone())
+                    .await
+                    .map_err(|e| control_err(&e))?;
+                id
+            } else {
+                let cwd = req
+                    .params
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
                         RpcError::invalid_params(
-                            "missing agent (required with cwd when id is absent)",
+                            "missing cwd (required with agent when id is absent)",
                         )
                     })?;
-                    let title = str_param(&req.params, "title");
-                    plane
-                        .create_session(cwd, Some(create_agent), title, model, fallbacks)
-                        .await
-                        .map_err(|e| control_err(&e))?
-                        .id
-                }
+                let create_agent = agent.clone().ok_or_else(|| {
+                    RpcError::invalid_params("missing agent (required with cwd when id is absent)")
+                })?;
+                let title = str_param(&req.params, "title");
+                plane
+                    .create_session(cwd, Some(create_agent), title, model, fallbacks)
+                    .await
+                    .map_err(|e| control_err(&e))?
+                    .id
             };
             if let Some(mode) = str_param(&req.params, "mode") {
                 plane
