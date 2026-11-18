@@ -19,6 +19,8 @@
 //! | `sessions.create` | `create_session` |
 //! | `sessions.prompt` / `sessions.cancel` | `prompt` / `cancel` |
 //! | `sessions.prompt_wait` | `prompt_wait` — prompt + await turn end → `PromptWaitResult` |
+//! | `sessions.commands` | `session_commands` — the agent's advertised slash commands |
+//! | `sessions.command` | `session_command` — invoke one as a prompt turn → `PromptWaitResult` |
 //! | `sessions.permission` | `respond_to_permission` |
 //! | `sessions.set_permission_policy` | `set_permission_policy` — auto-answer `session/request_permission` |
 //! | `sessions.delete` | `delete_session` |
@@ -119,7 +121,7 @@ fn manifest(local: &Local) -> Value {
             "sessions.export", "sessions.import", "sessions.convert",
             "sessions.history", "sessions.attach", "sessions.detach",
             "sessions.create", "sessions.prompt", "sessions.prompt_wait",
-            "sessions.cancel",
+            "sessions.cancel", "sessions.commands", "sessions.command",
             "sessions.permission", "sessions.set_mode", "sessions.delete", "sessions.patch_meta",
             "sessions.set_permission_policy",
             "sessions.restore", "sessions.rewind", "sessions.subscribe",
@@ -370,6 +372,44 @@ async fn dispatch(local: &Local, req: &Request, out: &Out) -> Result<Value, RpcE
             let timeout = (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms));
             let result = plane
                 .prompt_wait(id, &parts, agent.as_deref(), timeout)
+                .await
+                .map_err(|e| control_err(&e))?;
+            serde_json::to_value(result).map_err(|e| RpcError::internal(e.to_string()))
+        }
+        "sessions.commands" => {
+            let id = id_of(&req.params)?;
+            let commands = plane
+                .session_commands(id, agent.as_deref())
+                .await
+                .map_err(|e| control_err(&e))?;
+            serde_json::to_value(commands).map_err(|e| RpcError::internal(e.to_string()))
+        }
+        "sessions.command" => {
+            let id = id_of(&req.params)?;
+            let name = req
+                .params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RpcError::invalid_params("missing command name"))?;
+            let args = str_param(&req.params, "args");
+            // `text` is the verbatim command line (e.g. "/compact now")
+            // — `args` is the `/{name} <args>` shorthand; `text` wins.
+            let text = str_param(&req.params, "text");
+            let timeout_ms = req
+                .params
+                .get("timeoutMs")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let timeout = (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms));
+            let result = plane
+                .session_command(
+                    id,
+                    name,
+                    args.as_deref(),
+                    text.as_deref(),
+                    timeout,
+                    agent.as_deref(),
+                )
                 .await
                 .map_err(|e| control_err(&e))?;
             serde_json::to_value(result).map_err(|e| RpcError::internal(e.to_string()))

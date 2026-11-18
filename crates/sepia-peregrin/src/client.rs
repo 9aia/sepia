@@ -199,6 +199,34 @@ impl SepiaPeregrin {
         self.send("POST", &format!("/api/entities/{id}/ops"), &body)
     }
 
+    /// `sepia.commands` — the session's advertised slash commands
+    /// (`[{name, description?}]`; empty when the agent advertises none).
+    ///
+    /// # Errors
+    /// See [`Self::session_op`] — plus a malformed-body error.
+    pub fn commands(&self, id: &str) -> Result<Value, SepiaPeregrinError> {
+        let body = serde_json::json!({
+            "kind": "sepia.commands",
+            "payload": {},
+        });
+        self.send("POST", &format!("/api/entities/{id}/ops"), &body)
+    }
+
+    /// `sepia.command` — invoke an advertised slash command as a prompt
+    /// turn. `params` is `{name, args?, text?, timeoutMs?}`; returns the
+    /// `PromptWaitResult` document like [`Self::prompt_wait`].
+    ///
+    /// # Errors
+    /// On transport failure or non-2xx — an unadvertised `name` is a
+    /// 400 (`unsupported`), turn failures ride the result's `error`.
+    pub fn command(&self, id: &str, params: &Value) -> Result<Value, SepiaPeregrinError> {
+        let body = serde_json::json!({
+            "kind": "sepia.command",
+            "payload": params,
+        });
+        self.send("POST", &format!("/api/entities/{id}/ops"), &body)
+    }
+
     /// `sepia.attach` / `sepia.detach` — live-driver attach/release.
     /// `takeover` asks the node to break a foreign hold.
     ///

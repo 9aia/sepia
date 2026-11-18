@@ -10,7 +10,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
-use sepia_acp::{AcpCapabilities, AcpConnection, AcpSessionInfo, PromptPart, rpc::RpcError};
+use sepia_acp::{
+    AcpCapabilities, AcpConnection, AcpSessionInfo, AvailableCommand, PromptPart, rpc::RpcError,
+};
 use sepia_core::restore::{self, FileRestorePlan};
 use sepia_core::rewind::{self, RewindTarget};
 use sepia_core::storage::{NodesWindowOptions, SessionRepository};
@@ -1825,6 +1827,82 @@ impl ControlPlane {
         conn.cancel(id)
             .await
             .map_err(acp_error("Failed to cancel prompt"))
+    }
+
+    /// The live session's advertised slash commands — the agent's
+    /// last `available_commands_update`, retained on the connection.
+    /// Empty when the agent never advertised (or advertises none);
+    /// that is an answer, not an error.
+    ///
+    /// # Errors
+    /// `invalid` when the session is not attached.
+    #[tracing::instrument(name = "control_session_commands", skip_all, fields(session = %id, agent = ?agent_id))]
+    pub async fn session_commands(
+        &self,
+        id: &str,
+        agent_id: Option<&str>,
+    ) -> Result<Vec<AvailableCommand>, ControlError> {
+        let conn = {
+            let state = self.state.lock().await;
+            let live = Self::require_live(&state, id, agent_id)?;
+            Arc::clone(&live.conn)
+        };
+        Ok(conn.commands(id).await)
+    }
+
+    /// Invoke one advertised slash command as a prompt turn — the
+    /// runtime counterpart of the config IR's static command
+    /// definitions. `name` must match an `available_commands_update`
+    /// entry (a leading `/` is tolerated); unadvertised names fail
+    /// `unsupported`. `args` appends to the `/{name}` line; `text`
+    /// overrides the whole command line verbatim (still gated on the
+    /// advertised name). The turn is awaited like [`Self::prompt_wait`]
+    /// — same busy gate, same `PromptWaitResult`.
+    ///
+    /// # Errors
+    /// `invalid` when not attached or `name` is empty,
+    /// `unsupported` when the agent never advertised `name`,
+    /// `busy`/`internal` from the underlying turn.
+    #[tracing::instrument(name = "control_session_command", skip_all, fields(session = %id, command = %name, agent = ?agent_id))]
+    pub async fn session_command(
+        self: &Arc<Self>,
+        id: &str,
+        name: &str,
+        args: Option<&str>,
+        text: Option<&str>,
+        timeout: Option<Duration>,
+        agent_id: Option<&str>,
+    ) -> Result<PromptWaitResult, ControlError> {
+        let name = name.trim().trim_start_matches('/');
+        if name.is_empty() {
+            return Err(control_error(
+                ControlErrorCode::Invalid,
+                format!("Command name is required: {id}"),
+            ));
+        }
+        let advertised = self.session_commands(id, agent_id).await?;
+        let matched = advertised
+            .iter()
+            .any(|c| c.name.trim_start_matches('/') == name);
+        if !matched {
+            return Err(ControlError::new(
+                ControlErrorCode::Unsupported,
+                format!("Agent does not advertise command '{name}': {id}"),
+            ));
+        }
+        // Prompt-text invocation — the portable shape: slash commands
+        // ride `session/prompt` as text (`/compact`, `/review …`). A
+        // dedicated ACP method can replace this line later without
+        // touching callers.
+        let line = match text.map(str::trim).filter(|t| !t.is_empty()) {
+            Some(t) => t.to_string(),
+            None => match args.map(str::trim).filter(|a| !a.is_empty()) {
+                Some(a) => format!("/{name} {a}"),
+                None => format!("/{name}"),
+            },
+        };
+        self.prompt_wait(id, &[PromptPart::Text { text: line }], agent_id, timeout)
+            .await
     }
 
     /// Detaches if live, then deletes the session through its agent
