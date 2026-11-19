@@ -7,7 +7,7 @@
       "devDependencies": {
         "gh-pages": "^6.3.0",
         "vitepress": "^1.6.0",
-        "vitepress-theme-9aia": "github:9aia/vitepress-theme-9aia#8e8a66d0a989599d91add74860f11d63e5000318",
+        "vitepress-theme-9aia": "github:9aia/vitepress-theme-9aia#707db8167e74d97d650328a432da4ce5cd4729c8",
       },
     },
   },
@@ -450,7 +450,7 @@
 
     "vitepress": ["vitepress@1.6.4", "", { "dependencies": { "@docsearch/css": "3.8.2", "@docsearch/js": "3.8.2", "@iconify-json/simple-icons": "^1.2.21", "@shikijs/core": "^2.1.0", "@shikijs/transformers": "^2.1.0", "@shikijs/types": "^2.1.0", "@types/markdown-it": "^14.1.2", "@vitejs/plugin-vue": "^5.2.1", "@vue/devtools-api": "^7.7.0", "@vue/shared": "^3.5.13", "@vueuse/core": "^12.4.0", "@vueuse/integrations": "^12.4.0", "focus-trap": "^7.6.4", "mark.js": "8.11.1", "minisearch": "^7.1.1", "shiki": "^2.1.0", "vite": "^5.4.14", "vue": "^3.5.13" }, "peerDependencies": { "markdown-it-mathjax3": "^4", "postcss": "^8" }, "optionalPeers": ["markdown-it-mathjax3", "postcss"], "bin": { "vitepress": "bin/vitepress.js" } }, "sha512-+2ym1/+0VVrbhNyRoFFesVvBvHAVMZMK0rw60E3X/5349M1GuVdKeazuksqopEdvkKwKGs21Q729jX81/bkBJg=="],
 
-    "vitepress-theme-9aia": ["vitepress-theme-9aia@github:9aia/vitepress-theme-9aia#8e8a66d", { "peerDependencies": { "vitepress": ">=1.0.0", "vue": "^3.4.0" } }, "9aia-vitepress-theme-9aia-8e8a66d", "sha512-YX4I23Uufo2fZKKM1auw3WUl21pMXPrZQdrfk/hVO14imUhP3ohsTDzb/p6QIPQrfgffzxDeeC4F0TLiilh+bg=="],
+    "vitepress-theme-9aia": ["vitepress-theme-9aia@github:9aia/vitepress-theme-9aia#707db81", { "peerDependencies": { "vitepress": ">=1.0.0", "vue": "^3.4.0" } }, "9aia-vitepress-theme-9aia-707db81", "sha512-ecGsrFlW+4p0p97I8wrrreH4ZsZ8UmFbR6EMWJadDV03m7Vi85tnBlZf8N9nRFLwgaMyitZMlffiVemI6jj9xw=="],
 
     "vue": ["vue@3.5.44", "", { "dependencies": { "@vue/compiler-dom": "3.5.44", "@vue/compiler-sfc": "3.5.44", "@vue/runtime-dom": "3.5.44", "@vue/server-renderer": "3.5.44", "@vue/shared": "3.5.44" }, "peerDependencies": { "typescript": "*" }, "optionalPeers": ["typescript"] }, "sha512-dvvmaOCG7lAMkJTPqPwWeGMsPS6DIsFsfZDUgBp9V6mHf9b3+/wyVwYR4Es+WV6uJC0FKRxp81Obcq0ZwUcGFQ=="],
 
