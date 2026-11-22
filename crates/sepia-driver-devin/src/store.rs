@@ -55,6 +55,20 @@ CREATE TABLE IF NOT EXISTS prompt_history (
 );
 ";
 
+/// Session-scoped tables cleared together with `sessions` on delete —
+/// mirrors the set `devin rm` removes. The optional ones exist only on
+/// stores migrated by a live Devin install; `message_search` (FTS) is
+/// maintained by triggers on `message_nodes` and needs no explicit
+/// delete.
+const SESSION_TABLES: &[&str] = &[
+    "subagent_heads",
+    "live_row_times",
+    "tool_call_state",
+    "rendered_commits",
+    "message_nodes",
+    "prompt_history",
+];
+
 const SESSION_CACHE_MAX: usize = 64;
 const SESSION_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const CALLS_INDEX_TTL: Duration = Duration::from_secs(15);
@@ -119,6 +133,7 @@ pub struct DevinStore {
     readonly: bool,
     has_tool_call_state: bool,
     has_subagent_heads: bool,
+    tables: BTreeSet<String>,
     list_cache: std::sync::Mutex<Option<(f64, Vec<Session>)>>,
     session_cache: std::sync::Mutex<HashMap<String, (String, Session)>>,
     calls_index: std::sync::Mutex<HashMap<String, CallsEntry>>,
@@ -151,10 +166,11 @@ impl DevinStore {
             conn.pragma_update(None, "journal_mode", "WAL")
                 .map_err(err("Failed to open database"))?;
         }
-        let tables = table_names(&conn)?;
+        let mut tables = table_names(&conn)?;
         if !readonly && needs_migration(&tables) {
             conn.execute_batch(SCHEMA)
                 .map_err(err("Failed to open database"))?;
+            tables = table_names(&conn)?;
         }
         let has_tool_call_state = tables.contains("tool_call_state");
         let has_subagent_heads = tables.contains("subagent_heads");
@@ -164,6 +180,7 @@ impl DevinStore {
             readonly,
             has_tool_call_state,
             has_subagent_heads,
+            tables,
             list_cache: std::sync::Mutex::new(None),
             session_cache: std::sync::Mutex::new(HashMap::new()),
             calls_index: std::sync::Mutex::new(HashMap::new()),
@@ -904,16 +921,15 @@ impl SessionRepository for DevinStore {
         let tx = conn
             .unchecked_transaction()
             .map_err(err("Failed to delete session"))?;
-        tx.execute(
-            "DELETE FROM message_nodes WHERE session_id = ?",
-            params![id],
-        )
-        .map_err(err("Failed to delete session"))?;
-        tx.execute(
-            "DELETE FROM prompt_history WHERE session_id = ?",
-            params![id],
-        )
-        .map_err(err("Failed to delete session"))?;
+        for table in SESSION_TABLES {
+            if self.tables.contains(*table) {
+                tx.execute(
+                    &format!("DELETE FROM {table} WHERE session_id = ?"),
+                    params![id],
+                )
+                .map_err(err("Failed to delete session"))?;
+            }
+        }
         tx.execute("DELETE FROM sessions WHERE id = ?", params![id])
             .map_err(err("Failed to delete session"))?;
         tx.commit().map_err(err("Failed to delete session"))?;

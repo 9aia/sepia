@@ -313,3 +313,83 @@ async fn subagent_parents_degrades_on_a_schema_without_agent_id() {
     let listed = store.list().await.unwrap();
     assert!(!listed.is_empty());
 }
+
+#[tokio::test]
+async fn delete_clears_every_session_scoped_table() {
+    // `devin rm` removes rows from all session-scoped tables, not just
+    // sessions/message_nodes/prompt_history — a store delete must not
+    // leave orphans in the optional tables a live install migrates in.
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("sessions.db");
+    {
+        let store = DevinStore::open(&db, false).unwrap();
+        store
+            .save(&contract::session("s1", "S1", 1.0))
+            .await
+            .unwrap();
+        store
+            .save(&contract::session("keep", "K", 2.0))
+            .await
+            .unwrap();
+    }
+    {
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE subagent_heads(session_id TEXT, agent_id TEXT);
+             CREATE TABLE live_row_times(session_id TEXT, row_id INTEGER);
+             CREATE TABLE tool_call_state(session_id TEXT, tool_call_id TEXT);
+             CREATE TABLE rendered_commits(session_id TEXT, sequence_number INTEGER);",
+        )
+        .unwrap();
+        for table in [
+            "subagent_heads",
+            "live_row_times",
+            "tool_call_state",
+            "rendered_commits",
+        ] {
+            conn.execute(&format!("INSERT INTO {table} VALUES ('s1', 'x')"), [])
+                .unwrap();
+            conn.execute(&format!("INSERT INTO {table} VALUES ('keep', 'y')"), [])
+                .unwrap();
+        }
+    }
+    let store = DevinStore::open(&db, false).unwrap();
+    store.delete("s1").await.unwrap();
+    assert!(!store.has_session("s1").await.unwrap());
+
+    let conn = Connection::open(&db).unwrap();
+    for table in [
+        "subagent_heads",
+        "live_row_times",
+        "tool_call_state",
+        "rendered_commits",
+        "message_nodes",
+        "prompt_history",
+    ] {
+        let orphans: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM {table} WHERE session_id = 's1'"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0, "{table} kept rows for deleted s1");
+    }
+    // The sibling session's rows survive untouched.
+    for table in [
+        "subagent_heads",
+        "live_row_times",
+        "tool_call_state",
+        "rendered_commits",
+    ] {
+        let kept: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM {table} WHERE session_id = 'keep'"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 1, "{table} lost rows for kept session");
+    }
+    assert!(store.has_session("keep").await.unwrap());
+}
