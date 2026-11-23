@@ -2908,6 +2908,7 @@ dependencies = [
  "sepia-peregrin",
  "sepia-proto",
  "sepia-session",
+ "sepia-testkit",
  "serde",
  "serde_json",
  "sha2",
@@ -2915,6 +2916,7 @@ dependencies = [
  "thiserror 2.0.21",
  "time",
  "tokio",
+ "tower",
  "tracing",
  "uuid",
 ]

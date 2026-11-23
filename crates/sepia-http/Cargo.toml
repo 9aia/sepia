@@ -40,5 +40,7 @@ nix = { version = "0.29", default-features = false, features = ["hostname"] }
 [dev-dependencies]
 hypha-kv-file.workspace = true
 hypha-push.workspace = true
+sepia-testkit.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
+tower = { version = "0.5", features = ["util"] }
