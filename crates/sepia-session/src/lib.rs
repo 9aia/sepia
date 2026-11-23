@@ -11,6 +11,7 @@ pub mod local;
 pub mod merged;
 pub mod plane;
 pub mod policy;
+pub mod session_plane;
 pub mod translate;
 pub mod types;
 
@@ -23,5 +24,6 @@ pub use merged::{MergedRepository, agent_for_backend};
 pub use plane::{ControlPlane, CreateResult};
 pub use policy::{PermissionAction, PermissionPolicy, PermissionRule, settle_option};
 pub use sepia_meta::{MetaStore, SessionMeta};
+pub use session_plane::{LocalPlane, SessionPlane};
 pub use translate::Translator;
 pub use types::*;
