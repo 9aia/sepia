@@ -22,6 +22,9 @@ use crate::types::{
 };
 
 const CALL_TIMEOUT_MS: u64 = 120_000;
+/// Stdin writes are tiny; a child that stops reading must not wedge
+/// every queued call (and `close`) behind a full pipe.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 const PROTOCOL_VERSION: u64 = 1;
 
@@ -170,25 +173,28 @@ impl Inner {
         // the empty-line default is unreachable in practice.
         let mut line = rpc::encode_line(&response).unwrap_or_default();
         line.push('\n');
-        if let Some(stdin) = &mut *self.stdin.lock().await {
-            let _ = stdin.write_all(line.as_bytes()).await;
-            let _ = stdin.flush().await;
-        }
+        let _ = self.write(&line).await;
     }
 
     async fn write(&self, line: &str) -> Result<(), RpcError> {
-        let mut guard = self.stdin.lock().await;
-        let Some(stdin) = &mut *guard else {
-            return Err(RpcError::internal("agent stdin closed"));
+        let write = async {
+            let mut guard = self.stdin.lock().await;
+            let Some(stdin) = &mut *guard else {
+                return Err(RpcError::internal("agent stdin closed"));
+            };
+            stdin
+                .write_all(line.as_bytes())
+                .await
+                .map_err(|e| RpcError::internal(format!("agent stdin: {e}")))?;
+            stdin
+                .flush()
+                .await
+                .map_err(|e| RpcError::internal(format!("agent stdin: {e}")))
         };
-        stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|e| RpcError::internal(format!("agent stdin: {e}")))?;
-        stdin
-            .flush()
-            .await
-            .map_err(|e| RpcError::internal(format!("agent stdin: {e}")))
+        match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+            Ok(result) => result,
+            Err(_) => Err(RpcError::internal("agent stdin write timed out")),
+        }
     }
 
     async fn fail_all(&self, reason: &str) {
@@ -469,6 +475,25 @@ impl AcpConnection {
                 }
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+}
+
+impl Drop for AcpConnection {
+    /// `kill_on_drop` on the child only fires when `Inner` drops, but the
+    /// stdout reader and exit watcher hold `Arc<Inner>` and only exit
+    /// once the child's pipes close — which needs the child dead first.
+    /// A conn dropped without `close()` (e.g. a failed `initialize`)
+    /// would leak the agent process forever, so kill it directly.
+    fn drop(&mut self) {
+        if let Ok(mut child) = self.inner.child.try_lock() {
+            let _ = child.start_kill();
+        } else if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let inner = Arc::clone(&self.inner);
+            handle.spawn(async move {
+                let mut child = inner.child.lock().await;
+                let _ = child.start_kill();
+            });
         }
     }
 }
@@ -767,6 +792,62 @@ mod tests {
         // beat, then confirm the request was consumed from the broker.
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!conn.inner.broker.respond(&request.request_id, None));
+    }
+
+    /// Dropping a conn without `close()` must still kill the agent —
+    /// reader/watcher tasks hold `Arc<Inner>` and would otherwise keep
+    /// the kill-on-drop child alive forever.
+    #[tokio::test]
+    async fn drop_kills_the_agent_process() {
+        let pidfile = std::env::temp_dir().join(format!("sepia-acp-drop-{}", std::process::id()));
+        let _ = std::fs::remove_file(&pidfile);
+        let (child, stdin) = spawn_sh(&format!("echo $$ > {}; sleep 30", pidfile.display()));
+        let conn = bare_conn(child, stdin);
+        // A reader/watcher task holds `Arc<Inner>` — without the Drop
+        // kill, the child survives conn drop indefinitely.
+        let _task_hold = Arc::clone(&conn.inner);
+        // Wait for the child to record its pid before killing it.
+        let pid: i32 = {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Ok(raw) = std::fs::read_to_string(&pidfile) {
+                    if let Ok(pid) = raw.trim().parse() {
+                        break pid;
+                    }
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "agent never wrote its pidfile"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        drop(conn);
+        // The Drop kill is synchronous (start_kill); give the OS a beat
+        // to deliver SIGKILL, then the pid must be gone.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            // Dead means gone or a zombie awaiting reap — the bare test
+            // conn has no exit watcher, so `start_kill` alone leaves a
+            // zombie until the Child is dropped.
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"));
+            let dead = match stat {
+                Err(_) => true,
+                Ok(s) => s
+                    .rsplit(')')
+                    .next()
+                    .is_some_and(|rest| rest.trim_start().starts_with('Z')),
+            };
+            if dead {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "agent pid {pid} still alive after conn drop"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let _ = std::fs::remove_file(&pidfile);
     }
 
     /// The exit watcher returns silently when `try_wait` reports an

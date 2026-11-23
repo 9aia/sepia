@@ -19,6 +19,9 @@ use tokio::task::JoinHandle;
 // bounded per-call (`prompt_wait` overrides via `set_call_timeout`),
 // so the default only needs to cover spawn-class calls.
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+/// Stdin writes are tiny; a driver that stops reading must not wedge
+/// every queued call behind a full pipe.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const STDERR_RING: usize = 64;
 
 type PendingMap = HashMap<u64, oneshot::Sender<Result<Value, RpcError>>>;
@@ -54,11 +57,23 @@ struct Inner {
     closed: std::sync::atomic::AtomicBool,
 }
 
-/// A live driver subprocess. Dropping it kills the child; clones share
-/// the same child handle (the last drop still kills it).
-#[derive(Clone)]
+/// A live driver subprocess. Dropping the last clone kills the child;
+/// clones share the same child handle.
 pub struct DriverClient {
     inner: Arc<Inner>,
+    /// One ref per live client handle — the reader tasks also hold
+    /// `Arc<Inner>`, so `strong_count` on `inner` can never distinguish
+    /// "last client dropped" from "clients still alive".
+    clients: Arc<()>,
+}
+
+impl Clone for DriverClient {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            clients: Arc::clone(&self.clients),
+        }
+    }
 }
 
 impl DriverClient {
@@ -133,7 +148,10 @@ impl DriverClient {
         };
         *inner.stderr_reader.lock().await = stderr_reader;
 
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            clients: Arc::new(()),
+        })
     }
 
     /// Last stderr lines the driver emitted — for error context.
@@ -184,13 +202,22 @@ impl DriverClient {
         let request = rpc::Request::new(id, method, params);
         let line =
             rpc::encode_line(&request).map_err(|e| RpcError::internal(e.to_string()))? + "\n";
-        {
+        let write = async {
             let mut stdin = self.inner.stdin.lock().await;
             if let Err(e) = stdin.write_all(line.as_bytes()).await {
                 self.inner.pending.lock().await.remove(&id);
                 return Err(RpcError::internal(format!("driver stdin: {e}")));
             }
             let _ = stdin.flush().await;
+            Ok(())
+        };
+        match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                self.inner.pending.lock().await.remove(&id);
+                return Err(RpcError::internal("driver stdin write timed out"));
+            }
         }
         let budget = Duration::from_millis(self.inner.timeout_ms.load(Ordering::Relaxed));
         match tokio::time::timeout(budget, rx).await {
@@ -236,10 +263,11 @@ impl Inner {
 
 impl Drop for DriverClient {
     fn drop(&mut self) {
-        // Only the last handle may abort the shared reader tasks — an
-        // early clone dropping must not silence the channel its
-        // siblings still use.
-        if Arc::strong_count(&self.inner) == 1 {
+        // Only the last client handle may abort the shared reader tasks —
+        // an early clone dropping must not silence the channel its
+        // siblings still use. Aborting releases the tasks' `Arc<Inner>`,
+        // letting `Inner` (and the kill-on-drop child) go away.
+        if Arc::strong_count(&self.clients) == 1 {
             self.inner.reader.try_lock().map(|r| r.abort()).ok();
             self.inner.stderr_reader.try_lock().map(|r| r.abort()).ok();
         }
