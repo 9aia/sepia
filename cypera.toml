@@ -17,7 +17,6 @@
 "sepia-driver-devin" = "adapter"
 "sepia-host" = "adapter"
 "sepia-peregrin" = "adapter"
-"sepia-telemetry" = "adapter"
 "sepia-session" = "service"
 "sepia-meta" = "service"
 "sepia-convert" = "service"

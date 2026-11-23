@@ -20,7 +20,7 @@ depend on it; `sepia-cli` composes the local plane.
 | `crates/sepia-driver-{devin,cline,claude,cursor}` | store adapter binaries — installed per machine |
 | `crates/sepia-session` | local session plane: attach modes, lock probes, prompt/cancel/permission, restore/rewind, `local::build` |
 | `crates/sepia-{meta,convert}` | overlay store, store conversion |
-| `crates/sepia-telemetry` | opt-in OTEL layer over `tracing` |
+| — (git dep) | telemetry lives in [9aia/lampy](https://github.com/9aia/lampy) (`lampy-telemetry-otel`, P-042) — `SEPIA_OTEL_*` remains a supported alias |
 | `crates/sepia-cli` | the `sepia` engine lib (`Cli`/`command`/`parse_from`/`dispatch`/`run_from`) — **no bin**: the command ships as the tamias pack in `libraries/sepia/` (T-012) |
 | `crates/sepia-driver-pavo` | `tamias-driver-sepia` — pavo view driver (read-only views proxying `sepia serve`) **plus the engine ops surface**: `ops` manifest derived from `sepia_cli::command()`, `cli.<verb>` wire queries + `run <argv>`/`cli <argv>` passthroughs re-execing the engine in-process, feature-gated `mcp` via pavo-driver-kit |
 | `libraries/sepia` | the tamias pack — `tamias.yaml` declares `bins: [{name: sepia, shim: cli, driver: sepia}]`; `cargo xtask pack` stages `drivers/bin/<triple>/tamias-driver-sepia` (gitignored) |
