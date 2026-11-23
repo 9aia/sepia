@@ -2,6 +2,7 @@
 //! pending-request tracking, update/permission dispatch, kill-on-drop.
 
 use std::collections::HashMap;
+use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -18,7 +19,7 @@ use crate::registry::model_args;
 use crate::stderr::StderrTail;
 use crate::types::{
     AcpCapabilities, AcpSessionInfo, AcpSessionUpdate, AgentSpec, AvailableCommand,
-    PermissionRequest, PromptPart, PromptResult, SpawnOptions,
+    ClientRequestHandler, PermissionRequest, PromptPart, PromptResult, SpawnOptions, WireDebug,
 };
 
 const CALL_TIMEOUT_MS: u64 = 120_000;
@@ -67,9 +68,10 @@ fn take_stdio(child: &mut Child) -> Result<(ChildStdout, ChildStdin, ChildStderr
     Ok((stdout, stdin, stderr))
 }
 
-/// `SEPIA_INHERIT_ENV=1` opts back into forwarding the whole parent env.
+/// `SEPIA_INHERIT_ENV=1` or `SpawnOptions::inherit_env` opts back into
+/// forwarding the whole parent env.
 fn build_child_env(spec: &AgentSpec, options: &SpawnOptions) -> Vec<(String, String)> {
-    let inherit = std::env::var("SEPIA_INHERIT_ENV").is_ok_and(|v| v == "1");
+    let inherit = options.inherit_env || std::env::var("SEPIA_INHERIT_ENV").is_ok_and(|v| v == "1");
     build_child_env_with(spec, options, inherit, std::env::vars())
 }
 
@@ -112,13 +114,38 @@ struct Inner {
     /// slash-command advertisement, retained so `commands()` can
     /// answer without replaying the update stream. Last write wins.
     commands: RwLock<HashMap<String, Vec<AvailableCommand>>>,
+    /// Agent→client requests outside the permission lane
+    /// (`fs/read_text_file`, …) — `None` answers `-32601`.
+    client_requests: RwLock<Option<ClientRequestHandler>>,
+    /// ndjson transcript sink — `>` outbound, `<` inbound, pre-parse.
+    wire_debug: Option<WireDebug>,
     exit_error: OnceCell<RpcError>,
     exited: AtomicBool,
     call_timeout_ms: AtomicU64,
 }
 
 impl Inner {
+    /// Transcript line to the wire sink — stderr or an appended file.
+    /// Debug-only path; kept off the hot loop when unset.
+    fn wire_log(&self, dir: char, line: &str) {
+        let line = line.trim_end();
+        match &self.wire_debug {
+            None => {}
+            Some(WireDebug::Stderr) => eprintln!("acp{dir} {line}"),
+            Some(WireDebug::File(path)) => {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    let _ = writeln!(f, "{dir} {line}");
+                }
+            }
+        }
+    }
+
     async fn dispatch(self: &Arc<Self>, line: &str) {
+        self.wire_log('<', line);
         match rpc::decode_line(line) {
             Ok(Inbound::Response(response)) => {
                 let sender = self.pending.lock().await.remove(&response.id);
@@ -155,6 +182,9 @@ impl Inner {
                     // response and later lines depend on it).
                     let inner = Arc::clone(self);
                     tokio::spawn(async move { inner.answer_permission(req).await });
+                } else {
+                    let inner = Arc::clone(self);
+                    tokio::spawn(async move { inner.answer_client_request(req).await });
                 }
             }
             Err(_) => {}
@@ -176,7 +206,38 @@ impl Inner {
         let _ = self.write(&line).await;
     }
 
+    /// Agent→client request outside the permission lane — answered by
+    /// the configured [`ClientRequestHandler`] on the blocking pool,
+    /// or `-32601` when none is set (an unanswered request stalls the
+    /// agent until the call timeout).
+    async fn answer_client_request(self: &Arc<Self>, req: rpc::Request) {
+        let handler = self.client_requests.read().await.clone();
+        let response = match handler {
+            Some(handler) => {
+                let method = req.method.clone();
+                let params = req.params.clone();
+                let result = tokio::task::spawn_blocking(move || (handler.0)(&method, &params))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(RpcError::internal(format!("client request handler: {e}")))
+                    });
+                match result {
+                    Ok(value) => rpc::Response::ok(req.id, value),
+                    Err(e) => rpc::Response::err(req.id, e),
+                }
+            }
+            None => rpc::Response::err(
+                req.id,
+                RpcError::new(rpc::METHOD_NOT_FOUND, "method not found"),
+            ),
+        };
+        let mut line = rpc::encode_line(&response).unwrap_or_default();
+        line.push('\n');
+        let _ = self.write(&line).await;
+    }
+
     async fn write(&self, line: &str) -> Result<(), RpcError> {
+        self.wire_log('>', line);
         let write = async {
             let mut guard = self.stdin.lock().await;
             let Some(stdin) = &mut *guard else {
@@ -213,6 +274,10 @@ pub struct AcpConnection {
     inner: Arc<Inner>,
     stderr: Arc<StderrTail>,
     capabilities: RwLock<AcpCapabilities>,
+    /// `clientCapabilities` sent at `initialize` (SpawnOptions merge).
+    client_capabilities: Value,
+    /// `clientInfo` sent at `initialize`.
+    client_info: Option<Value>,
 }
 
 impl AcpConnection {
@@ -299,12 +364,14 @@ impl AcpConnection {
     /// The `initialize` handshake — must run before the connection is
     /// handed out.
     pub async fn initialize(&self) -> Result<(), RpcError> {
-        let result = self
-            .call(
-                "initialize",
-                json!({ "protocolVersion": PROTOCOL_VERSION, "clientCapabilities": {} }),
-            )
-            .await?;
+        let mut params = json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "clientCapabilities": self.client_capabilities,
+        });
+        if let Some(info) = &self.client_info {
+            params["clientInfo"] = info.clone();
+        }
+        let result = self.call("initialize", params).await?;
         let caps = as_record(&result["agentCapabilities"]);
         // Missing capability objects mean "not supported" — never index.
         let prompt = as_record(caps.get("promptCapabilities").unwrap_or(&Value::Null));
@@ -498,6 +565,35 @@ impl Drop for AcpConnection {
     }
 }
 
+/// `SpawnOptions::wire_debug` wins; `SEPIA_ACP_DEBUG` is the env
+/// fallback — `1`/`true` → stderr, any other truthy value → file path.
+fn resolve_wire_debug(explicit: Option<WireDebug>) -> Option<WireDebug> {
+    if explicit.is_some() {
+        return explicit;
+    }
+    let v = std::env::var("SEPIA_ACP_DEBUG").ok()?;
+    let v = v.trim();
+    if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false") {
+        return None;
+    }
+    if v == "1" || v.eq_ignore_ascii_case("true") {
+        return Some(WireDebug::Stderr);
+    }
+    Some(WireDebug::File(std::path::PathBuf::from(v)))
+}
+
+/// `SpawnOptions::client_capabilities` merged over the empty base —
+/// non-object extras degrade to no capabilities.
+fn merge_client_capabilities(extra: Option<&Value>) -> Value {
+    let mut base = json!({});
+    if let Some(Value::Object(map)) = extra {
+        if let Some(obj) = base.as_object_mut() {
+            obj.extend(map.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+    }
+    base
+}
+
 /// Spawn `spec` + `options` and run the `initialize` handshake.
 ///
 /// # Errors
@@ -555,6 +651,8 @@ pub async fn spawn_agent(
         permissions_tx,
         broker: PermissionBroker::new(),
         commands: RwLock::new(HashMap::new()),
+        client_requests: RwLock::new(options.request_handler.clone()),
+        wire_debug: resolve_wire_debug(options.wire_debug.clone()),
         exit_error: OnceCell::new(),
         exited: AtomicBool::new(false),
         call_timeout_ms: AtomicU64::new(CALL_TIMEOUT_MS),
@@ -588,6 +686,8 @@ pub async fn spawn_agent(
         inner,
         stderr,
         capabilities: RwLock::new(AcpCapabilities::default()),
+        client_capabilities: merge_client_capabilities(options.client_capabilities.as_ref()),
+        client_info: options.client_info.clone(),
     };
     conn.initialize().await?;
     Ok(conn)
@@ -673,12 +773,16 @@ mod tests {
                 permissions_tx,
                 broker: PermissionBroker::new(),
                 commands: RwLock::new(HashMap::new()),
+                client_requests: RwLock::new(None),
+                wire_debug: None,
                 exit_error: OnceCell::new(),
                 exited: AtomicBool::new(false),
                 call_timeout_ms: AtomicU64::new(CALL_TIMEOUT_MS),
             }),
             stderr: Arc::new(StderrTail::new("test", false)),
             capabilities: RwLock::new(AcpCapabilities::default()),
+            client_capabilities: json!({}),
+            client_info: None,
         }
     }
 
@@ -881,6 +985,7 @@ mod env_tests {
             env: None,
             model: None,
             fallbacks: None,
+            ..Default::default()
         };
         let vars = vec![
             ("HOME".to_string(), "/h".to_string()),
