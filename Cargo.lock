@@ -1366,7 +1366,7 @@ dependencies = [
 [[package]]
 name = "hypha-http"
 version = "0.1.0"
-source = "git+ssh://git@github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
+source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
 dependencies = [
  "async-trait",
  "axum",
@@ -1393,7 +1393,7 @@ dependencies = [
 [[package]]
 name = "hypha-kv"
 version = "0.1.0"
-source = "git+ssh://git@github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
+source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
 dependencies = [
  "serde",
  "serde_json",
@@ -1402,7 +1402,7 @@ dependencies = [
 [[package]]
 name = "hypha-kv-file"
 version = "0.1.0"
-source = "git+ssh://git@github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
+source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
 dependencies = [
  "hypha-kv",
  "serde",
@@ -1412,7 +1412,7 @@ dependencies = [
 [[package]]
 name = "hypha-push"
 version = "0.1.0"
-source = "git+ssh://git@github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
+source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -1427,7 +1427,7 @@ dependencies = [
 [[package]]
 name = "hypha-telemetry"
 version = "0.1.0"
-source = "git+ssh://git@github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
+source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
 dependencies = [
  "http 1.5.0",
  "opentelemetry",
@@ -2121,7 +2121,7 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 [[package]]
 name = "pavo-driver-kit"
 version = "0.1.0"
-source = "git+https://github.com/9aia/pavo?rev=7523dcb862dd2339917250f7489311cda27f0552#7523dcb862dd2339917250f7489311cda27f0552"
+source = "git+https://github.com/9aia/pavo?rev=ca4079d123fe7533210ed698051f5c3a09000911#ca4079d123fe7533210ed698051f5c3a09000911"
 dependencies = [
  "pavo-protocol",
  "serde",
@@ -2131,7 +2131,7 @@ dependencies = [
 [[package]]
 name = "pavo-protocol"
 version = "0.1.0"
-source = "git+https://github.com/9aia/pavo?rev=7523dcb862dd2339917250f7489311cda27f0552#7523dcb862dd2339917250f7489311cda27f0552"
+source = "git+https://github.com/9aia/pavo?rev=ca4079d123fe7533210ed698051f5c3a09000911#ca4079d123fe7533210ed698051f5c3a09000911"
 dependencies = [
  "serde",
  "serde_json",
@@ -2141,7 +2141,7 @@ dependencies = [
 [[package]]
 name = "pavo-testkit"
 version = "0.1.0"
-source = "git+https://github.com/9aia/pavo?rev=7523dcb862dd2339917250f7489311cda27f0552#7523dcb862dd2339917250f7489311cda27f0552"
+source = "git+https://github.com/9aia/pavo?rev=ca4079d123fe7533210ed698051f5c3a09000911#ca4079d123fe7533210ed698051f5c3a09000911"
 dependencies = [
  "pavo-protocol",
  "serde",
