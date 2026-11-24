@@ -1,0 +1,46 @@
+[package]
+name = "sepia-http"
+description = "Sepia's session REST surface — axum adapter mounting /api/sessions*, agents, config/projects compat, feed and meta wiring over SessionState"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sepia-acp.workspace = true
+sepia-session.workspace = true
+sepia-convert.workspace = true
+sepia-core.workspace = true
+sepia-meta.workspace = true
+sepia-proto.workspace = true
+sepia-peregrin.workspace = true
+hypha-push.workspace = true
+hypha-http.workspace = true
+hypha-kv.workspace = true
+hypha-telemetry.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+futures.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+time.workspace = true
+axum = "0.8"
+form_urlencoded = "1"
+http-body-util = "0.1"
+sha2 = "0.10"
+nix = { version = "0.29", default-features = false, features = ["hostname"] }
+
+[dev-dependencies]
+hypha-kv-file.workspace = true
+hypha-push.workspace = true
+sepia-testkit.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true
+tower = { version = "0.5", features = ["util"] }
