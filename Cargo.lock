@@ -891,7 +891,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1365,8 +1365,8 @@ dependencies = [
 
 [[package]]
 name = "hypha-http"
-version = "0.1.0"
-source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
+version = "0.2.0"
+source = "git+https://github.com/9aia/hypha.git?branch=main#5aa16b526bfd7c1a294a0de24dc62790450ed19a"
 dependencies = [
  "async-trait",
  "axum",
@@ -1378,7 +1378,7 @@ dependencies = [
  "hypha-kv",
  "hypha-kv-file",
  "hypha-push",
- "hypha-telemetry",
+ "lampy-telemetry-otel 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c)",
  "nix",
  "serde",
  "serde_json",
@@ -1392,8 +1392,8 @@ dependencies = [
 
 [[package]]
 name = "hypha-kv"
-version = "0.1.0"
-source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
+version = "0.2.0"
+source = "git+https://github.com/9aia/hypha.git?branch=main#5aa16b526bfd7c1a294a0de24dc62790450ed19a"
 dependencies = [
  "serde",
  "serde_json",
@@ -1401,8 +1401,8 @@ dependencies = [
 
 [[package]]
 name = "hypha-kv-file"
-version = "0.1.0"
-source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
+version = "0.2.0"
+source = "git+https://github.com/9aia/hypha.git?branch=main#5aa16b526bfd7c1a294a0de24dc62790450ed19a"
 dependencies = [
  "hypha-kv",
  "serde",
@@ -1411,8 +1411,8 @@ dependencies = [
 
 [[package]]
 name = "hypha-push"
-version = "0.1.0"
-source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
+version = "0.2.0"
+source = "git+https://github.com/9aia/hypha.git?branch=main#5aa16b526bfd7c1a294a0de24dc62790450ed19a"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -1422,20 +1422,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "web-push",
-]
-
-[[package]]
-name = "hypha-telemetry"
-version = "0.1.0"
-source = "git+https://github.com/9aia/hypha.git?branch=main#41dbbd49dd9985e26c63c4c7267f4c4b0a21e7e9"
-dependencies = [
- "http 1.5.0",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1702,6 +1688,14 @@ dependencies = [
 [[package]]
 name = "lampy-telemetry"
 version = "0.1.0"
+source = "git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c#04c89924413c5e169e5b6c48d7e5897be53be85c"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "lampy-telemetry"
+version = "0.1.0"
 source = "git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f#8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f"
 dependencies = [
  "thiserror 2.0.21",
@@ -1710,10 +1704,25 @@ dependencies = [
 [[package]]
 name = "lampy-telemetry-otel"
 version = "0.1.0"
+source = "git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c#04c89924413c5e169e5b6c48d7e5897be53be85c"
+dependencies = [
+ "http 1.5.0",
+ "lampy-telemetry 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c)",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "lampy-telemetry-otel"
+version = "0.1.0"
 source = "git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f#8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f"
 dependencies = [
  "http 1.5.0",
- "lampy-telemetry",
+ "lampy-telemetry 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f)",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -2603,7 +2612,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2713,7 +2722,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sepia-acp"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -2727,11 +2736,11 @@ dependencies = [
 
 [[package]]
 name = "sepia-cli"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "clap",
- "lampy-telemetry",
- "lampy-telemetry-otel",
+ "lampy-telemetry 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f)",
+ "lampy-telemetry-otel 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f)",
  "nix",
  "sepia-acp",
  "sepia-convert",
@@ -2752,7 +2761,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-convert"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "sepia-core",
@@ -2767,7 +2776,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-core"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "proptest",
@@ -2778,7 +2787,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "sepia-core",
@@ -2791,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-claude"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "sepia-core",
@@ -2807,7 +2816,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-cline"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -2824,7 +2833,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-config"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "sepia-core",
  "sepia-driver-claude",
@@ -2841,7 +2850,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-cursor"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "md-5",
@@ -2858,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-devin"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -2875,7 +2884,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-driver-pavo"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "clap",
  "pavo-driver-kit",
@@ -2897,7 +2906,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-host"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "sepia-core",
@@ -2912,7 +2921,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-http"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2923,7 +2932,7 @@ dependencies = [
  "hypha-kv",
  "hypha-kv-file",
  "hypha-push",
- "lampy-telemetry-otel",
+ "lampy-telemetry-otel 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f)",
  "nix",
  "sepia-acp",
  "sepia-convert",
@@ -2947,7 +2956,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-meta"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2956,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-peregrin"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2978,7 +2987,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-proto"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "sepia-core",
  "serde",
@@ -2987,7 +2996,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-session"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3011,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "sepia-testkit"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -3366,7 +3375,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3641,16 +3650,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-serde"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
-dependencies = [
- "serde",
- "tracing-core",
-]
-
-[[package]]
 name = "tracing-subscriber"
 version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3660,15 +3659,12 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex-automata",
- "serde",
- "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
- "tracing-serde",
 ]
 
 [[package]]
@@ -4134,7 +4130,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "serde_json",
