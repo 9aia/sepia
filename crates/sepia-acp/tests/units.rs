@@ -140,6 +140,7 @@ fn options() -> SpawnOptions {
         env: Some([("K".to_string(), "V".to_string())].into_iter().collect()),
         model: Some("m".into()),
         fallbacks: Some(vec!["f".into()]),
+        ..Default::default()
     }
 }
 
@@ -239,6 +240,7 @@ async fn updates_permission_and_stderr_paths() {
             env: None,
             model: None,
             fallbacks: None,
+            ..Default::default()
         },
     )
     .await

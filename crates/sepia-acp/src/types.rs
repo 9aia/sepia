@@ -2,6 +2,8 @@
 //! `sepia-acp` and its consumers (control plane, UI event translation).
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -246,6 +248,34 @@ pub struct PromptResult {
     pub stop_reason: Option<String>,
 }
 
+/// The callable inside [`ClientRequestHandler`] — factored out so the
+/// tuple struct stays readable.
+pub type ClientRequestFn =
+    Arc<dyn Fn(&str, &Value) -> Result<Value, sepia_driver::rpc::RpcError> + Send + Sync>;
+
+/// An agent→client request handler for methods outside the in-band
+/// permission lane (`fs/read_text_file`, terminal ops, …). Receives
+/// the method name and params; returns the JSON-RPC `result` payload
+/// or an error. Runs on the blocking pool — keep it fast.
+#[derive(Clone)]
+pub struct ClientRequestHandler(pub ClientRequestFn);
+
+impl std::fmt::Debug for ClientRequestHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClientRequestHandler")
+    }
+}
+
+/// Wire-level ndjson transcript sink — every line in both directions,
+/// pre-parse (non-JSON garbage included). `SEPIA_ACP_DEBUG` mirrors
+/// this when `SpawnOptions::wire_debug` is unset: `1`/`true` →
+/// stderr, any other truthy value → file path (appended).
+#[derive(Clone, Debug)]
+pub enum WireDebug {
+    Stderr,
+    File(PathBuf),
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SpawnOptions {
     pub cwd: String,
@@ -254,4 +284,22 @@ pub struct SpawnOptions {
     pub model: Option<String>,
     /// Ordered fallback models (agent-specific flag).
     pub fallbacks: Option<Vec<String>>,
+    /// Forward the whole parent environment (default: the
+    /// `ALLOWED_ENV_KEYS` allowlist only). Unattended consumers whose
+    /// agents need arbitrary auth/config vars opt in;
+    /// `SEPIA_INHERIT_ENV=1` forces it process-wide.
+    pub inherit_env: bool,
+    /// Extra `clientCapabilities` merged into `initialize` — e.g.
+    /// `{"fs":{"readTextFile":true}}` when a `request_handler` serves
+    /// fs reads.
+    pub client_capabilities: Option<Value>,
+    /// `clientInfo` reported at `initialize`.
+    pub client_info: Option<Value>,
+    /// Handler for agent→client requests other than
+    /// `session/request_permission` — an unanswered request stalls
+    /// the agent, so set one whenever the agent may call back. Methods
+    /// with no handler get a `-32601` response.
+    pub request_handler: Option<ClientRequestHandler>,
+    /// ndjson transcript sink; `SEPIA_ACP_DEBUG` is the env fallback.
+    pub wire_debug: Option<WireDebug>,
 }

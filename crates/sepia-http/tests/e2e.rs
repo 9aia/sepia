@@ -117,6 +117,7 @@ impl AgentRuntime for MockRuntime {
                 env: None,
                 model: model.map(str::to_string),
                 fallbacks: None,
+                ..Default::default()
             },
         )
         .await

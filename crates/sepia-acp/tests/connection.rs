@@ -24,6 +24,7 @@ fn options() -> SpawnOptions {
         env: None,
         model: None,
         fallbacks: None,
+        ..Default::default()
     }
 }
 

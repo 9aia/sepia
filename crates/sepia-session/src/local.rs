@@ -151,6 +151,7 @@ impl AgentRuntime for SpecRuntime {
                 env: None,
                 model: model.map(str::to_string),
                 fallbacks: fallbacks.map(<[String]>::to_vec),
+                ..Default::default()
             },
         )
         .await

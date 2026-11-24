@@ -44,6 +44,14 @@ pub fn field<'a>(obj: &'a Map<String, Value>, key: &str) -> &'a Value {
 }
 
 fn text_of(content: &Value) -> String {
+    // One content block, or a list of them — some agents chunk a
+    // turn's text across a `content` array instead of a single block.
+    if let Value::Array(blocks) = content {
+        return blocks
+            .iter()
+            .filter_map(|b| as_string(field(as_record(b), "text")))
+            .collect();
+    }
     as_string(field(as_record(content), "text"))
         .unwrap_or_default()
         .to_string()
