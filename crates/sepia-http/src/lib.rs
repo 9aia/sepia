@@ -286,11 +286,11 @@ pub async fn cors_layer(
 /// the hub's trace; requests without context get a local-root
 /// `http_request` span. Inert (plain span) when export is off.
 pub async fn trace_layer(req: Request<Body>, next: Next) -> Response {
-    let span = hypha_telemetry::server_span(req.method(), req.uri().path(), req.headers());
+    let span = lampy_telemetry_otel::server_span(req.method(), req.uri().path(), req.headers());
     let for_status = span.clone();
     async move {
         let res = next.run(req).await;
-        hypha_telemetry::record_response(&for_status, res.status().as_u16());
+        lampy_telemetry_otel::record_response(&for_status, res.status().as_u16());
         res
     }
     .instrument(span)

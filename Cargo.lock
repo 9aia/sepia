@@ -1702,7 +1702,7 @@ dependencies = [
 [[package]]
 name = "lampy-telemetry"
 version = "0.1.0"
-source = "git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c#04c89924413c5e169e5b6c48d7e5897be53be85c"
+source = "git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f#8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -1710,7 +1710,7 @@ dependencies = [
 [[package]]
 name = "lampy-telemetry-otel"
 version = "0.1.0"
-source = "git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c#04c89924413c5e169e5b6c48d7e5897be53be85c"
+source = "git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f#8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f"
 dependencies = [
  "http 1.5.0",
  "lampy-telemetry",
@@ -2923,7 +2923,7 @@ dependencies = [
  "hypha-kv",
  "hypha-kv-file",
  "hypha-push",
- "hypha-telemetry",
+ "lampy-telemetry-otel",
  "nix",
  "sepia-acp",
  "sepia-convert",
