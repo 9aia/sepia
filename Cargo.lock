@@ -1621,6 +1621,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "lampy-telemetry"
+version = "0.1.0"
+source = "git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c#04c89924413c5e169e5b6c48d7e5897be53be85c"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "lampy-telemetry-otel"
+version = "0.1.0"
+source = "git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c#04c89924413c5e169e5b6c48d7e5897be53be85c"
+dependencies = [
+ "http 1.5.0",
+ "lampy-telemetry",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2613,6 +2636,8 @@ name = "sepia-cli"
 version = "0.2.0"
 dependencies = [
  "clap",
+ "lampy-telemetry",
+ "lampy-telemetry-otel",
  "nix",
  "sepia-acp",
  "sepia-convert",
@@ -2624,7 +2649,6 @@ dependencies = [
  "sepia-driver-devin",
  "sepia-host",
  "sepia-session",
- "sepia-telemetry",
  "serde",
  "serde_json",
  "tempfile",
@@ -2854,19 +2878,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "sepia-telemetry"
-version = "0.2.0"
-dependencies = [
- "http 1.5.0",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
 ]
 
 [[package]]

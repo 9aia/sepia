@@ -396,7 +396,8 @@ pub fn dispatch(cli: &Cli) -> i32 {
             runtime().and_then(|rt| run_store(&StoreCommands::Delete(a.clone()), &rt))
         }
         Commands::Serve => {
-            let _telemetry = sepia_telemetry::init();
+            let spec = lampy_telemetry::TelemetrySpec::service("sepia").with_alias("SEPIA");
+            let _telemetry = lampy_telemetry_otel::init(&spec, env!("CARGO_PKG_NAME"));
             serve::serve_stdio()
         }
         Commands::Version => {

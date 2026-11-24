@@ -27,7 +27,10 @@ sepia-meta = { path = "crates/sepia-meta", version = "0.2.0" }
 sepia-driver = { path = "crates/sepia-driver", version = "0.2.0" }
 sepia-host = { path = "crates/sepia-host", version = "0.2.0" }
 sepia-testkit = { path = "crates/sepia-testkit", version = "0.2.0" }
-sepia-telemetry = { path = "crates/sepia-telemetry", version = "0.2.0" }
+# Telemetry expertise lives in 9aia/lampy (P-042) — pinned git dep,
+# rev = lampy decouple/pl-023.
+lampy-telemetry = { git = "ssh://git@github.com/9aia/lampy.git", rev = "04c89924413c5e169e5b6c48d7e5897be53be85c", version = "0.1.0" }
+lampy-telemetry-otel = { git = "ssh://git@github.com/9aia/lampy.git", rev = "04c89924413c5e169e5b6c48d7e5897be53be85c", version = "0.1.0" }
 sepia-peregrin = { path = "crates/sepia-peregrin", version = "0.2.0" }
 
 # External dependencies — pin conservative majors/minors.
