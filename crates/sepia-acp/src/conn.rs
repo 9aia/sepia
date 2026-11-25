@@ -53,6 +53,13 @@ const ALLOWED_ENV_KEYS: &[&str] = &[
     // Coverage runs instrument every spawned binary; without the profile
     // path the child's profraw never lands where llvm-cov collects it.
     "LLVM_PROFILE_FILE",
+    // Sandbox wrapper knobs — `SEPIA_AGENT_<ID>_COMMAND` may point at a
+    // confinement wrapper (e.g. sepia-agent-sandbox) that scopes itself
+    // by the session cwd; without these the wrapper sees an empty
+    // environment and falls back to its default policy.
+    "SEPIA_SANDBOX_CWD",
+    "SEPIA_SANDBOX_MASK",
+    "SEPIA_SANDBOX_RW",
 ];
 
 fn missing_stdio(which: &str) -> RpcError {
@@ -1073,6 +1080,7 @@ mod env_tests {
             ("SECRET_TOKEN".to_string(), "s".to_string()),
             ("PATH".to_string(), "/p".to_string()),
             ("DEVIN_PERMISSION_MODE".to_string(), "dangerous".to_string()),
+            ("SEPIA_SANDBOX_CWD".to_string(), "/tmp/wt".to_string()),
         ];
         // Inherit mode forwards everything.
         let env = build_child_env_with(&spec, &options, true, vars.clone().into_iter());
@@ -1084,6 +1092,12 @@ mod env_tests {
         assert!(
             env.iter()
                 .any(|(k, v)| k == "DEVIN_PERMISSION_MODE" && v == "dangerous")
+        );
+        // Sandbox scoping knobs ride the allowlist — the confinement
+        // wrapper reads them from the agent child's env.
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "SEPIA_SANDBOX_CWD" && v == "/tmp/wt")
         );
     }
 }
