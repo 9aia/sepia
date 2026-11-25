@@ -64,8 +64,8 @@ daemon. Adding an agent is dropping a binary in a discovery dir; see
 | `sepia-driver-cursor` | adapter | Cursor store driver — ~/.cursor chats store.db + agent-transcripts as a SessionRepository over the driver-wire protocol |
 | `sepia-driver-devin` | adapter | Devin store driver — sessions.db (sqlite) SessionRepository over the driver-wire protocol |
 | `sepia-host` | adapter | Daemon side of the sepia driver protocol — discovery, spawn, registry, remote SessionRepository |
+| `sepia-http` | adapter | Sepia's session REST surface — axum adapter mounting /api/sessions*, agents, config/projects compat, feed and meta wiring over SessionState |
 | `sepia-peregrin` | adapter | Sepia's first-class peregrin adapter — sessions as `sepia-session` entities over the entity plane |
-| `sepia-telemetry` | adapter | Opt-in OpenTelemetry layer over the tracing stack — OTLP export, W3C context propagation |
 | `sepia-convert` | service | Cross-store session conversion — history→IR rebuild, Devin-store import with cog grafting |
 | `sepia-meta` | service | Sepia-owned per-session overlay metadata (title/pin/projectIds/spans) — a JSON file beside the read-only session stores |
 | `sepia-session` | service | Sepia session plane — live-session ownership, lock probes, attach/takeover, prompt/cancel/permission, restore/rewind, and the machine-local composition |
