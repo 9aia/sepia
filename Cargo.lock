@@ -1378,7 +1378,7 @@ dependencies = [
  "hypha-kv",
  "hypha-kv-file",
  "hypha-push",
- "lampy-telemetry-otel 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c)",
+ "lampy-telemetry-otel 0.1.0",
  "nix",
  "serde",
  "serde_json",
@@ -1695,8 +1695,8 @@ dependencies = [
 
 [[package]]
 name = "lampy-telemetry"
-version = "0.1.0"
-source = "git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f#8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f"
+version = "0.2.0"
+source = "git+ssh://git@github.com/9aia/lampy.git?rev=7fc154c3d6e516221658414a6d1c7d9617792e3d#7fc154c3d6e516221658414a6d1c7d9617792e3d"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -1707,7 +1707,7 @@ version = "0.1.0"
 source = "git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c#04c89924413c5e169e5b6c48d7e5897be53be85c"
 dependencies = [
  "http 1.5.0",
- "lampy-telemetry 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=04c89924413c5e169e5b6c48d7e5897be53be85c)",
+ "lampy-telemetry 0.1.0",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -1718,11 +1718,11 @@ dependencies = [
 
 [[package]]
 name = "lampy-telemetry-otel"
-version = "0.1.0"
-source = "git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f#8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f"
+version = "0.2.0"
+source = "git+ssh://git@github.com/9aia/lampy.git?rev=7fc154c3d6e516221658414a6d1c7d9617792e3d#7fc154c3d6e516221658414a6d1c7d9617792e3d"
 dependencies = [
  "http 1.5.0",
- "lampy-telemetry 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f)",
+ "lampy-telemetry 0.2.0",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -2130,7 +2130,7 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 [[package]]
 name = "pavo-driver-kit"
 version = "0.1.0"
-source = "git+https://github.com/9aia/pavo?rev=ca4079d123fe7533210ed698051f5c3a09000911#ca4079d123fe7533210ed698051f5c3a09000911"
+source = "git+https://github.com/9aia/pavo?rev=f6235d10f990e9f7735d8a53495e94a57a640949#f6235d10f990e9f7735d8a53495e94a57a640949"
 dependencies = [
  "pavo-protocol",
  "serde",
@@ -2140,7 +2140,7 @@ dependencies = [
 [[package]]
 name = "pavo-protocol"
 version = "0.1.0"
-source = "git+https://github.com/9aia/pavo?rev=ca4079d123fe7533210ed698051f5c3a09000911#ca4079d123fe7533210ed698051f5c3a09000911"
+source = "git+https://github.com/9aia/pavo?rev=f6235d10f990e9f7735d8a53495e94a57a640949#f6235d10f990e9f7735d8a53495e94a57a640949"
 dependencies = [
  "serde",
  "serde_json",
@@ -2150,7 +2150,7 @@ dependencies = [
 [[package]]
 name = "pavo-testkit"
 version = "0.1.0"
-source = "git+https://github.com/9aia/pavo?rev=ca4079d123fe7533210ed698051f5c3a09000911#ca4079d123fe7533210ed698051f5c3a09000911"
+source = "git+https://github.com/9aia/pavo?rev=f6235d10f990e9f7735d8a53495e94a57a640949#f6235d10f990e9f7735d8a53495e94a57a640949"
 dependencies = [
  "pavo-protocol",
  "serde",
@@ -2739,8 +2739,8 @@ name = "sepia-cli"
 version = "1.0.0"
 dependencies = [
  "clap",
- "lampy-telemetry 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f)",
- "lampy-telemetry-otel 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f)",
+ "lampy-telemetry 0.2.0",
+ "lampy-telemetry-otel 0.2.0",
  "nix",
  "sepia-acp",
  "sepia-convert",
@@ -2932,7 +2932,7 @@ dependencies = [
  "hypha-kv",
  "hypha-kv-file",
  "hypha-push",
- "lampy-telemetry-otel 0.1.0 (git+ssh://git@github.com/9aia/lampy.git?rev=8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f)",
+ "lampy-telemetry-otel 0.2.0",
  "nix",
  "sepia-acp",
  "sepia-convert",

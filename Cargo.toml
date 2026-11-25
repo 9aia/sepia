@@ -29,8 +29,8 @@ sepia-host = { path = "crates/sepia-host", version = "1.0.0" }
 sepia-testkit = { path = "crates/sepia-testkit", version = "1.0.0" }
 # Telemetry expertise lives in 9aia/lampy (P-042) — pinned git dep,
 # rev = lampy main.
-lampy-telemetry = { git = "ssh://git@github.com/9aia/lampy.git", rev = "8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f", version = "0.1.0" }
-lampy-telemetry-otel = { git = "ssh://git@github.com/9aia/lampy.git", rev = "8a704a34b7b4ed6ec868e29d0b43c8bcbac28c7f", version = "0.1.0" }
+lampy-telemetry = { git = "ssh://git@github.com/9aia/lampy.git", rev = "7fc154c3d6e516221658414a6d1c7d9617792e3d", version = "0.2" }
+lampy-telemetry-otel = { git = "ssh://git@github.com/9aia/lampy.git", rev = "7fc154c3d6e516221658414a6d1c7d9617792e3d", version = "0.2" }
 sepia-peregrin = { path = "crates/sepia-peregrin", version = "1.0.0" }
 sepia-http = { path = "crates/sepia-http", version = "1.0.0" }
 
